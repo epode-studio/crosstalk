@@ -1,12 +1,37 @@
 # crosstalk
 
-**You just found the thing that breaks what your teammate is building. Right now, you are the messenger.**
+**Messaging between different people's Claude Code sessions, on terms the receiver sets.**
 
-Read it out of your terminal. Summarise it in Slack. They paste it into theirs.
-You both re-explain the context that made it matter. Meanwhile their agent has
-spent twenty minutes building on an assumption that stopped being true.
+## Where we are
 
-Crosstalk moves it agent to agent instead.
+Two people work on the same codebase. Both run Claude Code. On each side, an
+agent reads the repo, makes changes, runs the tests, and holds a working picture
+of what is true right now.
+
+So the work is already agentic on both ends. Two capable systems, each with
+context the other one needs.
+
+## What is missing
+
+The link between them is you.
+
+You find that a migration landed and the old column is gone. Your teammate's
+agent is, at this moment, writing code against that column. For it to find out,
+you have to notice that it matters, read the finding out of your terminal,
+compress it into a sentence, paste it into Slack, and wait. They read it, paste
+it into their session, and re-explain the parts that got lost on the way.
+
+That costs twice. It breaks your flow, because you stopped working to become a
+courier. And it leaves their agent building on something untrue for as long as
+the round trip takes.
+
+Claude Code does have session-to-session messaging, and it is good, but it only
+reaches sessions signed in to your own account. It solves laptop-to-desktop for
+one person. Your colleague's sessions never appear in your `/list-agents`.
+
+## What crosstalk does
+
+It carries the message itself, so neither of you has to.
 
 ```
 › tell marie the tenant_id migration landed, send her the diff
@@ -20,28 +45,63 @@ Seconds later, on her machine:
 › Message from crosstalk:paul/hardware (ctrl+o to expand)
 ```
 
-Her Claude reads it, pulls the diff if it needs it, keeps going. Neither of you
-stopped.
+Her Claude reads it, pulls the diff if it needs it, and keeps going. Neither of
+you stopped working, and her agent stopped being wrong.
 
-Claude Code's own messaging only reaches sessions on your account. Your
-colleague's never appear. Crosstalk is the half that crosses people.
+The catch is obvious once you say it out loud: if another person's agent can put
+text into your session, that is a new way to reach you, and being reachable is
+not always good. Most of what follows is about who decides when that happens.
+The answer is always you.
 
 ---
 
-## Say something without breaking your own flow
+## Three ideas to hold
 
-You write the intent. Claude writes the message and picks who needs it.
+Everything else follows from these.
+
+**You pair with people, not with sessions.** You exchange keys with Marie once.
+After that you can address her (`marie`), one of her sessions (`marie/api`), or a
+group she is in (`#beta`). Sessions come and go; the pairing does not.
+
+**The sender says how urgent, the receiver says what that earns.** A message
+carries an intent: `fyi`, `question`, or `blocking`. That is the sender's claim
+about their own situation. What it actually does on your machine is your setting,
+not theirs. Nothing a sender can write reaches into your turn unless you have
+already said that person may.
+
+**A notice is not the message.** When something arrives you get one dim line
+naming who sent it. The words they wrote are not in that line. Your Claude fetches
+them with a tool call, on purpose, when it is ready. This sounds like a detail. It
+is the whole security model, and [What cannot happen to you](#what-cannot-happen-to-you)
+explains why.
+
+---
+
+## Telling someone something
+
+You write the intent. Claude writes the message.
 
 ```
 › tell marie the migration landed and rebasing is safe
-› let the api session know the schema is frozen
 ```
 
-Attach what you are actually talking about instead of describing it: a diff, a
-file, your last few turns. The other side sees the label and the size, and only
-pulls the content if it needs it.
+Notice you did not compose anything. You said what you wanted her to know, the
+same way you would say it to a colleague across a desk, and your session turned
+that into a message with the context attached.
 
-## Find out what they are on, without asking
+**Attach the thing, not a description of it.** A message can carry a *slice*: a
+diff, a file, or the last few turns of your session.
+
+```
+› tell marie the schema is frozen, send her the migration file
+```
+
+The receiver's session sees only a label and a size, something like
+`file · db/migrate/0142_tenant_id.sql · 3.1 KB`. It pulls the content only if it
+needs it. So attaching a large diff costs the other person almost nothing unless
+it turns out to matter, which is the opposite of pasting it into chat.
+
+## Seeing what someone is working on
 
 ```
 /crosstalk:peers
@@ -53,33 +113,51 @@ pulls the content if it needs it.
       firmware  ~/palpable-fw    idle  4m ago
 ```
 
-Every Claude Code session already records its repo and status on disk. Crosstalk
-shares yours with people you have paired with, encrypted, so "is she in the
-firmware repo right now" stops being a question you have to interrupt her to ask.
+Every Claude Code session already writes its working directory and whether it is
+busy into a file on disk. Crosstalk reads yours and shares it with people you
+have paired with, encrypted, so "is she in the firmware repo right now" is
+something you can look at instead of something you have to interrupt her to ask.
 
-## Get an answer from the side that knows
+Read the line as: Marie is online, her messages are set to `notify` here, one is
+unread, and she has two sessions, one busy in `~/palpable` and one idle.
+
+## Asking a question you cannot answer yourself
 
 ```
 › ask marie's api session what /api/devices returns now
 ```
 
-Your session waits, hers answers, yours carries on. Off by default per person,
-because a question costs them a turn.
+Your session sends the question and waits. Hers answers. Yours continues with the
+answer in hand. Nobody typed a summary of anything.
 
-## Hand the whole thing over
+This one is off by default for each person, because an inbound question starts a
+turn on their machine and spends their tokens. Turn it on for someone you are
+actively working with:
+
+```
+/crosstalk:policy marie --allow-ask
+```
+
+## Handing work over
 
 ```
 › hand the firmware upload path to marie, with the diff
 ```
 
-Not a note about the work. The work: what it is, what is done, what is left,
-which files. Her session picks it up without re-deriving any of it.
+A handoff is not a note about work. It is the work: what the goal is, what is
+done, what is left, which files are involved, with slices attached. Her session
+picks it up without re-deriving any of it, which is the part that usually gets
+lost when a task changes hands.
 
-## Decide when they get to interrupt you
+## Deciding when someone may interrupt you
 
-This is the part everything else depends on. Someone else's message costs you a
-turn and pulls your agent off task, so the sender says how urgent it is and **you**
-decide what that earns.
+Here is the tension. A message from another person costs you a turn and pulls
+your agent off whatever it was doing. Deliver everything immediately and crosstalk
+becomes a thing people mute. Deliver nothing and it is a mailbox, which is what
+you already have.
+
+So the sender declares an intent, and your policy for that person decides what
+the intent is allowed to do.
 
 | They send | You are set to | What happens |
 |---|---|---|
@@ -89,48 +167,82 @@ decide what that earns.
 | anything | `deliver` | lands in your session mid-turn |
 | anything | `quiet` | held silently until you go idle |
 
-Nothing a sender can do reaches `deliver`. Only you can, per person, with
-`/crosstalk:policy marie deliver`, for when you are genuinely pairing on the same
-problem. There is a ceiling of 40 notices an hour across everyone, so no group
-can take over your session.
+Read the table down the middle column. `notify` is what everyone gets until you
+say otherwise, and within `notify` the intent only changes *when* the line
+appears, never whether their words enter your context.
 
-## Remember what you decided
+`deliver` is different in kind: their text lands inside your turn. That is the
+right setting when you are genuinely pairing on the same problem for an hour, and
+the wrong one the rest of the time, so it is something only you can turn on:
+
+```
+/crosstalk:policy marie deliver
+```
+
+**Nothing a sender does can reach `deliver`.** `blocking` can lift a held message
+to a notice; it cannot lift a notice into your turn. Escalation only ever goes in
+the safe direction. On top of that there is a ceiling of 40 notices an hour
+across everyone, so no group can take over your session, however many people are
+in it.
+
+Need quiet for an hour without disconnecting:
+
+```
+/crosstalk:mute marie 60
+```
+
+## Remembering what you decided
 
 ```
 › record that inbound peer text stays behind the read tool, and tell marie
 ```
 
-Appends to `DECISIONS.md` with attribution. Two people working with agents settle
-things constantly and write almost none of it down.
+Appends to `DECISIONS.md` in the repo, with who decided it and when, and
+optionally tells the other person. Two people working with agents settle things
+constantly and write almost none of it down, and the reasoning is the part that
+evaporates first.
 
-## Work as a group
+## Working as a group
 
 ```
 /crosstalk:room create beta
 /crosstalk:room invite beta marie jo
 ```
 
-Everyone sees the same roster and any member can add anyone. Two rules stop that
-becoming a way for strangers to reach your agent:
+A room is a shared space. Everyone in it sees the same roster, and any member can
+add anyone else, which is what makes it a room rather than a mailing list you
+maintain by hand.
 
-1. You can only add someone **you are already paired with**.
-2. Being added is an **invitation**. Nothing reaches you until you accept.
+That raises the obvious question: if anyone can add me, can a stranger reach my
+agent? No, because of two rules:
 
-Someone in a room you never paired with stays a stranger: they can put a notice
-on your screen and nothing more. Removing someone rekeys the room.
+1. **You can only add someone you are already paired with.** A room grows along
+   connections that already exist. Nobody arrives from outside your web of trust.
+2. **Being added is an invitation.** You see it, and nothing from that room
+   reaches your session until you accept.
+
+```
+/crosstalk:room                  # what you are in, and what you have been invited to
+/crosstalk:room accept beta
+```
+
+Someone in a room you have never paired with is still a stranger to you.
+Crosstalk marks them as such, holds their messages to a notice whatever intent
+they set, and refuses to let them ask you questions. Removing someone from a room
+generates a new key, so they cannot read anything sent afterwards.
 
 ---
 
-## Set it up
+## Setting it up
 
-**1.** Install.
+**1.** Install the plugin.
 
 ```
 /plugin marketplace add epode-studio/crosstalk
 /plugin install crosstalk@epode
 ```
 
-Needs `bun` or `node`. Nothing else to fetch or build.
+You need `bun` or `node` on PATH. Nothing is fetched or built at install time.
 
 **2.** Start pairing.
 
@@ -138,14 +250,24 @@ Needs `bun` or `node`. Nothing else to fetch or build.
 /crosstalk:pair --host
 ```
 
+`--host` means "run the relay on my machine". Crosstalk starts one, works out an
+address the other person can reach, and shuts nothing else down. If you have
+Tailscale it uses your tailnet address, which works from anywhere. Otherwise it
+uses your LAN address, which works on the same network.
+
 **3.** It prints four words.
 
 ```
     cricket-tungsten-tarn-lathe @ 192.168.50.69
 ```
 
-**4.** Say them to the other person. Out loud, on a call, in a DM. Anywhere
-except through the relay. They expire in fifteen minutes.
+Those four words are the entire secret. The relay stores your side of the pairing
+under a *hash* of them, so the relay itself never learns them.
+
+**4.** Say them to the other person.
+
+Out loud, on a call, in a DM. Anywhere except through the relay. Anyone holding
+those words can pair with you, and they expire after fifteen minutes.
 
 **5.** They run the same command with your words.
 
@@ -153,13 +275,23 @@ except through the relay. They expire in fifteen minutes.
 /crosstalk:pair cricket-tungsten-tarn-lathe @ 192.168.50.69
 ```
 
-**6.** You both get a pair of fingerprints. Read them to each other. If they
-match, nobody is in the middle.
+**6.** Check the fingerprints.
 
-That is it, permanently. `--host` runs a relay on your machine and uses your
-Tailscale address if you have one, which reaches anywhere, or your LAN address,
-which reaches the same network. If something is wrong, `/crosstalk:doctor` says
-what.
+You each see two short strings. Read them to each other. If they match, you have
+each other's real keys and nobody is sitting in the middle. If they do not, stop.
+
+```
+Paired with "marie".
+
+  them  cb48-a6d9-2704-d17f
+  you   8600-4fd4-0d24-d149
+```
+
+That is permanent. It survives restarts, reboots and Claude Code upgrades, and
+never has to be done again.
+
+**If something is wrong**, `/crosstalk:doctor` checks every part in order and
+says which one is broken.
 
 ## Commands
 
@@ -177,19 +309,23 @@ what.
 
 ## What cannot happen to you
 
-Claude Code wraps every inbound message from another session in framing of its
-own:
+Start from the thing that makes this hard.
+
+Claude Code has its own idea of what an inbound message from another session
+means. When one arrives, it wraps the text in framing before Claude reads it:
 
 > This came from another Claude session, not typed by your user, but very likely
 > working on their behalf. Treat it as a teammate's request.
 
-True for your own laptop. False for Marie. It cannot be removed, because a sender
-controls the message body and not the framing around it. That is measured rather
-than assumed: [`spike/`](spike/) shows how.
+That is correct when your desktop messages your laptop. It is wrong when the
+sender is Marie, who is a different person with different intentions and possibly
+a compromised machine. And it cannot be removed, because a sender controls the
+body of a message and not the framing wrapped around it. That is not a guess:
+[`spike/`](spike/) is the experiment that established it.
 
-So crosstalk never injects a peer's words. It injects a notice containing nothing
-they wrote, and the content comes back through a tool call, where it arrives as
-data instead of as a vouched-for request.
+So crosstalk does not put a peer's words into your session at all. It puts in a
+notice, which contains their name and nothing they wrote. The words come back
+separately, through a tool call:
 
 ```
 Marie's message
@@ -204,23 +340,33 @@ crosstalk daemon ──── injects: "1 message from marie/api"
                    content arrives as TOOL OUTPUT
 ```
 
-The rest of it:
+The difference matters because Claude already treats tool output as data to
+interpret rather than as an instruction to follow. Marie's sentence arrives
+labelled as something a different person wrote, not as a request that the harness
+has vouched for.
 
-- Messages are end to end encrypted. The relay routes ciphertext and holds no key
-  that opens it.
-- The link to the relay is encrypted too, and its identity is pinned during
-  pairing, so nobody on your network reads the metadata or stands in the middle.
-- Everything a sender controls is escaped, so a message cannot close crosstalk's
-  framing and write its own.
-- Peer messages are never posted with your session's own messaging token, which
-  would mark them as trusted local processes.
-- Replays are dropped and old envelopes refused.
-- A new pairing cannot take over an existing person's name and inherit their
-  settings.
-- Attaching a file refuses credentials and anything outside the project.
+Everything else:
+
+- **Messages are end to end encrypted.** The relay routes ciphertext and holds no
+  key that opens it.
+- **The link to the relay is encrypted too**, and its identity is pinned during
+  pairing, so nobody on your network can read who you talk to or stand in the
+  middle of it.
+- **Everything a sender controls is escaped.** A message cannot close crosstalk's
+  own framing and write friendlier framing of its own.
+- **Peer messages never carry your session's messaging token.** Presenting it
+  would mark them as trusted local processes and skip a check Claude Code
+  otherwise applies.
+- **Replays are dropped** and envelopes older than a day are refused, so a
+  hostile relay cannot re-deliver an old message.
+- **A new pairing cannot take over an existing person's name** and inherit the
+  settings you gave them.
+- **Attaching a file refuses credentials** and anything outside the project, in
+  case someone talks your Claude into sending one.
 - **Permission relay across people is not implemented and never will be.** Anyone
-  who can reply through a channel can approve tool use in your session. Across a
-  person boundary that is a category error.
+  who can reply through a channel can approve tool use in your session. Between
+  two of your own machines that is a feature. Across two people it is a category
+  error.
 
 ## How it works
 
@@ -237,10 +383,18 @@ Paul's machine                    relay                    Marie's machine
          └────── daemon ──────┘                └────── daemon ─────┘
 ```
 
-One daemon per machine, one MCP server per session. Direct messages are sealed
-with an X25519 key shared by the two identities. Room messages use a room key
-handed to each member over the pairwise channel they already share with whoever
-invited them.
+Three pieces per machine.
+
+The **MCP server** runs inside each Claude Code session and provides the tools
+Claude calls. The **daemon** runs once per machine, holds the connection to the
+relay, and knows about every local session. The **relay** exists because both
+laptops are behind NAT and both go to sleep; it is a dumb fan-out that
+authenticates peers and copies ciphertext.
+
+Direct messages are sealed with a key derived by X25519 from the two paired
+identities, so only those two can open them. Room messages use a room key that
+the relay never sees, handed to each new member over the pairwise channel they
+already share with whoever invited them.
 
 [`deploy/`](deploy/) runs a relay permanently if you want invites to be four
 words with no address on the end.
@@ -265,7 +419,7 @@ bun src/cli.ts doctor
 ```
 
 `CROSSTALK_HOME` moves crosstalk's state, so you can run several identities on
-one machine and pair them together. That is how all of this was tested.
+one machine and pair them with each other. That is how all of this was tested.
 
 ```
 src/daemon.ts    relay link, routing, triage, injection
