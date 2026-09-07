@@ -1,0 +1,11 @@
+{
+  "name": "epode",
+  "owner": { "name": "Paul Nylund" },
+  "plugins": [
+    {
+      "name": "crosstalk",
+      "source": "./",
+      "description": "Messaging between two people's Claude Code sessions, with presence, context slices and an interruption model built for pairs."
+    }
+  ]
+}

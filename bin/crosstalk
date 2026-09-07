@@ -1,0 +1,47 @@
+#!/bin/sh
+# Runtime shim. crosstalk is TypeScript; this picks whatever JavaScript runtime
+# the machine has and runs the prebuilt bundle, so installing the plugin never
+# requires a toolchain.
+#
+#   bin/crosstalk cli peers
+#   bin/crosstalk daemon
+#   bin/crosstalk server
+#   bin/crosstalk hook-session-start
+#   bin/crosstalk relay
+
+set -eu
+here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+what=${1:?usage: crosstalk <cli|daemon|server|hook-session-start|relay> [args...]}
+shift
+
+for candidate in "$CROSSTALK_RUNTIME" bun node; do
+  [ -n "${candidate:-}" ] || continue
+  if command -v "$candidate" >/dev/null 2>&1; then
+    runtime=$candidate
+    break
+  fi
+done 2>/dev/null || true
+
+if [ -z "${runtime:-}" ]; then
+  echo "crosstalk needs bun or node on PATH." >&2
+  echo "Install one: https://bun.sh  or  https://nodejs.org" >&2
+  exit 127
+fi
+
+# Prefer the built bundle; fall back to source when running from a checkout
+# with bun available.
+if [ -f "$here/dist/$what.js" ]; then
+  exec "$runtime" "$here/dist/$what.js" "$@"
+fi
+
+case "$what" in
+  relay) src="$here/relay/relay.ts" ;;
+  *)     src="$here/src/$what.ts" ;;
+esac
+
+if [ "$runtime" != "bun" ]; then
+  echo "crosstalk: dist/ is missing and $runtime cannot run TypeScript." >&2
+  echo "Run: bun scripts/build.ts" >&2
+  exit 1
+fi
+exec "$runtime" "$src" "$@"

@@ -1,0 +1,18 @@
+{
+  "name": "crosstalk",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Messaging between two people's Claude Code sessions",
+  "repository": { "type": "git", "url": "https://github.com/epode-studio/crosstalk.git" },
+  "scripts": {
+    "build": "bun scripts/build.ts",
+    "daemon": "bun src/daemon.ts",
+    "relay": "bun relay/relay.ts",
+    "server": "bun src/server.ts",
+    "crosstalk": "bun src/cli.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.20.0"
+  }
+}

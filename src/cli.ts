@@ -1,0 +1,437 @@
+#!/usr/bin/env bun
+// crosstalk CLI. The slash commands in commands/ call into this.
+//
+//   crosstalk pair [--host]          start pairing, print an invite
+//   crosstalk pair ct1_…             accept an invite
+//   crosstalk peers | status | cost | doctor
+//   crosstalk policy [peer] [notify|deliver|quiet] [--allow-ask|--no-allow-ask]
+//   crosstalk mute [peer] [minutes]
+//   crosstalk relay start|stop|status
+//   crosstalk daemon start|stop|restart
+
+import {
+  loadIdentity,
+  saveIdentity,
+  loadPeers,
+  savePeers,
+  loadPolicy,
+  savePolicy,
+  policyFor,
+  loadRelay,
+  saveRelay,
+  ROOT,
+  P,
+} from "./config.ts"
+import { newIdentity, newPhrase, codeForPhrase, sealOffer, openOffer, asPeer, fingerprint } from "./crypto.ts"
+import { formatInvite, parseInvite } from "./invite.ts"
+import { bestAddress } from "./net.ts"
+import { ensureDaemon, daemonRunning, request } from "./client.ts"
+import { summarise } from "./usage.ts"
+import { rootFrom, shim } from "./paths.ts"
+import fs from "node:fs"
+import path from "node:path"
+import net from "node:net"
+import { spawn, execFileSync } from "node:child_process"
+
+const argv = process.argv.slice(2)
+const cmd = argv[0] ?? "status"
+const VALUE_FLAGS = new Set(["--label", "--phrase", "--relay", "--port"])
+/** Set this to a relay you host, and an invite becomes four words and nothing else. */
+const DEFAULT_RELAY = process.env.CROSSTALK_DEFAULT_RELAY ?? ""
+const flag = (f: string, d?: string) => {
+  const i = argv.indexOf(f)
+  return i === -1 ? d : argv[i + 1]
+}
+const has = (f: string) => argv.includes(f)
+const positional = (() => {
+  const out: string[] = []
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i]
+    if (a.startsWith("--")) {
+      if (VALUE_FLAGS.has(a)) i++
+      continue
+    }
+    out.push(a)
+  }
+  return out
+})()
+
+const ROOT_DIR = rootFrom(import.meta.url)
+const RELAY_PID = path.join(ROOT, "relay.pid")
+const httpBase = (ws = loadRelay().url) => ws.replace(/^ws/, "http").replace(/\/ws$/, "")
+
+const die = (m: string): never => {
+  console.error(m)
+  process.exit(1)
+}
+
+const ago = (ts: number) => {
+  if (!ts) return "never"
+  const s = Math.round((Date.now() - ts) / 1000)
+  if (s < 60) return `${s}s ago`
+  if (s < 3600) return `${Math.round(s / 60)}m ago`
+  return `${Math.round(s / 3600)}h ago`
+}
+
+function identityOrCreate() {
+  const existing = loadIdentity()
+  if (existing) return existing
+  const label =
+    flag("--label") ??
+    (() => {
+      try {
+        return execFileSync("git", ["config", "user.name"], { encoding: "utf8" }).trim().split(" ")[0].toLowerCase()
+      } catch {
+        return process.env.USER ?? "me"
+      }
+    })()
+  const id = newIdentity(label)
+  saveIdentity(id)
+  console.log(`created identity "${label}"   ${fingerprint(id.ed.pub)}`)
+  return id
+}
+
+// --- relay ---------------------------------------------------------------------
+
+const relayPid = (): number | null => {
+  try {
+    const pid = Number(fs.readFileSync(RELAY_PID, "utf8"))
+    process.kill(pid, 0)
+    return pid
+  } catch {
+    return null
+  }
+}
+
+async function relayReachable(url = loadRelay().url, ms = 1500): Promise<boolean> {
+  try {
+    const c = AbortSignal.timeout(ms)
+    const r = await fetch(`${httpBase(url)}/health`, { signal: c })
+    return r.ok
+  } catch {
+    return false
+  }
+}
+
+async function startRelay(port = Number(flag("--port", "8787"))): Promise<string> {
+  const addr = bestAddress()
+  if (relayPid()) {
+    const url = loadRelay().url
+    if (await relayReachable(url)) return url
+  }
+  const out = fs.openSync(path.join(ROOT, "relay.log"), "a")
+  const child = spawn(shim(ROOT_DIR), ["relay", "--host", "0.0.0.0", "--port", String(port)], {
+    detached: true,
+    stdio: ["ignore", out, out],
+  })
+  child.unref()
+  fs.mkdirSync(ROOT, { recursive: true, mode: 0o700 })
+  fs.writeFileSync(RELAY_PID, String(child.pid), { mode: 0o600 })
+  const url = `ws://${addr.host}:${port}`
+  saveRelay(url)
+  for (let i = 0; i < 40; i++) {
+    if (await relayReachable(url, 500)) break
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  console.log(`relay running on ${url}   (${addr.kind}, ${addr.note})`)
+  return url
+}
+
+async function relay() {
+  const sub = positional[0] ?? "status"
+  if (sub === "stop") {
+    const pid = relayPid()
+    if (!pid) return console.log("no relay started by crosstalk is running")
+    process.kill(pid, "SIGTERM")
+    fs.rmSync(RELAY_PID, { force: true })
+    return console.log("relay stopped")
+  }
+  if (sub === "start") {
+    await startRelay()
+    return
+  }
+  const url = loadRelay().url
+  console.log(`configured  ${url}`)
+  console.log(`reachable   ${(await relayReachable(url)) ? "yes" : "no"}`)
+  console.log(`local pid   ${relayPid() ?? "none started by crosstalk"}`)
+}
+
+// --- pairing -------------------------------------------------------------------
+
+async function pair() {
+  if (has("--relay")) saveRelay(flag("--relay")!)
+  const id = identityOrCreate()
+  const offer = { label: id.label, edPub: id.ed.pub, xPub: id.x.pub }
+  const joining = positional.join(" ").trim()
+
+  // Accepting an invite.
+  if (joining) {
+    const inv = parseInvite(joining)
+    if (inv.relay) saveRelay(inv.relay)
+    const code = codeForPhrase(inv.phrase)
+
+    if (!(await relayReachable()))
+      die(
+        `cannot reach the relay at ${httpBase()}.\n\nIf they hosted it themselves, their machine has to be awake and reachable from here — same network, or both on the same tailnet.`,
+      )
+
+    const r = await fetch(`${httpBase()}/pair/${code}?side=offer`)
+    if (!r.ok)
+      die(
+        r.status === 429
+          ? "the relay is rate-limiting pairing attempts; wait a minute"
+          : `no invite matches "${inv.phrase}". Check the words, or ask for a new one — invites last 15 minutes.`,
+      )
+    const { blob } = (await r.json()) as { blob: string }
+    let peer
+    try {
+      peer = asPeer(openOffer(inv.phrase, blob))
+    } catch {
+      return die(`could not open that invite. The words are probably slightly off.`)
+    }
+
+    const peers = loadPeers()
+    peers[peer.label] = peer
+    savePeers(peers)
+    const post = await fetch(`${httpBase()}/pair/${code}?side=reply`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ blob: sealOffer(inv.phrase, offer) }),
+    })
+    if (!post.ok) die("could not send the pairing reply")
+    await ensureDaemon(ROOT_DIR)
+    console.log(`
+Paired with "${peer.label}".
+
+  them  ${peer.fingerprint}
+  you   ${fingerprint(id.ed.pub)}
+
+Check both against what they see. Their messages arrive as "notify": you get a
+notice, and their words stay behind the crosstalk_read tool until your Claude
+fetches them. Change that per peer with /crosstalk:policy.`)
+    return
+  }
+
+  // Inviting.
+  const url = has("--host") ? await startRelay() : loadRelay().url
+  if (!(await relayReachable(url)))
+    die(
+      `no relay at ${httpBase(url)}.\n\nRun this instead and crosstalk will host one for you:\n  /crosstalk:pair --host`,
+    )
+
+  const phrase = flag("--phrase") ?? newPhrase()
+  const code = codeForPhrase(phrase)
+  const res = await fetch(`${httpBase(url)}/pair/${code}?side=offer`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ blob: sealOffer(phrase, offer) }),
+  })
+  if (!res.ok) die(`the relay at ${httpBase(url)} refused the pairing offer`)
+
+  const sameRelayAsDefault = url === DEFAULT_RELAY
+  const invite = formatInvite(phrase, url, sameRelayAsDefault)
+  const addr = bestAddress()
+
+  console.log(`
+Tell them these words:
+
+    ${invite}
+
+They run  /crosstalk:pair ${invite}
+
+Say it out loud, or send it somewhere you already trust. Not through the relay.
+Whoever has these words can pair with you until they expire.
+
+  you       ${id.label}  ${fingerprint(id.ed.pub)}
+  relay     ${url}${sameRelayAsDefault ? "" : `  (${addr.kind}: ${addr.note})`}
+  expires   15 minutes
+
+Waiting…`)
+
+  for (let i = 0; i < 900; i++) {
+    const r = await fetch(`${httpBase(url)}/pair/${code}?side=reply`).catch(() => null)
+    if (r?.ok) {
+      const { blob } = (await r.json()) as { blob: string }
+      const peer = asPeer(openOffer(phrase, blob))
+      if (peer.fingerprint === fingerprint(id.ed.pub)) die("that pairing reply carries your own key")
+      const peers = loadPeers()
+      peers[peer.label] = peer
+      savePeers(peers)
+      await ensureDaemon(ROOT_DIR)
+      console.log(`
+Paired with "${peer.label}".
+
+  them  ${peer.fingerprint}
+  you   ${fingerprint(id.ed.pub)}
+
+Read both aloud and check they match. Their messages arrive as "notify".`)
+      return
+    }
+    await new Promise((r) => setTimeout(r, 1000))
+  }
+  die("that invite expired without anyone using it")
+}
+
+// --- everything else -------------------------------------------------------------
+
+async function peers() {
+  if (!(await ensureDaemon(ROOT_DIR))) die("daemon is not running; see ~/.claude/crosstalk/daemon.log")
+  const r = await request({ op: "peers" })
+  console.log(`\nyou   ${r.me.label}   relay ${r.relay}`)
+  for (const s of r.me.sessions) console.log(`      ${s.name}  ${s.cwd}  ${s.status}`)
+  if (!r.peers.length) {
+    console.log(`\nNo peers yet. Run /crosstalk:pair --host to invite someone.\n`)
+    return
+  }
+  for (const p of r.peers) {
+    const muted = p.policy.mutedUntil && p.policy.mutedUntil > Date.now()
+    console.log(
+      `\n${p.online ? "●" : "○"} ${p.label}  ${p.fingerprint}  ${p.policy.delivery}${muted ? " (muted)" : ""}${p.unread ? `  ${p.unread} unread` : ""}`,
+    )
+    if (!p.sessions.length) console.log(`      no sessions reported  (presence ${ago(p.presenceAt)})`)
+    for (const s of p.sessions) console.log(`      ${s.name}  ${s.cwd}  ${s.status}  ${ago(s.lastSeen)}`)
+  }
+  console.log()
+}
+
+async function mute() {
+  const peer = positional[0] && !/^\d+$/.test(positional[0]) ? positional[0] : undefined
+  const minutes = Number(positional.find((a) => /^\d+$/.test(a)) ?? 60)
+  await ensureDaemon(ROOT_DIR)
+  const r = await request({ op: "mute", peer, minutes })
+  console.log(
+    r.mutedUntil
+      ? `muted ${peer ?? "all peers"} until ${new Date(r.mutedUntil).toLocaleTimeString()}`
+      : `unmuted ${peer ?? "all peers"}`,
+  )
+}
+
+async function policy() {
+  const mode = positional.find((a) => ["notify", "deliver", "quiet"].includes(a))
+  const peer = positional.find((a) => a !== mode)
+  const set: Record<string, unknown> = {}
+  if (mode) set.delivery = mode
+  if (has("--allow-ask")) set.allowAsk = true
+  if (has("--no-allow-ask")) set.allowAsk = false
+
+  if (!Object.keys(set).length) {
+    const p = loadPolicy()
+    console.log(`\ndefault   ${p.default.delivery}   ask ${p.default.allowAsk ? "allowed" : "off"}`)
+    for (const label of Object.keys(loadPeers())) {
+      const pp = policyFor(label, p)
+      console.log(`${label.padEnd(10)}${pp.delivery}   ask ${pp.allowAsk ? "allowed" : "off"}`)
+    }
+    console.log(`
+  notify    a notice appears; their words stay behind crosstalk_read  (default)
+  deliver   their text lands in your session mid-turn
+  quiet     held silently, surfaced when the session next goes idle
+`)
+    return
+  }
+  await ensureDaemon(ROOT_DIR)
+  const r = await request({ op: "policy", peer, set })
+  console.log(JSON.stringify(r.policy, null, 2))
+}
+
+async function cost() {
+  const s = daemonRunning() ? await request({ op: "usage" }) : { ...summarise() }
+  if (!s.rows?.length) return console.log("no crosstalk messages yet")
+  console.log(`\npeer        sent   recvd   to Claude   ~tokens out   ~tokens in`)
+  for (const r of s.rows) {
+    console.log(
+      `${r.peer.padEnd(12)}${String(r.sent).padEnd(7)}${String(r.received).padEnd(8)}${String(r.deliveredToClaude).padEnd(12)}${String(r.estTokensOut).padEnd(14)}${r.estTokensIn}`,
+    )
+  }
+  console.log(
+    `\nA delivered message costs the receiver a turn, like a prompt they typed.
+Token figures are a rough estimate from message length, for orientation only.\n`,
+  )
+}
+
+async function status() {
+  const id = loadIdentity()
+  if (!id) return console.log("crosstalk: not set up. Run /crosstalk:pair --host.")
+  console.log(`identity  ${id.label}  ${fingerprint(id.ed.pub)}`)
+  console.log(`relay     ${loadRelay().url}`)
+  console.log(`peers     ${Object.keys(loadPeers()).join(", ") || "none"}`)
+  if (!daemonRunning()) return console.log("daemon    not running")
+  const r = await request({ op: "status" })
+  console.log(`daemon    running, relay ${r.relay}`)
+  for (const s of r.sessions) console.log(`          ${s.name}  ${s.cwd}`)
+}
+
+async function doctor() {
+  const rows: [string, boolean | null, string][] = []
+  const id = loadIdentity()
+  const socket = process.env.CLAUDE_CODE_MESSAGING_SOCKET
+
+  rows.push(["runtime", true, `${path.basename(process.execPath)} ${process.version ?? ""}`.trim()])
+  rows.push(["identity", !!id, id ? `${id.label}  ${fingerprint(id.ed.pub)}` : "none — run /crosstalk:pair --host"])
+  rows.push([
+    "peers",
+    Object.keys(loadPeers()).length > 0,
+    Object.keys(loadPeers()).join(", ") || "none paired yet",
+  ])
+  rows.push(["inbox socket", !!socket && fs.existsSync(socket), socket ?? "CLAUDE_CODE_MESSAGING_SOCKET not set"])
+  rows.push([
+    "messaging token",
+    !!process.env.CLAUDE_CODE_MESSAGING_TOKEN,
+    process.env.CLAUDE_CODE_MESSAGING_TOKEN ? "present" : "missing — messages arrive as anonymous peers",
+  ])
+
+  const sessionsDir = path.join(process.env.HOME ?? "", ".claude", "sessions")
+  let visible = 0
+  try {
+    visible = fs.readdirSync(sessionsDir).filter((f) => f.endsWith(".json")).length
+  } catch {}
+  rows.push(["session registry", visible > 0, `${visible} entries in ${sessionsDir}`])
+
+  const relayUrl = loadRelay().url
+  rows.push(["relay", await relayReachable(relayUrl), relayUrl])
+  rows.push(["daemon", daemonRunning(), daemonRunning() ? "running" : "not running (starts on next session)"])
+
+  if (daemonRunning()) {
+    try {
+      const s = await request({ op: "status" })
+      rows.push(["daemon ↔ relay", s.relay === "connected", s.relay])
+      rows.push(["registered sessions", s.sessions.length > 0, s.sessions.map((x: any) => x.name).join(", ") || "none"])
+    } catch (e) {
+      rows.push(["daemon ↔ relay", false, (e as Error).message])
+    }
+  }
+
+  console.log()
+  for (const [name, ok, detail] of rows) {
+    console.log(`${ok === null ? "·" : ok ? "✓" : "✗"}  ${name.padEnd(20)} ${detail}`)
+  }
+  const bad = rows.filter(([, ok]) => ok === false)
+  console.log(bad.length ? `\n${bad.length} thing(s) to fix above.\n` : `\nAll good.\n`)
+}
+
+async function daemon() {
+  const sub = positional[0] ?? "start"
+  if (sub === "stop" || sub === "restart") {
+    try {
+      process.kill(Number(fs.readFileSync(P.daemonLock, "utf8")), "SIGTERM")
+      console.log("daemon stopped")
+    } catch {
+      console.log("daemon was not running")
+    }
+    if (sub === "stop") return
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  console.log((await ensureDaemon(ROOT_DIR)) ? "daemon running" : "daemon failed to start")
+}
+
+const commands: Record<string, () => Promise<void>> = {
+  pair,
+  peers,
+  mute,
+  policy,
+  cost,
+  status,
+  doctor,
+  daemon,
+  relay,
+}
+await (commands[cmd] ?? (async () => die(`unknown command "${cmd}"`)))()

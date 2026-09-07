@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "crosstalk": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/crosstalk",
+      "args": ["server"]
+    }
+  }
+}
