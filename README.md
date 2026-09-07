@@ -1,6 +1,6 @@
 # crosstalk
 
-**Messaging between different people's Claude Code sessions, on terms the receiver sets.**
+**Let your Claude agent talk to other people's. You still decide when you get interrupted.**
 
 ## Where we are
 
