@@ -109,6 +109,7 @@ var loadPolicy = () => {
   const p = readJson(P.policy, DEFAULT_POLICY);
   return { default: { ...DEFAULT_POLICY.default, ...p.default }, peers: p.peers ?? {} };
 };
+var savePolicy = (p) => writeJson(P.policy, p);
 function policyFor(label, policy = loadPolicy()) {
   return { ...policy.default, ...policy.peers[label] ?? {} };
 }
@@ -1176,8 +1177,76 @@ Undo with:  security delete-generic-password -a crosstalk -s crosstalk-identity
   }
   console.log(`not moved: ${r.reason}`);
 }
+async function rename() {
+  const [a, b] = positional;
+  if (has("--me") || a === "me") {
+    const to = (has("--me") ? a : b)?.trim();
+    if (!to)
+      die("usage: /crosstalk:rename me <newname>");
+    const id = loadIdentity();
+    if (!id)
+      die("no identity yet");
+    const was = id.label;
+    id.label = to;
+    saveIdentity(id);
+    console.log(`you are "${to}" now, was "${was}".`);
+    console.log("People you have already paired with keep the name they gave you.");
+    if (daemonRunning())
+      console.log("Restart the daemon to advertise it: /crosstalk:status then crosstalk daemon restart");
+    return;
+  }
+  if (!a || !b) {
+    const peers3 = loadPeers();
+    console.log(`
+usage: /crosstalk:rename <current> <new>
+       /crosstalk:rename me <new>
+`);
+    console.log(`known: ${Object.keys(peers3).join(", ") || "nobody yet"}
+`);
+    return;
+  }
+  const peers2 = loadPeers();
+  const peer = peers2[a];
+  if (!peer)
+    die(`no peer called "${a}". Known: ${Object.keys(peers2).join(", ") || "nobody"}`);
+  if (peers2[b])
+    die(`"${b}" is already someone else (${peers2[b].fingerprint})`);
+  delete peers2[a];
+  peers2[b] = { ...peer, label: b };
+  savePeers(peers2);
+  const pol = loadPolicy();
+  if (pol.peers[a]) {
+    pol.peers[b] = pol.peers[a];
+    delete pol.peers[a];
+    savePolicy(pol);
+  }
+  try {
+    const uPath = path6.join(ROOT, "usage.json");
+    const u = JSON.parse(fs4.readFileSync(uPath, "utf8"));
+    if (u[a]) {
+      u[b] = u[a];
+      delete u[a];
+      fs4.writeFileSync(uPath, JSON.stringify(u, null, 2), { mode: 384 });
+    }
+  } catch {}
+  try {
+    const qPath = path6.join(ROOT, "queue.json");
+    const q = JSON.parse(fs4.readFileSync(qPath, "utf8"));
+    let touched = 0;
+    for (const msgs of Object.values(q))
+      for (const m of msgs)
+        if (m.from === a)
+          m.from = b, touched++;
+    if (touched)
+      fs4.writeFileSync(qPath, JSON.stringify(q, null, 2), { mode: 384 });
+  } catch {}
+  console.log(`"${a}" is "${b}" now, still ${peer.fingerprint}.`);
+  if (daemonRunning())
+    console.log("Restart the daemon so it picks this up: crosstalk daemon restart");
+}
 var commands = {
   pair,
+  rename,
   room,
   secure,
   peers,

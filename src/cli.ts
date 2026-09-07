@@ -582,8 +582,74 @@ Undo with:  security delete-generic-password -a crosstalk -s crosstalk-identity
   console.log(`not moved: ${r.reason}`)
 }
 
+async function rename() {
+  const [a, b] = positional
+
+  // Your own label. Peers keep whatever name they gave you locally, so this
+  // only affects how you introduce yourself to someone new.
+  if (has("--me") || a === "me") {
+    const to = (has("--me") ? a : b)?.trim()
+    if (!to) die("usage: /crosstalk:rename me <newname>")
+    const id = loadIdentity()
+    if (!id) die("no identity yet")
+    const was = id.label
+    id.label = to
+    saveIdentity(id)
+    console.log(`you are "${to}" now, was "${was}".`)
+    console.log("People you have already paired with keep the name they gave you.")
+    if (daemonRunning()) console.log("Restart the daemon to advertise it: /crosstalk:status then crosstalk daemon restart")
+    return
+  }
+
+  if (!a || !b) {
+    const peers = loadPeers()
+    console.log(`\nusage: /crosstalk:rename <current> <new>\n       /crosstalk:rename me <new>\n`)
+    console.log(`known: ${Object.keys(peers).join(", ") || "nobody yet"}\n`)
+    return
+  }
+
+  const peers = loadPeers()
+  const peer = peers[a]
+  if (!peer) die(`no peer called "${a}". Known: ${Object.keys(peers).join(", ") || "nobody"}`)
+  if (peers[b]) die(`"${b}" is already someone else (${peers[b].fingerprint})`)
+
+  delete peers[a]
+  peers[b] = { ...peer, label: b }
+  savePeers(peers)
+
+  // Carry across everything else filed under the old name.
+  const pol = loadPolicy()
+  if (pol.peers[a]) {
+    pol.peers[b] = pol.peers[a]
+    delete pol.peers[a]
+    savePolicy(pol)
+  }
+  try {
+    const uPath = path.join(ROOT, "usage.json")
+    const u = JSON.parse(fs.readFileSync(uPath, "utf8"))
+    if (u[a]) {
+      u[b] = u[a]
+      delete u[a]
+      fs.writeFileSync(uPath, JSON.stringify(u, null, 2), { mode: 0o600 })
+    }
+  } catch {}
+  try {
+    const qPath = path.join(ROOT, "queue.json")
+    const q = JSON.parse(fs.readFileSync(qPath, "utf8"))
+    let touched = 0
+    for (const msgs of Object.values(q) as any[])
+      for (const m of msgs) if (m.from === a) (m.from = b), touched++
+    if (touched) fs.writeFileSync(qPath, JSON.stringify(q, null, 2), { mode: 0o600 })
+  } catch {}
+
+  console.log(`"${a}" is "${b}" now, still ${peer.fingerprint}.`)
+  if (daemonRunning())
+    console.log("Restart the daemon so it picks this up: crosstalk daemon restart")
+}
+
 const commands: Record<string, () => Promise<void>> = {
   pair,
+  rename,
   room,
   secure,
   peers,
