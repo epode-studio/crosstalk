@@ -41,9 +41,30 @@ function lan(): string | null {
  * the case that matters, and needs no port forwarding.
  */
 export function bestAddress(): Address {
+  // Whatever we guess, the person on the other end is the one who finds out it
+  // was wrong. CROSSTALK_ADDRESS, or --address, wins.
+  const forced = process.env.CROSSTALK_ADDRESS
+  if (forced) return { host: forced, kind: "lan", note: "set by you" }
+
   const ts = tailscale()
   if (ts) return { host: ts, kind: "tailscale", note: "over your tailnet, from anywhere" }
   const l = lan()
   if (l) return { host: l, kind: "lan", note: "same network only" }
   return { host: "127.0.0.1", kind: "loopback", note: "this machine only" }
+}
+
+/** Every address we could offer, so a human can pick when the guess is wrong. */
+export function allAddresses(): Address[] {
+  const out: Address[] = []
+  const ts = tailscale()
+  if (ts) out.push({ host: ts, kind: "tailscale", note: "over your tailnet, from anywhere" })
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    for (const a of addrs ?? []) {
+      if (a.family !== "IPv4" || a.internal) continue
+      if (a.address.startsWith("169.254.")) continue
+      if (out.some((x) => x.host === a.address)) continue
+      out.push({ host: a.address, kind: "lan", note: "same network only" })
+    }
+  }
+  return out
 }

@@ -479,6 +479,9 @@ function lan() {
   return best.find((a) => a.startsWith("192.168.")) ?? best.find((a) => a.startsWith("10.")) ?? best.find((a) => /^172\.(1[6-9]|2\d|3[01])\./.test(a)) ?? best[0] ?? null;
 }
 function bestAddress() {
+  const forced = process.env.CROSSTALK_ADDRESS;
+  if (forced)
+    return { host: forced, kind: "lan", note: "set by you" };
   const ts = tailscale();
   if (ts)
     return { host: ts, kind: "tailscale", note: "over your tailnet, from anywhere" };
@@ -486,6 +489,24 @@ function bestAddress() {
   if (l)
     return { host: l, kind: "lan", note: "same network only" };
   return { host: "127.0.0.1", kind: "loopback", note: "this machine only" };
+}
+function allAddresses() {
+  const out = [];
+  const ts = tailscale();
+  if (ts)
+    out.push({ host: ts, kind: "tailscale", note: "over your tailnet, from anywhere" });
+  for (const addrs of Object.values(os2.networkInterfaces())) {
+    for (const a of addrs ?? []) {
+      if (a.family !== "IPv4" || a.internal)
+        continue;
+      if (a.address.startsWith("169.254."))
+        continue;
+      if (out.some((x) => x.host === a.address))
+        continue;
+      out.push({ host: a.address, kind: "lan", note: "same network only" });
+    }
+  }
+  return out;
 }
 
 // src/client.ts
@@ -622,7 +643,7 @@ import path6 from "path";
 import { spawn as spawn2, execFileSync as execFileSync3 } from "child_process";
 var argv = process.argv.slice(2);
 var cmd = argv[0] ?? "status";
-var VALUE_FLAGS = new Set(["--label", "--phrase", "--relay", "--port"]);
+var VALUE_FLAGS = new Set(["--label", "--phrase", "--relay", "--port", "--address"]);
 var DEFAULT_RELAY = process.env.CROSSTALK_DEFAULT_RELAY ?? "";
 var flag = (f, d) => {
   const i = argv.indexOf(f);
@@ -704,6 +725,8 @@ async function relayReachable(url = loadRelay().url, ms = 1500) {
   }
 }
 async function startRelay(port = Number(flag("--port", "8787"))) {
+  if (has("--address"))
+    process.env.CROSSTALK_ADDRESS = flag("--address");
   const addr = bestAddress();
   if (relayPid()) {
     const url2 = loadRelay().url;
@@ -726,6 +749,10 @@ async function startRelay(port = Number(flag("--port", "8787"))) {
     await new Promise((r) => setTimeout(r, 100));
   }
   console.log(`relay running on ${url}   (${addr.kind}, ${addr.note})`);
+  const others = allAddresses().filter((a) => a.host !== addr.host);
+  if (others.length)
+    console.log(`other addresses this machine has: ${others.map((a) => a.host).join(", ")}
+If they cannot reach ${addr.host}, redo with --address <one of those>.`);
   return url;
 }
 async function relay() {
@@ -994,7 +1021,31 @@ async function doctor() {
   } catch {}
   rows.push(["session registry", visible > 0, `${visible} entries in ${sessionsDir}`]);
   const relayUrl = loadRelay().url;
-  rows.push(["relay", await relayReachable(relayUrl), relayUrl]);
+  const reach = await relayReachable(relayUrl);
+  rows.push(["relay", reach, relayUrl]);
+  if (relayPid()) {
+    const addr = bestAddress();
+    const all = allAddresses();
+    rows.push([
+      "relay is yours",
+      true,
+      `serving on all interfaces; hand out ${addr.host}${all.length > 1 ? `  (also have ${all.filter((a) => a.host !== addr.host).map((a) => a.host).join(", ")})` : ""}`
+    ]);
+    if (process.platform === "darwin") {
+      let fw = "";
+      try {
+        fw = execFileSync3("/usr/libexec/ApplicationFirewall/socketfilterfw", ["--getglobalstate"], {
+          encoding: "utf8"
+        }).trim();
+      } catch {}
+      const on = /State = 1|enabled/i.test(fw);
+      rows.push([
+        "macOS firewall",
+        !on,
+        on ? "on, which can silently drop the other machine's connection. Allow incoming for bun or node, or turn it off while pairing." : "off, incoming connections are not blocked"
+      ]);
+    }
+  }
   rows.push(["daemon", daemonRunning(), daemonRunning() ? "running" : "not running (starts on next session)"]);
   if (daemonRunning()) {
     try {

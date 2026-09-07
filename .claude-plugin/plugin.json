@@ -1,14 +1,8 @@
 {
   "name": "crosstalk",
-  "version": "0.1.0",
-  "description": "Messaging between two people's Claude Code sessions, with presence, context slices and an interruption model built for pairs.",
-  "author": {
-    "name": "Paul Nylund"
-  },
-  "commands": "./commands",
-  "hooks": "./hooks/hooks.json",
-  "skills": "./skills",
-  "mcpServers": "./.mcp.json",
+  "version": "0.1.1",
+  "description": "Messaging between different people's Claude Code sessions, with presence, context slices and an interruption model built for pairs.",
+  "author": { "name": "Paul Nylund" },
   "license": "MIT",
   "homepage": "https://github.com/epode-studio/crosstalk",
   "repository": "https://github.com/epode-studio/crosstalk"

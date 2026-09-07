@@ -25,7 +25,7 @@ import {
 } from "./config.ts"
 import { newIdentity, newPhrase, codeForPhrase, sealOffer, openOffer, asPeer, fingerprint } from "./crypto.ts"
 import { formatInvite, parseInvite } from "./invite.ts"
-import { bestAddress } from "./net.ts"
+import { bestAddress, allAddresses } from "./net.ts"
 import { ensureDaemon, daemonRunning, request } from "./client.ts"
 import { summarise } from "./usage.ts"
 import { rootFrom, shim } from "./paths.ts"
@@ -36,7 +36,7 @@ import { spawn, execFileSync } from "node:child_process"
 
 const argv = process.argv.slice(2)
 const cmd = argv[0] ?? "status"
-const VALUE_FLAGS = new Set(["--label", "--phrase", "--relay", "--port"])
+const VALUE_FLAGS = new Set(["--label", "--phrase", "--relay", "--port", "--address"])
 /** Set this to a relay you host, and an invite becomes four words and nothing else. */
 const DEFAULT_RELAY = process.env.CROSSTALK_DEFAULT_RELAY ?? ""
 const flag = (f: string, d?: string) => {
@@ -125,6 +125,7 @@ async function relayReachable(url = loadRelay().url, ms = 1500): Promise<boolean
 }
 
 async function startRelay(port = Number(flag("--port", "8787"))): Promise<string> {
+  if (has("--address")) process.env.CROSSTALK_ADDRESS = flag("--address")!
   const addr = bestAddress()
   if (relayPid()) {
     const url = loadRelay().url
@@ -145,6 +146,11 @@ async function startRelay(port = Number(flag("--port", "8787"))): Promise<string
     await new Promise((r) => setTimeout(r, 100))
   }
   console.log(`relay running on ${url}   (${addr.kind}, ${addr.note})`)
+  const others = allAddresses().filter((a) => a.host !== addr.host)
+  if (others.length)
+    console.log(
+      `other addresses this machine has: ${others.map((a) => a.host).join(", ")}\nIf they cannot reach ${addr.host}, redo with --address <one of those>.`,
+    )
   return url
 }
 
@@ -427,7 +433,33 @@ async function doctor() {
   rows.push(["session registry", visible > 0, `${visible} entries in ${sessionsDir}`])
 
   const relayUrl = loadRelay().url
-  rows.push(["relay", await relayReachable(relayUrl), relayUrl])
+  const reach = await relayReachable(relayUrl)
+  rows.push(["relay", reach, relayUrl])
+  if (relayPid()) {
+    const addr = bestAddress()
+    const all = allAddresses()
+    rows.push([
+      "relay is yours",
+      true,
+      `serving on all interfaces; hand out ${addr.host}${all.length > 1 ? `  (also have ${all.filter((a) => a.host !== addr.host).map((a) => a.host).join(", ")})` : ""}`,
+    ])
+    if (process.platform === "darwin") {
+      let fw = ""
+      try {
+        fw = execFileSync("/usr/libexec/ApplicationFirewall/socketfilterfw", ["--getglobalstate"], {
+          encoding: "utf8",
+        }).trim()
+      } catch {}
+      const on = /State = 1|enabled/i.test(fw)
+      rows.push([
+        "macOS firewall",
+        !on,
+        on
+          ? "on, which can silently drop the other machine's connection. Allow incoming for bun or node, or turn it off while pairing."
+          : "off, incoming connections are not blocked",
+      ])
+    }
+  }
   rows.push(["daemon", daemonRunning(), daemonRunning() ? "running" : "not running (starts on next session)"])
 
   if (daemonRunning()) {
