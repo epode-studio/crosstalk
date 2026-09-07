@@ -19,6 +19,8 @@ export type Envelope = {
   /** Sender's label and session name, e.g. "paul" and "hardware". */
   from: string
   fromSession: string
+  /** Subagent or teammate that composed this, if not the main conversation. */
+  fromAgent?: string
   /** Target label, and optionally one session name. Empty means any session. */
   to: string
   toSession?: string

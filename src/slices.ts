@@ -5,6 +5,7 @@
 
 import crypto from "node:crypto"
 import fs from "node:fs"
+import path from "node:path"
 import { execFileSync } from "node:child_process"
 import type { Slice } from "./protocol.ts"
 
@@ -34,9 +35,41 @@ export function diffSlice(cwd: string, ref = "HEAD"): Slice | null {
   }
 }
 
-export function fileSlice(file: string): Slice | null {
+const SECRET_PATTERNS = [
+  /(^|\/)\.env(\.|$)/i,
+  /(^|\/)\.ssh\//,
+  /(^|\/)\.aws\//,
+  /(^|\/)\.gnupg\//,
+  /(^|\/)\.netrc$/,
+  /(^|\/)\.npmrc$/,
+  /(^|\/)id_(rsa|dsa|ecdsa|ed25519)$/,
+  /\.(pem|key|p12|pfx|keystore)$/i,
+  /(^|\/)credentials(\.json)?$/i,
+  /(^|\/)\.claude\/(crosstalk|\.credentials)/,
+  /(^|\/)secrets?\b/i,
+]
+
+export class SliceRefused extends Error {}
+
+/**
+ * A peer cannot read your files, but a peer can ask your Claude to send one.
+ * Keep the obvious secrets out of reach and stay inside the working tree.
+ */
+export function fileSlice(file: string, root?: string): Slice | null {
+  const full = path.resolve(file)
+  if (SECRET_PATTERNS.some((re) => re.test(full)))
+    throw new SliceRefused(
+      `refusing to attach ${file}: it looks like a credential. If you really mean to send it, paste the specific lines instead.`,
+    )
+  if (root) {
+    const base = path.resolve(root)
+    if (full !== base && !full.startsWith(base + path.sep))
+      throw new SliceRefused(
+        `refusing to attach ${file}: it is outside ${base}. Attach files from the project you are working in.`,
+      )
+  }
   try {
-    return make("file", file, fs.readFileSync(file, "utf8"))
+    return make("file", full, fs.readFileSync(full, "utf8"))
   } catch {
     return null
   }

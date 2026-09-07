@@ -22,7 +22,8 @@ import {
   saveParked,
   type Held,
 } from "./config.ts"
-import { pairKey, seal, open as unseal, sign, fingerprint as fingerprintOf } from "./crypto.ts"
+import { pairKey, seal, open as unseal, fingerprint as fingerprintOf } from "./crypto.ts"
+import { Channel, derive, newEphemeral, signWith, transcript, verifyWith } from "./link.ts"
 import { listLocalSessions, findSession, type LocalSession } from "./registry.ts"
 import { injectNotice, injectMessage } from "./inject.ts"
 import { triage } from "./policy.ts"
@@ -147,6 +148,7 @@ const peersByFingerprint = () => {
 }
 
 let ws: WebSocket | null = null
+let channel: Channel | null = null
 let backoff = 1000
 const pendingAsks = new Map<string, { peer: string; resolve: (answer: Envelope) => void }>()
 
@@ -157,25 +159,60 @@ function connect() {
   const sock = new WebSocket(target)
   ws = sock
 
+  let eph: ReturnType<typeof newEphemeral> | null = null
+  let pendingTranscript: Buffer | null = null
+
   sock.onmessage = (ev) => {
-    let f: Frame
-    try {
-      f = JSON.parse(String(ev.data))
-    } catch {
-      return
-    }
-    if (f.t === "challenge") {
+    // Only the first frame is plaintext. Everything after it is sealed.
+    if (!channel) {
+      let h: any
+      try {
+        h = JSON.parse(String(ev.data))
+      } catch {
+        return sock.close()
+      }
+      if (h.t !== "hello" || !h.ephPub || !h.nonce) return sock.close()
+      eph = newEphemeral()
+      pendingTranscript = transcript(h.ephPub, eph.pub, h.nonce)
+      channel = new Channel(derive(eph.key, h.ephPub, pendingTranscript, "client"))
       sock.send(
         JSON.stringify({
-          t: "auth",
+          t: "hello",
+          ephPub: eph.pub,
           pub: identity!.ed.pub,
-          sig: sign(identity!, f.nonce),
           label: identity!.label,
+          sig: signWith(identity!.ed.priv, pendingTranscript),
         }),
       )
       return
     }
+
+    let f: Frame
+    try {
+      f = channel.open(String(ev.data)) as Frame
+    } catch {
+      log("relay sent a frame this link could not open; reconnecting")
+      channel = null
+      return sock.close()
+    }
+
     if (f.t === "ready") {
+      // The relay proves which relay it is, inside the channel. A pinned key
+      // that does not match means someone is standing in the middle.
+      const pinned = loadRelay().pub
+      const sig = (f as any).sig
+      if (pinned) {
+        if (!sig || !verifyWith(pinned, pendingTranscript!, sig)) {
+          log("RELAY IDENTITY MISMATCH: refusing this link")
+          channel = null
+          return sock.close()
+        }
+      } else if (sig) {
+        // No pin yet, which happens on the machine that started the relay
+        // itself. Trust on first use; the other side gets the key inside the
+        // sealed pairing offer instead.
+        log("no pinned relay identity; continuing unpinned")
+      }
       backoff = 1000
       log(`relay ready as ${f.fingerprint}`)
       publishPresence()
@@ -210,6 +247,7 @@ function connect() {
 
   sock.onclose = () => {
     ws = null
+    channel = null
     backoff = Math.min(backoff * 2, 30_000)
     setTimeout(connect, backoff)
   }
@@ -219,15 +257,13 @@ function connect() {
 function sendEnvelope(peerLabel: string, env: Envelope): { ok: boolean; error?: string } {
   const peer = loadPeers()[peerLabel]
   if (!peer) return { ok: false, error: `not paired with "${peerLabel}"` }
-  if (!ws || ws.readyState !== 1) return { ok: false, error: "relay not connected" }
-  ws.send(
-    JSON.stringify({
-      t: "send",
-      to: peer.fingerprint,
-      id: env.id,
-      body: seal(pairKey(identity!, peer), JSON.stringify(env)),
-    }),
-  )
+  if (!relaySend({
+    t: "send",
+    to: peer.fingerprint,
+    id: env.id,
+    body: seal(pairKey(identity!, peer), JSON.stringify(env)),
+  }))
+    return { ok: false, error: "relay not connected" }
   return { ok: true }
 }
 
@@ -376,6 +412,7 @@ function onEnvelope(
     id: env.id,
     from: peerLabel,
     fromSession: env.fromSession,
+    fromAgent: env.fromAgent,
     intent: env.intent,
     kind: env.kind,
     text: env.text,
@@ -446,11 +483,24 @@ function acceptRoomKey(peerLabel: string, env: Envelope) {
     members: {},
     pending: { invitedBy: peerLabel, at: Date.now() },
   }
+  const isNew = !room.keys[k.epoch]
   room.keys[k.epoch] = k.key
   room.epoch = Math.max(room.epoch ?? 0, k.epoch)
   room.name = k.name ?? room.name
   rooms.upsert(room, st)
   log(`received the key for #${room.name} epoch ${k.epoch} from ${peerLabel}`)
+
+  // Whoever rekeys can only hand the key to people they are paired with, so
+  // pass it along to the ones they could not reach. A member that already has
+  // this epoch stops, which is what keeps this from going round forever.
+  if (!isNew) return
+  const peers = loadPeers()
+  for (const m of Object.values(room.members)) {
+    if (m.fingerprint === myFingerprint()) continue
+    const label = Object.values(peers).find((x) => x.fingerprint === m.fingerprint)?.label
+    if (!label || label === peerLabel) continue
+    sendRoomKey(label, room)
+  }
 }
 
 function sendRoomKey(peerLabel: string, room: rooms.Room) {
@@ -474,8 +524,8 @@ function sendRoomKey(peerLabel: string, room: rooms.Room) {
 }
 
 const relaySend = (o: unknown) => {
-  if (!ws || ws.readyState !== 1) return false
-  ws.send(JSON.stringify(o))
+  if (!ws || ws.readyState !== 1 || !channel) return false
+  ws.send(channel.seal(o))
   return true
 }
 
@@ -529,7 +579,7 @@ function publishPresence() {
   }
 }
 setInterval(publishPresence, 20_000)
-setInterval(() => ws?.readyState === 1 && ws.send(JSON.stringify({ t: "ping" })), 25_000)
+setInterval(() => relaySend({ t: "ping" }), 25_000)
 
 // --- control socket ------------------------------------------------------------
 
@@ -698,6 +748,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
           ts: Date.now(),
           from: identity!.label,
           fromSession: sessions.get(req.sessionId)?.name ?? "-",
+          fromAgent: req.fromAgent,
           to: `#${room.name}`,
           kind: (req.op === "send" ? (req.kind as Kind) ?? "message" : (req.op as Kind)),
           intent: (req.intent as Intent) ?? "fyi",
@@ -721,6 +772,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         ts: Date.now(),
         from: identity!.label,
         fromSession: sessions.get(req.sessionId)?.name ?? "-",
+        fromAgent: req.fromAgent,
         to: label,
         toSession: session,
         kind: req.op === "send" ? ((req.kind as Kind) ?? "message") : (req.op as Kind),

@@ -4,6 +4,7 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { execFileSync } from "node:child_process"
 
 // CROSSTALK_HOME relocates crosstalk own state only. The Claude Code session
 // registry is always read from the real home directory, so a second identity
@@ -79,8 +80,85 @@ function writeJson(file: string, value: unknown) {
   fs.renameSync(tmp, file)
 }
 
-export const loadIdentity = (): Identity | null => readJson<Identity | null>(P.identity, null)
+const KEYCHAIN_SERVICE = "crosstalk-identity"
+
+const keychain = {
+  available: () => process.platform === "darwin",
+  read(): Identity | null {
+    try {
+      const out = execFileSync(
+        "security",
+        ["find-generic-password", "-a", "crosstalk", "-s", KEYCHAIN_SERVICE, "-w"],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+      ).trim()
+      return out ? (JSON.parse(Buffer.from(out, "base64").toString("utf8")) as Identity) : null
+    } catch {
+      return null
+    }
+  },
+  write(id: Identity) {
+    execFileSync(
+      "security",
+      [
+        "add-generic-password",
+        "-a",
+        "crosstalk",
+        "-s",
+        KEYCHAIN_SERVICE,
+        "-w",
+        Buffer.from(JSON.stringify(id), "utf8").toString("base64"),
+        "-U",
+      ],
+      { stdio: ["ignore", "ignore", "ignore"] },
+    )
+  },
+  clear() {
+    try {
+      execFileSync("security", ["delete-generic-password", "-a", "crosstalk", "-s", KEYCHAIN_SERVICE], {
+        stdio: "ignore",
+      })
+    } catch {}
+  },
+}
+
+export { keychain }
+
+/**
+ * The private key lives in identity.json at mode 0600 by default, the way an
+ * SSH key without a passphrase does. `crosstalk secure` moves it into the macOS
+ * keychain instead, leaving only the public half on disk.
+ */
+export const loadIdentity = (): Identity | null => {
+  const onDisk = readJson<(Identity & { storage?: string }) | null>(P.identity, null)
+  if (onDisk?.storage === "keychain") {
+    const full = keychain.read()
+    if (full) return full
+    return null // the key is in the keychain and the keychain said no
+  }
+  return onDisk
+}
+
 export const saveIdentity = (id: Identity) => writeJson(P.identity, id)
+
+/** Move an existing identity into the keychain, leaving public keys on disk. */
+export function secureIdentity(): { moved: boolean; reason?: string } {
+  if (!keychain.available()) return { moved: false, reason: "the keychain is macOS only" }
+  const current = loadIdentity()
+  if (!current) return { moved: false, reason: "no identity yet" }
+  const onDisk = readJson<any>(P.identity, {})
+  if (onDisk.storage === "keychain") return { moved: false, reason: "already in the keychain" }
+  keychain.write(current)
+  if (JSON.stringify(keychain.read()) !== JSON.stringify(current))
+    return { moved: false, reason: "the keychain did not return what was written" }
+  writeJson(P.identity, {
+    storage: "keychain",
+    label: current.label,
+    ed: { pub: current.ed.pub, priv: "" },
+    x: { pub: current.x.pub, priv: "" },
+    createdAt: current.createdAt,
+  })
+  return { moved: true }
+}
 
 export const loadPeers = (): Record<string, Peer> => readJson(P.peers, {})
 export const savePeers = (peers: Record<string, Peer>) => writeJson(P.peers, peers)
@@ -95,15 +173,21 @@ export function policyFor(label: string, policy = loadPolicy()): PeerPolicy {
   return { ...policy.default, ...(policy.peers[label] ?? {}) }
 }
 
-export const loadRelay = (): { url: string } =>
+/** `pub` is the relay's Ed25519 identity, pinned so it cannot be swapped out. */
+export const loadRelay = (): { url: string; pub?: string } =>
   readJson(P.relay, { url: process.env.CROSSTALK_RELAY ?? "ws://127.0.0.1:8787" })
-export const saveRelay = (url: string) => writeJson(P.relay, { url })
+
+export const saveRelay = (url: string, pub?: string) => {
+  const current = loadRelay()
+  writeJson(P.relay, { url, pub: pub ?? (url === current.url ? current.pub : undefined) })
+}
 
 /** Messages held for a session that has not read them yet. */
 export type Held = {
   id: string
   from: string
   fromSession: string
+  fromAgent?: string
   intent: string
   kind: string
   text: string

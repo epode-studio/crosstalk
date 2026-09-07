@@ -86,8 +86,8 @@ turns one `blocking` message into five interrupted sessions.
 
 If you are a subagent or a teammate, a crosstalk message you send goes out under
 the session's name, not yours, and any reply comes back to the session's main
-conversation rather than to you. Say who you are in the message text if it
-matters.
+conversation rather than to you. Pass your name as `from_agent` on
+`crosstalk_send` so the other side can see which agent wrote it.
 
 Do not have several agents in one session message the same peer about the same
 thing. From their side it reads as one person sending four messages in a row, and

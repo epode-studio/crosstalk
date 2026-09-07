@@ -19,6 +19,7 @@ import {
   policyFor,
   loadRelay,
   saveRelay,
+  secureIdentity,
   ROOT,
   P,
 } from "./config.ts"
@@ -103,6 +104,16 @@ const relayPid = (): number | null => {
   }
 }
 
+async function relayPubkey(url = loadRelay().url, ms = 2000): Promise<string | undefined> {
+  try {
+    const r = await fetch(`${httpBase(url)}/pubkey`, { signal: AbortSignal.timeout(ms) })
+    if (!r.ok) return undefined
+    return ((await r.json()) as { pub: string }).pub
+  } catch {
+    return undefined
+  }
+}
+
 async function relayReachable(url = loadRelay().url, ms = 1500): Promise<boolean> {
   try {
     const c = AbortSignal.timeout(ms)
@@ -158,6 +169,12 @@ async function relay() {
 
 // --- pairing -------------------------------------------------------------------
 
+const myOffer = async (id: ReturnType<typeof identityOrCreate>) => ({
+  label: id.label,
+  edPub: id.ed.pub,
+  xPub: id.x.pub,
+})
+
 function adoptPeer(peer: ReturnType<typeof asPeer>) {
   const peers = loadPeers()
   const existing = peers[peer.label]
@@ -173,7 +190,6 @@ function adoptPeer(peer: ReturnType<typeof asPeer>) {
 async function pair() {
   if (has("--relay")) saveRelay(flag("--relay")!)
   const id = identityOrCreate()
-  const offer = { label: id.label, edPub: id.ed.pub, xPub: id.x.pub }
   const joining = positional.join(" ").trim()
 
   // Accepting an invite.
@@ -195,18 +211,24 @@ async function pair() {
           : `no invite matches "${inv.phrase}". Check the words, or ask for a new one, invites last 15 minutes.`,
       )
     const { blob } = (await r.json()) as { blob: string }
-    let peer
+    let peer, offerRelayPub: string | undefined
     try {
-      peer = asPeer(openOffer(inv.phrase, blob))
+      const raw = openOffer(inv.phrase, blob)
+      offerRelayPub = raw.relayPub
+      peer = asPeer(raw)
     } catch {
       return die(`could not open that invite. The words are probably slightly off.`)
     }
 
     adoptPeer(peer)
+    // Pin the relay identity that came inside the sealed offer, so nothing on
+    // the network can pass itself off as this relay later.
+    const advertised = (peer as any).relayPub ?? offerRelayPub
+    if (advertised) saveRelay(loadRelay().url, advertised)
     const post = await fetch(`${httpBase()}/pair/${code}?side=reply`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ blob: sealOffer(inv.phrase, offer) }),
+      body: JSON.stringify({ blob: sealOffer(inv.phrase, await myOffer(id)) }),
     })
     if (!post.ok) die("could not send the pairing reply")
     await ensureDaemon(ROOT_DIR)
@@ -231,10 +253,12 @@ fetches them. Change that per peer with /crosstalk:policy.`)
 
   const phrase = flag("--phrase") ?? newPhrase()
   const code = codeForPhrase(phrase)
+  const relayPub = await relayPubkey(url)
+  if (relayPub) saveRelay(url, relayPub)
   const res = await fetch(`${httpBase(url)}/pair/${code}?side=offer`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ blob: sealOffer(phrase, offer) }),
+    body: JSON.stringify({ blob: sealOffer(phrase, { ...(await myOffer(id)), relayPub }) }),
   })
   if (!res.ok) die(`the relay at ${httpBase(url)} refused the pairing offer`)
 
@@ -350,7 +374,7 @@ async function policy() {
 }
 
 async function cost() {
-  const s = daemonRunning() ? await request({ op: "usage" }) : { ..summarise() }
+  const s = daemonRunning() ? await request({ op: "usage" }) : { ...summarise() }
   if (!s.rows?.length) return console.log("no crosstalk messages yet")
   console.log(`\npeer        sent   recvd   to Claude   ~tokens out   ~tokens in`)
   for (const r of s.rows) {
@@ -441,7 +465,7 @@ async function daemon() {
 
 async function room() {
   await ensureDaemon(ROOT_DIR)
-  const [verb..rest] = positional
+  const [verb, ...rest] = positional
 
   if (!verb || verb === "list") {
     const r = await request({ op: "rooms" })
@@ -476,7 +500,7 @@ async function room() {
       return
     }
     case "invite": {
-      const [name..people] = rest
+      const [name, ...people] = rest
       if (!name || !people.length) die("usage: /crosstalk:room invite beta marie jo")
       for (const p of people) {
         const r = await request({ op: "room_invite", room: name, peer: p })
@@ -511,9 +535,25 @@ async function room() {
   }
 }
 
+async function secure() {
+  const r = secureIdentity()
+  if (r.moved) {
+    console.log(`
+Your private key is in the macOS keychain now. ${P.identity} keeps only the
+public half, so a process that reads your files no longer walks away with your
+identity.
+
+Undo with:  security delete-generic-password -a crosstalk -s crosstalk-identity
+(after which you would have to pair again)`)
+    return
+  }
+  console.log(`not moved: ${r.reason}`)
+}
+
 const commands: Record<string, () => Promise<void>> = {
   pair,
   room,
+  secure,
   peers,
   mute,
   policy,

@@ -68,7 +68,8 @@ function frame(opts: InjectOptions, content: string) {
       role: "user",
       content: `<cross-session-message ${attrs}>\n${content}\n</cross-session-message>`,
     },
-    priority: "next"..(from ? { from } : {}),
+    priority: "next",
+    ...(from ? { from } : {}),
   }
 }
 

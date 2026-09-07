@@ -5,9 +5,12 @@
 //
 //   bun relay/relay.ts [--port 8787] [--host 127.0.0.1]
 
-import { verify, fingerprint } from "../src/crypto.ts"
+import { fingerprint } from "../src/crypto.ts"
+import { Channel, derive, newEd25519, newEphemeral, signWith, transcript, verifyWith } from "../src/link.ts"
 import crypto from "node:crypto"
 import fs from "node:fs"
+import http from "node:http"
+import { WebSocketServer } from "ws"
 import type { Frame } from "../src/protocol.ts"
 
 const argv = process.argv.slice(2)
@@ -24,7 +27,14 @@ const BUFFER_TTL_MS = 24 * 60 * 60 * 1000
 const MAX_BUFFERED_PER_SENDER = 200
 const MAX_BODY = 1 << 20
 
-type Conn = { fp?: string; label?: string; nonce: string; authed: boolean }
+type Conn = {
+  fp?: string
+  label?: string
+  nonce: string
+  authed: boolean
+  eph?: ReturnType<typeof newEphemeral>
+  ch?: Channel
+}
 
 const live = new Map<string, Set<any>>() // fingerprint -> sockets
 const buffered = new Map<
@@ -35,6 +45,15 @@ const seen = new Map<string, number>() // msg id -> ts, for duplicate suppressio
 const rate = new Map<string, number[]>() // fingerprint -> recent send timestamps
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a)
+
+/** Send a protocol frame over a connection's encrypted channel. */
+function send(ws: any, frame: unknown) {
+  const d = ws.data as Conn
+  if (!d.ch) return
+  try {
+    ws.send(d.ch.seal(frame))
+  } catch {}
+}
 
 function sweep() {
   const now = Date.now()
@@ -61,12 +80,11 @@ function drain(fp: string, ws: any) {
     if (!key.startsWith(`${fp}|`)) continue
     buffered.delete(key)
     for (const m of q) {
-      ws.send(
-        JSON.stringify(
-          m.roomId
-            ? { t: "room_deliver", roomId: m.roomId, from: m.from, body: m.body, id: m.id }
-            : { t: "deliver", from: m.from, body: m.body, id: m.id },
-        ),
+      send(
+        ws,
+        m.roomId
+          ? { t: "room_deliver", roomId: m.roomId, from: m.from, body: m.body, id: m.id }
+          : { t: "deliver", from: m.from, body: m.body, id: m.id },
       )
       sent++
     }
@@ -77,7 +95,7 @@ function drain(fp: string, ws: any) {
 function announce(fp: string) {
   const online = [...live.keys()]
   for (const set of live.values())
-    for (const ws of set) ws.send(JSON.stringify({ t: "presence", peers: online }))
+    for (const ws of set) send(ws, { t: "presence", peers: online })
 }
 
 // Pairing offers, held briefly and encrypted under a passphrase the relay
@@ -118,6 +136,17 @@ type RelayRoom = {
   members: Record<string, RelayMember>
 }
 
+const IDENTITY_FILE = process.env.CROSSTALK_RELAY_IDENTITY ?? "./crosstalk-relay-identity.json"
+const relayIdentity = (() => {
+  try {
+    return JSON.parse(fs.readFileSync(IDENTITY_FILE, "utf8"))
+  } catch {
+    const k = newEd25519()
+    fs.writeFileSync(IDENTITY_FILE, JSON.stringify(k), { mode: 0o600 })
+    return k
+  }
+})()
+
 const ROOMS_FILE = process.env.CROSSTALK_RELAY_STATE ?? "./crosstalk-rooms.json"
 const roomState: Record<string, RelayRoom> = (() => {
   try {
@@ -148,8 +177,7 @@ const roster = (room: RelayRoom) => ({
 /** Tell every connected member of a room that its roster moved. */
 function announceRoom(room: RelayRoom) {
   for (const m of Object.values(room.members)) {
-    for (const ws of live.get(m.fingerprint) ?? [])
-      ws.send(JSON.stringify({ t: "room", room: roster(room) }))
+    for (const ws of live.get(m.fingerprint) ?? []) send(ws, { t: "room", room: roster(room) })
   }
 }
 
@@ -198,7 +226,7 @@ function handleRoom(ws: any, d: Conn, f: any): boolean {
       // Announce before dropping the last member, then clean up.
       announceRoom(room)
       if (f.t !== "room_accept")
-        for (const ws2 of live.get(me) ?? []) ws2.send(JSON.stringify({ t: "room_gone", roomId: room.id }))
+        for (const ws2 of live.get(me) ?? []) send(ws2, { t: "room_gone", roomId: room.id })
       if (!Object.keys(room.members).length) delete roomState[room.id]
       saveRooms()
       return true
@@ -210,18 +238,16 @@ function handleRoom(ws: any, d: Conn, f: any): boolean {
       delete room.members[fp]
       saveRooms()
       announceRoom(room)
-      for (const ws2 of live.get(fp) ?? []) ws2.send(JSON.stringify({ t: "room_gone", roomId: room.id }))
+      for (const ws2 of live.get(fp) ?? []) send(ws2, { t: "room_gone", roomId: room.id })
       return true
     }
     case "room_list": {
-      ws.send(
-        JSON.stringify({
-          t: "rooms",
-          rooms: Object.values(roomState)
-            .filter((x) => x.members[me])
-            .map(roster),
-        }),
-      )
+      send(ws, {
+        t: "rooms",
+        rooms: Object.values(roomState)
+          .filter((x) => x.members[me])
+          .map(roster),
+      })
       return true
     }
     case "room_send": {
@@ -233,15 +259,9 @@ function handleRoom(ws: any, d: Conn, f: any): boolean {
       seen.set(f.id, Date.now())
       for (const m of Object.values(room.members)) {
         if (m.fingerprint === me || m.state !== "joined") continue
-        const out = JSON.stringify({
-          t: "room_deliver",
-          roomId: room.id,
-          from: me,
-          body: f.body,
-          id: f.id,
-        })
+        const out = { t: "room_deliver", roomId: room.id, from: me, body: f.body, id: f.id }
         const targets = live.get(m.fingerprint)
-        if (targets?.size) for (const t of targets) t.send(out)
+        if (targets?.size) for (const t of targets) send(t, out)
         else {
           const key = `${m.fingerprint}|${me}`
           const q = buffered.get(key) ?? []
@@ -249,137 +269,175 @@ function handleRoom(ws: any, d: Conn, f: any): boolean {
           buffered.set(key, q.slice(-MAX_BUFFERED_PER_SENDER))
         }
       }
-      ws.send(JSON.stringify({ t: "ack", id: f.id }))
+      send(ws, { t: "ack", id: f.id })
       return true
     }
   }
   return false
 }
 
-Bun.serve({
-  port: PORT,
-  hostname: HOST,
-  async fetch(req, server) {
-    const url = new URL(req.url)
+function onMessage(ws: any, raw: string) {
 
-    if (url.pathname === "/ws") {
-      const ok = server.upgrade(req, {
-        data: { nonce: crypto.randomBytes(24).toString("base64"), authed: false } as Conn,
-      })
-      return ok ? undefined : new Response("upgrade failed", { status: 400 })
+  const d = ws.data as Conn
+
+  // The handshake frame is the only plaintext one. Everything after it is
+  // sealed to the link keys.
+  if (!d.authed) {
+let f: any
+try {
+  f = JSON.parse(String(raw))
+} catch {
+  return ws.close()
+}
+if (f.t !== "hello" || !f.ephPub || !f.pub || !f.sig) return ws.close()
+const t = transcript(d.eph!.pub, f.ephPub, d.nonce)
+if (!verifyWith(f.pub, t, f.sig)) {
+  ws.send(JSON.stringify({ t: "error", message: "bad signature" }))
+  return ws.close()
+}
+d.ch = new Channel(derive(d.eph!.key, f.ephPub, t, "relay"))
+d.fp = fingerprint(f.pub)
+d.label = f.label
+d.authed = true
+if (!live.has(d.fp)) live.set(d.fp, new Set())
+live.get(d.fp)!.add(ws)
+// The relay's own signature travels inside the channel, which the client
+// can only open if the relay held the matching ephemeral private key.
+send(ws, { t: "ready", fingerprint: d.fp, sig: signWith(relayIdentity.priv, t) })
+log(`link up ${d.label} ${d.fp}`)
+drain(d.fp, ws)
+announce(d.fp)
+return
+  }
+
+  let f: Frame
+  try {
+f = d.ch!.open(String(raw)) as Frame
+  } catch {
+log(`bad frame from ${d.label ?? "?"}; closing`)
+return ws.close()
+  }
+
+  if (f.t === "ping") return send(ws, { t: "pong" })
+
+  if (typeof f.t === "string" && f.t.startsWith("room_") && handleRoom(ws, d, f)) return
+
+  if (f.t === "send") {
+if (!rateOk(d.fp!)) return send(ws, { t: "error", message: "rate limited" })
+if (typeof f.body !== "string" || f.body.length > MAX_BODY)
+  return send(ws, { t: "error", message: "body too large" })
+if (seen.has(f.id)) return send(ws, { t: "ack", id: f.id })
+seen.set(f.id, Date.now())
+
+const out = { t: "deliver", from: d.fp, body: f.body, id: f.id }
+const targets = live.get(f.to)
+if (targets?.size) {
+  for (const t of targets) send(t, out)
+} else {
+  const key = `${f.to}|${d.fp}`
+  const q = buffered.get(key) ?? []
+  q.push({ from: d.fp!, body: f.body, id: f.id, ts: Date.now() })
+  buffered.set(key, q.slice(-MAX_BUFFERED_PER_SENDER))
+}
+send(ws, { t: "ack", id: f.id })
+  }
+
+}
+
+function onClose(ws: any) {
+
+  const d = ws.data as Conn
+  if (!d.fp) return
+  const set = live.get(d.fp)
+  set?.delete(ws)
+  if (set && !set.size) live.delete(d.fp)
+  log(`closed ${d.label ?? "?"} ${d.fp}`)
+  announce(d.fp)
+}
+
+const httpServer = http.createServer((req, res) => {
+  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`)
+  const json = (body: unknown, status = 200) => {
+    const s = JSON.stringify(body)
+    res.writeHead(status, { "content-type": "application/json", "content-length": Buffer.byteLength(s) })
+    res.end(s)
+  }
+
+  if (url.pathname === "/health") return json({ ok: true, online: live.size })
+
+  // Clients pin this. It also travels inside the pairing offer, sealed under
+  // the phrase, so an attacker who can rewrite traffic cannot substitute it.
+  if (url.pathname === "/pubkey") return json({ pub: relayIdentity.pub })
+
+  const m = url.pathname.match(/^\/pair\/([A-Z0-9]{4,16})$/)
+  if (m) {
+    const code = m[1]
+    const slot = (url.searchParams.get("side") === "reply" ? "reply" : "offer") as "offer" | "reply"
+
+    // A pairing phrase is only 32 bits, so the defence against guessing is that
+    // a guess has to come through here. Only one request can test a phrase:
+    // fetching the offer to try to decrypt it. Counting anything else would
+    // throttle the inviter's own polling for the reply.
+    if (req.method === "GET" && slot === "offer") {
+      const who = req.socket.remoteAddress ?? "unknown"
+      const now = Date.now()
+      const win = (pairRate.get(who) ?? []).filter((t) => now - t < 60_000)
+      win.push(now)
+      pairRate.set(who, win)
+      if (win.length > 30) return json({ error: "too many pairing attempts" }, 429)
     }
 
-    if (url.pathname === "/health") return Response.json({ ok: true, online: live.size })
-
-    const m = url.pathname.match(/^\/pair\/([A-Z0-9]{4,16})$/)
-    if (m) {
-      const code = m[1]
-      const slot = (url.searchParams.get("side") === "reply" ? "reply" : "offer") as
-        | "offer"
-        | "reply"
-      // A pairing phrase is only 32 bits, so the defence against guessing is
-      // that a guess has to come through here. Only one request can test a
-      // phrase: fetching the offer to try to decrypt it. Counting anything else
-      // would throttle the inviter's own polling for the reply.
-      if (req.method === "GET" && slot === "offer") {
-        const who = server.requestIP(req)?.address ?? "unknown"
-        const now = Date.now()
-        const win = (pairRate.get(who) ?? []).filter((t) => now - t < 60_000)
-        win.push(now)
-        pairRate.set(who, win)
-        if (win.length > 30)
-          return Response.json({ error: "too many pairing attempts" }, { status: 429 })
-      }
-      if (req.method === "POST") {
-        const { blob } = (await req.json()) as { blob: string }
-        if (typeof blob !== "string" || blob.length > 8192)
-          return Response.json({ error: "bad blob" }, { status: 400 })
+    if (req.method === "POST") {
+      let raw = ""
+      req.on("data", (c) => {
+        raw += c
+        if (raw.length > 16384) req.destroy()
+      })
+      req.on("end", () => {
+        let blob: unknown
+        try {
+          blob = (JSON.parse(raw) as { blob: string }).blob
+        } catch {
+          return json({ error: "bad body" }, 400)
+        }
+        if (typeof blob !== "string" || blob.length > 8192) return json({ error: "bad blob" }, 400)
         const e = offers.get(code) ?? { ts: Date.now() }
-        if (e[slot]) return Response.json({ error: "slot already filled" }, { status: 409 })
+        // Write once. Otherwise anyone holding the code can keep replacing the
+        // offer and stop the pairing from ever completing.
+        if (e[slot]) return json({ error: "slot already filled" }, 409)
         e[slot] = blob
         e.ts = Date.now()
         offers.set(code, e)
-        return Response.json({ ok: true })
-      }
-      if (req.method === "GET") {
-        const e = offers.get(code)
-        if (!e?.[slot]) return Response.json({ error: "not ready" }, { status: 404 })
-        return Response.json({ blob: e[slot] })
-      }
+        json({ ok: true })
+      })
+      return
     }
 
-    return new Response("crosstalk relay", { status: 200 })
-  },
+    if (req.method === "GET") {
+      const e = offers.get(code)
+      if (!e?.[slot]) return json({ error: "not ready" }, 404)
+      return json({ blob: e[slot] })
+    }
+  }
 
-  websocket: {
-    open(ws) {
-      const d = ws.data as Conn
-      ws.send(JSON.stringify({ t: "challenge", nonce: d.nonce }))
-    },
-
-    message(ws, raw) {
-      const d = ws.data as Conn
-      let f: Frame
-      try {
-        f = JSON.parse(String(raw))
-      } catch {
-        return
-      }
-
-      if (f.t === "auth") {
-        if (!verify(f.pub, d.nonce, f.sig)) {
-          ws.send(JSON.stringify({ t: "error", message: "bad signature" }))
-          return ws.close()
-        }
-        d.fp = fingerprint(f.pub)
-        d.label = f.label
-        d.authed = true
-        if (!live.has(d.fp)) live.set(d.fp, new Set())
-        live.get(d.fp)!.add(ws)
-        ws.send(JSON.stringify({ t: "ready", fingerprint: d.fp }))
-        log(`auth ${d.label} ${d.fp}`)
-        drain(d.fp, ws)
-        announce(d.fp)
-        return
-      }
-
-      if (!d.authed) return
-
-      if (f.t === "ping") return ws.send(JSON.stringify({ t: "pong" }))
-
-      if (typeof f.t === "string" && f.t.startsWith("room_") && handleRoom(ws, d, f)) return
-
-      if (f.t === "send") {
-        if (!rateOk(d.fp!)) return ws.send(JSON.stringify({ t: "error", message: "rate limited" }))
-        if (typeof f.body !== "string" || f.body.length > MAX_BODY)
-          return ws.send(JSON.stringify({ t: "error", message: "body too large" }))
-        if (seen.has(f.id)) return ws.send(JSON.stringify({ t: "ack", id: f.id }))
-        seen.set(f.id, Date.now())
-
-        const out = { t: "deliver", from: d.fp, body: f.body, id: f.id }
-        const targets = live.get(f.to)
-        if (targets?.size) {
-          for (const t of targets) t.send(JSON.stringify(out))
-        } else {
-          const key = `${f.to}|${d.fp}`
-          const q = buffered.get(key) ?? []
-          q.push({ from: d.fp!, body: f.body, id: f.id, ts: Date.now() })
-          buffered.set(key, q.slice(-MAX_BUFFERED_PER_SENDER))
-        }
-        ws.send(JSON.stringify({ t: "ack", id: f.id }))
-      }
-    },
-
-    close(ws) {
-      const d = ws.data as Conn
-      if (!d.fp) return
-      const set = live.get(d.fp)
-      set?.delete(ws)
-      if (set && !set.size) live.delete(d.fp)
-      log(`closed ${d.label ?? "?"} ${d.fp}`)
-      announce(d.fp)
-    },
-  },
+  res.writeHead(200, { "content-type": "text/plain" })
+  res.end("crosstalk relay")
 })
 
-log(`crosstalk relay on ws://${HOST}:${PORT}/ws`)
+const wss = new WebSocketServer({ server: httpServer, path: "/ws" })
+
+wss.on("connection", (ws: any) => {
+  const d: Conn = {
+    nonce: crypto.randomBytes(24).toString("base64"),
+    authed: false,
+    eph: newEphemeral(),
+  }
+  ws.data = d
+  ws.send(JSON.stringify({ t: "hello", ephPub: d.eph!.pub, nonce: d.nonce }))
+
+  ws.on("message", (raw: any) => onMessage(ws, String(raw)))
+  ws.on("close", () => onClose(ws))
+  ws.on("error", () => {})
+})
+
+httpServer.listen(PORT, HOST, () => log(`crosstalk relay on ws://${HOST}:${PORT}/ws`))

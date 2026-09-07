@@ -4,7 +4,10 @@
   "type": "module",
   "license": "MIT",
   "description": "Messaging between two people's Claude Code sessions",
-  "repository": { "type": "git", "url": "https://github.com/epode-studio/crosstalk.git" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/epode-studio/crosstalk.git"
+  },
   "scripts": {
     "build": "bun scripts/build.ts",
     "daemon": "bun src/daemon.ts",
@@ -13,6 +16,10 @@
     "crosstalk": "bun src/cli.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.20.0"
+    "@modelcontextprotocol/sdk": "^1.20.0",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
   }
 }
