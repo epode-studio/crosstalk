@@ -2,7 +2,7 @@
 // every session writes its cwd, status and socket path to
 // ~/.claude/sessions/<pid>.json, and keeps updatedAt fresh.
 //
-// A registry entry proves a session existed, not that it is reachable — see
+// A registry entry proves a session existed, not that it is reachable, see
 // spike/README.md. Long-lived sessions lose their socket to /tmp cleanup while
 // still running, so callers that need reachability must probe.
 

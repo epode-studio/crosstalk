@@ -28,6 +28,8 @@ export type Envelope = {
   slices?: Slice[]
   thread?: string
   replyTo?: string
+  /** Room this was fanned out to, as the sender named it locally. */
+  room?: string
   /** ask/answer correlation. */
   correlation?: string
   /** Presence payload, only on kind === "presence". */

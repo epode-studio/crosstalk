@@ -12,7 +12,7 @@
 //    inside a delimiter they cannot predict, rather than as prose arguing with
 //    the prose around it.
 //
-// Everything a peer controls — their text, their session name — is escaped
+// Everything a peer controls, their text, their session name, is escaped
 // before it goes near a tag. Without that, a message body could close our tag
 // and write its own framing.
 
@@ -68,8 +68,7 @@ function frame(opts: InjectOptions, content: string) {
       role: "user",
       content: `<cross-session-message ${attrs}>\n${content}\n</cross-session-message>`,
     },
-    priority: "next",
-    ...(from ? { from } : {}),
+    priority: "next"..(from ? { from } : {}),
   }
 }
 

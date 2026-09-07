@@ -44,7 +44,7 @@ export function fileSlice(file: string): Slice | null {
 
 /**
  * The last N exchanges from a session's own transcript. Only ever the sending
- * session's own transcript, and only when the sender asks for it — this is the
+ * session's own transcript, and only when the sender asks for it, this is the
  * one place crosstalk touches conversation content, so it stays explicit.
  */
 export function turnsSlice(transcriptPath: string, turns = 6): Slice | null {

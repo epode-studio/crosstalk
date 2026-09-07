@@ -5,7 +5,7 @@
 //   otter-basalt-thunder-anvil @ 100.87.4.21
 //
 // The phrase is the whole secret. The relay files the offer under a hash of it
-// and never sees the phrase, so nothing else has to stay confidential — but the
+// and never sees the phrase, so nothing else has to stay confidential, but the
 // phrase itself must reach the other person over something you trust, and never
 // through the relay.
 

@@ -158,6 +158,18 @@ async function relay() {
 
 // --- pairing -------------------------------------------------------------------
 
+function adoptPeer(peer: ReturnType<typeof asPeer>) {
+  const peers = loadPeers()
+  const existing = peers[peer.label]
+  if (existing && existing.fingerprint !== peer.fingerprint) {
+    die(
+      `you are already paired with someone called "${peer.label}".\n\n  existing  ${existing.fingerprint}\n  new       ${peer.fingerprint}\n\nRefusing to replace them, a new peer must not inherit an existing peer's policy.\nAsk them to pair again under a different name (--label), or remove the old peer\nfrom ~/.claude/crosstalk/peers.json if you know it is stale.`,
+    )
+  }
+  peers[peer.label] = peer
+  savePeers(peers)
+}
+
 async function pair() {
   if (has("--relay")) saveRelay(flag("--relay")!)
   const id = identityOrCreate()
@@ -172,7 +184,7 @@ async function pair() {
 
     if (!(await relayReachable()))
       die(
-        `cannot reach the relay at ${httpBase()}.\n\nIf they hosted it themselves, their machine has to be awake and reachable from here — same network, or both on the same tailnet.`,
+        `cannot reach the relay at ${httpBase()}.\n\nIf they hosted it themselves, their machine has to be awake and reachable from here, same network, or both on the same tailnet.`,
       )
 
     const r = await fetch(`${httpBase()}/pair/${code}?side=offer`)
@@ -180,7 +192,7 @@ async function pair() {
       die(
         r.status === 429
           ? "the relay is rate-limiting pairing attempts; wait a minute"
-          : `no invite matches "${inv.phrase}". Check the words, or ask for a new one — invites last 15 minutes.`,
+          : `no invite matches "${inv.phrase}". Check the words, or ask for a new one, invites last 15 minutes.`,
       )
     const { blob } = (await r.json()) as { blob: string }
     let peer
@@ -190,9 +202,7 @@ async function pair() {
       return die(`could not open that invite. The words are probably slightly off.`)
     }
 
-    const peers = loadPeers()
-    peers[peer.label] = peer
-    savePeers(peers)
+    adoptPeer(peer)
     const post = await fetch(`${httpBase()}/pair/${code}?side=reply`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -252,11 +262,17 @@ Waiting…`)
     const r = await fetch(`${httpBase(url)}/pair/${code}?side=reply`).catch(() => null)
     if (r?.ok) {
       const { blob } = (await r.json()) as { blob: string }
-      const peer = asPeer(openOffer(phrase, blob))
+      let peer
+      try {
+        peer = asPeer(openOffer(phrase, blob))
+      } catch {
+        // Someone with the code parked a reply they could not seal correctly.
+        // Keep waiting for the real one rather than dying here.
+        await new Promise((r) => setTimeout(r, 1000))
+        continue
+      }
       if (peer.fingerprint === fingerprint(id.ed.pub)) die("that pairing reply carries your own key")
-      const peers = loadPeers()
-      peers[peer.label] = peer
-      savePeers(peers)
+      adoptPeer(peer)
       await ensureDaemon(ROOT_DIR)
       console.log(`
 Paired with "${peer.label}".
@@ -334,7 +350,7 @@ async function policy() {
 }
 
 async function cost() {
-  const s = daemonRunning() ? await request({ op: "usage" }) : { ...summarise() }
+  const s = daemonRunning() ? await request({ op: "usage" }) : { ..summarise() }
   if (!s.rows?.length) return console.log("no crosstalk messages yet")
   console.log(`\npeer        sent   recvd   to Claude   ~tokens out   ~tokens in`)
   for (const r of s.rows) {
@@ -366,7 +382,7 @@ async function doctor() {
   const socket = process.env.CLAUDE_CODE_MESSAGING_SOCKET
 
   rows.push(["runtime", true, `${path.basename(process.execPath)} ${process.version ?? ""}`.trim()])
-  rows.push(["identity", !!id, id ? `${id.label}  ${fingerprint(id.ed.pub)}` : "none — run /crosstalk:pair --host"])
+  rows.push(["identity", !!id, id ? `${id.label}  ${fingerprint(id.ed.pub)}` : "none, run /crosstalk:pair --host"])
   rows.push([
     "peers",
     Object.keys(loadPeers()).length > 0,
@@ -376,7 +392,7 @@ async function doctor() {
   rows.push([
     "messaging token",
     !!process.env.CLAUDE_CODE_MESSAGING_TOKEN,
-    process.env.CLAUDE_CODE_MESSAGING_TOKEN ? "present" : "missing — messages arrive as anonymous peers",
+    process.env.CLAUDE_CODE_MESSAGING_TOKEN ? "present" : "missing, messages arrive as anonymous peers",
   ])
 
   const sessionsDir = path.join(process.env.HOME ?? "", ".claude", "sessions")
@@ -423,8 +439,81 @@ async function daemon() {
   console.log((await ensureDaemon(ROOT_DIR)) ? "daemon running" : "daemon failed to start")
 }
 
+async function room() {
+  await ensureDaemon(ROOT_DIR)
+  const [verb..rest] = positional
+
+  if (!verb || verb === "list") {
+    const r = await request({ op: "rooms" })
+    if (!r.rooms.length) {
+      console.log("\nNo rooms. Make one:\n\n  /crosstalk:room create beta\n  /crosstalk:room invite beta marie\n")
+      return
+    }
+    console.log()
+    for (const room of r.rooms) {
+      const who = room.members
+        .map((m: any) => m.label + (m.you ? " (you)" : "") + (m.state === "invited" ? " (invited)" : "") + (!m.paired && !m.you ? " ·not paired" : ""))
+        .join(", ")
+      if (room.pending) {
+        console.log(`  #${room.name}   INVITATION from ${room.pending.invitedBy}`)
+        console.log(`      ${who}`)
+        console.log(`      accept:  /crosstalk:room accept ${room.name}`)
+      } else {
+        console.log(`  #${room.name}`.padEnd(18) + who)
+      }
+    }
+    console.log()
+    return
+  }
+
+  const say = (r: any, ok: string) => (r.ok ? console.log(ok) : die(r.error))
+
+  switch (verb) {
+    case "create": {
+      const name = rest[0] ?? die("name the room: /crosstalk:room create beta")
+      const r = await request({ op: "room_create", name })
+      say(r, `created #${r.room}. Invite someone you are paired with:\n\n  /crosstalk:room invite ${r.room} <peer>\n`)
+      return
+    }
+    case "invite": {
+      const [name..people] = rest
+      if (!name || !people.length) die("usage: /crosstalk:room invite beta marie jo")
+      for (const p of people) {
+        const r = await request({ op: "room_invite", room: name, peer: p })
+        r.ok ? console.log(`invited ${r.invited} to #${r.room}`) : console.error(`${p}: ${r.error}`)
+      }
+      console.log("\nThey each have to accept before anything from the room reaches them.")
+      return
+    }
+    case "accept":
+    case "decline":
+    case "leave": {
+      const name = rest[0] ?? die(`usage: /crosstalk:room ${verb} beta`)
+      const r = await request({ op: `room_${verb}`, room: name })
+      say(r, verb === "accept" ? `joined #${r.room}` : `left #${r.room}`)
+      return
+    }
+    case "kick":
+    case "remove": {
+      const [name, who] = rest
+      if (!name || !who) die("usage: /crosstalk:room kick beta marie")
+      const r = await request({ op: "room_kick", room: name, peer: who })
+      if (!r.ok) die(r.error)
+      console.log(`removed ${r.removed} from #${name} and rekeyed to epoch ${r.rekeyedTo}`)
+      if (r.unreachable?.length)
+        console.log(
+          `\nCould not hand the new key to: ${r.unreachable.join(", ")}.\nYou are not paired with them, so someone who is has to pass it on.`,
+        )
+      return
+    }
+    default:
+      die(`unknown: /crosstalk:room ${verb}\n\nTry: list, create, invite, accept, decline, leave, kick`)
+  }
+}
+
 const commands: Record<string, () => Promise<void>> = {
   pair,
+  room,
   peers,
   mute,
   policy,

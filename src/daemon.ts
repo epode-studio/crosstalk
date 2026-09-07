@@ -22,12 +22,13 @@ import {
   saveParked,
   type Held,
 } from "./config.ts"
-import { pairKey, seal, open as unseal, sign } from "./crypto.ts"
+import { pairKey, seal, open as unseal, sign, fingerprint as fingerprintOf } from "./crypto.ts"
 import { listLocalSessions, findSession, type LocalSession } from "./registry.ts"
 import { injectNotice, injectMessage } from "./inject.ts"
 import { triage } from "./policy.ts"
 import { appendDecision } from "./decisions.ts"
 import * as usage from "./usage.ts"
+import * as rooms from "./rooms.ts"
 import type { Envelope, Frame, Intent, Kind, SessionPresence, Slice } from "./protocol.ts"
 
 const identity = loadIdentity()
@@ -88,6 +89,18 @@ const held: Record<string, Held[]> = loadQueue()
 // transcript. Either way it is only a notice, never the peer's own words.
 const subscribers = new Map<string, Set<net.Socket>>()
 
+// Per-sender limits do not bound the total. With several peers, each polite on
+// its own, a session can still be interrupted constantly.
+const noticeTimes: number[] = []
+const NOTICE_BUDGET_PER_HOUR = 40
+function withinNoticeBudget(): boolean {
+  const now = Date.now()
+  while (noticeTimes.length && now - noticeTimes[0] > 3_600_000) noticeTimes.shift()
+  if (noticeTimes.length >= NOTICE_BUDGET_PER_HOUR) return false
+  noticeTimes.push(now)
+  return true
+}
+
 function push(sessionId: string, msg: unknown): boolean {
   const set = subscribers.get(sessionId)
   if (!set?.size) return false
@@ -115,9 +128,10 @@ function hold(sessionId: string, h: Held, slices?: Slice[]) {
 // Envelopes that arrived before any local session had registered. Persisted, so
 // a daemon crash between the relay's drain and the SessionStart hook does not
 // lose them.
-const orphaned: { label: string; env: Envelope }[] = loadParked() as {
+const orphaned: { label: string; env: Envelope; stranger?: boolean }[] = loadParked() as {
   label: string
   env: Envelope
+  stranger?: boolean
 }[]
 const persistParked = () => saveParked(orphaned)
 
@@ -134,7 +148,7 @@ const peersByFingerprint = () => {
 
 let ws: WebSocket | null = null
 let backoff = 1000
-const pendingAsks = new Map<string, (answer: Envelope) => void>()
+const pendingAsks = new Map<string, { peer: string; resolve: (answer: Envelope) => void }>()
 
 function connect() {
   const { url } = loadRelay()
@@ -182,6 +196,15 @@ function connect() {
         log(`failed to open body from ${peer.label}: ${(e as Error).message}`)
       }
     }
+    if (f.t === "room") return onRoster((f as any).room)
+    if (f.t === "rooms") return (f as any).rooms.forEach(onRoster)
+    if (f.t === "room_gone") {
+      const st = rooms.load()
+      delete st[(f as any).roomId]
+      rooms.save(st)
+      return
+    }
+    if (f.t === "room_deliver") return onRoomBody(f as any)
     if (f.t === "error") log(`relay error: ${f.message}`)
   }
 
@@ -208,9 +231,109 @@ function sendEnvelope(peerLabel: string, env: Envelope): { ok: boolean; error?: 
   return { ok: true }
 }
 
+
+// --- rooms --------------------------------------------------------------------
+
+const myFingerprint = () => fingerprintOf(identity!.ed.pub)
+
+/** The relay's roster is authoritative for membership; keys stay local. */
+function onRoster(r: { id: string; name: string; members: any[] }) {
+  const st = rooms.load()
+  const existing = st[r.id]
+  const me = myFingerprint()
+  const mine = r.members.find((m) => m.fingerprint === me)
+  if (!mine) {
+    delete st[r.id]
+    rooms.save(st)
+    return
+  }
+  const room: rooms.Room = existing ?? {
+    id: r.id,
+    name: r.name,
+    keys: {},
+    epoch: 0,
+    members: {},
+  }
+  room.name = r.name
+  room.members = Object.fromEntries(r.members.map((m) => [m.fingerprint, { ...m, addedAt: Date.now() }]))
+  if (mine.state === "invited") {
+    const inviter = peersByFingerprint().get(mine.addedBy)
+    room.pending = { invitedBy: inviter?.label ?? mine.addedBy, at: Date.now() }
+  } else {
+    delete room.pending
+    room.joinedAt ??= Date.now()
+  }
+  rooms.upsert(room, st)
+  if (room.pending) notifyInvitation(room)
+}
+
+/** An invitation is a notice, never a message. Nothing from the room lands yet. */
+function notifyInvitation(room: rooms.Room) {
+  const target = pickSession()
+  if (!target) return
+  const others = Object.values(room.members)
+    .filter((m) => m.fingerprint !== myFingerprint())
+    .map((m) => m.label)
+  injectNotice(
+    { socket: target.socket, replyTo: target.socket, fromName: `crosstalk:invite` },
+    {
+      count: 1,
+      peer: room.pending!.invitedBy,
+      peerSession: `#${room.name}`,
+      intent: "fyi",
+      kind: `room invitation (with ${others.join(", ") || "nobody else yet"}); accept with /crosstalk:room accept ${room.name}`,
+    },
+  ).catch(() => {})
+}
+
+/** Room bodies are sealed with the room key, which the relay never holds. */
+function onRoomBody(f: { roomId: string; from: string; body: string; id: string }) {
+  const st = rooms.load()
+  const room = st[f.roomId]
+  if (!room || room.pending) return log(`dropped room message for a room we have not joined`)
+  let env: Envelope | null = null
+  for (const epoch of Object.keys(room.keys).map(Number).sort((a, b) => b - a)) {
+    try {
+      env = JSON.parse(unseal(rooms.keyFor(room, epoch)!, f.body))
+      break
+    } catch {}
+  }
+  if (!env) return log(`could not open a message in #${room.name}; we may have missed a rekey`)
+  const sender = room.members[f.from]
+  const paired = peersByFingerprint().get(f.from)
+  onEnvelope(paired?.label ?? sender?.label ?? "someone", env, {
+    room,
+    strangerInRoom: !paired,
+  })
+}
+
 // --- inbound ------------------------------------------------------------------
 
-function onEnvelope(peerLabel: string, env: Envelope) {
+// Replay defence. The pair key authenticates who wrote an envelope but says
+// nothing about when, so a relay that keeps a copy could re-deliver it forever.
+const seenIds = new Map<string, number>()
+const MAX_SKEW_MS = 10 * 60_000
+const REPLAY_WINDOW_MS = 24 * 60 * 60_000
+setInterval(() => {
+  const now = Date.now()
+  for (const [id, ts] of seenIds) if (now - ts > REPLAY_WINDOW_MS) seenIds.delete(id)
+}, 60_000)
+
+function onEnvelope(
+  peerLabel: string,
+  env: Envelope,
+  ctx?: { room?: rooms.Room; strangerInRoom?: boolean; replayingParked?: boolean },
+) {
+  // A parked envelope is re-run through here once a session registers, so the
+  // duplicate check has to skip that path and only record an id once the
+  // message is actually held.
+  if (!ctx?.replayingParked && seenIds.has(env.id))
+    return log(`dropped replay of ${env.id} from ${peerLabel}`)
+  const age = Date.now() - (env.ts ?? 0)
+  if (age > REPLAY_WINDOW_MS || age < -MAX_SKEW_MS) {
+    return log(`dropped stale or future-dated ${env.kind} from ${peerLabel} (${Math.round(age / 1000)}s)`)
+  }
+
   if (env.kind === "presence") {
     peerPresence.set(peerLabel, { sessions: env.presence ?? [], at: Date.now() })
     return
@@ -219,13 +342,23 @@ function onEnvelope(peerLabel: string, env: Envelope) {
   if (env.kind === "answer" && env.correlation) {
     const waiter = pendingAsks.get(env.correlation)
     if (waiter) {
+      if (waiter.peer !== peerLabel) {
+        return log(`dropped answer for ${waiter.peer}'s question, sent by ${peerLabel}`)
+      }
       pendingAsks.delete(env.correlation)
-      waiter(env)
+      waiter.resolve(env)
       return
     }
   }
 
-  const pol = policyFor(peerLabel)
+  if (env.kind === "room_key") return acceptRoomKey(peerLabel, env)
+
+  let pol = policyFor(peerLabel)
+  if (ctx?.strangerInRoom) {
+    // Someone in the room this machine has never paired with. They can put a
+    // notice on the screen and nothing else.
+    pol = { ...pol, delivery: pol.delivery === "quiet" ? "quiet" : "notify", allowAsk: false }
+  }
   if (env.kind === "ask" && !pol.allowAsk) {
     log(`refused ask from ${peerLabel}: allowAsk is off`)
     return
@@ -233,12 +366,12 @@ function onEnvelope(peerLabel: string, env: Envelope) {
 
   const target = pickSession(env.toSession)
   if (!target) {
-    orphaned.push({ label: peerLabel, env })
+    orphaned.push({ label: peerLabel, env, stranger: !!ctx?.strangerInRoom })
     persistParked()
     return log(`no local session registered yet; parked message from ${peerLabel}`)
   }
 
-  const decision = triage(pol, env.intent, env.kind, statusOf(target.sessionId))
+  const decision = { ...triage(pol, env.intent, env.kind, statusOf(target.sessionId)) }
   const h: Held = {
     id: env.id,
     from: peerLabel,
@@ -249,9 +382,11 @@ function onEnvelope(peerLabel: string, env: Envelope) {
     slices: (env.slices ?? []).map((s) => ({ kind: s.kind, label: s.label, bytes: s.bytes })),
     thread: env.thread,
     replyTo: env.replyTo,
+    room: ctx?.room ? `#${ctx.room.name}` : env.room,
     correlation: env.correlation,
     ts: env.ts,
   }
+  seenIds.set(env.id, Date.now())
   hold(target.sessionId, h, env.slices)
   log(`inbound ${env.kind}/${env.intent} from ${peerLabel} → ${target.name}: ${decision.action} (${decision.why})`)
 
@@ -259,9 +394,17 @@ function onEnvelope(peerLabel: string, env: Envelope) {
     socket: target.socket,
     replyTo: target.socket,
     fromName: `crosstalk:${peerLabel}/${env.fromSession}`,
-    token: target.token,
+    // Deliberately no token. Presenting the session's own messaging token would
+    // make this a verified own-child message, which skips the approval hold
+    // Claude Code applies to unverified peers. A different person's text must
+    // stay subject to that hold.
   }
 
+  // Over budget, everything degrades to quiet and waits for an idle moment.
+  if (decision.action !== "quiet" && !withinNoticeBudget()) {
+    log(`notice budget spent (${NOTICE_BUDGET_PER_HOUR}/h); holding ${env.id} until idle`)
+    decision.action = "quiet"
+  }
   if (decision.action !== "quiet") h.surfaced = true
   persist()
   usage.record(peerLabel, "recv", env.text.length, decision.action !== "quiet")
@@ -287,6 +430,53 @@ function onEnvelope(peerLabel: string, env: Envelope) {
     }
   }
   // quiet: nothing now; the idle watcher surfaces it.
+}
+
+
+/** The inviter hands over the room key on the pairwise channel we already share. */
+function acceptRoomKey(peerLabel: string, env: Envelope) {
+  const k = env.presence as unknown as { roomId: string; name: string; epoch: number; key: string }
+  if (!k?.roomId || !k.key) return
+  const st = rooms.load()
+  const room = st[k.roomId] ?? {
+    id: k.roomId,
+    name: k.name,
+    keys: {},
+    epoch: k.epoch,
+    members: {},
+    pending: { invitedBy: peerLabel, at: Date.now() },
+  }
+  room.keys[k.epoch] = k.key
+  room.epoch = Math.max(room.epoch ?? 0, k.epoch)
+  room.name = k.name ?? room.name
+  rooms.upsert(room, st)
+  log(`received the key for #${room.name} epoch ${k.epoch} from ${peerLabel}`)
+}
+
+function sendRoomKey(peerLabel: string, room: rooms.Room) {
+  return sendEnvelope(peerLabel, {
+    v: 1,
+    id: crypto.randomUUID(),
+    ts: Date.now(),
+    from: identity!.label,
+    fromSession: "-",
+    to: peerLabel,
+    kind: "room_key" as Kind,
+    intent: "fyi",
+    text: "",
+    presence: {
+      roomId: room.id,
+      name: room.name,
+      epoch: room.epoch,
+      key: room.keys[room.epoch],
+    } as any,
+  })
+}
+
+const relaySend = (o: unknown) => {
+  if (!ws || ws.readyState !== 1) return false
+  ws.send(JSON.stringify(o))
+  return true
 }
 
 // --- idle watcher and presence -------------------------------------------------
@@ -315,7 +505,7 @@ setInterval(() => {
     }
     if (push(s.sessionId, { push: "arrival", ...notice })) continue
     injectNotice(
-      { socket: s.socket, replyTo: s.socket, fromName: `crosstalk:${newest.from}`, token: reg.token },
+      { socket: s.socket, replyTo: s.socket, fromName: `crosstalk:${newest.from}` },
       notice,
     ).catch((e) => log(`idle flush failed: ${e.message}`))
   }
@@ -367,20 +557,163 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         transcript: req.transcript,
         lastStatus: "idle",
       })
+      // Held messages are filed under the session id that was live when they
+      // arrived, and a new session gets a new id. Without this, anything unread
+      // when you quit is stranded in queue.json forever.
+      const liveIds = new Set(listLocalSessions().map((s) => s.sessionId))
+      let adopted = 0
+      for (const [sid, msgs] of Object.entries(held)) {
+        if (sid === req.sessionId || liveIds.has(sid)) continue
+        const unread = msgs.filter((m) => !m.readAt)
+        if (!unread.length) {
+          delete held[sid]
+          continue
+        }
+        ;(held[req.sessionId] ??= []).push(...unread.map((m) => ({ ...m, surfaced: false })))
+        adopted += unread.length
+        delete held[sid]
+      }
+      if (adopted) {
+        persist()
+        log(`carried ${adopted} unread message(s) over from an ended session`)
+      }
       log(`registered session ${req.name} (${req.cwd})`)
       publishPresence()
       if (orphaned.length) {
         const replay = orphaned.splice(0)
         persistParked()
         log(`replaying ${replay.length} parked message(s)`)
-        for (const o of replay) onEnvelope(o.label, o.env)
+        for (const o of replay)
+          onEnvelope(o.label, o.env, { replayingParked: true, strangerInRoom: o.stranger })
       }
       return { ok: true, label: identity!.label }
+    }
+
+    case "rooms": {
+      const st = rooms.load()
+      return {
+        ok: true,
+        me: myFingerprint(),
+        rooms: Object.values(st).map((r) => ({
+          id: r.id,
+          name: r.name,
+          pending: r.pending ?? null,
+          members: Object.values(r.members).map((m) => ({
+            label: m.label,
+            state: m.state,
+            paired: !!peersByFingerprint().get(m.fingerprint),
+            you: m.fingerprint === myFingerprint(),
+          })),
+        })),
+      }
+    }
+
+    case "room_create": {
+      const id = rooms.newRoomId()
+      const room: rooms.Room = {
+        id,
+        name: rooms.normalise(req.name),
+        keys: { 0: rooms.newRoomKey() },
+        epoch: 0,
+        members: {},
+        joinedAt: Date.now(),
+      }
+      rooms.upsert(room)
+      if (!relaySend({ t: "room_create", id, name: room.name })) return { ok: false, error: "relay not connected" }
+      return { ok: true, room: room.name, id }
+    }
+
+    case "room_invite": {
+      const room = rooms.byName(req.room)
+      if (!room) return { ok: false, error: `no room called "#${req.room}" here` }
+      const peer = loadPeers()[req.peer]
+      if (!peer)
+        return {
+          ok: false,
+          error: `you are not paired with "${req.peer}". A room only grows along pairings that already exist, so pair with them first.`,
+        }
+      relaySend({ t: "room_invite", roomId: room.id, fingerprint: peer.fingerprint, label: peer.label })
+      const sent = sendRoomKey(peer.label, room)
+      return sent.ok
+        ? { ok: true, invited: peer.label, room: room.name }
+        : { ok: false, error: sent.error }
+    }
+
+    case "room_accept":
+    case "room_decline":
+    case "room_leave": {
+      const st = rooms.load()
+      const room = Object.values(st).find((r) => rooms.normalise(r.name) === rooms.normalise(req.room))
+      if (!room) return { ok: false, error: `no room called "#${req.room}" here` }
+      relaySend({ t: req.op, roomId: room.id })
+      if (req.op === "room_accept") {
+        delete room.pending
+        room.joinedAt = Date.now()
+        rooms.upsert(room, st)
+      } else {
+        delete st[room.id]
+        rooms.save(st)
+      }
+      return { ok: true, room: room.name }
+    }
+
+    case "room_kick": {
+      const room = rooms.byName(req.room)
+      if (!room) return { ok: false, error: `no room called "#${req.room}" here` }
+      const member = Object.values(room.members).find((m) => m.label === req.peer)
+      if (!member) return { ok: false, error: `${req.peer} is not in #${room.name}` }
+      relaySend({ t: "room_kick", roomId: room.id, fingerprint: member.fingerprint })
+      // Rekey, so a removed member cannot read what comes next.
+      room.epoch += 1
+      room.keys[room.epoch] = rooms.newRoomKey()
+      rooms.upsert(room)
+      const peers = loadPeers()
+      const unreachable: string[] = []
+      for (const m of Object.values(room.members)) {
+        if (m.fingerprint === member.fingerprint || m.fingerprint === myFingerprint()) continue
+        const label = Object.values(peers).find((p) => p.fingerprint === m.fingerprint)?.label
+        if (label) sendRoomKey(label, room)
+        else unreachable.push(m.label)
+      }
+      return { ok: true, removed: member.label, rekeyedTo: room.epoch, unreachable }
     }
 
     case "send":
     case "handoff":
     case "ask": {
+      // A room fans out over the pairwise channels. Every member is someone
+      // this machine paired with directly, so nothing here widens who can
+      // reach us.
+      if (rooms.isRoom(String(req.to))) {
+        if (req.op === "ask") return { ok: false, error: "ask goes to one person, not a room" }
+        const room = rooms.byName(String(req.to))
+        if (!room) return { ok: false, error: `no room called "${req.to}" here` }
+        if (room.pending)
+          return { ok: false, error: `you have not accepted the invitation to #${room.name} yet` }
+        const key = rooms.keyFor(room)
+        if (!key) return { ok: false, error: `no key for #${room.name}` }
+        const env: Envelope = {
+          v: 1,
+          id: crypto.randomUUID(),
+          ts: Date.now(),
+          from: identity!.label,
+          fromSession: sessions.get(req.sessionId)?.name ?? "-",
+          to: `#${room.name}`,
+          kind: (req.op === "send" ? (req.kind as Kind) ?? "message" : (req.op as Kind)),
+          intent: (req.intent as Intent) ?? "fyi",
+          text: String(req.text ?? ""),
+          slices: req.slices,
+          thread: req.thread,
+          room: `#${room.name}`,
+        }
+        const ok = relaySend({ t: "room_send", roomId: room.id, id: env.id, body: seal(key, JSON.stringify(env)) })
+        if (!ok) return { ok: false, error: "relay not connected" }
+        const recipients = Object.values(room.members).filter(
+          (m) => m.state === "joined" && m.fingerprint !== myFingerprint(),
+        )
+        for (const m of recipients) usage.record(m.label, "sent", env.text.length)
+        return { ok: true, id: env.id, room: room.name, sentTo: recipients.map((m) => m.label) }
+      }
       const [label, session] = String(req.to).split("/")
       const env: Envelope = {
         v: 1,
@@ -396,6 +729,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         slices: req.slices,
         thread: req.thread,
         replyTo: req.replyTo,
+        room: req.room,
         correlation: req.op === "ask" ? crypto.randomUUID() : undefined,
       }
       const r = sendEnvelope(label, env)
@@ -409,9 +743,12 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
           pendingAsks.delete(env.correlation!)
           resolve(null)
         }, timeout)
-        pendingAsks.set(env.correlation!, (a) => {
-          clearTimeout(t)
-          resolve(a)
+        pendingAsks.set(env.correlation!, {
+          peer: label,
+          resolve: (a) => {
+            clearTimeout(t)
+            resolve(a)
+          },
         })
       })
       return answer
@@ -458,6 +795,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         ok: true,
         me: { label: identity!.label, sessions: localPresence() },
         relay: ws?.readyState === 1 ? "connected" : "disconnected",
+        rooms: rooms.load(),
         peers: Object.values(peers).map((p) => ({
           label: p.label,
           fingerprint: p.fingerprint,
@@ -473,6 +811,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
     }
 
     case "policy": {
+
       const policy = loadPolicy()
       if (req.peer) {
         policy.peers[req.peer] = { ...policyFor(req.peer, policy), ...(req.set ?? {}) }

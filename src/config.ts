@@ -110,6 +110,7 @@ export type Held = {
   slices: { kind: string; label: string; bytes: number }[]
   thread?: string
   replyTo?: string
+  room?: string
   /** Set on kind "ask": pass it back to crosstalk_answer. */
   correlation?: string
   /** A notice for this message has been shown. Unset means still silent. */

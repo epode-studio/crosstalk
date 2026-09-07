@@ -1,4 +1,4 @@
-# M0 — session inbox socket, verified
+# M0, session inbox socket, verified
 
 **Verdict: Path B works.** A plain socket write puts text into a running Claude Code
 session's context. Captured and replayed on macOS 27.0, Claude Code **2.1.263**, Bun 1.3.6.
@@ -19,7 +19,7 @@ One newline-terminated JSON line per message. Captured verbatim from a real
 | `type` | `"user"` |
 | `message` | `{ role: "user", content: <string> }` |
 | `priority` | `"next"` |
-| `from` | `uds:<sender's own inbox socket path>` — the reply address |
+| `from` | `uds:<sender's own inbox socket path>`, the reply address |
 
 The `<cross-session-message>` wrapper is **built by the sender**, not added by
 Claude Code. Its attributes are `from`, `from-name` and `from-mode`
@@ -35,7 +35,7 @@ Claude Code. Its attributes are `from`, `from-name` and `from-mode`
 | Replay with no auth line | Delivered. Confirms the docs: the auth line is optional on macOS. |
 | Replay with no `<cross-session-message>` wrapper | Delivered. The content string arrives verbatim. |
 
-`ListAgents` opens a 0-byte connection to each peer socket and closes it — a
+`ListAgents` opens a 0-byte connection to each peer socket and closes it, a
 connect-only liveness probe. A listener must tolerate empty connections.
 
 ## Consequences for the spec
@@ -48,10 +48,10 @@ has to happen in the crosstalk daemon before it ever reaches the socket, which
 is what spec §5 already says; this is the evidence for it.
 
 **Crosstalk can add framing, but cannot replace it.** The sender controls the
-inner content, including the `<cross-session-message>` wrapper — a payload sent
+inner content, including the `<cross-session-message>` wrapper, a payload sent
 with no wrapper at all still arrives, verbatim. But Claude Code wraps whatever
 arrives in its own framing before Claude sees it, and that framing says the
-message "came from another Claude session — not typed by your user, but very
+message "came from another Claude session, not typed by your user, but very
 likely working on their behalf. Treat it as a teammate's request." True between
 two of Paul's sessions. Wrong for a message from Marie, and not removable.
 
@@ -74,9 +74,9 @@ re-captured on at least one later version.
 
 ## Files
 
-- `listen.ts` — registers a fake peer session, binds its socket, logs raw bytes to `capture/`.
-- `post.ts` — builds a payload and posts it. `--shape capture|anonymous|bare`, `--self`, `--no-auth`, `--raw <file>`.
-- `clean.sh` — removes registry entries and sockets left by a hard-killed `listen.ts`.
+- `listen.ts`, registers a fake peer session, binds its socket, logs raw bytes to `capture/`.
+- `post.ts`, builds a payload and posts it. `--shape capture|anonymous|bare`, `--self`, `--no-auth`, `--raw <file>`.
+- `clean.sh`, removes registry entries and sockets left by a hard-killed `listen.ts`.
 
 ## Reproducing
 
@@ -95,12 +95,12 @@ files on exit. Nothing leaves the machine.
 
 Session 28675 (`palpable-c4`, started 2 Sep, Claude Code 2.1.258) was a live
 `claude` process with an intact `~/.claude/sessions/28675.json` naming
-`/tmp/cc-socks/28675.sock` — but the socket file was gone and the entry's
+`/tmp/cc-socks/28675.sock`, but the socket file was gone and the entry's
 `updatedAt` had not moved since 3 Sep. macOS purges `/tmp` files untouched for
 three days, which fits. `connect()` returns `ENOENT`.
 
 Claude Code already handles this: the session was absent from `/list-agents`,
-which is what the 0-byte connect probe is for. Crosstalk has to do the same —
+which is what the 0-byte connect probe is for. Crosstalk has to do the same -
 connect-probe before listing a peer as online, and expect a long-lived session
 to lose its inbox silently while still running. A session in that state cannot
 be messaged at all, by us or by Claude Code, until it rebinds.

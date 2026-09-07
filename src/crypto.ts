@@ -120,7 +120,7 @@ const WORDS = [
  * The phrase IS the secret. Four words from 256 is 32 bits, which is
  * weak against an offline attack and fine here: the offer lives 15 minutes, the
  * key is stretched through 200k PBKDF2 rounds, and the relay rate-limits
- * lookups. Nothing else needs to travel — the relay stores the offer under a
+ * lookups. Nothing else needs to travel, the relay stores the offer under a
  * hash of the phrase and never sees the phrase itself.
  */
 export const newPhrase = (words = 4) =>

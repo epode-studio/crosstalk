@@ -26,7 +26,7 @@ const text = arg("--text", "crosstalk probe: replay test")!
 const from = arg("--from", "crosstalk")!
 const shapeName = arg("--shape", "capture")!
 
-// Captured from a real SendMessage on 2.1.263 — see spike/README.md. The body
+// Captured from a real SendMessage on 2.1.263, see spike/README.md. The body
 // is one newline-terminated JSON line. `from` is the sender's own inbox socket
 // and doubles as the reply address; the receiving Claude sees only the
 // <cross-session-message> wrapper.
