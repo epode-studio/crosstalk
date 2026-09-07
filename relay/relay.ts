@@ -9,8 +9,7 @@ import { fingerprint } from "../src/crypto.ts"
 import { Channel, derive, newEd25519, newEphemeral, signWith, transcript, verifyWith } from "../src/link.ts"
 import crypto from "node:crypto"
 import fs from "node:fs"
-import http from "node:http"
-import { WebSocketServer } from "ws"
+import { serve, type Conn as Socket } from "./serve.ts"
 import type { Frame } from "../src/protocol.ts"
 
 const argv = process.argv.slice(2)
@@ -27,7 +26,7 @@ const BUFFER_TTL_MS = 24 * 60 * 60 * 1000
 const MAX_BUFFERED_PER_SENDER = 200
 const MAX_BODY = 1 << 20
 
-type Conn = {
+type State = {
   fp?: string
   label?: string
   nonce: string
@@ -35,6 +34,8 @@ type Conn = {
   eph?: ReturnType<typeof newEphemeral>
   ch?: Channel
 }
+
+const state = (ws: Socket) => ws.data as State
 
 const live = new Map<string, Set<any>>() // fingerprint -> sockets
 const buffered = new Map<
@@ -48,7 +49,7 @@ const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a)
 
 /** Send a protocol frame over a connection's encrypted channel. */
 function send(ws: any, frame: unknown) {
-  const d = ws.data as Conn
+  const d = state(ws)
   if (!d.ch) return
   try {
     ws.send(d.ch.seal(frame))
@@ -74,7 +75,7 @@ function rateOk(fp: string): boolean {
   return win.length <= 60
 }
 
-function drain(fp: string, ws: any) {
+function drain(fp: string, ws: Socket) {
   let sent = 0
   for (const [key, q] of [...buffered]) {
     if (!key.startsWith(`${fp}|`)) continue
@@ -181,7 +182,7 @@ function announceRoom(room: RelayRoom) {
   }
 }
 
-function handleRoom(ws: any, d: Conn, f: any): boolean {
+function handleRoom(ws: Socket, d: State, f: any): boolean {
   const me = d.fp!
   switch (f.t) {
     case "room_create": {
@@ -276,9 +277,9 @@ function handleRoom(ws: any, d: Conn, f: any): boolean {
   return false
 }
 
-function onMessage(ws: any, raw: string) {
+function onMessage(ws: Socket, raw: string) {
 
-  const d = ws.data as Conn
+  const d = state(ws)
 
   // The handshake frame is the only plaintext one. Everything after it is
   // sealed to the link keys.
@@ -344,9 +345,9 @@ send(ws, { t: "ack", id: f.id })
 
 }
 
-function onClose(ws: any) {
+function onClose(ws: Socket) {
 
-  const d = ws.data as Conn
+  const d = state(ws)
   if (!d.fp) return
   const set = live.get(d.fp)
   set?.delete(ws)
@@ -355,48 +356,42 @@ function onClose(ws: any) {
   announce(d.fp)
 }
 
-const httpServer = http.createServer((req, res) => {
-  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`)
-  const json = (body: unknown, status = 200) => {
-    const s = JSON.stringify(body)
-    res.writeHead(status, { "content-type": "application/json", "content-length": Buffer.byteLength(s) })
-    res.end(s)
-  }
+serve({
+  port: PORT,
+  host: HOST,
+  path: "/ws",
 
-  if (url.pathname === "/health") return json({ ok: true, online: live.size })
+  http: async ({ method, url, body, remoteAddress }) => {
+    const json = (o: unknown, status = 200) => ({ status, body: JSON.stringify(o) })
 
-  // Clients pin this. It also travels inside the pairing offer, sealed under
-  // the phrase, so an attacker who can rewrite traffic cannot substitute it.
-  if (url.pathname === "/pubkey") return json({ pub: relayIdentity.pub })
+    if (url.pathname === "/health") return json({ ok: true, online: live.size })
 
-  const m = url.pathname.match(/^\/pair\/([A-Z0-9]{4,16})$/)
-  if (m) {
-    const code = m[1]
-    const slot = (url.searchParams.get("side") === "reply" ? "reply" : "offer") as "offer" | "reply"
+    // Clients pin this. It also travels inside the pairing offer, sealed under
+    // the phrase, so an attacker who can rewrite traffic cannot substitute it.
+    if (url.pathname === "/pubkey") return json({ pub: relayIdentity.pub })
 
-    // A pairing phrase is only 32 bits, so the defence against guessing is that
-    // a guess has to come through here. Only one request can test a phrase:
-    // fetching the offer to try to decrypt it. Counting anything else would
-    // throttle the inviter's own polling for the reply.
-    if (req.method === "GET" && slot === "offer") {
-      const who = req.socket.remoteAddress ?? "unknown"
-      const now = Date.now()
-      const win = (pairRate.get(who) ?? []).filter((t) => now - t < 60_000)
-      win.push(now)
-      pairRate.set(who, win)
-      if (win.length > 30) return json({ error: "too many pairing attempts" }, 429)
-    }
+    const m = url.pathname.match(/^\/pair\/([A-Z0-9]{4,16})$/)
+    if (m) {
+      const code = m[1]
+      const slot = (url.searchParams.get("side") === "reply" ? "reply" : "offer") as "offer" | "reply"
 
-    if (req.method === "POST") {
-      let raw = ""
-      req.on("data", (c) => {
-        raw += c
-        if (raw.length > 16384) req.destroy()
-      })
-      req.on("end", () => {
+      // A pairing phrase is only 32 bits, so the defence against guessing is
+      // that a guess has to come through here. Only one request can test a
+      // phrase: fetching the offer to try to decrypt it. Counting anything else
+      // would throttle the inviter's own polling for the reply.
+      if (method === "GET" && slot === "offer") {
+        const who = remoteAddress ?? "unknown"
+        const now = Date.now()
+        const win = (pairRate.get(who) ?? []).filter((t) => now - t < 60_000)
+        win.push(now)
+        pairRate.set(who, win)
+        if (win.length > 30) return json({ error: "too many pairing attempts" }, 429)
+      }
+
+      if (method === "POST") {
         let blob: unknown
         try {
-          blob = (JSON.parse(raw) as { blob: string }).blob
+          blob = (JSON.parse(await body()) as { blob: string }).blob
         } catch {
           return json({ error: "bad body" }, 400)
         }
@@ -408,36 +403,30 @@ const httpServer = http.createServer((req, res) => {
         e[slot] = blob
         e.ts = Date.now()
         offers.set(code, e)
-        json({ ok: true })
-      })
-      return
+        return json({ ok: true })
+      }
+
+      if (method === "GET") {
+        const e = offers.get(code)
+        if (!e?.[slot]) return json({ error: "not ready" }, 404)
+        return json({ blob: e[slot] })
+      }
     }
 
-    if (req.method === "GET") {
-      const e = offers.get(code)
-      if (!e?.[slot]) return json({ error: "not ready" }, 404)
-      return json({ blob: e[slot] })
+    return { status: 200, body: "crosstalk relay", type: "text/plain" }
+  },
+
+  open(ws) {
+    const d: State = {
+      nonce: crypto.randomBytes(24).toString("base64"),
+      authed: false,
+      eph: newEphemeral(),
     }
-  }
+    ws.data = d
+    ws.send(JSON.stringify({ t: "hello", ephPub: d.eph!.pub, nonce: d.nonce }))
+  },
 
-  res.writeHead(200, { "content-type": "text/plain" })
-  res.end("crosstalk relay")
+  message: (ws, raw) => onMessage(ws, raw),
+  close: (ws) => onClose(ws),
+  onListen: () => log(`crosstalk relay on ws://${HOST}:${PORT}/ws`),
 })
-
-const wss = new WebSocketServer({ server: httpServer, path: "/ws" })
-
-wss.on("connection", (ws: any) => {
-  const d: Conn = {
-    nonce: crypto.randomBytes(24).toString("base64"),
-    authed: false,
-    eph: newEphemeral(),
-  }
-  ws.data = d
-  ws.send(JSON.stringify({ t: "hello", ephPub: d.eph!.pub, nonce: d.nonce }))
-
-  ws.on("message", (raw: any) => onMessage(ws, String(raw)))
-  ws.on("close", () => onClose(ws))
-  ws.on("error", () => {})
-})
-
-httpServer.listen(PORT, HOST, () => log(`crosstalk relay on ws://${HOST}:${PORT}/ws`))

@@ -78,10 +78,238 @@ class Channel {
 }
 
 // relay/relay.ts
-import crypto3 from "crypto";
+import crypto4 from "crypto";
 import fs from "fs";
-import http from "http";
-import { WebSocketServer } from "ws";
+
+// relay/serve.ts
+import http from "node:http";
+
+// relay/wsserver.ts
+import crypto3 from "node:crypto";
+var GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+var accept = (key) => crypto3.createHash("sha1").update(key + GUID).digest("base64");
+function frame(opcode, payload) {
+  const len = payload.length;
+  let header;
+  if (len < 126) {
+    header = Buffer.alloc(2);
+    header[1] = len;
+  } else if (len < 65536) {
+    header = Buffer.alloc(4);
+    header[1] = 126;
+    header.writeUInt16BE(len, 2);
+  } else {
+    header = Buffer.alloc(10);
+    header[1] = 127;
+    header.writeBigUInt64BE(BigInt(len), 2);
+  }
+  header[0] = 128 | opcode;
+  return Buffer.concat([header, payload]);
+}
+function upgrade(req, socket, head, maxPayload = 4 << 20) {
+  const key = req.headers["sec-websocket-key"];
+  if (typeof key !== "string" || (req.headers.upgrade ?? "").toLowerCase() !== "websocket") {
+    socket.end(`HTTP/1.1 400 Bad Request\r
+\r
+`);
+    return null;
+  }
+  socket.write(`HTTP/1.1 101 Switching Protocols\r
+` + `Upgrade: websocket\r
+` + `Connection: Upgrade\r
+` + `Sec-WebSocket-Accept: ${accept(key)}\r
+\r
+`);
+  socket.setNoDelay(true);
+  const ws = {
+    remoteAddress: socket.remoteAddress,
+    send(text) {
+      if (socket.writable)
+        socket.write(frame(1, Buffer.from(text, "utf8")));
+    },
+    close() {
+      if (socket.writable)
+        socket.write(frame(8, Buffer.alloc(0)));
+      socket.end();
+    }
+  };
+  let buf = head?.length ? Buffer.from(head) : Buffer.alloc(0);
+  let fragments = [];
+  let fragmentOpcode = 0;
+  const fail = () => {
+    try {
+      socket.destroy();
+    } catch {}
+  };
+  socket.on("data", (chunk) => {
+    buf = buf.length ? Buffer.concat([buf, chunk]) : chunk;
+    for (;; ) {
+      if (buf.length < 2)
+        return;
+      const fin = (buf[0] & 128) !== 0;
+      const opcode = buf[0] & 15;
+      const masked = (buf[1] & 128) !== 0;
+      let len = buf[1] & 127;
+      let offset = 2;
+      if (len === 126) {
+        if (buf.length < 4)
+          return;
+        len = buf.readUInt16BE(2);
+        offset = 4;
+      } else if (len === 127) {
+        if (buf.length < 10)
+          return;
+        const big = buf.readBigUInt64BE(2);
+        if (big > BigInt(maxPayload))
+          return fail();
+        len = Number(big);
+        offset = 10;
+      }
+      if (len > maxPayload)
+        return fail();
+      if (!masked)
+        return fail();
+      if (buf.length < offset + 4 + len)
+        return;
+      const mask = buf.subarray(offset, offset + 4);
+      const payload = Buffer.allocUnsafe(len);
+      for (let i = 0;i < len; i++)
+        payload[i] = buf[offset + 4 + i] ^ mask[i & 3];
+      buf = buf.subarray(offset + 4 + len);
+      if (opcode === 8) {
+        ws.close();
+        return;
+      }
+      if (opcode === 9) {
+        if (socket.writable)
+          socket.write(frame(10, payload));
+        continue;
+      }
+      if (opcode === 10)
+        continue;
+      if (opcode === 0) {
+        fragments.push(payload);
+      } else {
+        fragments = [payload];
+        fragmentOpcode = opcode;
+      }
+      if (!fin)
+        continue;
+      const whole = fragments.length === 1 ? fragments[0] : Buffer.concat(fragments);
+      fragments = [];
+      if (fragmentOpcode === 1)
+        ws.onMessage?.(whole.toString("utf8"));
+    }
+  });
+  socket.on("close", () => ws.onClose?.());
+  socket.on("error", () => ws.onClose?.());
+  return ws;
+}
+
+// relay/serve.ts
+var isBun = typeof globalThis.Bun !== "undefined";
+function serve(o) {
+  return isBun ? serveBun(o) : serveNode(o);
+}
+function serveBun(o) {
+  const Bun = globalThis.Bun;
+  Bun.serve({
+    port: o.port,
+    hostname: o.host,
+    async fetch(req, server) {
+      const url = new URL(req.url);
+      if (url.pathname === o.path) {
+        const ok = server.upgrade(req, { data: { conn: null } });
+        return ok ? undefined : new Response("upgrade failed", { status: 400 });
+      }
+      const reply = await o.http({
+        method: req.method,
+        url,
+        body: () => req.text(),
+        remoteAddress: server.requestIP(req)?.address
+      });
+      return new Response(reply.body, {
+        status: reply.status,
+        headers: { "content-type": reply.type ?? "application/json" }
+      });
+    },
+    websocket: {
+      open(ws) {
+        const conn = {
+          send: (t) => {
+            try {
+              ws.send(t);
+            } catch {}
+          },
+          close: () => ws.close(),
+          remoteAddress: ws.remoteAddress,
+          data: {}
+        };
+        ws.data.conn = conn;
+        o.open(conn);
+      },
+      message(ws, raw) {
+        if (ws.data.conn)
+          o.message(ws.data.conn, String(raw));
+      },
+      close(ws) {
+        if (ws.data.conn)
+          o.close(ws.data.conn);
+      }
+    }
+  });
+  o.onListen?.();
+}
+function serveNode(o) {
+  const server = http.createServer(async (req, res) => {
+    const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    const body = () => new Promise((resolve) => {
+      let raw = "";
+      req.on("data", (c) => {
+        raw += c;
+        if (raw.length > 1 << 20)
+          req.destroy();
+      });
+      req.on("end", () => resolve(raw));
+      req.on("error", () => resolve(""));
+    });
+    const reply = await o.http({
+      method: req.method ?? "GET",
+      url,
+      body,
+      remoteAddress: req.socket.remoteAddress
+    });
+    res.writeHead(reply.status, {
+      "content-type": reply.type ?? "application/json",
+      "content-length": Buffer.byteLength(reply.body)
+    });
+    res.end(reply.body);
+  });
+  server.on("upgrade", (req, socket, head) => {
+    const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    if (url.pathname !== o.path) {
+      socket.end(`HTTP/1.1 404 Not Found\r
+\r
+`);
+      return;
+    }
+    const ws = upgrade(req, socket, head);
+    if (!ws)
+      return;
+    const conn = {
+      send: ws.send,
+      close: ws.close,
+      remoteAddress: ws.remoteAddress,
+      data: {}
+    };
+    ws.onMessage = (t) => o.message(conn, t);
+    ws.onClose = () => o.close(conn);
+    o.open(conn);
+  });
+  server.listen(o.port, o.host, () => o.onListen?.());
+}
+
+// relay/relay.ts
 var argv = process.argv.slice(2);
 var arg = (f, d) => {
   const i = argv.indexOf(f);
@@ -92,17 +320,18 @@ var HOST = arg("--host", "127.0.0.1");
 var BUFFER_TTL_MS = 24 * 60 * 60 * 1000;
 var MAX_BUFFERED_PER_SENDER = 200;
 var MAX_BODY = 1 << 20;
+var state = (ws) => ws.data;
 var live = new Map;
 var buffered = new Map;
 var seen = new Map;
 var rate = new Map;
 var log = (...a) => console.log(new Date().toISOString(), ...a);
-function send(ws, frame) {
-  const d = ws.data;
+function send(ws, frame2) {
+  const d = state(ws);
   if (!d.ch)
     return;
   try {
-    ws.send(d.ch.seal(frame));
+    ws.send(d.ch.seal(frame2));
   } catch {}
 }
 function sweep() {
@@ -313,7 +542,7 @@ function handleRoom(ws, d, f) {
   return false;
 }
 function onMessage(ws, raw) {
-  const d = ws.data;
+  const d = state(ws);
   if (!d.authed) {
     let f2;
     try {
@@ -375,7 +604,7 @@ function onMessage(ws, raw) {
   }
 }
 function onClose(ws) {
-  const d = ws.data;
+  const d = state(ws);
   if (!d.fp)
     return;
   const set = live.get(d.fp);
@@ -385,41 +614,33 @@ function onClose(ws) {
   log(`closed ${d.label ?? "?"} ${d.fp}`);
   announce(d.fp);
 }
-var httpServer = http.createServer((req, res) => {
-  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-  const json = (body, status = 200) => {
-    const s = JSON.stringify(body);
-    res.writeHead(status, { "content-type": "application/json", "content-length": Buffer.byteLength(s) });
-    res.end(s);
-  };
-  if (url.pathname === "/health")
-    return json({ ok: true, online: live.size });
-  if (url.pathname === "/pubkey")
-    return json({ pub: relayIdentity.pub });
-  const m = url.pathname.match(/^\/pair\/([A-Z0-9]{4,16})$/);
-  if (m) {
-    const code = m[1];
-    const slot = url.searchParams.get("side") === "reply" ? "reply" : "offer";
-    if (req.method === "GET" && slot === "offer") {
-      const who = req.socket.remoteAddress ?? "unknown";
-      const now = Date.now();
-      const win = (pairRate.get(who) ?? []).filter((t) => now - t < 60000);
-      win.push(now);
-      pairRate.set(who, win);
-      if (win.length > 30)
-        return json({ error: "too many pairing attempts" }, 429);
-    }
-    if (req.method === "POST") {
-      let raw = "";
-      req.on("data", (c) => {
-        raw += c;
-        if (raw.length > 16384)
-          req.destroy();
-      });
-      req.on("end", () => {
+serve({
+  port: PORT,
+  host: HOST,
+  path: "/ws",
+  http: async ({ method, url, body, remoteAddress }) => {
+    const json = (o, status = 200) => ({ status, body: JSON.stringify(o) });
+    if (url.pathname === "/health")
+      return json({ ok: true, online: live.size });
+    if (url.pathname === "/pubkey")
+      return json({ pub: relayIdentity.pub });
+    const m = url.pathname.match(/^\/pair\/([A-Z0-9]{4,16})$/);
+    if (m) {
+      const code = m[1];
+      const slot = url.searchParams.get("side") === "reply" ? "reply" : "offer";
+      if (method === "GET" && slot === "offer") {
+        const who = remoteAddress ?? "unknown";
+        const now = Date.now();
+        const win = (pairRate.get(who) ?? []).filter((t) => now - t < 60000);
+        win.push(now);
+        pairRate.set(who, win);
+        if (win.length > 30)
+          return json({ error: "too many pairing attempts" }, 429);
+      }
+      if (method === "POST") {
         let blob;
         try {
-          blob = JSON.parse(raw).blob;
+          blob = JSON.parse(await body()).blob;
         } catch {
           return json({ error: "bad body" }, 400);
         }
@@ -431,31 +652,27 @@ var httpServer = http.createServer((req, res) => {
         e[slot] = blob;
         e.ts = Date.now();
         offers.set(code, e);
-        json({ ok: true });
-      });
-      return;
+        return json({ ok: true });
+      }
+      if (method === "GET") {
+        const e = offers.get(code);
+        if (!e?.[slot])
+          return json({ error: "not ready" }, 404);
+        return json({ blob: e[slot] });
+      }
     }
-    if (req.method === "GET") {
-      const e = offers.get(code);
-      if (!e?.[slot])
-        return json({ error: "not ready" }, 404);
-      return json({ blob: e[slot] });
-    }
-  }
-  res.writeHead(200, { "content-type": "text/plain" });
-  res.end("crosstalk relay");
+    return { status: 200, body: "crosstalk relay", type: "text/plain" };
+  },
+  open(ws) {
+    const d = {
+      nonce: crypto4.randomBytes(24).toString("base64"),
+      authed: false,
+      eph: newEphemeral()
+    };
+    ws.data = d;
+    ws.send(JSON.stringify({ t: "hello", ephPub: d.eph.pub, nonce: d.nonce }));
+  },
+  message: (ws, raw) => onMessage(ws, raw),
+  close: (ws) => onClose(ws),
+  onListen: () => log(`crosstalk relay on ws://${HOST}:${PORT}/ws`)
 });
-var wss = new WebSocketServer({ server: httpServer, path: "/ws" });
-wss.on("connection", (ws) => {
-  const d = {
-    nonce: crypto3.randomBytes(24).toString("base64"),
-    authed: false,
-    eph: newEphemeral()
-  };
-  ws.data = d;
-  ws.send(JSON.stringify({ t: "hello", ephPub: d.eph.pub, nonce: d.nonce }));
-  ws.on("message", (raw) => onMessage(ws, String(raw)));
-  ws.on("close", () => onClose(ws));
-  ws.on("error", () => {});
-});
-httpServer.listen(PORT, HOST, () => log(`crosstalk relay on ws://${HOST}:${PORT}/ws`));

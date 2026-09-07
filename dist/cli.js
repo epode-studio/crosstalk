@@ -809,19 +809,25 @@ var myOffer = async (id) => ({
 });
 function adoptPeer(peer) {
   const peers = loadPeers();
-  const existing = peers[peer.label];
-  if (existing && existing.fingerprint !== peer.fingerprint) {
-    die(`you are already paired with someone called "${peer.label}".
-
-  existing  ${existing.fingerprint}
-  new       ${peer.fingerprint}
-
-Refusing to replace them, a new peer must not inherit an existing peer's policy.
-Ask them to pair again under a different name (--label), or remove the old peer
-from ~/.claude/crosstalk/peers.json if you know it is stale.`);
+  const taken = (name) => peers[name] && peers[name].fingerprint !== peer.fingerprint;
+  let label = peer.label;
+  if (taken(label)) {
+    const byMachine = peer.machine ? `${peer.label}-${peer.machine}` : "";
+    if (byMachine && !taken(byMachine))
+      label = byMachine;
+    else {
+      let i = 2;
+      while (taken(`${peer.label}-${i}`))
+        i++;
+      label = `${peer.label}-${i}`;
+    }
+    console.log(`
+You already have a "${peer.label}" (${peers[peer.label].fingerprint}), so this one is "${label}".
+Rename it with /crosstalk:rename ${label} <name>.`);
   }
-  peers[peer.label] = peer;
+  peers[label] = { ...peer, label };
   savePeers(peers);
+  return label;
 }
 async function pair() {
   if (has("--relay"))

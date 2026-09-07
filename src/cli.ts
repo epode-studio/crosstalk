@@ -175,16 +175,33 @@ const myOffer = async (id: ReturnType<typeof identityOrCreate>) => ({
   xPub: id.x.pub,
 })
 
-function adoptPeer(peer: ReturnType<typeof asPeer>) {
+/**
+ * Never replaces an existing peer, because a new key must not inherit the
+ * settings you gave someone else. Two machines belonging to the same person
+ * both inherit that person's name, so a clash takes a distinguishing suffix
+ * rather than a refusal. Returns the name actually used.
+ */
+function adoptPeer(peer: ReturnType<typeof asPeer>): string {
   const peers = loadPeers()
-  const existing = peers[peer.label]
-  if (existing && existing.fingerprint !== peer.fingerprint) {
-    die(
-      `you are already paired with someone called "${peer.label}".\n\n  existing  ${existing.fingerprint}\n  new       ${peer.fingerprint}\n\nRefusing to replace them, a new peer must not inherit an existing peer's policy.\nAsk them to pair again under a different name (--label), or remove the old peer\nfrom ~/.claude/crosstalk/peers.json if you know it is stale.`,
+  const taken = (name: string) => peers[name] && peers[name].fingerprint !== peer.fingerprint
+  let label = peer.label
+
+  if (taken(label)) {
+    const byMachine = peer.machine ? `${peer.label}-${peer.machine}` : ""
+    if (byMachine && !taken(byMachine)) label = byMachine
+    else {
+      let i = 2
+      while (taken(`${peer.label}-${i}`)) i++
+      label = `${peer.label}-${i}`
+    }
+    console.log(
+      `\nYou already have a "${peer.label}" (${peers[peer.label].fingerprint}), so this one is "${label}".\nRename it with /crosstalk:rename ${label} <name>.`,
     )
   }
-  peers[peer.label] = peer
+
+  peers[label] = { ...peer, label }
   savePeers(peers)
+  return label
 }
 
 async function pair() {
