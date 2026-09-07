@@ -1,6 +1,6 @@
 {
   "name": "crosstalk",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Messaging between different people's Claude Code sessions, with presence, context slices and an interruption model built for pairs.",
   "author": {
     "name": "Paul Nylund"

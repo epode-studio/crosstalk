@@ -21,6 +21,7 @@ var P = {
   relay: path.join(ROOT, "relay.json"),
   queue: path.join(ROOT, "queue.json"),
   parked: path.join(ROOT, "parked.json"),
+  sessions: path.join(ROOT, "sessions.json"),
   usage: path.join(ROOT, "usage.json"),
   daemonSock: path.join(ROOT, "daemon.sock"),
   daemonLock: path.join(ROOT, "daemon.lock"),
@@ -99,6 +100,8 @@ function policyFor(label, policy = loadPolicy()) {
 var loadRelay = () => readJson(P.relay, { url: process.env.CROSSTALK_RELAY ?? "ws://127.0.0.1:8787" });
 var loadQueue = () => readJson(P.queue, {});
 var saveQueue = (q) => writeJson(P.queue, q);
+var loadRegistered = () => readJson(P.sessions, {});
+var saveRegistered = (s) => writeJson(P.sessions, s);
 var loadParked = () => readJson(P.parked, []);
 var saveParked = (p) => writeJson(P.parked, p);
 
@@ -370,6 +373,7 @@ var P2 = {
   relay: path4.join(ROOT2, "relay.json"),
   queue: path4.join(ROOT2, "queue.json"),
   parked: path4.join(ROOT2, "parked.json"),
+  sessions: path4.join(ROOT2, "sessions.json"),
   usage: path4.join(ROOT2, "usage.json"),
   daemonSock: path4.join(ROOT2, "daemon.sock"),
   daemonLock: path4.join(ROOT2, "daemon.lock"),
@@ -489,7 +493,8 @@ var log = (...a) => {
   process.stdout.write(`${new Date().toISOString()} ${a.map(String).join(" ")}
 `);
 };
-var sessions = new Map;
+var sessions = new Map(Object.entries(loadRegistered()).filter(([id]) => listLocalSessions().some((s) => s.sessionId === id)));
+var persistSessions = () => saveRegistered(Object.fromEntries(sessions));
 var localPresence = () => listLocalSessions().filter((s) => sessions.has(s.sessionId)).map((s) => ({ name: s.name, cwd: s.cwd, status: s.status, lastSeen: s.updatedAt }));
 function pickSession(preferName) {
   if (preferName) {
@@ -984,6 +989,7 @@ async function handle(req, sock) {
         persist();
         log(`carried ${adopted} unread message(s) over from an ended session`);
       }
+      persistSessions();
       log(`registered session ${req.name} (${req.cwd})`);
       publishPresence();
       if (orphaned.length) {

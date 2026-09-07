@@ -20,6 +20,8 @@ import {
   saveQueue,
   loadParked,
   saveParked,
+  loadRegistered,
+  saveRegistered,
   type Held,
 } from "./config.ts"
 import { pairKey, seal, open as unseal, fingerprint as fingerprintOf } from "./crypto.ts"
@@ -57,7 +59,14 @@ type Registered = {
   lastStatus: string
 }
 
-const sessions = new Map<string, Registered>()
+// Restored from disk, then filtered to whatever is actually still alive, so a
+// daemon restart does not orphan a session that is mid-conversation.
+const sessions = new Map<string, Registered>(
+  Object.entries(loadRegistered()).filter(([id]) =>
+    listLocalSessions().some((s) => s.sessionId === id),
+  ) as [string, Registered][],
+)
+const persistSessions = () => saveRegistered(Object.fromEntries(sessions))
 
 const localPresence = (): SessionPresence[] =>
   listLocalSessions()
@@ -640,6 +649,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         persist()
         log(`carried ${adopted} unread message(s) over from an ended session`)
       }
+      persistSessions()
       log(`registered session ${req.name} (${req.cwd})`)
       publishPresence()
       if (orphaned.length) {

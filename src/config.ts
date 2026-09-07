@@ -19,6 +19,7 @@ export const P = {
   relay: path.join(ROOT, "relay.json"),
   queue: path.join(ROOT, "queue.json"),
   parked: path.join(ROOT, "parked.json"),
+  sessions: path.join(ROOT, "sessions.json"),
   usage: path.join(ROOT, "usage.json"),
   daemonSock: path.join(ROOT, "daemon.sock"),
   daemonLock: path.join(ROOT, "daemon.lock"),
@@ -221,5 +222,14 @@ export const saveQueue = (q: Record<string, Held[]>) => writeJson(P.queue, q)
  * daemon authenticates, which is before the SessionStart hook has run, and a
  * crash in that window used to lose them.
  */
+/**
+ * Sessions that registered with the daemon. Kept on disk because the daemon
+ * restarts more often than a Claude Code session does, and SessionStart only
+ * fires once, so an in-memory list left a running session unreachable after
+ * every daemon restart.
+ */
+export const loadRegistered = (): Record<string, any> => readJson(P.sessions, {})
+export const saveRegistered = (s: Record<string, any>) => writeJson(P.sessions, s)
+
 export const loadParked = (): { label: string; env: unknown }[] => readJson(P.parked, [])
 export const saveParked = (p: { label: string; env: unknown }[]) => writeJson(P.parked, p)

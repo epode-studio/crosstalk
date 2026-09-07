@@ -15,6 +15,9 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
 import net from "node:net"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 import { P, loadIdentity } from "./config.ts"
 import { ensureDaemon, request } from "./client.ts"
 import { diffSlice, fileSlice, turnsSlice, textSlice, SliceRefused } from "./slices.ts"
@@ -357,10 +360,38 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 // has not loaded this server as a channel, notifications are dropped silently
 // and the daemon's socket injection is what the user sees instead.
 
+/**
+ * Everything the daemon needs to reach this session, read from Claude Code's own
+ * registry rather than trusted from the environment.
+ */
+function selfRegistration() {
+  try {
+    const dir = path.join(os.homedir(), ".claude", "sessions")
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith(".json")) continue
+      const e = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"))
+      if (e.sessionId !== SESSION_ID) continue
+      return {
+        op: "register",
+        sessionId: e.sessionId,
+        pid: e.pid,
+        name: e.name,
+        cwd: e.cwd,
+        socket: e.messagingSocketPath,
+      }
+    }
+  } catch {}
+  return null
+}
+
 function subscribe() {
-  const sock = net.createConnection(P.daemonSock, () =>
-    sock.write(JSON.stringify({ op: "subscribe", sessionId: SESSION_ID }) + "\n"),
-  )
+  const sock = net.createConnection(P.daemonSock, () => {
+    // Re-register on every connect. The daemon restarts more often than a
+    // session does, and SessionStart only fires once.
+    const reg = selfRegistration()
+    if (reg) sock.write(JSON.stringify(reg) + "\n")
+    sock.write(JSON.stringify({ op: "subscribe", sessionId: SESSION_ID }) + "\n")
+  })
   let rest = ""
   sock.on("data", async (b) => {
     rest += b.toString("utf8")

@@ -16139,6 +16139,9 @@ var ServerResultSchema2 = union([
 
 // src/server.ts
 import net2 from "net";
+import fs4 from "fs";
+import os3 from "os";
+import path5 from "path";
 
 // src/config.ts
 import fs from "node:fs";
@@ -16154,6 +16157,7 @@ var P = {
   relay: path.join(ROOT, "relay.json"),
   queue: path.join(ROOT, "queue.json"),
   parked: path.join(ROOT, "parked.json"),
+  sessions: path.join(ROOT, "sessions.json"),
   usage: path.join(ROOT, "usage.json"),
   daemonSock: path.join(ROOT, "daemon.sock"),
   daemonLock: path.join(ROOT, "daemon.lock"),
@@ -16225,6 +16229,7 @@ var P2 = {
   relay: path2.join(ROOT2, "relay.json"),
   queue: path2.join(ROOT2, "queue.json"),
   parked: path2.join(ROOT2, "parked.json"),
+  sessions: path2.join(ROOT2, "sessions.json"),
   usage: path2.join(ROOT2, "usage.json"),
   daemonSock: path2.join(ROOT2, "daemon.sock"),
   daemonLock: path2.join(ROOT2, "daemon.lock"),
@@ -16684,9 +16689,36 @@ mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
     return err(e.message);
   }
 });
+function selfRegistration() {
+  try {
+    const dir = path5.join(os3.homedir(), ".claude", "sessions");
+    for (const f of fs4.readdirSync(dir)) {
+      if (!f.endsWith(".json"))
+        continue;
+      const e = JSON.parse(fs4.readFileSync(path5.join(dir, f), "utf8"));
+      if (e.sessionId !== SESSION_ID)
+        continue;
+      return {
+        op: "register",
+        sessionId: e.sessionId,
+        pid: e.pid,
+        name: e.name,
+        cwd: e.cwd,
+        socket: e.messagingSocketPath
+      };
+    }
+  } catch {}
+  return null;
+}
 function subscribe() {
-  const sock = net2.createConnection(P.daemonSock, () => sock.write(JSON.stringify({ op: "subscribe", sessionId: SESSION_ID }) + `
-`));
+  const sock = net2.createConnection(P.daemonSock, () => {
+    const reg = selfRegistration();
+    if (reg)
+      sock.write(JSON.stringify(reg) + `
+`);
+    sock.write(JSON.stringify({ op: "subscribe", sessionId: SESSION_ID }) + `
+`);
+  });
   let rest = "";
   sock.on("data", async (b) => {
     rest += b.toString("utf8");
