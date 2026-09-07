@@ -137,7 +137,13 @@ export const codeForPhrase = (phrase: string) =>
 export const pairingKey = (phrase: string): Buffer =>
   crypto.pbkdf2Sync(normalisePhrase(phrase), "crosstalk/pair/v2", 200_000, 32, "sha256")
 
-export type Offer = { label: string; edPub: string; xPub: string; relayPub?: string }
+export type Offer = {
+  label: string
+  edPub: string
+  xPub: string
+  machine?: string
+  relayPub?: string
+}
 
 export const sealOffer = (phrase: string, offer: Offer) =>
   seal(pairingKey(phrase), JSON.stringify(offer))
@@ -147,6 +153,7 @@ export const openOffer = (phrase: string, blob: string): Offer =>
 
 export const asPeer = (o: Offer): Peer => ({
   label: o.label,
+  machine: o.machine,
   edPub: o.edPub,
   xPub: o.xPub,
   fingerprint: fingerprint(o.edPub),

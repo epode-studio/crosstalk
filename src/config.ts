@@ -27,6 +27,8 @@ export const P = {
 
 export type Identity = {
   label: string
+  /** Which machine this identity lives on, for telling your own apart. */
+  machine?: string
   ed: { pub: string; priv: string }
   x: { pub: string; priv: string }
   createdAt: number
@@ -38,6 +40,8 @@ export type Peer = {
   xPub: string
   fingerprint: string
   pairedAt: number
+  /** The machine they paired from, shown when two peers share a name. */
+  machine?: string
 }
 
 export type Delivery = "notify" | "deliver" | "quiet"

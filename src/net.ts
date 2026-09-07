@@ -68,3 +68,41 @@ export function allAddresses(): Address[] {
   }
   return out
 }
+
+/** This machine's name, the one its owner would recognise. */
+export function machineName(): string {
+  const clean = (s: string) =>
+    s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24)
+  if (process.platform === "darwin") {
+    try {
+      const name = execFileSync("scutil", ["--get", "ComputerName"], {
+        encoding: "utf8",
+        timeout: 2000,
+      })
+      // "Paul's MacBook Air" is mostly the owner's name repeated back, so keep
+      // the part that distinguishes one machine from another.
+      const c = clean(name).replace(/^[a-z]+-?s-/, "")
+      if (c) return c
+    } catch {}
+  }
+  return clean(os.hostname().split(".")[0]) || "machine"
+}
+
+/** The name this person already goes by on this machine. */
+export function userName(): string {
+  const first = (s: string) => s.trim().split(/\s+/)[0]?.toLowerCase().replace(/[^a-z0-9-]/g, "")
+  for (const get of [
+    () => execFileSync("git", ["config", "user.name"], { encoding: "utf8", timeout: 2000 }),
+    () =>
+      process.platform === "darwin"
+        ? execFileSync("id", ["-F"], { encoding: "utf8", timeout: 2000 })
+        : "",
+    () => process.env.USER ?? "",
+  ]) {
+    try {
+      const v = first(get())
+      if (v && v.length > 1) return v
+    } catch {}
+  }
+  return "me"
+}

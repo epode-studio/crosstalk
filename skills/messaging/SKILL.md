@@ -1,5 +1,5 @@
 ---
-name: crosstalk
+name: messaging
 description: Use when the user wants to tell, ask, or hand something to another person whose Claude Code sessions are paired with theirs, "tell Marie", "ask Marie's session", "hand this to Marie", "who's online", "what is Marie working on", or when a crosstalk notice says messages are waiting.
 ---
 

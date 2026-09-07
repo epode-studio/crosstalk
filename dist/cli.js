@@ -421,6 +421,7 @@ var sealOffer = (phrase, offer) => seal(pairingKey(phrase), JSON.stringify(offer
 var openOffer = (phrase, blob) => JSON.parse(open(pairingKey(phrase), blob));
 var asPeer = (o) => ({
   label: o.label,
+  machine: o.machine,
   edPub: o.edPub,
   xPub: o.xPub,
   fingerprint: fingerprint(o.edPub),
@@ -508,6 +509,36 @@ function allAddresses() {
     }
   }
   return out;
+}
+function machineName() {
+  const clean = (s) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24);
+  if (process.platform === "darwin") {
+    try {
+      const name = execFileSync2("scutil", ["--get", "ComputerName"], {
+        encoding: "utf8",
+        timeout: 2000
+      });
+      const c = clean(name).replace(/^[a-z]+-?s-/, "");
+      if (c)
+        return c;
+    } catch {}
+  }
+  return clean(os2.hostname().split(".")[0]) || "machine";
+}
+function userName() {
+  const first = (s) => s.trim().split(/\s+/)[0]?.toLowerCase().replace(/[^a-z0-9-]/g, "");
+  for (const get of [
+    () => execFileSync2("git", ["config", "user.name"], { encoding: "utf8", timeout: 2000 }),
+    () => process.platform === "darwin" ? execFileSync2("id", ["-F"], { encoding: "utf8", timeout: 2000 }) : "",
+    () => process.env.USER ?? ""
+  ]) {
+    try {
+      const v = first(get());
+      if (v && v.length > 1)
+        return v;
+    } catch {}
+  }
+  return "me";
 }
 
 // src/client.ts
@@ -685,16 +716,11 @@ function identityOrCreate() {
   const existing = loadIdentity();
   if (existing)
     return existing;
-  const label = flag("--label") ?? (() => {
-    try {
-      return execFileSync3("git", ["config", "user.name"], { encoding: "utf8" }).trim().split(" ")[0].toLowerCase();
-    } catch {
-      return process.env.USER ?? "me";
-    }
-  })();
-  const id = newIdentity(label);
+  const label = flag("--label") ?? userName();
+  const id = { ...newIdentity(label), machine: machineName() };
   saveIdentity(id);
-  console.log(`created identity "${label}"   ${fingerprint(id.ed.pub)}`);
+  console.log(`you are "${label}" on "${id.machine}"   ${fingerprint(id.ed.pub)}`);
+  console.log(`change it any time with /crosstalk:rename me <name>`);
   return id;
 }
 var relayPid = () => {
@@ -777,6 +803,7 @@ async function relay() {
 }
 var myOffer = async (id) => ({
   label: id.label,
+  machine: id.machine ?? machineName(),
   edPub: id.ed.pub,
   xPub: id.x.pub
 });
@@ -822,7 +849,8 @@ If they hosted it themselves, their machine has to be awake and reachable from h
     } catch {
       return die(`could not open that invite. The words are probably slightly off.`);
     }
-    adoptPeer(peer);
+    const localName = adoptPeer(peer);
+    peer.label = localName;
     const advertised = peer.relayPub ?? offerRelayPub;
     if (advertised)
       saveRelay(loadRelay().url, advertised);
@@ -894,7 +922,7 @@ Waiting\u2026`);
       }
       if (peer.fingerprint === fingerprint(id.ed.pub))
         die("that pairing reply carries your own key");
-      adoptPeer(peer);
+      peer.label = adoptPeer(peer);
       await ensureDaemon(ROOT_DIR);
       console.log(`
 Paired with "${peer.label}".

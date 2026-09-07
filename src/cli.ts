@@ -25,7 +25,7 @@ import {
 } from "./config.ts"
 import { newIdentity, newPhrase, codeForPhrase, sealOffer, openOffer, asPeer, fingerprint } from "./crypto.ts"
 import { formatInvite, parseInvite } from "./invite.ts"
-import { bestAddress, allAddresses } from "./net.ts"
+import { bestAddress, allAddresses, machineName, userName } from "./net.ts"
 import { ensureDaemon, daemonRunning, request } from "./client.ts"
 import { summarise } from "./usage.ts"
 import { rootFrom, shim } from "./paths.ts"
@@ -77,18 +77,11 @@ const ago = (ts: number) => {
 function identityOrCreate() {
   const existing = loadIdentity()
   if (existing) return existing
-  const label =
-    flag("--label") ??
-    (() => {
-      try {
-        return execFileSync("git", ["config", "user.name"], { encoding: "utf8" }).trim().split(" ")[0].toLowerCase()
-      } catch {
-        return process.env.USER ?? "me"
-      }
-    })()
-  const id = newIdentity(label)
+  const label = flag("--label") ?? userName()
+  const id = { ...newIdentity(label), machine: machineName() }
   saveIdentity(id)
-  console.log(`created identity "${label}"   ${fingerprint(id.ed.pub)}`)
+  console.log(`you are "${label}" on "${id.machine}"   ${fingerprint(id.ed.pub)}`)
+  console.log(`change it any time with /crosstalk:rename me <name>`)
   return id
 }
 
@@ -177,6 +170,7 @@ async function relay() {
 
 const myOffer = async (id: ReturnType<typeof identityOrCreate>) => ({
   label: id.label,
+  machine: id.machine ?? machineName(),
   edPub: id.ed.pub,
   xPub: id.x.pub,
 })
@@ -226,7 +220,8 @@ async function pair() {
       return die(`could not open that invite. The words are probably slightly off.`)
     }
 
-    adoptPeer(peer)
+    const localName = adoptPeer(peer)
+    peer.label = localName
     // Pin the relay identity that came inside the sealed offer, so nothing on
     // the network can pass itself off as this relay later.
     const advertised = (peer as any).relayPub ?? offerRelayPub
@@ -302,7 +297,7 @@ Waiting…`)
         continue
       }
       if (peer.fingerprint === fingerprint(id.ed.pub)) die("that pairing reply carries your own key")
-      adoptPeer(peer)
+      peer.label = adoptPeer(peer)
       await ensureDaemon(ROOT_DIR)
       console.log(`
 Paired with "${peer.label}".
