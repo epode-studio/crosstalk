@@ -1,35 +1,53 @@
 #!/bin/sh
-# Runtime shim. crosstalk is TypeScript; this picks whatever JavaScript runtime
+# Runtime shim. crosstalk is TypeScript; this picks whichever JavaScript runtime
 # the machine has and runs the prebuilt bundle, so installing the plugin never
 # requires a toolchain.
 #
-#   bin/crosstalk cli peers
-#   bin/crosstalk daemon
-#   bin/crosstalk server
-#   bin/crosstalk hook-session-start
-#   bin/crosstalk relay
+#   crosstalk cli peers
+#   crosstalk daemon
+#   crosstalk server
+#   crosstalk hook-session-start
+#   crosstalk relay
+#
+# Set CROSSTALK_RUNTIME to force one.
 
 set -eu
+
 here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-what=${1:?usage: crosstalk <cli|daemon|server|hook-session-start|relay> [args...]}
+
+if [ $# -eq 0 ]; then
+  echo "usage: crosstalk <cli|daemon|server|hook-session-start|relay> [args...]" >&2
+  exit 64
+fi
+what=$1
 shift
 
-for candidate in "$CROSSTALK_RUNTIME" bun node; do
-  [ -n "${candidate:-}" ] || continue
-  if command -v "$candidate" >/dev/null 2>&1; then
-    runtime=$candidate
-    break
+runtime=""
+forced=${CROSSTALK_RUNTIME-}
+if [ -n "$forced" ]; then
+  if command -v "$forced" >/dev/null 2>&1; then
+    runtime=$forced
+  else
+    echo "crosstalk: CROSSTALK_RUNTIME is set to '$forced', which is not on PATH." >&2
+    exit 127
   fi
-done 2>/dev/null || true
+else
+  for candidate in bun node; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      runtime=$candidate
+      break
+    fi
+  done
+fi
 
-if [ -z "${runtime:-}" ]; then
-  echo "crosstalk needs bun or node on PATH." >&2
-  echo "Install one: https://bun.sh  or  https://nodejs.org" >&2
+if [ -z "$runtime" ]; then
+  echo "crosstalk needs bun or node on PATH, and found neither." >&2
+  echo "PATH is: $PATH" >&2
+  echo "Install one: https://bun.sh or https://nodejs.org" >&2
   exit 127
 fi
 
-# Prefer the built bundle; fall back to source when running from a checkout
-# with bun available.
+# Prefer the built bundle. Fall back to source when running from a checkout.
 if [ -f "$here/dist/$what.js" ]; then
   exec "$runtime" "$here/dist/$what.js" "$@"
 fi
@@ -39,9 +57,15 @@ case "$what" in
   *)     src="$here/src/$what.ts" ;;
 esac
 
+if [ ! -f "$src" ]; then
+  echo "crosstalk: no dist/$what.js and no $src" >&2
+  exit 66
+fi
+
 if [ "$runtime" != "bun" ]; then
-  echo "crosstalk: dist/ is missing and $runtime cannot run TypeScript." >&2
+  echo "crosstalk: dist/$what.js is missing and $runtime cannot run TypeScript." >&2
   echo "Run: bun scripts/build.ts" >&2
   exit 1
 fi
+
 exec "$runtime" "$src" "$@"
