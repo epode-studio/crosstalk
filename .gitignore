@@ -1,3 +1,4 @@
 spike/capture/
 node_modules/
 .DS_Store
+crosstalk-rooms.json
