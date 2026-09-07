@@ -16528,7 +16528,7 @@ mcp.setRequestHandler(ListToolsRequestSchema2, async () => ({
     },
     {
       name: "crosstalk_ask",
-      description: "Ask a peer's session a question and wait for the answer. Blocks up to timeout_seconds. Use for things only their side can answer. Never call this in a loop.",
+      description: "Ask a peer's session a question and wait for the answer. Blocks up to timeout_seconds. Use for things only their side can answer. Never call this in a loop. Someone in a shared room you have not paired with cannot be asked.",
       inputSchema: {
         type: "object",
         properties: {

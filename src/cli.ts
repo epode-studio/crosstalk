@@ -366,6 +366,9 @@ async function policy() {
   notify    a notice appears; their words stay behind crosstalk_read  (default)
   deliver   their text lands in your session mid-turn
   quiet     held silently, surfaced when the session next goes idle
+
+  Questions are allowed from people you paired with. Turn them off for someone
+  with /crosstalk:policy <name> --no-allow-ask.
 `)
     return
   }

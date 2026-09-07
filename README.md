@@ -130,13 +130,15 @@ unread, and she has two sessions, one busy in `~/palpable` and one idle.
 Your session sends the question and waits. Hers answers. Yours continues with the
 answer in hand. Nobody typed a summary of anything.
 
-This one is off by default for each person, because an inbound question starts a
-turn on their machine and spends their tokens. Turn it on for someone you are
-actively working with:
+This works with anyone you have paired with. It does cost them a turn, so if
+someone is asking too often:
 
 ```
-/crosstalk:policy marie --allow-ask
+/crosstalk:policy marie --no-allow-ask
 ```
+
+Someone in a shared room you have never paired with cannot ask you anything at
+all, whatever their settings say.
 
 ## Handing work over
 

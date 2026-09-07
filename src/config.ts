@@ -49,7 +49,7 @@ export type Delivery = "notify" | "deliver" | "quiet"
 export type PeerPolicy = {
   delivery: Delivery
   mutedUntil?: number
-  /** Allow this peer's Claude to use crosstalk_ask against our sessions. */
+  /** Whether this peer's Claude may use crosstalk_ask here. On for paired peers. */
   allowAsk: boolean
 }
 
@@ -61,7 +61,12 @@ export type Policy = {
 export const DEFAULT_POLICY: Policy = {
   // notify is the safe default: a new peer's text never lands in the session
   // under the harness's "teammate" framing until you opt them into deliver.
-  default: { delivery: "notify", allowAsk: false },
+  //
+  // Questions are on, because you paired with this person on purpose and a
+  // question is less intrusive than a delivered message. It costs a turn here,
+  // which the notice budget already bounds. Someone in a shared room you have
+  // never paired with is a different case and still cannot ask.
+  default: { delivery: "notify", allowAsk: true },
   peers: {},
 }
 

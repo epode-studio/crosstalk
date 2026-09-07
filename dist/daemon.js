@@ -27,7 +27,7 @@ var P = {
   log: path.join(ROOT, "daemon.log")
 };
 var DEFAULT_POLICY = {
-  default: { delivery: "notify", allowAsk: false },
+  default: { delivery: "notify", allowAsk: true },
   peers: {}
 };
 function ensureRoot() {
@@ -486,12 +486,8 @@ if (!identity) {
   process.exit(1);
 }
 var log = (...a) => {
-  const line = `${new Date().toISOString()} ${a.map(String).join(" ")}
-`;
-  process.stdout.write(line);
-  try {
-    fs6.appendFileSync(P.log, line);
-  } catch {}
+  process.stdout.write(`${new Date().toISOString()} ${a.map(String).join(" ")}
+`);
 };
 var sessions = new Map;
 var localPresence = () => listLocalSessions().filter((s) => sessions.has(s.sessionId)).map((s) => ({ name: s.name, cwd: s.cwd, status: s.status, lastSeen: s.updatedAt }));
@@ -770,6 +766,19 @@ function onEnvelope(peerLabel, env, ctx) {
   }
   if (env.kind === "ask" && !pol.allowAsk) {
     log(`refused ask from ${peerLabel}: allowAsk is off`);
+    if (env.correlation)
+      sendEnvelope(peerLabel, {
+        v: 1,
+        id: crypto5.randomUUID(),
+        ts: Date.now(),
+        from: identity.label,
+        fromSession: "-",
+        to: peerLabel,
+        kind: "answer",
+        intent: "fyi",
+        correlation: env.correlation,
+        text: ctx?.strangerInRoom ? "Refused: we share a room but have never paired, and questions from someone unpaired are not accepted. Send a message instead." : "Refused: questions are switched off for you here. An inbound question starts a turn and spends tokens on this machine, so it stays off until they run /crosstalk:policy <name> --allow-ask. Send a message instead."
+      });
     return;
   }
   const target = pickSession(env.toSession);
@@ -1293,6 +1302,14 @@ var control = net2.createServer((sock) => {
   });
   sock.on("error", () => {});
 });
+try {
+  const running = Number(fs6.readFileSync(P.daemonLock, "utf8"));
+  if (running && running !== process.pid && fs6.existsSync(P.daemonSock)) {
+    process.kill(running, 0);
+    console.error(`crosstalk: a daemon is already running as pid ${running}`);
+    process.exit(0);
+  }
+} catch {}
 control.listen(P.daemonSock, () => {
   fs6.chmodSync(P.daemonSock, 384);
   fs6.writeFileSync(P.daemonLock, String(process.pid), { mode: 384 });

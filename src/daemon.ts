@@ -39,11 +39,9 @@ if (!identity) {
 }
 
 const log = (...a: unknown[]) => {
-  const line = `${new Date().toISOString()} ${a.map(String).join(" ")}\n`
-  process.stdout.write(line)
-  try {
-    fs.appendFileSync(P.log, line)
-  } catch {}
+  // Whatever starts the daemon points stdout at daemon.log, so writing there
+  // as well duplicated every line.
+  process.stdout.write(`${new Date().toISOString()} ${a.map(String).join(" ")}\n`)
 }
 
 // --- local session registrations ---------------------------------------------
@@ -397,6 +395,21 @@ function onEnvelope(
   }
   if (env.kind === "ask" && !pol.allowAsk) {
     log(`refused ask from ${peerLabel}: allowAsk is off`)
+    if (env.correlation)
+      sendEnvelope(peerLabel, {
+        v: 1,
+        id: crypto.randomUUID(),
+        ts: Date.now(),
+        from: identity!.label,
+        fromSession: "-",
+        to: peerLabel,
+        kind: "answer",
+        intent: "fyi",
+        correlation: env.correlation,
+        text: ctx?.strangerInRoom
+          ? "Refused: we share a room but have never paired, and questions from someone unpaired are not accepted. Send a message instead."
+          : "Refused: questions are switched off for you here. An inbound question starts a turn and spends tokens on this machine, so it stays off until they run /crosstalk:policy <name> --allow-ask. Send a message instead.",
+      })
     return
   }
 
@@ -953,6 +966,16 @@ const control = net.createServer((sock) => {
   })
   sock.on("error", () => {})
 })
+
+// Stand down if one is already up and answering, rather than double-delivering.
+try {
+  const running = Number(fs.readFileSync(P.daemonLock, "utf8"))
+  if (running && running !== process.pid && fs.existsSync(P.daemonSock)) {
+    process.kill(running, 0)
+    console.error(`crosstalk: a daemon is already running as pid ${running}`)
+    process.exit(0)
+  }
+} catch {}
 
 control.listen(P.daemonSock, () => {
   fs.chmodSync(P.daemonSock, 0o600)
