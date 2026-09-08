@@ -1,13 +1,20 @@
 #!/usr/bin/env bun
 // crosstalk CLI. The slash commands in commands/ call into this.
 //
-//   crosstalk pair [--host]          start pairing, print an invite
-//   crosstalk pair ct1_…             accept an invite
-//   crosstalk peers | status | cost | doctor
-//   crosstalk policy [peer] [notify|deliver|quiet] [--allow-ask|--no-allow-ask]
+//   crosstalk pair [--host]              start pairing, print the words
+//   crosstalk pair 3644-cherry-horn-…    accept them
+//   crosstalk link                       another machine, same identity
+//   crosstalk install <client|path>      another agent, or your PATH
+//   crosstalk trust <who> <level>        how much they may interrupt
+//   crosstalk facts | tasks | room       what the room keeps
+//   crosstalk peers | status | cost | attention | doctor
+//   crosstalk post "…" [--intent] [--source]
 //   crosstalk mute [peer] [minutes]
 //   crosstalk relay start|stop|status
 //   crosstalk daemon start|stop|restart
+//
+// `policy` is the three-setting model `trust` replaced. It still reads and
+// writes, so an old setup keeps working, and it is deliberately undocumented.
 
 import {
   loadIdentity,
@@ -1478,6 +1485,42 @@ function registerMcp(cli: string, args: string[], bin: string) {
   }
 }
 
+
+/**
+ * Put `crosstalk` on PATH.
+ *
+ * Installed as a plugin, the binary lives somewhere under the plugin cache that
+ * nobody could be expected to type. That is fine inside Claude Code, where the
+ * slash commands know where it is, and useless to a build script, which is
+ * exactly where `crosstalk post` is meant to be called from.
+ */
+async function installPath() {
+  const bin = shim(rootFrom(import.meta.url))
+  const dir = path.join(os.homedir(), ".local", "bin")
+  const link = path.join(dir, "crosstalk")
+  fs.mkdirSync(dir, { recursive: true })
+
+  let existing = ""
+  try {
+    existing = fs.readlinkSync(link)
+  } catch {
+    if (fs.existsSync(link)) die(`${link} already exists and is not a link. Move it, then run this again.`)
+  }
+  if (existing && existing !== bin) console.log(`replacing a link to ${existing}`)
+  try {
+    fs.unlinkSync(link)
+  } catch {}
+  fs.symlinkSync(bin, link)
+  console.log(`linked   ${link} -> ${bin}`)
+
+  const onPath = (process.env.PATH ?? "").split(":").includes(dir)
+  console.log(
+    onPath
+      ? `\n\`crosstalk\` now works anywhere, including from a build script.`
+      : `\n${dir} is not on your PATH. Add this to your shell profile:\n\n  export PATH="$HOME/.local/bin:$PATH"`,
+  )
+}
+
 /** Everything a client needs, per client. */
 async function install() {
   const who = (positional[0] ?? "").toLowerCase()
@@ -1488,7 +1531,11 @@ async function install() {
   if (who === "goose") return installGoose()
   if (who === "cursor" || who === "cursor-agent") return installCursor()
   if (who === "codex") return installCodex()
-  die(`usage: crosstalk install <agy|qwen|kimi|hermes|goose|cursor|codex>
+  if (who === "path") return installPath()
+  die(`usage: crosstalk install <codex|cursor|agy|qwen|kimi|hermes|goose|path>
+
+  path   put \`crosstalk\` on your PATH, for build scripts and anything
+         that is not a coding agent
 
 Claude Code and Codex install as a plugin instead:
   /plugin marketplace add epode-studio/crosstalk

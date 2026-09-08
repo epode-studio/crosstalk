@@ -309,6 +309,25 @@ case "$OUT" in
   *) ok "hermes gets context and nothing else" ;;
 esac
 
+# --- reaching the CLI ----------------------------------------------------------
+#
+# `crosstalk` on PATH is a symlink into the plugin, so the shim has to resolve
+# itself before it can find dist/. Without that it looks for the bundle next to
+# the link and reports that the plugin is missing.
+echo
+echo "reaching the cli"
+LINKDIR=$(mktemp -d)
+ln -s "$ROOT/bin/crosstalk" "$LINKDIR/crosstalk"
+OUT=$("$LINKDIR/crosstalk" status 2>&1)
+has "$OUT" "crosstalk" "the shim works through a symlink"
+case "$OUT" in
+  *"no dist/"*) bad "it resolves the plugin root, not the link's directory" ;;
+  *) ok "it resolves the plugin root, not the link's directory" ;;
+esac
+OUT=$("$ROOT/bin/crosstalk" install 2>&1)
+has "$OUT" "path" "install offers the PATH step"
+rm -rf "$LINKDIR"
+
 # --- the label a person actually sees ------------------------------------------
 #
 # Claude Code renders from-name to the user and shows the same string to the

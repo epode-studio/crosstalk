@@ -4238,6 +4238,32 @@ function registerMcp(cli, args, bin) {
     console.log(`         run: ${cli} ${args.join(" ")}`);
   }
 }
+async function installPath() {
+  const bin = shim2(rootFrom2(import.meta.url));
+  const dir = path8.join(os5.homedir(), ".local", "bin");
+  const link2 = path8.join(dir, "crosstalk");
+  fs6.mkdirSync(dir, { recursive: true });
+  let existing = "";
+  try {
+    existing = fs6.readlinkSync(link2);
+  } catch {
+    if (fs6.existsSync(link2))
+      die(`${link2} already exists and is not a link. Move it, then run this again.`);
+  }
+  if (existing && existing !== bin)
+    console.log(`replacing a link to ${existing}`);
+  try {
+    fs6.unlinkSync(link2);
+  } catch {}
+  fs6.symlinkSync(bin, link2);
+  console.log(`linked   ${link2} -> ${bin}`);
+  const onPath2 = (process.env.PATH ?? "").split(":").includes(dir);
+  console.log(onPath2 ? `
+\`crosstalk\` now works anywhere, including from a build script.` : `
+${dir} is not on your PATH. Add this to your shell profile:
+
+  export PATH="$HOME/.local/bin:$PATH"`);
+}
 async function install() {
   const who = (positional[0] ?? "").toLowerCase();
   if (who === "agy" || who === "antigravity")
@@ -4254,7 +4280,12 @@ async function install() {
     return installCursor();
   if (who === "codex")
     return installCodex();
-  die(`usage: crosstalk install <agy|qwen|kimi|hermes|goose|cursor|codex>
+  if (who === "path")
+    return installPath();
+  die(`usage: crosstalk install <codex|cursor|agy|qwen|kimi|hermes|goose|path>
+
+  path   put \`crosstalk\` on your PATH, for build scripts and anything
+         that is not a coding agent
 
 Claude Code and Codex install as a plugin instead:
   /plugin marketplace add epode-studio/crosstalk

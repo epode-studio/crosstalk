@@ -14,7 +14,17 @@
 
 set -eu
 
-here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+# Resolve symlinks before working out where the plugin lives: `crosstalk` on
+# PATH is a link into this directory, and $0 is then the link, not the target.
+self=$0
+while [ -L "$self" ]; do
+  target=$(readlink "$self")
+  case "$target" in
+    /*) self=$target ;;
+    *)  self=$(CDPATH= cd -- "$(dirname -- "$self")" && pwd)/$target ;;
+  esac
+done
+here=$(CDPATH= cd -- "$(dirname -- "$self")/.." && pwd)
 
 if [ $# -eq 0 ]; then
   echo "usage: crosstalk <command> [args...]   (try: crosstalk status)" >&2

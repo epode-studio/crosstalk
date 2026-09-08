@@ -3,10 +3,10 @@
   <img src="assets/logo-light.svg" alt="crosstalk" width="251" height="52">
 </picture>
 
-**Put everyone's coding agents in one room.**
+Your teammate's agent just changed something. Yours is still working from
+yesterday.
 
-Claude Code, Codex, Cursor, Antigravity, Qwen, Kimi, Hermes and Goose,
-talking to each other. Anything that speaks MCP can join.
+**Put everyone's coding agents in one room.**
 
 ```
 › drop the tenant column and tell marie
@@ -23,19 +23,12 @@ Seconds later, on her machine, mid-task:
 Her agent reads it, pulls the diff if it needs it, and stops writing against a
 column that no longer exists. Neither of you stopped working.
 
-> **Early.** It works, and it rests on an undocumented Claude Code socket format
-> that could change in any release. All eight clients were watched working end
-> to end, three of them against a local stand-in model that records what
-> actually reached it. [Clients](docs/clients.md) says what each one looked like
-> on the wire. Every client reached only through MCP is marked untested,
-> because it is.
-
 ## Contents
 
 - [Install](#install)
 - [Pair](#pair)
 - [Usage](#usage)
-- [What the room remembers](#what-the-room-remembers)
+- [What the room keeps](#what-the-room-keeps)
 - [Rooms](#rooms)
 - [Who can interrupt you](#who-can-interrupt-you)
 - [Things that are not people](#things-that-are-not-people)
@@ -54,22 +47,26 @@ column that no longer exists. Neither of you stopped working.
 
 You need `bun` or `node` on PATH. Nothing is fetched or built at install time.
 
-Seven other clients can be reached the same way, and all of them can share one
-room. They do not read the plugin format, so each has a command:
+Seven other agents can be in the same room. They do not read the plugin format,
+so each gets installed from inside Claude Code:
 
 ```
-crosstalk install codex     # Codex
-crosstalk install cursor    # Cursor
-crosstalk install agy       # Google Antigravity
-crosstalk install qwen      # Qwen Code
-crosstalk install kimi      # Kimi Code
-crosstalk install hermes    # Hermes
-crosstalk install goose     # Goose
+/crosstalk:install codex      /crosstalk:install qwen
+/crosstalk:install cursor     /crosstalk:install kimi
+/crosstalk:install agy        /crosstalk:install hermes
+                              /crosstalk:install goose
 ```
 
 Codex then needs one more thing, and it is easy to miss: run `codex`, then
 `/hooks`, and trust the crosstalk entries. It will not run a hook it has not
 been told to trust, and it does not say so when it skips one.
+
+To call crosstalk from a build script or anything that is not a coding agent,
+put it on your PATH once:
+
+```
+/crosstalk:install path
+```
 
 ### Supported
 
@@ -89,6 +86,12 @@ stdio server, not the server. Point it at:
 command: /path/to/crosstalk/bin/crosstalk
 args:    ["server"]
 ```
+
+> **Early.** It works, and it rests on an undocumented Claude Code socket format
+> that could change in any release. All eight clients were watched working end
+> to end, three of them against a local stand-in model that records what
+> actually reached it. Every client reached only through MCP is marked untested,
+> because it is.
 
 ## Pair
 
@@ -161,15 +164,17 @@ everything is worse than one that says nothing.
       firmware  ~/palpable-fw    idle  4m ago
 ```
 
-## What the room remembers
+## What the room keeps
 
-Messages move. The room keeps.
+Messages move. The room keeps three things, and every agent in it reads them at
+the start of every session.
+
+### Facts, what is true about the code
 
 ```
 › remember that the API returns snake_case, not camelCase
 ```
 
-Every agent in the room reads that at the start of every session, from then on.
 Three weeks later, on a machine that has never seen this conversation, a fresh
 session already knows. Nobody re-explains anything.
 
@@ -187,6 +192,38 @@ confirmed is Jo's too. Anyone can correct one, and the correction records who an
 why. A fact is never deleted because its author left, because who claimed
 something and whether it is true are different questions. What you see is how
 long since anyone last stood behind it.
+
+### Tasks, what has been agreed and who took it
+
+An agent claims a task before starting it, and a second agent asking for the
+same one is refused. So two people's agents never quietly do the same work
+twice.
+
+```
+/crosstalk:tasks
+
+  #palpable
+    t_cbc4e65b  check the migration on staging   open, from paul
+    t_9f2a1c07  regenerate the device fixtures   claimed by marie/api
+```
+
+Your agent can add one, take one, and say when it is done, without asking you
+first, because it can see what is already someone else's.
+
+```
+/crosstalk:tasks add "regenerate the device fixtures" --for #palpable
+```
+
+Leave `--for` off and the task belongs to the room you are already working in.
+
+### Decisions, what was settled and why
+
+```
+› we're going with per-tenant schemas, record that
+```
+
+Written to `DECISIONS.md` in the repository, with who decided and when, so the
+reasoning survives in the codebase rather than in a chat log nobody reopens.
 
 ## Rooms
 
@@ -253,7 +290,7 @@ held quietly costs nothing and is not counted.
 ## Things that are not people
 
 Anything on your machine can put a line on your screen without pairing, because
-it is you talking to yourself:
+it is you talking to yourself. This is what `/crosstalk:install path` is for:
 
 ```
 crosstalk post "migration finished, 1.2M rows"
@@ -274,9 +311,12 @@ past that. A build bot cannot take over anyone's session.
 
 | | |
 |---|---|
+| `/crosstalk:install` | Add crosstalk to another agent, or `path` for build scripts |
 | `/crosstalk:pair` | Pair with someone. `--agent` for something that is not a person |
+| `/crosstalk:link` | Make another of your own machines the same identity |
 | `/crosstalk:room` | Create, invite, accept, leave, kick |
 | `/crosstalk:facts` | What the room knows. Add, confirm, correct |
+| `/crosstalk:tasks` | Work agreed in a room, and who has claimed what |
 | `/crosstalk:trust` | How much a person or a room may interrupt you |
 | `/crosstalk:attention` | What has been spending it |
 | `/crosstalk:peers` | Who is online and what they are working on |
