@@ -34,8 +34,20 @@ export default {
     if (url.pathname === "/health") return json({ ok: true, worker: true })
     if (url.pathname === "/pubkey") return json({ pub: env.RELAY_PUBKEY ?? "" })
 
-    // Pairing offers live for fifteen minutes under a hash of the four words.
-    const pair = url.pathname.match(/^\/pair\/([A-Z0-9]{4,32})$/)
+    // A slot is public and allocated here. Only the words are secret, which is
+    // what stops anyone deriving the phrase from something the relay can see.
+    if (url.pathname === "/slot" && req.method === "POST") {
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const slot = String(Math.floor(Math.random() * 9000) + 1000)
+        const taken = await env.PAIRING.get(env.PAIRING.idFromName(slot)).fetch(
+          new Request("https://do/claim", { method: "POST" }),
+        )
+        if (taken.ok) return json({ slot })
+      }
+      return json({ error: "no free slot, try again" }, 503)
+    }
+
+    const pair = url.pathname.match(/^\/pair\/([A-Za-z0-9]{1,32})$/)
     if (pair) {
       const id = env.PAIRING.idFromName(pair[1])
       return env.PAIRING.get(id).fetch(req)
@@ -270,19 +282,30 @@ export class Pairing {
 
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url)
-    const slot = url.searchParams.get("side") === "reply" ? "reply" : "offer"
 
-    if (req.method === "POST") {
-      const { blob } = (await req.json()) as { blob?: string }
-      if (typeof blob !== "string" || blob.length > 8192) return json({ error: "bad blob" }, 400)
-      // Write once, so nobody holding the code can keep replacing the offer.
-      if (await this.state.storage.get(slot)) return json({ error: "slot already filled" }, 409)
-      await this.state.storage.put(slot, blob)
+    // Allocation: succeeds once, so two people never share a slot.
+    if (url.pathname === "/claim") {
+      if (await this.state.storage.get("claimed")) return json({ error: "taken" }, 409)
+      await this.state.storage.put("claimed", Date.now())
       await this.state.storage.setAlarm(Date.now() + 15 * 60_000)
       return json({ ok: true })
     }
 
-    const blob = await this.state.storage.get<string>(slot)
+    // Three parts: each side's blinded point, then each side's sealed identity.
+    const part = url.searchParams.get("part") ?? "a"
+    if (!/^[abc]$/.test(part)) return json({ error: "bad part" }, 400)
+
+    if (req.method === "POST") {
+      const { blob } = (await req.json()) as { blob?: string }
+      if (typeof blob !== "string" || blob.length > 8192) return json({ error: "bad blob" }, 400)
+      // Write once, so nobody holding the slot can replace what is there.
+      if (await this.state.storage.get(part)) return json({ error: "part already filled" }, 409)
+      await this.state.storage.put(part, blob)
+      await this.state.storage.setAlarm(Date.now() + 15 * 60_000)
+      return json({ ok: true })
+    }
+
+    const blob = await this.state.storage.get<string>(part)
     return blob ? json({ blob }) : json({ error: "not ready" }, 404)
   }
 

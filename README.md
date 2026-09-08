@@ -60,11 +60,14 @@ interrupted. See [Clients](docs/clients.md).
 /crosstalk:pair
 ```
 
-**2.** It prints five words.
+**2.** It prints a number and four words.
 
 ```
-    gale-brazier-zircon-widgeon-lackey
+    3644-cherry-horn-cataract-redwing
 ```
+
+The number is a public slot the relay hands out. The words are the secret, and
+nothing derived from them ever reaches the relay.
 
 **3.** Say them to the other person. Out loud, on a call, in a DM. Anywhere
 except through the relay. They expire in fifteen minutes.
@@ -72,7 +75,7 @@ except through the relay. They expire in fifteen minutes.
 **4.** They run the same command with your words.
 
 ```
-/crosstalk:pair gale-brazier-zircon-widgeon-lackey
+/crosstalk:pair 3644-cherry-horn-cataract-redwing
 ```
 
 **5.** You both see two fingerprints. Read them to each other. If they match,
@@ -261,10 +264,10 @@ data rather than as a vouched-for request.
 Facts work the same way. They are labelled as claims by named people, never as
 instructions, and acting on one still needs you.
 
-Pairing words are stretched with a memory-hard derivation before anything derived
-from them reaches the relay, because a relay you do not run would otherwise be
-able to grind five words out of a plain hash. Both fingerprints are still worth
-reading aloud.
+Pairing runs a password-authenticated key exchange, so the words never leave your
+machine in any form, not even a hash. Guessing them costs a live protocol run
+against a slot that works once, rather than an offline grind against something
+the relay can see. Both fingerprints are still worth reading aloud.
 
 Permission relay across people is not implemented and never will be.
 

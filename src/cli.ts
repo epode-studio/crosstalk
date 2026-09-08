@@ -23,7 +23,8 @@ import {
   ROOT,
   P,
 } from "./config.ts"
-import { newIdentity, newPhrase, codeForPhrase, sealOffer, openOffer, asPeer, fingerprint } from "./crypto.ts"
+import { newIdentity, newPhrase, asPeer, fingerprint, seal, open } from "./crypto.ts"
+import * as pake from "./pake.ts"
 import { formatInvite, parseInvite } from "./invite.ts"
 import {
   bestAddress,
@@ -263,62 +264,60 @@ async function pair() {
   if (has("--relay")) saveRelay(flag("--relay")!)
   const id = identityOrCreate()
   const joining = positional.join(" ").trim()
+  const base = () => httpBase(loadRelay().url)
 
-  // Accepting an invite.
-  if (joining) {
-    const inv = parseInvite(joining)
-    const code = codeForPhrase(inv.phrase)
-
-    if (inv.where) {
-      const port = inv.port ?? 8787
-      const tried: string[] = []
-      let found: string | null = null
-      for (const candidate of expandAddress(inv.where, port)) {
-        tried.push(candidate)
-        if (await relayReachable(candidate, 3000)) {
-          found = candidate
-          break
-        }
-      }
-      if (!found)
-        die(
-          `nothing is answering as "${inv.where}".\n\nTried: ${tried.join(", ")}\n\nTheir machine has to be awake, and you have to be able to reach it: the same\nnetwork, or both on the same tailnet. Ask them what /crosstalk:pair --host\nprinted, including the part after "at".`,
-        )
-      saveRelay(found)
-    }
-
-    if (!(await relayReachable()))
-      die(`cannot reach a relay at ${httpBase()}.`)
-
-    const r = await fetch(`${httpBase()}/pair/${code}?side=offer`)
-    if (!r.ok)
-      die(
-        r.status === 429
-          ? "the relay is rate-limiting pairing attempts; wait a minute"
-          : `no invite matches "${inv.phrase}". Check the words, or ask for a new one, invites last 15 minutes.`,
-      )
-    const { blob } = (await r.json()) as { blob: string }
-    let peer, offerRelayPub: string | undefined
-    try {
-      const raw = openOffer(inv.phrase, blob)
-      offerRelayPub = raw.relayPub
-      peer = asPeer(raw)
-    } catch {
-      return die(`could not open that invite. The words are probably slightly off.`)
-    }
-
-    const localName = adoptPeer(peer)
-    peer.label = localName
-    // Pin the relay identity that came inside the sealed offer, so nothing on
-    // the network can pass itself off as this relay later.
-    const advertised = (peer as any).relayPub ?? offerRelayPub
-    if (advertised) saveRelay(loadRelay().url, advertised)
-    const post = await fetch(`${httpBase()}/pair/${code}?side=reply`, {
+  const put = async (slot: string, part: string, blob: string) => {
+    const r = await fetch(`${base()}/pair/${slot}?part=${part}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ blob: sealOffer(inv.phrase, await myOffer(id)) }),
+      body: JSON.stringify({ blob }),
     })
-    if (!post.ok) die("could not send the pairing reply")
+    if (!r.ok) die(`the relay would not take part ${part} (${r.status})`)
+  }
+  const get = async (slot: string, part: string, waitMs = 0): Promise<string | null> => {
+    const deadline = Date.now() + waitMs
+    for (;;) {
+      const r = await fetch(`${base()}/pair/${slot}?part=${part}`).catch(() => null)
+      if (r?.ok) return ((await r.json()) as { blob: string }).blob
+      if (Date.now() >= deadline) return null
+      await new Promise((res) => setTimeout(res, 1000))
+    }
+  }
+
+  // --- accepting an invitation ------------------------------------------------
+  if (joining) {
+    const inv = parseInvite(joining)
+    if (!inv.slot) die("that invite is missing its number. It looks like 4821-otter-basalt-thunder-anvil.")
+    if (inv.where) {
+      for (const candidate of expandAddress(inv.where, inv.port ?? 8787))
+        if (await relayReachable(candidate, 3000)) {
+          saveRelay(candidate)
+          break
+        }
+    }
+    if (!(await relayReachable())) die(`cannot reach a relay at ${base()}.`)
+
+    const theirs = await get(inv.slot, "a")
+    if (!theirs) die(`nothing is waiting on ${inv.slot}. Invites last fifteen minutes.`)
+
+    const mine = pake.begin(inv.phrase, inv.slot)
+    const key = pake.finish(mine, theirs, inv.slot, "crosstalk/pair/v4")
+    if (!key) die("that invite could not be used. Check the words.")
+
+    // Our identity, sealed to a key only someone with the same words can hold.
+    await put(inv.slot, "b", mine.message + "." + seal(key, JSON.stringify(await myOffer(id))))
+
+    const back = await get(inv.slot, "c", 120_000)
+    if (!back) die("the other side never answered. Ask them to start again.")
+    let peer
+    try {
+      peer = asPeer(JSON.parse(open(key, back)))
+    } catch {
+      return die("could not read what they sent. Somebody may be interfering; start again.")
+    }
+    const localName = adoptPeer(peer)
+    peer.label = localName
+    if ((peer as any).relayPub) saveRelay(loadRelay().url, (peer as any).relayPub)
     await ensureDaemon(ROOT_DIR)
     console.log(`
 Paired with "${peer.label}"${peer.isMachine ? ", a machine rather than a person" : ""}.
@@ -335,84 +334,61 @@ yours a question. Their words never enter your session unless you raise them.
     return
   }
 
-  // Inviting.
+  // --- offering one -----------------------------------------------------------
   const url = has("--host") ? await startRelay() : loadRelay().url
   if (!(await relayReachable(url)))
-    die(
-      `no relay at ${httpBase(url)}.\n\nRun this instead and crosstalk will host one for you:\n  /crosstalk:pair --host`,
-    )
+    die(`no relay at ${httpBase(url)}.\n\nRun this instead and crosstalk will host one for you:\n  /crosstalk:pair --host`)
 
-  const phrase = flag("--phrase") ?? newPhrase()
-  const code = codeForPhrase(phrase)
-  const relayPub = await relayPubkey(url)
-  if (relayPub) saveRelay(url, relayPub)
-  const res = await fetch(`${httpBase(url)}/pair/${code}?side=offer`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ blob: sealOffer(phrase, { ...(await myOffer(id)), relayPub }) }),
-  })
-  if (!res.ok) die(`the relay at ${httpBase(url)} refused the pairing offer`)
+  const slotRes = await fetch(`${httpBase(url)}/slot`, { method: "POST" }).catch(() => null)
+  if (!slotRes?.ok) die("the relay would not give out a slot. Try again in a moment.")
+  const { slot } = (await slotRes.json()) as { slot: string }
+
+  const phrase = flag("--phrase") ?? newPhrase(4)
+  const mine = pake.begin(phrase, slot)
+  await put(slot, "a", mine.message)
 
   const asHttp = new URL(url.replace(/^ws/, "http"))
-  const port = Number(asHttp.port || (asHttp.protocol === "https:" ? 443 : 8787))
-  const tunnelSub = asHttp.hostname.endsWith(".trycloudflare.com")
-    ? asHttp.hostname.replace(".trycloudflare.com", "")
-    : null
   const where =
-    url === DEFAULT_RELAY
-      ? null
-      : tunnelSub
-        ? { token: tunnelSub, reach: "anywhere" as const, how: "a throwaway tunnel" }
-        : await whereToSay(port)
-  const invite = formatInvite(phrase, where?.token ?? null, port)
-
-  const reachNote = !where
-    ? "They can be anywhere. Both of you reach the same relay, which routes\nciphertext and holds no key that opens it."
-    : where.reach === "anywhere"
-      ? "They can be anywhere."
-      : where?.reach === "same network"
-        ? "They have to be on the same network as you. For anywhere, put both machines on\na tailnet with Tailscale and run this again, or host a relay: see deploy/."
-        : "No network address was found, so nothing outside this machine can reach it."
-  const tunnelNote = tunnelSub
-    ? "\nThis address only lasts as long as this tunnel. Close it and the two of you stop\nreaching each other, and pairing again gives a different one. For something that\nlasts, run a relay: see deploy/."
-    : ""
+    url === DEFAULT_RELAY ? null : `${asHttp.hostname}${asHttp.port ? ":" + asHttp.port : ""}`
+  const invite = `${slot}-${phrase}${where ? ` at ${where}` : ""}`
 
   console.log(`
-Tell them these words:
+Tell them this:
 
     ${invite}
 
 They run  /crosstalk:pair ${invite}
 
-Say it out loud, or send it somewhere you already trust. Not through the relay.
-Whoever has these words can pair with you until they expire.
+Say it out loud, or send it somewhere you already trust. The number is public;
+the words are the secret. They work once and expire in fifteen minutes.
 
   you       ${id.label}  ${fingerprint(id.ed.pub)}
-  reaches   ${where?.reach ?? "anywhere"}${where ? `  (${where.how})` : ""}
-  expires   15 minutes
-
-${reachNote}${tunnelNote}
+  reaches   ${where ? "same network" : "anywhere"}
 
 Waiting…`)
 
-  for (let i = 0; i < 900; i++) {
-    const r = await fetch(`${httpBase(url)}/pair/${code}?side=reply`).catch(() => null)
-    if (r?.ok) {
-      const { blob } = (await r.json()) as { blob: string }
-      let peer
-      try {
-        peer = asPeer(openOffer(phrase, blob))
-      } catch {
-        // Someone with the code parked a reply they could not seal correctly.
-        // Keep waiting for the real one rather than dying here.
-        await new Promise((r) => setTimeout(r, 1000))
-        continue
-      }
-      if (peer.fingerprint === fingerprint(id.ed.pub)) die("that pairing reply carries your own key")
-      peer.label = adoptPeer(peer)
-      await ensureDaemon(ROOT_DIR)
-      console.log(`
-Paired with "${peer.label}".
+  const theirs = await get(slot, "b", 900_000)
+  if (!theirs) die("that invite expired without anyone using it")
+  const dot = theirs.indexOf(".")
+  const key = pake.finish(mine, theirs.slice(0, dot), slot, "crosstalk/pair/v4")
+  if (!key) die("somebody tried to pair with the wrong words. Start again with a new invite.")
+
+  let peer
+  try {
+    peer = asPeer(JSON.parse(open(key, theirs.slice(dot + 1))))
+  } catch {
+    return die("could not read what they sent. Somebody may be interfering; start again.")
+  }
+  if (peer.fingerprint === fingerprint(id.ed.pub)) die("that reply carries your own key")
+
+  const relayPub = await relayPubkey(url)
+  if (relayPub) saveRelay(url, relayPub)
+  await put(slot, "c", seal(key, JSON.stringify({ ...(await myOffer(id)), relayPub })))
+
+  peer.label = adoptPeer(peer)
+  await ensureDaemon(ROOT_DIR)
+  console.log(`
+Paired with "${peer.label}"${peer.isMachine ? ", a machine rather than a person" : ""}.
 
   them  ${peer.fingerprint}
   you   ${fingerprint(id.ed.pub)}
@@ -423,11 +399,6 @@ They start at "ask": a line on your screen, and their agent may ask yours a
 question. Nothing they do puts their words inside your turn.
 
   /crosstalk:trust`)
-      return
-    }
-    await new Promise((r) => setTimeout(r, 1000))
-  }
-  die("that invite expired without anyone using it")
 }
 
 // --- everything else -------------------------------------------------------------
@@ -971,17 +942,35 @@ async function link() {
           saveRelay(candidate)
           break
         }
-    const code = codeForPhrase(inv.phrase)
-    const r = await fetch(`${httpBase()}/pair/${code}?side=offer`)
-    if (!r.ok) die("no link waiting for those words. They last fifteen minutes.")
-    const { blob } = (await r.json()) as { blob: string }
+    if (!inv.slot) die("that link is missing its number. It looks like 4821-six-words-like-this.")
+    const first = await fetch(`${httpBase()}/pair/${inv.slot}?part=a`)
+    if (!first.ok) die("no link waiting on that number. They last fifteen minutes.")
+    const theirPoint = ((await first.json()) as { blob: string }).blob
+
+    const half = pake.begin(inv.phrase, inv.slot)
+    const key = pake.finish(half, theirPoint, inv.slot, "crosstalk/link/v1")
+    if (!key) die("could not use that link. Check the words.")
+    await fetch(`${httpBase()}/pair/${inv.slot}?part=b`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ blob: half.message }),
+    })
+
     let bundle: any
-    try {
-      const raw = openOffer(inv.phrase, blob)
-      bundle = JSON.parse(zlib.gunzipSync(Buffer.from((raw as any).z, "base64")).toString("utf8"))
-    } catch {
-      return die("could not open that. The words are probably slightly off.")
+    for (let i = 0; i < 120; i++) {
+      const r = await fetch(`${httpBase()}/pair/${inv.slot}?part=c`).catch(() => null)
+      if (r?.ok) {
+        try {
+          const raw = JSON.parse(open(key, ((await r.json()) as { blob: string }).blob))
+          bundle = JSON.parse(zlib.gunzipSync(Buffer.from(raw.z, "base64")).toString("utf8"))
+        } catch {
+          return die("could not read what came back. Start again.")
+        }
+        break
+      }
+      await new Promise((res) => setTimeout(res, 1000))
     }
+    if (!bundle) die("the other machine never sent anything. Start again.")
     fs.mkdirSync(ROOT, { recursive: true, mode: 0o700 })
     const write = (name: string, value: unknown) =>
       fs.writeFileSync(path.join(ROOT, name), JSON.stringify(value, null, 2), { mode: 0o600 })
@@ -1002,8 +991,12 @@ and a message reaches whichever machine you are sitting at.`)
   }
 
   if (!id) die("nothing to link yet. Pair with someone first, or run this on the machine that already has your identity.")
+  const url0 = loadRelay().url
+  const slotRes = await fetch(`${httpBase(url0)}/slot`, { method: "POST" }).catch(() => null)
+  if (!slotRes?.ok) die("the relay would not give out a slot. Try again in a moment.")
+  const { slot } = (await slotRes.json()) as { slot: string }
   const phrase = newPhrase(6)
-  const code = codeForPhrase(phrase)
+  const half = pake.begin(phrase, slot)
   const bundle = {
     identity: id,
     peers: loadPeers(),
@@ -1012,31 +1005,42 @@ and a message reaches whichever machine you are sitting at.`)
     relay: loadRelay(),
   }
   const z = zlib.gzipSync(Buffer.from(JSON.stringify(bundle), "utf8")).toString("base64")
-  const sealed = sealOffer(phrase, { z } as any)
+  const url = url0
+  await fetch(`${httpBase(url)}/pair/${slot}?part=a`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ blob: half.message }),
+  })
+  console.log(`
+On your other machine, run:
+
+    /crosstalk:link ${slot}-${phrase}
+
+Waiting…`)
+
+  let key: Buffer | null = null
+  for (let i = 0; i < 900; i++) {
+    const r = await fetch(`${httpBase(url)}/pair/${slot}?part=b`).catch(() => null)
+    if (r?.ok) {
+      key = pake.finish(half, ((await r.json()) as { blob: string }).blob, slot, "crosstalk/link/v1")
+      break
+    }
+    await new Promise((res) => setTimeout(res, 1000))
+  }
+  if (!key) die("the other machine never answered.")
+  const sealed = seal(key, JSON.stringify({ z }))
   if (sealed.length > 8000)
     die("too much to send in one go. This happens with a lot of peers; copy ~/.claude/crosstalk across by hand instead.")
-  const url = loadRelay().url
-  const res = await fetch(`${httpBase(url)}/pair/${code}?side=offer`, {
+  const res = await fetch(`${httpBase(url)}/pair/${slot}?part=c`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ blob: sealed }),
   })
   if (!res.ok) die("the relay would not take it. Try again in a minute.")
-  // The other machine has no config yet, so it would look at the default relay.
-  // Say where to look when this one is somewhere else.
-  const asHttp = new URL(url.replace(/^ws/, "http"))
-  const invite =
-    url === DEFAULT_RELAY
-      ? phrase
-      : `${phrase} at ${asHttp.hostname}${asHttp.port ? `:${asHttp.port}` : ""}`
   console.log(`
-On your other machine, run:
-
-    /crosstalk:link ${invite}
-
-That machine becomes this identity: same fingerprint, same people, same rooms.
-These six words carry your whole identity, so keep them between the two
-machines and nowhere else. They expire in fifteen minutes.`)
+That machine is becoming this identity: same fingerprint, same people, same
+rooms. Those six words carry your whole identity, so keep them between your own
+two machines and nowhere else.`)
 }
 
 const commands: Record<string, () => Promise<void>> = {

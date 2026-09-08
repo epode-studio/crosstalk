@@ -14,7 +14,7 @@
 
 import { normalisePhrase } from "./crypto.ts"
 
-export type Invite = { phrase: string; where?: string; port?: number }
+export type Invite = { slot?: string; phrase: string; where?: string; port?: number }
 
 export const DEFAULT_PORT = 8787
 
@@ -24,14 +24,21 @@ export function formatInvite(phrase: string, where: string | null, port: number)
   return `${phrase} at ${where}${suffix}`
 }
 
+/** "4821-otter-basalt-thunder-anvil at host" or just the words for a link. */
 export function parseInvite(input: string): Invite {
   const raw = input.trim().replace(/^["']|["']$/g, "")
   // Accept "at" or "@", with or without spaces, because people retype these.
   const [left, right] = raw.split(/\s+at\s+|\s*@\s*/i).map((s) => s?.trim())
-  const phrase = normalisePhrase(left ?? "")
+  let phrase = normalisePhrase(left ?? "")
+  let slot: string | undefined
+  const lead = phrase.match(/^([0-9]{3,6})-(.+)$/)
+  if (lead) {
+    slot = lead[1]
+    phrase = lead[2]
+  }
   if (!phrase || phrase.split("-").length < 3)
     throw new Error(`"${input}" does not look like a pairing phrase (expected four words)`)
-  if (!right) return { phrase }
+  if (!right) return { slot, phrase }
   const m = right.match(/^(.*?)(?::(\d{2,5}))?$/)
-  return { phrase, where: m?.[1] || right, port: m?.[2] ? Number(m[2]) : DEFAULT_PORT }
+  return { slot, phrase, where: m?.[1] || right, port: m?.[2] ? Number(m[2]) : DEFAULT_PORT }
 }

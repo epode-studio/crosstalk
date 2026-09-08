@@ -137,7 +137,7 @@ function announce(fp: string) {
 
 // Pairing offers, held briefly and encrypted under a passphrase the relay
 // never sees. Two slots per code: the initiator's offer and the joiner's reply.
-const offers = new Map<string, { offer?: string; reply?: string; ts: number }>()
+const offers = new Map<string, { a?: string; b?: string; c?: string; ts: number }>()
 const pairRate = new Map<string, number[]>()
 setInterval(() => {
   const now = Date.now()
@@ -408,16 +408,26 @@ serve({
     // the phrase, so an attacker who can rewrite traffic cannot substitute it.
     if (url.pathname === "/pubkey") return json({ pub: relayIdentity.pub })
 
-    const m = url.pathname.match(/^\/pair\/([A-Z0-9]{4,16})$/)
+    if (url.pathname === "/slot" && method === "POST") {
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const slot = String(Math.floor(Math.random() * 9000) + 1000)
+        if (!offers.has(slot)) {
+          offers.set(slot, { ts: Date.now() })
+          return json({ slot })
+        }
+      }
+      return json({ error: "no free slot, try again" }, 503)
+    }
+
+    const m = url.pathname.match(/^\/pair\/([A-Za-z0-9]{1,32})$/)
     if (m) {
       const code = m[1]
-      const slot = (url.searchParams.get("side") === "reply" ? "reply" : "offer") as "offer" | "reply"
+      const part = (url.searchParams.get("part") ?? "a") as "a" | "b" | "c"
+      if (!/^[abc]$/.test(part)) return json({ error: "bad part" }, 400)
 
-      // A pairing phrase is only 32 bits, so the defence against guessing is
-      // that a guess has to come through here. Only one request can test a
-      // phrase: fetching the offer to try to decrypt it. Counting anything else
-      // would throttle the inviter's own polling for the reply.
-      if (method === "GET" && slot === "offer") {
+      // A slot is public, so this no longer guards a secret. It still stops
+      // someone walking every slot looking for pairings in progress.
+      if (method === "GET") {
         const who = remoteAddress ?? "unknown"
         const now = Date.now()
         const win = (pairRate.get(who) ?? []).filter((t) => now - t < 60_000)
@@ -437,8 +447,8 @@ serve({
         const e = offers.get(code) ?? { ts: Date.now() }
         // Write once. Otherwise anyone holding the code can keep replacing the
         // offer and stop the pairing from ever completing.
-        if (e[slot]) return json({ error: "slot already filled" }, 409)
-        e[slot] = blob
+        if (e[part]) return json({ error: "slot already filled" }, 409)
+        e[part] = blob
         e.ts = Date.now()
         offers.set(code, e)
         return json({ ok: true })
@@ -447,7 +457,7 @@ serve({
       if (method === "GET") {
         const e = offers.get(code)
         if (!e?.[slot]) return json({ error: "not ready" }, 404)
-        return json({ blob: e[slot] })
+        return json({ blob: e[part] })
       }
     }
 

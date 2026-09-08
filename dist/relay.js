@@ -650,11 +650,23 @@ serve({
       return json({ ok: true, online: live.size });
     if (url.pathname === "/pubkey")
       return json({ pub: relayIdentity.pub });
-    const m = url.pathname.match(/^\/pair\/([A-Z0-9]{4,16})$/);
+    if (url.pathname === "/slot" && method === "POST") {
+      for (let attempt = 0;attempt < 20; attempt++) {
+        const slot2 = String(Math.floor(Math.random() * 9000) + 1000);
+        if (!offers.has(slot2)) {
+          offers.set(slot2, { ts: Date.now() });
+          return json({ slot: slot2 });
+        }
+      }
+      return json({ error: "no free slot, try again" }, 503);
+    }
+    const m = url.pathname.match(/^\/pair\/([A-Za-z0-9]{1,32})$/);
     if (m) {
       const code = m[1];
-      const slot = url.searchParams.get("side") === "reply" ? "reply" : "offer";
-      if (method === "GET" && slot === "offer") {
+      const part = url.searchParams.get("part") ?? "a";
+      if (!/^[abc]$/.test(part))
+        return json({ error: "bad part" }, 400);
+      if (method === "GET") {
         const who = remoteAddress ?? "unknown";
         const now = Date.now();
         const win = (pairRate.get(who) ?? []).filter((t) => now - t < 60000);
@@ -673,9 +685,9 @@ serve({
         if (typeof blob !== "string" || blob.length > 8192)
           return json({ error: "bad blob" }, 400);
         const e = offers.get(code) ?? { ts: Date.now() };
-        if (e[slot])
+        if (e[part])
           return json({ error: "slot already filled" }, 409);
-        e[slot] = blob;
+        e[part] = blob;
         e.ts = Date.now();
         offers.set(code, e);
         return json({ ok: true });
@@ -684,7 +696,7 @@ serve({
         const e = offers.get(code);
         if (!e?.[slot])
           return json({ error: "not ready" }, 404);
-        return json({ blob: e[slot] });
+        return json({ blob: e[part] });
       }
     }
     return { status: 200, body: "crosstalk relay", type: "text/plain" };
