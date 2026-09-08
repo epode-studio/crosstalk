@@ -640,6 +640,15 @@ function onClose(ws) {
   log(`closed ${d.label ?? "?"} ${d.fp}`);
   announce(d.fp);
 }
+process.on("uncaughtException", (e) => {
+  if (e?.code === "EADDRINUSE") {
+    console.error(`crosstalk relay: port ${PORT} is already in use.
+` + `Something is listening there, quite possibly a relay you already started.
+` + `Check with "crosstalk relay", or choose another port with --port.`);
+    process.exit(1);
+  }
+  throw e;
+});
 serve({
   port: PORT,
   host: HOST,

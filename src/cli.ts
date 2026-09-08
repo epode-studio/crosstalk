@@ -3,11 +3,12 @@
 //
 //   crosstalk room new                   start a room, print the words
 //   crosstalk room join 3644-cherry-…    join one you were read
-//   crosstalk room create beta           a bigger one, for several people
+//   crosstalk room create platform           a bigger one, for several people
 //   crosstalk link                       another machine, same identity
 //   crosstalk install <client|path>      another agent, or your PATH
 //   crosstalk trust <who> <level>        how much they may interrupt
 //   crosstalk facts | tasks | room       what the room keeps
+//   crosstalk relay [status|start|stop]  the relay, not the server itself
 //   crosstalk peers | status | cost | attention | doctor
 //   crosstalk post "…" [--intent] [--source]
 //   crosstalk mute [peer] [minutes]
@@ -203,7 +204,7 @@ async function startRelay(port = Number(flag("--port", "8787"))): Promise<string
     if (await relayReachable(url)) return url
   }
   const out = fs.openSync(path.join(ROOT, "relay.log"), "a")
-  const child = spawn(shim(ROOT_DIR), ["relay", "--host", "0.0.0.0", "--port", String(port)], {
+  const child = spawn(shim(ROOT_DIR), ["relay-server", "--host", "0.0.0.0", "--port", String(port)], {
     detached: true,
     stdio: ["ignore", out, out],
   })
@@ -375,7 +376,7 @@ async function pair(words?: string) {
     if ((peer as any).relayPub) saveRelay(loadRelay().url, (peer as any).relayPub)
     await ensureDaemon(ROOT_DIR)
     console.log(`
-Paired with "${peer.label}"${peer.isMachine ? ", a machine rather than a person" : ""}.
+Now in a room with "${peer.label}"${peer.isMachine ? ", a machine rather than a person" : ""}.
 
   them  ${peer.fingerprint}
   you   ${fingerprint(id.ed.pub)}
@@ -443,7 +444,7 @@ Waiting…`)
   peer.label = adoptPeer(peer)
   await ready()
   console.log(`
-Paired with "${peer.label}"${peer.isMachine ? ", a machine rather than a person" : ""}.
+Now in a room with "${peer.label}"${peer.isMachine ? ", a machine rather than a person" : ""}.
 
   them  ${peer.fingerprint}
   you   ${fingerprint(id.ed.pub)}
@@ -706,7 +707,7 @@ async function room() {
     const direct = r.direct ?? []
     if (!r.rooms.length && !direct.length) {
       console.log(
-        "\nYou are not in anything yet.\n\n  /crosstalk:room new             start one, and read the words to someone\n  /crosstalk:room join <words>    join one you were read\n  /crosstalk:room create beta     a bigger one, for several people\n",
+        "\nYou are not in anything yet.\n\n  /crosstalk:room new             start one, and read the words to someone\n  /crosstalk:room join <words>    join one you were read\n  /crosstalk:room create platform  one for a whole team, any size\n",
       )
       return
     }
@@ -734,14 +735,14 @@ async function room() {
 
   switch (verb) {
     case "create": {
-      const name = rest[0] ?? die("name the room: /crosstalk:room create beta")
+      const name = rest[0] ?? die("name the room: /crosstalk:room create platform")
       const r = await request({ op: "room_create", name })
       say(r, `created #${r.room}. Invite someone you already share a room with:\n\n  /crosstalk:room invite ${r.room} <peer>\n`)
       return
     }
     case "invite": {
       const [name, ...people] = rest
-      if (!name || !people.length) die("usage: /crosstalk:room invite beta marie jo")
+      if (!name || !people.length) die("usage: /crosstalk:room invite platform marie jo")
       for (const p of people) {
         const r = await request({ op: "room_invite", room: name, peer: p })
         r.ok ? console.log(`invited ${r.invited} to #${r.room}`) : console.error(`${p}: ${r.error}`)
@@ -752,7 +753,7 @@ async function room() {
     case "accept":
     case "decline":
     case "leave": {
-      const name = rest[0] ?? die(`usage: /crosstalk:room ${verb} beta`)
+      const name = rest[0] ?? die(`usage: /crosstalk:room ${verb} platform`)
       const r = await request({ op: `room_${verb}`, room: name })
       say(r, verb === "accept" ? `joined #${r.room}` : `left #${r.room}`)
       return
@@ -760,7 +761,7 @@ async function room() {
     case "kick":
     case "remove": {
       const [name, who] = rest
-      if (!name || !who) die("usage: /crosstalk:room kick beta marie")
+      if (!name || !who) die("usage: /crosstalk:room kick platform marie")
       const r = await request({ op: "room_kick", room: name, peer: who })
       if (!r.ok) die(r.error)
       console.log(`removed ${r.removed} from #${name} and rekeyed to epoch ${r.rekeyedTo}`)

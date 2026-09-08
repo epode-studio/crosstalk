@@ -3084,7 +3084,7 @@ async function startRelay(port = Number(flag("--port", "8787"))) {
       return url2;
   }
   const out = fs6.openSync(path8.join(ROOT, "relay.log"), "a");
-  const child = spawn3(shim2(ROOT_DIR), ["relay", "--host", "0.0.0.0", "--port", String(port)], {
+  const child = spawn3(shim2(ROOT_DIR), ["relay-server", "--host", "0.0.0.0", "--port", String(port)], {
     detached: true,
     stdio: ["ignore", out, out]
   });
@@ -3238,7 +3238,7 @@ async function pair(words) {
       saveRelay(loadRelay().url, peer2.relayPub);
     await ensureDaemon(ROOT_DIR);
     console.log(`
-Paired with "${peer2.label}"${peer2.isMachine ? ", a machine rather than a person" : ""}.
+Now in a room with "${peer2.label}"${peer2.isMachine ? ", a machine rather than a person" : ""}.
 
   them  ${peer2.fingerprint}
   you   ${fingerprint(id.ed.pub)}
@@ -3303,7 +3303,7 @@ Waiting\u2026`);
   peer.label = adoptPeer(peer);
   await ready();
   console.log(`
-Paired with "${peer.label}"${peer.isMachine ? ", a machine rather than a person" : ""}.
+Now in a room with "${peer.label}"${peer.isMachine ? ", a machine rather than a person" : ""}.
 
   them  ${peer.fingerprint}
   you   ${fingerprint(id.ed.pub)}
@@ -3542,7 +3542,7 @@ You are not in anything yet.
 
   /crosstalk:room new             start one, and read the words to someone
   /crosstalk:room join <words>    join one you were read
-  /crosstalk:room create beta     a bigger one, for several people
+  /crosstalk:room create platform  one for a whole team, any size
 `);
       return;
     }
@@ -3567,7 +3567,7 @@ You are not in anything yet.
   const say = (r, ok) => r.ok ? console.log(ok) : die(r.error);
   switch (verb) {
     case "create": {
-      const name = rest[0] ?? die("name the room: /crosstalk:room create beta");
+      const name = rest[0] ?? die("name the room: /crosstalk:room create platform");
       const r = await request({ op: "room_create", name });
       say(r, `created #${r.room}. Invite someone you already share a room with:
 
@@ -3578,7 +3578,7 @@ You are not in anything yet.
     case "invite": {
       const [name, ...people] = rest;
       if (!name || !people.length)
-        die("usage: /crosstalk:room invite beta marie jo");
+        die("usage: /crosstalk:room invite platform marie jo");
       for (const p of people) {
         const r = await request({ op: "room_invite", room: name, peer: p });
         r.ok ? console.log(`invited ${r.invited} to #${r.room}`) : console.error(`${p}: ${r.error}`);
@@ -3590,7 +3590,7 @@ They each have to accept before anything from the room reaches them.`);
     case "accept":
     case "decline":
     case "leave": {
-      const name = rest[0] ?? die(`usage: /crosstalk:room ${verb} beta`);
+      const name = rest[0] ?? die(`usage: /crosstalk:room ${verb} platform`);
       const r = await request({ op: `room_${verb}`, room: name });
       say(r, verb === "accept" ? `joined #${r.room}` : `left #${r.room}`);
       return;
@@ -3599,7 +3599,7 @@ They each have to accept before anything from the room reaches them.`);
     case "remove": {
       const [name, who] = rest;
       if (!name || !who)
-        die("usage: /crosstalk:room kick beta marie");
+        die("usage: /crosstalk:room kick platform marie");
       const r = await request({ op: "room_kick", room: name, peer: who });
       if (!r.ok)
         die(r.error);

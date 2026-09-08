@@ -163,12 +163,18 @@ person. You can be on different networks, in different countries: messages trave
 through a relay that routes ciphertext and holds no key that opens it. Run your
 own with `--host`, or deploy the Worker in [`worker/`](worker/).
 
-**A bigger room** works exactly the same way, and `/crosstalk:room` lists
-everything you are in:
+**A room with more people in it** is the same thing, not a different feature.
+Two of you, or your whole team: nothing in crosstalk or the relay counts members.
+
+```
+/crosstalk:room create platform
+```
+
+`/crosstalk:room` lists everything you are in:
 
 ```
   marie           just the two of you
-  #beta           paul, marie, jo
+  #platform       paul, marie, jo, sam, ana
 ```
 
 Anyone in a room can add anyone else, and two rules stop that becoming a way for

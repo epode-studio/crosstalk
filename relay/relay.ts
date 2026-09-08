@@ -394,6 +394,20 @@ function onClose(ws: Socket) {
   announce(d.fp)
 }
 
+// A port already in use is the ordinary way to start a relay twice, and the
+// stack trace it produces says nothing a person can act on.
+process.on("uncaughtException", (e: NodeJS.ErrnoException) => {
+  if (e?.code === "EADDRINUSE") {
+    console.error(
+      `crosstalk relay: port ${PORT} is already in use.\n` +
+        `Something is listening there, quite possibly a relay you already started.\n` +
+        `Check with "crosstalk relay", or choose another port with --port.`,
+    )
+    process.exit(1)
+  }
+  throw e
+})
+
 serve({
   port: PORT,
   host: HOST,

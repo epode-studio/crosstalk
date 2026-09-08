@@ -61,7 +61,7 @@ done
 [ -z "$INVITE" ] && { echo "no invite"; cat "$TMP/pa.log"; exit 1; }
 CROSSTALK_HOME="$TMP/b" bun src/cli.ts pair $INVITE --label bb --relay "ws://127.0.0.1:$PORT" >"$TMP/pb.log" 2>&1
 for _ in $(seq 1 30); do grep -q Paired "$TMP/pa.log" && break; sleep 0.5; done
-if grep -q Paired "$TMP/pa.log" && grep -q Paired "$TMP/pb.log"; then pass "paired"; else fail "pairing did not complete"; exit 1; fi
+if grep -q "in a room with" "$TMP/pa.log" && grep -q "in a room with" "$TMP/pb.log"; then pass "in a room"; else fail "joining did not complete"; exit 1; fi
 
 # --- 1. a send while the relay is down is held, not lost ---------------------
 echo

@@ -36,10 +36,15 @@ shift
 # Only these are real entry points. Everything else is a CLI subcommand, so
 # `crosstalk install goose` and `crosstalk post "..."` work as written rather
 # than needing a `cli` in front of them.
+# `relay` is deliberately not in this list. It is both an internal entry point
+# and a CLI subcommand, and the subcommand is the one a person means: `crosstalk
+# relay` should say what the relay is doing, not start a second one. The CLI
+# spawns the server as `relay-server`.
 case "$what" in
-  cli|daemon|server|hook|relay) ;;
+  cli|daemon|server|hook|relay-server) ;;
   *) set -- "$what" "$@"; what=cli ;;
 esac
+[ "$what" = "relay-server" ] && what=relay
 
 runtime=""
 forced=${CROSSTALK_RUNTIME-}

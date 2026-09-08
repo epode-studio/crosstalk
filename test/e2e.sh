@@ -55,9 +55,9 @@ has "$INVITE" '^[0-9]' "invite leads with a public slot"
 check "$(echo "$INVITE" | tr -cd - | wc -c | tr -d ' ')" "4" "four secret words after it"
 
 JOIN=$(b pair "$INVITE" --label ben)
-has "$JOIN" 'Paired with "ana"' "the joining side paired"
-for _ in $(seq 1 40); do grep -q "Paired with" "$A/pair.log" && break; sleep 0.5; done
-has "$(cat "$A/pair.log")" 'Paired with "ben"' "the inviting side paired"
+has "$JOIN" 'Now in a room with "ana"' "the joining side is in the room"
+for _ in $(seq 1 40); do grep -q "Now in a room with" "$A/pair.log" && break; sleep 0.5; done
+has "$(cat "$A/pair.log")" 'Now in a room with "ben"' "the starting side is in the room"
 
 FA=$(bun -e 'const {fingerprint}=await import("./src/crypto.ts");const fs=require("fs");console.log(fingerprint(JSON.parse(fs.readFileSync(process.argv[1]+"/identity.json","utf8")).ed.pub))' "$A")
 has "$JOIN" "$FA" "the fingerprints match across the two sides"
@@ -342,6 +342,20 @@ CROSSTALK_HOME="$BROKEN" bun src/cli.ts room new >/dev/null 2>&1
 check "$(cat "$BROKEN/identity.json")" '{"broken": ' "and nothing writes over it"
 rm -rf "$BROKEN"
 has "$(a room join 2>&1)" "usage" "room join with no words says so, rather than hosting"
+
+# --- the relay name collision --------------------------------------------------
+#
+# `relay` is both an internal entry point and a CLI subcommand. Typing
+# `crosstalk relay` used to start a second relay server, and crash with a raw
+# EADDRINUSE trace when one was already up.
+echo
+echo "the relay command"
+OUT=$("$ROOT/bin/crosstalk" relay 2>&1 | head -3)
+has "$OUT" "configured" "crosstalk relay reports, rather than starting one"
+case "$OUT" in
+  *EADDRINUSE*|*"| var "*) bad "and does not crash into a stack trace" ;;
+  *) ok "and does not crash into a stack trace" ;;
+esac
 
 # --- when a message lands ------------------------------------------------------
 #
