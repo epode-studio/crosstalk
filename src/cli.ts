@@ -1155,13 +1155,65 @@ async function installKimi() {
   console.log(`tools    add the MCP server in ${path.join(dir, "mcp.json")}`)
 }
 
+
+/**
+ * Hermes keeps hooks in a YAML block in ~/.hermes/config.yaml, names its events
+ * in snake_case, and reads back a `context` string. It also gates every new
+ * (event, command) pair behind a consent prompt, so the last step is the user's
+ * and cannot be done here.
+ *
+ * on_session_start registers the session; pre_llm_call runs before every model
+ * call, which is where a waiting message gets picked up mid-turn.
+ */
+async function installHermes() {
+  const bin = shim(rootFrom(import.meta.url))
+  const dir = path.join(os.homedir(), ".hermes")
+  const file = path.join(dir, "config.yaml")
+  if (!fs.existsSync(file)) die(`no ${file}. Run hermes once first, then run this again.`)
+
+  const existing = fs.readFileSync(file, "utf8")
+  if (existing.includes("crosstalk hook"))
+    die(`${file} already has crosstalk hooks. Remove them by hand to reinstall.`)
+  if (/^hooks:/m.test(existing))
+    die(`${file} already has a hooks: block. Add these two entries to it by hand:
+
+hooks:
+  on_session_start:
+    - command: "${bin} hook on_session_start"
+      timeout: 20
+  pre_llm_call:
+    - command: "${bin} hook pre_llm_call"
+      timeout: 20`)
+
+  fs.writeFileSync(
+    file,
+    `${existing.trimEnd()}\n
+# crosstalk
+hooks:
+  on_session_start:
+    - command: "${bin} hook on_session_start"
+      timeout: 20
+  pre_llm_call:
+    - command: "${bin} hook pre_llm_call"
+      timeout: 20
+`,
+  )
+  console.log(`hooks    ${file}`)
+  console.log(`
+Hermes asks before it will run a hook it has not seen. Start it once in a
+terminal and answer yes twice, or run it with --accept-hooks. Check with:
+
+  hermes hooks list`)
+}
+
 /** Everything a client needs, per client. */
 async function install() {
   const who = (positional[0] ?? "").toLowerCase()
   if (who === "agy" || who === "antigravity") return installAgy()
   if (who === "qwen") return installQwen()
   if (who === "kimi") return installKimi()
-  die(`usage: crosstalk install <agy|qwen|kimi>
+  if (who === "hermes") return installHermes()
+  die(`usage: crosstalk install <agy|qwen|kimi|hermes>
 
 Claude Code and Codex install as a plugin instead:
   /plugin marketplace add epode-studio/crosstalk

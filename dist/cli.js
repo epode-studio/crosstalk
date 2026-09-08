@@ -4012,6 +4012,43 @@ ${blocks}`);
   console.log(`hooks    ${file}`);
   console.log(`tools    add the MCP server in ${path8.join(dir, "mcp.json")}`);
 }
+async function installHermes() {
+  const bin = shim2(rootFrom2(import.meta.url));
+  const dir = path8.join(os5.homedir(), ".hermes");
+  const file = path8.join(dir, "config.yaml");
+  if (!fs6.existsSync(file))
+    die(`no ${file}. Run hermes once first, then run this again.`);
+  const existing = fs6.readFileSync(file, "utf8");
+  if (existing.includes("crosstalk hook"))
+    die(`${file} already has crosstalk hooks. Remove them by hand to reinstall.`);
+  if (/^hooks:/m.test(existing))
+    die(`${file} already has a hooks: block. Add these two entries to it by hand:
+
+hooks:
+  on_session_start:
+    - command: "${bin} hook on_session_start"
+      timeout: 20
+  pre_llm_call:
+    - command: "${bin} hook pre_llm_call"
+      timeout: 20`);
+  fs6.writeFileSync(file, `${existing.trimEnd()}
+
+# crosstalk
+hooks:
+  on_session_start:
+    - command: "${bin} hook on_session_start"
+      timeout: 20
+  pre_llm_call:
+    - command: "${bin} hook pre_llm_call"
+      timeout: 20
+`);
+  console.log(`hooks    ${file}`);
+  console.log(`
+Hermes asks before it will run a hook it has not seen. Start it once in a
+terminal and answer yes twice, or run it with --accept-hooks. Check with:
+
+  hermes hooks list`);
+}
 async function install() {
   const who = (positional[0] ?? "").toLowerCase();
   if (who === "agy" || who === "antigravity")
@@ -4020,7 +4057,9 @@ async function install() {
     return installQwen();
   if (who === "kimi")
     return installKimi();
-  die(`usage: crosstalk install <agy|qwen|kimi>
+  if (who === "hermes")
+    return installHermes();
+  die(`usage: crosstalk install <agy|qwen|kimi|hermes>
 
 Claude Code and Codex install as a plugin instead:
   /plugin marketplace add epode-studio/crosstalk

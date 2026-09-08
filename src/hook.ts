@@ -56,6 +56,13 @@ const eventName: string =
  */
 const isAgy = typeof hook.conversationId === "string"
 
+/**
+ * Hermes names its events in snake_case and nobody else does, which is the
+ * cheapest way to recognise it. It reads back a `context` string rather than
+ * any of the fields the others use.
+ */
+const isHermes = /^(pre|post|on)_[a-z_]+$/.test(eventName)
+
 const sessionId: string | undefined =
   hook.session_id ??
   hook.sessionId ??
@@ -69,9 +76,18 @@ const sessionId: string | undefined =
  * agy has no SessionStart. PreInvocation runs before every model call and
  * numbers them from zero, so the first one is where a session announces itself.
  */
+/**
+ * Where the working set goes on the first turn.
+ *
+ * agy has no session-start event, so its first PreInvocation stands in.
+ * Hermes has one, but only pre_llm_call is read back for context, so its first
+ * turn stands in too. It flags that itself, nested one level down.
+ */
 const isSessionStart = isAgy
   ? /^PreInvocation$/i.test(eventName) && Number(hook.invocationNum ?? 0) === 0
-  : /^SessionStart$/i.test(eventName)
+  : isHermes
+    ? /^pre_llm_call$/.test(eventName) && hook.extra?.is_first_turn === true
+    : /^SessionStart$/i.test(eventName)
 
 /**
  * agy runs a hook in the directory holding hooks.json, not the project, so
@@ -91,7 +107,7 @@ const cwd: string = hook.cwd ?? (isAgy ? agyCwd() : process.cwd())
 
 /** Nothing to do until someone has paired. */
 if (!loadIdentity() || !sessionId) {
-  process.stdout.write(JSON.stringify(isAgy ? {} : { continue: true }))
+  process.stdout.write(JSON.stringify(isAgy || isHermes ? {} : { continue: true }))
   process.exit(0)
 }
 
@@ -147,14 +163,18 @@ async function pendingNotice(): Promise<string | null> {
  * The same text, in whichever field the client actually reads.
  *
  * Claude Code, Codex and Qwen Code take hookSpecificOutput.additionalContext.
- * Kimi Code takes a plain `message` and wraps it in a <hook_result> tag itself.
- * agy takes steps and ignores every other key, so an empty object is how you
- * say nothing to it. Writing all of them costs nothing: a client that does not
- * know a field ignores it.
+ * Kimi Code takes a plain `message` and wraps it in a <hook_result> tag itself,
+ * so both go out together: a client that does not know a field ignores it.
+ * agy takes steps and Hermes takes a `context` string, and both read nothing
+ * else, so each gets an object of its own. An empty one says nothing.
  */
 const say = (extra?: string) => {
   if (isAgy) {
     process.stdout.write(JSON.stringify(extra ? { injectSteps: [{ ephemeralMessage: extra }] } : {}))
+    process.exit(0)
+  }
+  if (isHermes) {
+    process.stdout.write(JSON.stringify(extra ? { context: extra } : {}))
     process.exit(0)
   }
   const out: any = { continue: true }
@@ -166,10 +186,12 @@ const say = (extra?: string) => {
   process.exit(0)
 }
 
-// agy has no session-start event, so a session that began before the daemon did
-// would never be known to it. Re-announcing on each model call is one call over
-// a unix socket and keeps the roster right.
-if (isAgy && !isSessionStart && /^PreInvocation$/i.test(eventName)) await registerSession()
+// Neither agy nor Hermes reliably announces a session at a moment this hook can
+// also speak from, so both re-announce on every model call. It is one call over
+// a unix socket, and it keeps the roster right for a session that started
+// before the daemon did.
+if (!isSessionStart && (/^PreInvocation$/i.test(eventName) || /^(pre_llm_call|on_session_start)$/.test(eventName)))
+  await registerSession()
 
 if (isSessionStart) {
   await registerSession()
@@ -188,6 +210,12 @@ if (isSessionStart) {
     say()
   }
 }
+
+// Asking for a notice consumes it, so only an event that can actually deliver
+// one may ask. Hermes reads a hook's answer on pre_llm_call and nowhere else,
+// so on_session_start registers and stays quiet; without that it would swallow
+// the notice into an answer nobody reads.
+if (isHermes && !/^pre_llm_call$/.test(eventName)) say()
 
 // Every other event is a chance to hand over anything waiting. The daemon
 // returns nothing for a session it can push to directly.

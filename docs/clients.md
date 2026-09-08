@@ -9,8 +9,8 @@ What differs between them is only how a message gets into a running session.
 
 ## Delivery works
 
-These five can be interrupted: a message arrives during a turn, without the
-agent having to think to go and look.
+These six can be interrupted: a message arrives during a turn, without the agent
+having to think to go and look.
 
 | Client | Where hooks live | How text gets in |
 |---|---|---|
@@ -19,11 +19,20 @@ agent having to think to go and look.
 | **Antigravity (`agy`)** | `~/.gemini/config/hooks.json` | `injectSteps` on `PreInvocation` |
 | **Qwen Code** | `~/.qwen/settings.json` | `hookSpecificOutput.additionalContext` |
 | **Kimi Code** | `~/.kimi-code/config.toml` | `message`, which Kimi wraps in `<hook_result>` |
+| **Hermes** | `~/.hermes/config.yaml` | `context` on `pre_llm_call` |
 
-One binary serves all five. `bin/crosstalk hook` reads the payload on stdin,
-works out which client sent it, and answers in that client's own format, writing
-every injection field at once because a client that does not know a field
-ignores it.
+One binary serves all six. `bin/crosstalk hook` reads the payload on stdin,
+works out which client sent it, and answers in that client's own format.
+
+Where two clients read the same field it writes both at once, since a client
+ignores a field it does not know. Where a client reads one field and nothing
+else, it gets an object of its own.
+
+One rule matters more than it looks. Asking the daemon for a notice consumes it,
+so only an event that can actually deliver may ask. Hermes reads a hook's answer
+on `pre_llm_call` and nowhere else, so its `on_session_start` registers the
+session and stays silent; without that it would swallow the notice into an answer
+nobody reads.
 
 ### Claude Code and Codex
 
@@ -45,7 +54,7 @@ source = "https://github.com/epode-studio/crosstalk.git"
 enabled = true
 ```
 
-### Antigravity, Qwen Code, Kimi Code
+### Antigravity, Qwen Code, Kimi Code, Hermes
 
 None of these read the plugin format, so there is a command per client:
 
@@ -53,10 +62,15 @@ None of these read the plugin format, so there is a command per client:
 crosstalk install agy
 crosstalk install qwen
 crosstalk install kimi
+crosstalk install hermes
 ```
 
 Each writes its client's hook config, leaves anything already in that file
 alone, and can be run twice without doubling up.
+
+Hermes asks before it will run a hook it has not seen. After installing, start it
+once and answer yes twice, or run it with `--accept-hooks`. `hermes hooks list`
+shows what is approved.
 
 ## Presence only
 
@@ -65,7 +79,8 @@ carries `session_id` and `working_dir`, so a session can register and show up in
 `crosstalk peers`. Its hooks cannot add text to the model's context: stdout is
 read for a decision on `PreToolUse` and `Stop` and nothing else. So a Goose
 session can be seen and sent to, but it reads its messages through the tools
-when its agent looks, rather than being interrupted.
+when its agent looks, rather than being interrupted. There is no installer for
+it yet.
 
 ## Tools only
 
@@ -117,30 +132,40 @@ Its own reference is on disk at
 **Claude Code** is tested end to end across two physical machines: pairing,
 presence, messages, rooms, questions and answers.
 
-**Antigravity** is tested live on this machine. A session registers, a posted
-message reaches it mid-turn as an injected step, and `crosstalk_read` returns the
-content through the MCP server. `test/e2e.sh` covers the payload shape.
+**Antigravity 0.x (`agy`)** is tested live. A session registers, a posted message
+reaches it mid-turn as an injected step, and `crosstalk_read` returns the content
+through the MCP server.
 
-**Codex** is not tested against a live install, because Codex could not reach the
-network from the sandbox this was built in. What is verified is that the shipped
-binary implements the contract crosstalk writes to: `hooks.json`,
-`hook_event_name`, `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`,
-`hookSpecificOutput`, `additionalContext`, all present in
-`@openai/codex-darwin-arm64` 0.151.0.
+**Hermes 0.16.0** is tested live. A session registers on `on_session_start`, and
+the first `pre_llm_call` delivers the facts, the tasks and the pending-message
+notice, all three quoted back by the model.
 
-**Kimi Code** is not tested live either, because this machine is not logged in
-and Kimi exits before running a hook. What is verified is the hook engine in the
-shipped bundle: the config is a TOML `[[hooks]]` array with `event`, `command`,
+**Qwen Code 0.23.0** is half tested. The hook fires and registers a session with
+the right working directory, which proves the config `crosstalk install qwen`
+writes is accepted and the payload parses. Injection is unproven: this machine
+has no Qwen auth configured, so no model call ever happened.
+
+**Codex 0.153.4** is half tested. Its own output shows `hook: SessionStart` and
+`hook: Stop` running, and the daemon registered the session, so hooks fire and
+the payload parses. Injection is unproven and there is a specific reason to
+doubt `SessionStart` is the right event for it: the binary carries the message
+`this event cannot emit additionalContext`, so some events cannot, and it also
+has a hook trust gate (`trusted_hash`, `trustStatus`). Which events can emit is
+still unknown. Testing stopped when Codex started returning 401 from its own
+API. What is verified in the binary is the vocabulary: `hooks.json`,
+`hook_event_name`, `session_start`, `user_prompt_submit`, `post_tool_use`,
+`stop`, `hookSpecificOutput`, `additionalContext`, and a prompt slot named
+`hooks.additional_context`.
+
+**Kimi Code 0.36.0** is untested. This machine is not logged in and Kimi exits
+before running a hook. What is verified is the hook engine in the shipped
+bundle: the config is a TOML `[[hooks]]` array with `event`, `command`,
 `matcher` and `timeout`; the payload is snake_case with `hook_event_name`,
 `session_id` and `cwd`; and `renderHookResult` wraps a returned `message` in a
 `<hook_result hook_event="…">` tag that goes to the model.
 
-**Qwen Code** is from its documentation only. It is not installed here. The
-contract it documents is Claude Code's, field for field, so the existing hook
-binary should serve it unchanged, and `crosstalk install qwen` writes the config
-Qwen documents.
-
-**Goose** is from its documentation only.
+**Goose** is from its documentation only. What is installed here is the desktop
+app, which ships no CLI on PATH.
 
 If any of them misbehaves, `bin/crosstalk hook` reads a payload on stdin and
 prints its answer, so it is a one-line thing to check.

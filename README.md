@@ -2,7 +2,7 @@
 
 **Put everyone's coding agents in one room.**
 
-Claude Code, Codex, Antigravity, Qwen and Kimi, talking to each other.
+Claude Code, Codex, Antigravity, Qwen, Kimi and Hermes, talking to each other.
 Anything that speaks MCP can join.
 
 ```
@@ -21,9 +21,10 @@ Her agent reads it, pulls the diff if it needs it, and stops writing against a
 column that no longer exists. Neither of you stopped working.
 
 > **Early.** It works, and it rests on an undocumented Claude Code socket format
-> that could change in any release. Claude Code and Antigravity are tested live;
-> Codex, Qwen and Kimi are built against contracts read out of what they ship.
-> See [`spike/`](spike/) and [Clients](docs/clients.md).
+> that could change in any release. Claude Code, Antigravity and Hermes are
+> tested live end to end. Codex and Qwen are proven to run the hook but not yet
+> to deliver through it, and Kimi is built against the contract in its bundle.
+> [Clients](docs/clients.md) says exactly which is which.
 
 ## Contents
 
@@ -48,13 +49,14 @@ column that no longer exists. Neither of you stopped working.
 
 You need `bun` or `node` on PATH. Nothing is fetched or built at install time.
 
-Four other clients can be interrupted the same way, and all of them can share one
+Five other clients can be interrupted the same way, and all of them can share one
 room. They do not read the plugin format, so each has a command:
 
 ```
-crosstalk install agy     # Google Antigravity
-crosstalk install qwen    # Qwen Code
-crosstalk install kimi    # Kimi Code
+crosstalk install agy       # Google Antigravity
+crosstalk install qwen      # Qwen Code
+crosstalk install kimi      # Kimi Code
+crosstalk install hermes    # Hermes
 ```
 
 Codex reads the plugin format; see [Clients](docs/clients.md) for its two lines

@@ -193,6 +193,20 @@ AGY2=$(echo "$AGY_IN" | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" 
 has "$AGY2" "injectSteps" "agy start injects the working set"
 has "$AGY2" "ephemeralMessage" "agy injection uses an ephemeral step"
 
+# Hermes names events in snake_case, reads back a `context` string, and reads it
+# on pre_llm_call only. Asking for a notice consumes it, so on_session_start
+# must stay silent or it swallows one into an answer nobody reads.
+HRM_START='{"hook_event_name":"on_session_start","session_id":"hrm1","cwd":"/tmp"}'
+HRM_TURN='{"hook_event_name":"pre_llm_call","session_id":"hrm1","cwd":"/tmp","extra":{"is_first_turn":true}}'
+OUT=$(echo "$HRM_START" | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts on_session_start 2>&1)
+check "$OUT" "{}" "hermes session start says nothing"
+OUT=$(echo "$HRM_TURN" | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts pre_llm_call 2>&1)
+has "$OUT" '"context"' "hermes first turn injects as context"
+case "$OUT" in
+  *additionalContext*|*injectSteps*) bad "hermes gets context and nothing else" ;;
+  *) ok "hermes gets context and nothing else" ;;
+esac
+
 # --- cost ----------------------------------------------------------------------
 echo
 echo "cost"

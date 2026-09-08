@@ -189,8 +189,9 @@ try {
 } catch {}
 var eventName = hook.hook_event_name ?? hook.hookEventName ?? hook.event_name ?? hook.hook_event?.type ?? hook.event_type ?? hook.event ?? process.argv[2] ?? "SessionStart";
 var isAgy = typeof hook.conversationId === "string";
+var isHermes = /^(pre|post|on)_[a-z_]+$/.test(eventName);
 var sessionId = hook.session_id ?? hook.sessionId ?? hook.thread_id ?? hook.conversation_id ?? hook.conversationId ?? process.env.CLAUDE_CODE_SESSION_ID ?? process.env.ANTIGRAVITY_CONVERSATION_ID;
-var isSessionStart = isAgy ? /^PreInvocation$/i.test(eventName) && Number(hook.invocationNum ?? 0) === 0 : /^SessionStart$/i.test(eventName);
+var isSessionStart = isAgy ? /^PreInvocation$/i.test(eventName) && Number(hook.invocationNum ?? 0) === 0 : isHermes ? /^pre_llm_call$/.test(eventName) && hook.extra?.is_first_turn === true : /^SessionStart$/i.test(eventName);
 var AGENT_DIRS = new Set([".agents", ".agent", "_agents", "_agent"]);
 function agyCwd() {
   const ws = hook.workspacePaths;
@@ -203,7 +204,7 @@ function agyCwd() {
 }
 var cwd = hook.cwd ?? (isAgy ? agyCwd() : process.cwd());
 if (!loadIdentity() || !sessionId) {
-  process.stdout.write(JSON.stringify(isAgy ? {} : { continue: true }));
+  process.stdout.write(JSON.stringify(isAgy || isHermes ? {} : { continue: true }));
   process.exit(0);
 }
 var root = rootFrom2(import.meta.url);
@@ -251,6 +252,10 @@ var say = (extra) => {
     process.stdout.write(JSON.stringify(extra ? { injectSteps: [{ ephemeralMessage: extra }] } : {}));
     process.exit(0);
   }
+  if (isHermes) {
+    process.stdout.write(JSON.stringify(extra ? { context: extra } : {}));
+    process.exit(0);
+  }
   const out = { continue: true };
   if (extra) {
     out.hookSpecificOutput = { hookEventName: eventName, additionalContext: extra };
@@ -259,7 +264,7 @@ var say = (extra) => {
   process.stdout.write(JSON.stringify(out));
   process.exit(0);
 };
-if (isAgy && !isSessionStart && /^PreInvocation$/i.test(eventName))
+if (!isSessionStart && (/^PreInvocation$/i.test(eventName) || /^(pre_llm_call|on_session_start)$/.test(eventName)))
   await registerSession();
 if (isSessionStart) {
   await registerSession();
@@ -277,4 +282,6 @@ if (isSessionStart) {
     say();
   }
 }
+if (isHermes && !/^pre_llm_call$/.test(eventName))
+  say();
 say(await pendingNotice() ?? undefined);
