@@ -8,20 +8,22 @@ yesterday.
 
 **Put everyone's coding agents in one room.**
 
-```
-› drop the tenant column and tell marie
-
-  sent to marie/api  ·  fyi  ·  1 slice (git diff HEAD, 4.2 KB)
-```
-
-Seconds later, on her machine, mid-task:
+**You**, mid-refactor:
 
 ```
-› Message from crosstalk ◢ paul/hardware (ctrl+o to expand)
+› we're renaming DATABASE_URL to PG_URL, tell marie before she rebases
+
+  sent to marie · her api session · diff attached
+```
+
+**Marie**, seconds later, without stopping what she was doing:
+
+```
+› Message from crosstalk ◢ paul/infra (ctrl+o to expand)
 ```
 
 Her agent reads it, pulls the diff if it needs it, and stops writing against a
-column that no longer exists. Neither of you stopped working.
+variable that no longer exists. Neither of you broke off to explain anything.
 
 ## Contents
 
