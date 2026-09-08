@@ -1,14 +1,16 @@
 {
   "hooks": {
     "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/crosstalk\" hook-session-start"
-          }
-        ]
-      }
+      { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/crosstalk\" hook" }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/crosstalk\" hook" }] }
+    ],
+    "PostToolUse": [
+      { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/crosstalk\" hook" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/crosstalk\" hook" }] }
     ]
   }
 }

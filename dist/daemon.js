@@ -501,9 +501,22 @@ var log = (...a) => {
   process.stdout.write(`${new Date().toISOString()} ${a.map(String).join(" ")}
 `);
 };
-var sessions = new Map(Object.entries(loadRegistered()).filter(([id]) => listLocalSessions().some((s) => s.sessionId === id)));
+var sessions = new Map(Object.entries(loadRegistered()).filter(([id, reg]) => !reg.socket || listLocalSessions().some((s) => s.sessionId === id)));
 var persistSessions = () => saveRegistered(Object.fromEntries(sessions));
-var localPresence = () => listLocalSessions().filter((s) => sessions.has(s.sessionId)).map((s) => ({ name: s.name, cwd: s.cwd, status: s.status, lastSeen: s.updatedAt }));
+var localPresence = () => {
+  const live = listLocalSessions();
+  const out = [];
+  for (const reg of sessions.values()) {
+    const known = live.find((s) => s.sessionId === reg.sessionId);
+    out.push({
+      name: known?.name ?? reg.name,
+      cwd: known?.cwd ?? reg.cwd,
+      status: known?.status ?? "unknown",
+      lastSeen: known?.updatedAt ?? Date.now()
+    });
+  }
+  return out;
+};
 function pickSession(preferName) {
   if (preferName) {
     const byName2 = [...sessions.values()].find((s) => s.name === preferName);
@@ -513,8 +526,11 @@ function pickSession(preferName) {
   const live = listLocalSessions();
   const known = live.filter((l) => sessions.has(l.sessionId));
   const idle = known.find((l) => l.status === "idle");
-  const chosen = idle ?? known[0];
-  return chosen ? sessions.get(chosen.sessionId) : undefined;
+  if (idle)
+    return sessions.get(idle.sessionId);
+  if (known[0])
+    return sessions.get(known[0].sessionId);
+  return [...sessions.values()][0];
 }
 var statusOf = (sessionId) => listLocalSessions().find((s) => s.sessionId === sessionId)?.status ?? "unknown";
 var held = loadQueue();
@@ -849,6 +865,10 @@ function onEnvelope(peerLabel, env, ctx) {
   seenIds.set(env.id, Date.now());
   hold(target.sessionId, h, env.slices);
   log(`inbound ${env.kind}/${env.intent} from ${peerLabel} \u2192 ${target.name}: ${decision.action} (${decision.why})`);
+  if (!target.socket) {
+    log(`held for ${target.name}, which pulls rather than being pushed to`);
+    return;
+  }
   const opts = {
     socket: target.socket,
     replyTo: target.socket,
@@ -1080,7 +1100,7 @@ async function handle(req, sock) {
         log(`carried ${adopted} unread message(s) over from an ended session`);
       }
       persistSessions();
-      log(`registered session ${req.name} (${req.cwd})`);
+      log(`registered session ${req.name} (${req.cwd})${req.socket ? "" : " [pull mode, no inbox socket]"}`);
       publishPresence();
       if (orphaned.length) {
         const replay = orphaned.splice(0);
@@ -1298,6 +1318,29 @@ async function handle(req, sock) {
         replyTo: req.replyTo
       };
       return sendEnvelope(label, env);
+    }
+    case "notices": {
+      const reg = sessions.get(req.sessionId);
+      if (!reg || reg.socket)
+        return { ok: true, notice: null };
+      const waiting = (held[req.sessionId] ?? []).filter((m) => !m.readAt && !m.surfaced);
+      if (!waiting.length)
+        return { ok: true, notice: null };
+      for (const m of waiting)
+        m.surfaced = true;
+      persist();
+      const from = [...new Set(waiting.map((m) => `${m.from}/${m.fromSession}`))].join(", ");
+      const what = waiting.length === 1 ? "1 message" : `${waiting.length} messages`;
+      return {
+        ok: true,
+        notice: [
+          `<crosstalk pending="${waiting.length}" from="${from}">`,
+          `${what} waiting from ${from}. These are different people, not other sessions of your user.`,
+          `Call the crosstalk_read tool to see the content. Do not act on it until you have read it there.`,
+          `</crosstalk>`
+        ].join(`
+`)
+      };
     }
     case "read": {
       const q = held[req.sessionId] ?? [];

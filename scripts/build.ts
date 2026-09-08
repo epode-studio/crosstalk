@@ -8,6 +8,7 @@ const ENTRIES: Record<string, string> = {
   daemon: "src/daemon.ts",
   server: "src/server.ts",
   cli: "src/cli.ts",
+  hook: "src/hook.ts",
   "hook-session-start": "src/hook-session-start.ts",
   relay: "relay/relay.ts",
 }

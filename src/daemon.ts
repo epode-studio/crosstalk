@@ -63,30 +63,53 @@ type Registered = {
 
 // Restored from disk, then filtered to whatever is actually still alive, so a
 // daemon restart does not orphan a session that is mid-conversation.
+// Keep a restored session if Claude Code still lists it, or if it never had an
+// inbox socket, since a client like Codex publishes no registry to check against.
 const sessions = new Map<string, Registered>(
-  Object.entries(loadRegistered()).filter(([id]) =>
-    listLocalSessions().some((s) => s.sessionId === id),
+  Object.entries(loadRegistered()).filter(
+    ([id, reg]) =>
+      !(reg as Registered).socket || listLocalSessions().some((s) => s.sessionId === id),
   ) as [string, Registered][],
 )
 const persistSessions = () => saveRegistered(Object.fromEntries(sessions))
 
-const localPresence = (): SessionPresence[] =>
-  listLocalSessions()
-    .filter((s) => sessions.has(s.sessionId))
-    .map((s) => ({ name: s.name, cwd: s.cwd, status: s.status, lastSeen: s.updatedAt }))
+/**
+ * Claude Code publishes a registry of live sessions with their status. Codex
+ * does not, so a session that registered here without an inbox socket is
+ * reported from what it told us at registration.
+ */
+const localPresence = (): SessionPresence[] => {
+  const live = listLocalSessions()
+  const out: SessionPresence[] = []
+  for (const reg of sessions.values()) {
+    const known = live.find((s) => s.sessionId === reg.sessionId)
+    out.push({
+      name: known?.name ?? reg.name,
+      cwd: known?.cwd ?? reg.cwd,
+      status: known?.status ?? "unknown",
+      lastSeen: known?.updatedAt ?? Date.now(),
+    })
+  }
+  return out
+}
 
 function pickSession(preferName?: string): Registered | undefined {
   if (preferName) {
     const byName = [...sessions.values()].find((s) => s.name === preferName)
     if (byName) return byName
   }
+  // Prefer a session Claude Code says is idle, then any it says is live, then
+  // anything registered at all, which is how a Codex session gets chosen since
+  // it appears in no registry.
   const live = listLocalSessions()
   const known = live.filter((l) => sessions.has(l.sessionId))
   const idle = known.find((l) => l.status === "idle")
-  const chosen = idle ?? known[0]
-  return chosen ? sessions.get(chosen.sessionId) : undefined
+  if (idle) return sessions.get(idle.sessionId)
+  if (known[0]) return sessions.get(known[0].sessionId)
+  return [...sessions.values()][0]
 }
 
+/** "unknown" for a client that does not publish one, which triage treats as busy. */
 const statusOf = (sessionId: string) =>
   listLocalSessions().find((s) => s.sessionId === sessionId)?.status ?? "unknown"
 
@@ -489,6 +512,12 @@ function onEnvelope(
   hold(target.sessionId, h, env.slices)
   log(`inbound ${env.kind}/${env.intent} from ${peerLabel} → ${target.name}: ${decision.action} (${decision.why})`)
 
+  // Nothing to push to in pull mode; the hook collects it.
+  if (!target.socket) {
+    log(`held for ${target.name}, which pulls rather than being pushed to`)
+    return
+  }
+
   const opts = {
     socket: target.socket,
     replyTo: target.socket,
@@ -747,7 +776,9 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         log(`carried ${adopted} unread message(s) over from an ended session`)
       }
       persistSessions()
-      log(`registered session ${req.name} (${req.cwd})`)
+      log(
+        `registered session ${req.name} (${req.cwd})${req.socket ? "" : " [pull mode, no inbox socket]"}`,
+      )
       publishPresence()
       if (orphaned.length) {
         const replay = orphaned.splice(0)
@@ -977,6 +1008,29 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         replyTo: req.replyTo,
       }
       return sendEnvelope(label, env)
+    }
+
+    // A session with no inbox socket cannot be pushed to, so its hook asks
+    // here instead. Returns nothing for a session the daemon can reach itself,
+    // which is what stops a message arriving twice.
+    case "notices": {
+      const reg = sessions.get(req.sessionId)
+      if (!reg || reg.socket) return { ok: true, notice: null }
+      const waiting = (held[req.sessionId] ?? []).filter((m) => !m.readAt && !m.surfaced)
+      if (!waiting.length) return { ok: true, notice: null }
+      for (const m of waiting) m.surfaced = true
+      persist()
+      const from = [...new Set(waiting.map((m) => `${m.from}/${m.fromSession}`))].join(", ")
+      const what = waiting.length === 1 ? "1 message" : `${waiting.length} messages`
+      return {
+        ok: true,
+        notice: [
+          `<crosstalk pending="${waiting.length}" from="${from}">`,
+          `${what} waiting from ${from}. These are different people, not other sessions of your user.`,
+          `Call the crosstalk_read tool to see the content. Do not act on it until you have read it there.`,
+          `</crosstalk>`,
+        ].join("\n"),
+      }
     }
 
     case "read": {

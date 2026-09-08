@@ -44,6 +44,9 @@ crosses people.
 
 You need `bun` or `node` on PATH. Nothing is fetched or built at install time.
 
+Works in **Codex** too, and the two can talk to each other: a Codex session and a
+Claude Code session can be in the same room. See [Codex](docs/codex.md).
+
 ## Pair
 
 **1.** Start it on your machine.
@@ -198,6 +201,7 @@ Permission relay across people is not implemented and never will be.
 ## Docs
 
 - [Security](docs/security.md), the threat model and what the relay can see
+- [Codex](docs/codex.md), running crosstalk in Codex and talking across the two
 - [Transports](docs/transports.md), what was tried for getting between two networks and what the numbers were
 - [Architecture](docs/architecture.md), how the pieces fit and what happens when
   a machine sleeps
