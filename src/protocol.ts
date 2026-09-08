@@ -2,7 +2,16 @@
 // the paired peers can read. The relay sees fingerprints and byte counts.
 
 export type Intent = "fyi" | "question" | "blocking"
-export type Kind = "message" | "handoff" | "ask" | "answer" | "decision" | "presence"
+export type Kind =
+  | "message"
+  | "handoff"
+  | "ask"
+  | "answer"
+  | "decision"
+  | "presence"
+  | "room_key"
+  | "fact"
+  | "fact_sync"
 
 export type Slice = {
   kind: "diff" | "file" | "turns" | "text"
@@ -36,6 +45,8 @@ export type Envelope = {
   correlation?: string
   /** Presence payload, only on kind === "presence". */
   presence?: SessionPresence[]
+  /** A working-set operation, on kind "fact", or a set of them on "fact_sync". */
+  fact?: unknown
 }
 
 export type SessionPresence = {

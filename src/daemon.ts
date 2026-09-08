@@ -36,6 +36,7 @@ import * as outbound from "./outbound.ts"
 import { appendDecision } from "./decisions.ts"
 import * as usage from "./usage.ts"
 import * as rooms from "./rooms.ts"
+import * as facts from "./facts.ts"
 import type { Envelope, Frame, Intent, Kind, SessionPresence, Slice } from "./protocol.ts"
 
 const identity = loadIdentity()
@@ -275,6 +276,7 @@ function connect() {
       log(`relay ready as ${f.fingerprint}`)
       flushOutbox()
       publishPresence()
+      requestFactSync()
       return
     }
     if (f.t === "presence") {
@@ -460,6 +462,8 @@ function onEnvelope(
   }
 
   if (env.kind === "room_key") return acceptRoomKey(peerLabel, env)
+
+  if (env.kind === "fact" || env.kind === "fact_sync") return acceptFacts(peerLabel, env)
 
   const tctx: trust.Context = {
     room: ctx?.room?.name ?? (env.room ? env.room.replace(/^#/, "") : undefined),
@@ -664,6 +668,92 @@ function flushOutbox() {
     log(`flushed ${sent} held message(s)${dropped ? `, dropped ${dropped} older than a day` : ""}`)
 }
 
+// --- the working set ---------------------------------------------------------
+
+/** A fact op from a peer. Writing needs "ask", so a stranger can read and not write. */
+function acceptFacts(peerLabel: string, env: Envelope) {
+  const room = (env.room ?? "").replace(/^#/, "")
+  if (!room) return
+  const level = trust.levelFor(peerLabel, { room, paired: !!loadPeers()[peerLabel] })
+  if (!trust.atLeast(level, "ask"))
+    return log(`ignored a fact from ${peerLabel}: they are at ${level}, writing needs ask`)
+
+  const ops = env.kind === "fact_sync" ? (env.fact as facts.Op[]) : [env.fact as facts.Op]
+  let changed = 0
+  for (const op of ops ?? []) if (op && facts.apply(room, op)) changed++
+  if (changed) log(`${changed} fact change(s) in #${room} from ${peerLabel}`)
+
+  // A sync request is answered with everything we have for that room.
+  if (env.kind === "fact_sync" && !ops?.length) shareFacts(peerLabel, room)
+}
+
+function broadcastFact(room: string, op: facts.Op) {
+  const r = rooms.byName(room)
+  const members = r
+    ? Object.values(r.members)
+        .map((m) => Object.values(loadPeers()).find((p) => p.fingerprint === m.fingerprint)?.label)
+        .filter((x): x is string => !!x)
+    : Object.keys(loadPeers()).filter((label) => label === room)
+  for (const label of members) {
+    if (label === identity!.label) continue
+    sendEnvelope(label, {
+      v: 1,
+      id: crypto.randomUUID(),
+      ts: Date.now(),
+      from: identity!.label,
+      fromSession: "-",
+      to: label,
+      kind: "fact",
+      intent: "fyi",
+      text: "",
+      room: `#${room}`,
+      fact: op,
+    })
+  }
+}
+
+/** Hand over everything we hold for a room, which is how someone catches up. */
+function shareFacts(peerLabel: string, room: string) {
+  const ops: facts.Op[] = facts.liveFacts(room).map((fact) => ({ op: "add", fact }))
+  if (!ops.length) return
+  sendEnvelope(peerLabel, {
+    v: 1,
+    id: crypto.randomUUID(),
+    ts: Date.now(),
+    from: identity!.label,
+    fromSession: "-",
+    to: peerLabel,
+    kind: "fact_sync",
+    intent: "fyi",
+    text: "",
+    room: `#${room}`,
+    fact: ops,
+  })
+}
+
+/** Ask everyone for anything we are missing, on every reconnect. */
+function requestFactSync() {
+  const roomNames = [
+    ...Object.keys(loadPeers()),
+    ...Object.values(rooms.load()).map((r) => r.name),
+  ]
+  for (const room of new Set(roomNames))
+    for (const label of Object.keys(loadPeers()))
+      sendEnvelope(label, {
+        v: 1,
+        id: crypto.randomUUID(),
+        ts: Date.now(),
+        from: identity!.label,
+        fromSession: "-",
+        to: label,
+        kind: "fact_sync",
+        intent: "fyi",
+        text: "",
+        room: `#${room}`,
+        fact: [],
+      })
+}
+
 // --- idle watcher and presence -------------------------------------------------
 
 const lastStatus = new Map<string, string>()
@@ -792,6 +882,68 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
           onEnvelope(o.label, o.env, { replayingParked: true, strangerInRoom: o.stranger })
       }
       return { ok: true, label: identity!.label }
+    }
+
+    case "facts": {
+      const store = facts.load()
+      const roomNames = [
+        ...Object.keys(loadPeers()),
+        ...Object.values(rooms.load()).map((r) => r.name),
+      ]
+      if (req.write) {
+        const room = rooms.normalise(String(req.room ?? roomNames[0] ?? ""))
+        if (!room) return { ok: false, error: "no room to write to; pair with someone first" }
+        const now = Date.now()
+        let op: facts.Op
+        if (req.write === "add") {
+          op = {
+            op: "add",
+            fact: {
+              id: facts.newFactId(),
+              text: String(req.text ?? "").trim(),
+              by: identity!.label,
+              at: now,
+              tags: (req.tags ?? []).map(String),
+              confirmed: [],
+            },
+          }
+          if (!(op as any).fact.text) return { ok: false, error: "a fact needs some text" }
+        } else if (req.write === "confirm") {
+          op = { op: "confirm", id: String(req.id), by: identity!.label, at: now }
+        } else if (req.write === "supersede") {
+          op = {
+            op: "supersede",
+            id: String(req.id),
+            by: identity!.label,
+            at: now,
+            reason: req.reason,
+            fact: req.text
+              ? {
+                  id: facts.newFactId(),
+                  text: String(req.text).trim(),
+                  by: identity!.label,
+                  at: now,
+                  tags: (req.tags ?? []).map(String),
+                  confirmed: [],
+                  supersedes: String(req.id),
+                }
+              : undefined,
+          }
+        } else {
+          op = { op: "remove", id: String(req.id), by: identity!.label, at: now }
+        }
+        const changed = facts.apply(room, op, store)
+        if (changed) broadcastFact(room, op)
+        return { ok: changed, room, op: req.write }
+      }
+      return {
+        ok: true,
+        rooms: roomNames,
+        facts: Object.fromEntries(
+          [...new Set(roomNames)].map((r) => [r, facts.liveFacts(r, store)]),
+        ),
+        digest: facts.digest([...new Set(roomNames)], req.cwd ?? process.cwd(), store),
+      }
     }
 
     case "rooms": {

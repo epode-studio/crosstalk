@@ -8,6 +8,7 @@ function fingerprint(edPubB64) {
   const h = crypto.createHash("sha256").update(un64(edPubB64)).digest("hex");
   return h.slice(0, 16).match(/.{4}/g).join("-");
 }
+var SCRYPT = { N: 32768, r: 8, p: 1, maxmem: 256 * 1024 * 1024 };
 
 // src/link.ts
 import crypto2 from "node:crypto";

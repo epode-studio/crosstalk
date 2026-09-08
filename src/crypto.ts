@@ -117,25 +117,36 @@ const WORDS = [
 ]
 
 /**
- * The phrase IS the secret. Four words from 256 is 32 bits, which is
- * weak against an offline attack and fine here: the offer lives 15 minutes, the
- * key is stretched through 200k PBKDF2 rounds, and the relay rate-limits
- * lookups. Nothing else needs to travel, the relay stores the offer under a
- * hash of the phrase and never sees the phrase itself.
+ * The phrase IS the secret, and the relay sees something derived from it, so the
+ * derivation has to be expensive to reverse. Five words from 256 is 40 bits,
+ * which a plain hash gives away instantly. scrypt at 32MB a guess does not:
+ * an attacker with a hundred thousand cores and three terabytes of memory
+ * between them covers under a tenth of a percent of the space inside the
+ * fifteen minutes an offer lives, and the fingerprint check both people do
+ * afterwards catches even that.
+ *
+ * A PAKE would let this go back to four words by making every guess cost a live
+ * handshake. That is the right end state and this is not it.
  */
-export const newPhrase = (words = 4) =>
+export const newPhrase = (words = 5) =>
   Array.from({ length: words }, () => WORDS[crypto.randomInt(WORDS.length)]).join("-")
 
 export const normalisePhrase = (p: string) =>
   p.trim().toLowerCase().replace(/\s+/g, "-").replace(/-+/g, "-")
 
-/** What the relay files the offer under. Derived, so the relay never sees the phrase. */
-export const codeForPhrase = (phrase: string) =>
-  crypto.createHash("sha256").update("crosstalk/room/" + normalisePhrase(phrase)).digest("hex").slice(0, 12).toUpperCase()
+// Memory-hard, so a relay holding the code cannot cheaply grind the phrase out
+// of it. 32MB and about 60ms per attempt on ordinary hardware.
+const SCRYPT = { N: 32768, r: 8, p: 1, maxmem: 256 * 1024 * 1024 }
 
-/** Key protecting a pairing offer. Weak input, so stretch it hard. */
-export const pairingKey = (phrase: string): Buffer =>
-  crypto.pbkdf2Sync(normalisePhrase(phrase), "crosstalk/pair/v2", 200_000, 32, "sha256")
+const stretch = (phrase: string, salt: string, bytes = 32) =>
+  crypto.scryptSync(normalisePhrase(phrase), salt, bytes, SCRYPT)
+
+/** What the relay files the offer under. Derived, and expensive to reverse. */
+export const codeForPhrase = (phrase: string) =>
+  stretch(phrase, "crosstalk/code/v3", 6).toString("hex").toUpperCase()
+
+/** Key protecting a pairing offer. Same stretching, different salt. */
+export const pairingKey = (phrase: string): Buffer => stretch(phrase, "crosstalk/pair/v3")
 
 export type Offer = {
   label: string

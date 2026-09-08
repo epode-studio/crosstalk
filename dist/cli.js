@@ -417,10 +417,12 @@ var WORDS = [
   "brazier",
   "taper"
 ];
-var newPhrase = (words = 4) => Array.from({ length: words }, () => WORDS[crypto.randomInt(WORDS.length)]).join("-");
+var newPhrase = (words = 5) => Array.from({ length: words }, () => WORDS[crypto.randomInt(WORDS.length)]).join("-");
 var normalisePhrase = (p) => p.trim().toLowerCase().replace(/\s+/g, "-").replace(/-+/g, "-");
-var codeForPhrase = (phrase) => crypto.createHash("sha256").update("crosstalk/room/" + normalisePhrase(phrase)).digest("hex").slice(0, 12).toUpperCase();
-var pairingKey = (phrase) => crypto.pbkdf2Sync(normalisePhrase(phrase), "crosstalk/pair/v2", 200000, 32, "sha256");
+var SCRYPT = { N: 32768, r: 8, p: 1, maxmem: 256 * 1024 * 1024 };
+var stretch = (phrase, salt, bytes = 32) => crypto.scryptSync(normalisePhrase(phrase), salt, bytes, SCRYPT);
+var codeForPhrase = (phrase) => stretch(phrase, "crosstalk/code/v3", 6).toString("hex").toUpperCase();
+var pairingKey = (phrase) => stretch(phrase, "crosstalk/pair/v3");
 var sealOffer = (phrase, offer) => seal(pairingKey(phrase), JSON.stringify(offer));
 var openOffer = (phrase, blob) => JSON.parse(open(pairingKey(phrase), blob));
 var asPeer = (o) => ({
@@ -434,6 +436,7 @@ var asPeer = (o) => ({
 
 // src/crypto.ts
 var normalisePhrase2 = (p) => p.trim().toLowerCase().replace(/\s+/g, "-").replace(/-+/g, "-");
+var SCRYPT2 = { N: 32768, r: 8, p: 1, maxmem: 256 * 1024 * 1024 };
 
 // src/invite.ts
 var DEFAULT_PORT = 8787;
