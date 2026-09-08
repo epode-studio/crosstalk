@@ -943,8 +943,105 @@ async function factsCmd() {
   console.log()
 }
 
+/**
+ * Your second machine should be you, not a second person.
+ *
+ * Pairing exchanges keys between two people. Linking copies one identity onto
+ * another machine, so both answer to the same fingerprint and appear once in
+ * every room. Messages arrive on whichever machine you are sitting at, because
+ * the relay holds a mailbox per identity and delivers to every connection on it.
+ *
+ * The phrase here protects your whole identity rather than one introduction, so
+ * it is six words instead of five and it should never leave the two machines.
+ */
+async function link() {
+  const zlib = await import("node:zlib")
+  const id = loadIdentity()
+  const joining = positional.join(" ").trim()
+
+  if (joining) {
+    if (id)
+      die(
+        `this machine already has an identity ("${id.label}"). Linking would replace it,\nalong with everyone it is paired with. Move ~/.claude/crosstalk aside first if\nyou are sure.`,
+      )
+    const inv = parseInvite(joining)
+    if (inv.where)
+      for (const candidate of expandAddress(inv.where, inv.port ?? 8787))
+        if (await relayReachable(candidate, 3000)) {
+          saveRelay(candidate)
+          break
+        }
+    const code = codeForPhrase(inv.phrase)
+    const r = await fetch(`${httpBase()}/pair/${code}?side=offer`)
+    if (!r.ok) die("no link waiting for those words. They last fifteen minutes.")
+    const { blob } = (await r.json()) as { blob: string }
+    let bundle: any
+    try {
+      const raw = openOffer(inv.phrase, blob)
+      bundle = JSON.parse(zlib.gunzipSync(Buffer.from((raw as any).z, "base64")).toString("utf8"))
+    } catch {
+      return die("could not open that. The words are probably slightly off.")
+    }
+    fs.mkdirSync(ROOT, { recursive: true, mode: 0o700 })
+    const write = (name: string, value: unknown) =>
+      fs.writeFileSync(path.join(ROOT, name), JSON.stringify(value, null, 2), { mode: 0o600 })
+    write("identity.json", { ...bundle.identity, machine: machineName() })
+    write("peers.json", bundle.peers ?? {})
+    if (bundle.rooms) write("rooms.json", bundle.rooms)
+    if (bundle.trust) write("trust.json", bundle.trust)
+    if (bundle.relay) write("relay.json", bundle.relay)
+    await ensureDaemon(ROOT_DIR)
+    console.log(`
+This machine is now "${bundle.identity.label}", the same one as your other machine.
+
+  ${fingerprint(bundle.identity.ed.pub)}
+
+Everyone you had paired with came across. In a room you appear once, not twice,
+and a message reaches whichever machine you are sitting at.`)
+    return
+  }
+
+  if (!id) die("nothing to link yet. Pair with someone first, or run this on the machine that already has your identity.")
+  const phrase = newPhrase(6)
+  const code = codeForPhrase(phrase)
+  const bundle = {
+    identity: id,
+    peers: loadPeers(),
+    rooms: (() => { try { return JSON.parse(fs.readFileSync(path.join(ROOT, "rooms.json"), "utf8")) } catch { return {} } })(),
+    trust: trust.load(),
+    relay: loadRelay(),
+  }
+  const z = zlib.gzipSync(Buffer.from(JSON.stringify(bundle), "utf8")).toString("base64")
+  const sealed = sealOffer(phrase, { z } as any)
+  if (sealed.length > 8000)
+    die("too much to send in one go. This happens with a lot of peers; copy ~/.claude/crosstalk across by hand instead.")
+  const url = loadRelay().url
+  const res = await fetch(`${httpBase(url)}/pair/${code}?side=offer`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ blob: sealed }),
+  })
+  if (!res.ok) die("the relay would not take it. Try again in a minute.")
+  // The other machine has no config yet, so it would look at the default relay.
+  // Say where to look when this one is somewhere else.
+  const asHttp = new URL(url.replace(/^ws/, "http"))
+  const invite =
+    url === DEFAULT_RELAY
+      ? phrase
+      : `${phrase} at ${asHttp.hostname}${asHttp.port ? `:${asHttp.port}` : ""}`
+  console.log(`
+On your other machine, run:
+
+    /crosstalk:link ${invite}
+
+That machine becomes this identity: same fingerprint, same people, same rooms.
+These six words carry your whole identity, so keep them between the two
+machines and nowhere else. They expire in fifteen minutes.`)
+}
+
 const commands: Record<string, () => Promise<void>> = {
   pair,
+  link,
   post,
   attention,
   facts: factsCmd,

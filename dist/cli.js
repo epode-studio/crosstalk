@@ -1,5 +1,23 @@
 #!/usr/bin/env bun
 // @bun
+import { createRequire } from "node:module";
+var __create = Object.create;
+var __getProtoOf = Object.getPrototypeOf;
+var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __toESM = (mod, isNodeMode, target) => {
+  target = mod != null ? __create(__getProtoOf(mod)) : {};
+  const to = isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
+  for (let key of __getOwnPropNames(mod))
+    if (!__hasOwnProp.call(to, key))
+      __defProp(to, key, {
+        get: () => mod[key],
+        enumerable: true
+      });
+  return to;
+};
+var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // src/config.ts
 import fs from "node:fs";
@@ -1773,8 +1791,98 @@ async function factsCmd() {
   }
   console.log();
 }
+async function link() {
+  const zlib = await import("zlib");
+  const id = loadIdentity();
+  const joining = positional.join(" ").trim();
+  if (joining) {
+    if (id)
+      die(`this machine already has an identity ("${id.label}"). Linking would replace it,
+along with everyone it is paired with. Move ~/.claude/crosstalk aside first if
+you are sure.`);
+    const inv = parseInvite(joining);
+    if (inv.where) {
+      for (const candidate of expandAddress(inv.where, inv.port ?? 8787))
+        if (await relayReachable(candidate, 3000)) {
+          saveRelay(candidate);
+          break;
+        }
+    }
+    const code2 = codeForPhrase(inv.phrase);
+    const r = await fetch(`${httpBase()}/pair/${code2}?side=offer`);
+    if (!r.ok)
+      die("no link waiting for those words. They last fifteen minutes.");
+    const { blob } = await r.json();
+    let bundle2;
+    try {
+      const raw = openOffer(inv.phrase, blob);
+      bundle2 = JSON.parse(zlib.gunzipSync(Buffer.from(raw.z, "base64")).toString("utf8"));
+    } catch {
+      return die("could not open that. The words are probably slightly off.");
+    }
+    fs6.mkdirSync(ROOT, { recursive: true, mode: 448 });
+    const write = (name, value) => fs6.writeFileSync(path8.join(ROOT, name), JSON.stringify(value, null, 2), { mode: 384 });
+    write("identity.json", { ...bundle2.identity, machine: machineName() });
+    write("peers.json", bundle2.peers ?? {});
+    if (bundle2.rooms)
+      write("rooms.json", bundle2.rooms);
+    if (bundle2.trust)
+      write("trust.json", bundle2.trust);
+    if (bundle2.relay)
+      write("relay.json", bundle2.relay);
+    await ensureDaemon(ROOT_DIR);
+    console.log(`
+This machine is now "${bundle2.identity.label}", the same one as your other machine.
+
+  ${fingerprint(bundle2.identity.ed.pub)}
+
+Everyone you had paired with came across. In a room you appear once, not twice,
+and a message reaches whichever machine you are sitting at.`);
+    return;
+  }
+  if (!id)
+    die("nothing to link yet. Pair with someone first, or run this on the machine that already has your identity.");
+  const phrase = newPhrase(6);
+  const code = codeForPhrase(phrase);
+  const bundle = {
+    identity: id,
+    peers: loadPeers(),
+    rooms: (() => {
+      try {
+        return JSON.parse(fs6.readFileSync(path8.join(ROOT, "rooms.json"), "utf8"));
+      } catch {
+        return {};
+      }
+    })(),
+    trust: load2(),
+    relay: loadRelay()
+  };
+  const z = zlib.gzipSync(Buffer.from(JSON.stringify(bundle), "utf8")).toString("base64");
+  const sealed = sealOffer(phrase, { z });
+  if (sealed.length > 8000)
+    die("too much to send in one go. This happens with a lot of peers; copy ~/.claude/crosstalk across by hand instead.");
+  const url = loadRelay().url;
+  const res = await fetch(`${httpBase(url)}/pair/${code}?side=offer`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ blob: sealed })
+  });
+  if (!res.ok)
+    die("the relay would not take it. Try again in a minute.");
+  const asHttp = new URL(url.replace(/^ws/, "http"));
+  const invite = url === DEFAULT_RELAY ? phrase : `${phrase} at ${asHttp.hostname}${asHttp.port ? `:${asHttp.port}` : ""}`;
+  console.log(`
+On your other machine, run:
+
+    /crosstalk:link ${invite}
+
+That machine becomes this identity: same fingerprint, same people, same rooms.
+These six words carry your whole identity, so keep them between the two
+machines and nowhere else. They expire in fifteen minutes.`);
+}
 var commands = {
   pair,
+  link,
   post,
   attention,
   facts: factsCmd,
