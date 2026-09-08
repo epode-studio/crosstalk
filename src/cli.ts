@@ -69,6 +69,12 @@ const VALUE_FLAGS = new Set([
  * Point somewhere else with --relay, or run your own: see deploy/ and worker/.
  */
 const DEFAULT_RELAY = process.env.CROSSTALK_DEFAULT_RELAY ?? "wss://crosstalk-relay.billowing-poetry-4cd6.workers.dev"
+/**
+ * The mark, above the views long enough to want a heading. Short outputs stay
+ * bare so this reads as a title rather than as a prefix on every line.
+ */
+const heading = () => console.log(`\n  ◢◢◢ crosstalk\n`)
+
 const flag = (f: string, d?: string) => {
   const i = argv.indexOf(f)
   return i === -1 ? d : argv[i + 1]
@@ -407,19 +413,20 @@ question. Nothing they do puts their words inside your turn.
 async function peers() {
   if (!(await ensureDaemon(ROOT_DIR))) die("daemon is not running; see ~/.claude/crosstalk/daemon.log")
   const r = await request({ op: "peers" })
-  console.log(`\nyou   ${r.me.label}   relay ${r.relay}`)
-  for (const s of r.me.sessions) console.log(`      ${s.name}  ${s.cwd}  ${s.status}`)
+  heading()
+  console.log(`  you   ${r.me.label}   relay ${r.relay}`)
+  for (const s of r.me.sessions) console.log(`        ${s.name}  ${s.cwd}  ${s.status}`)
   if (!r.peers.length) {
-    console.log(`\nNo peers yet. Run /crosstalk:pair --host to invite someone.\n`)
+    console.log(`\n  No peers yet. Run /crosstalk:pair --host to invite someone.\n`)
     return
   }
   for (const p of r.peers) {
     const muted = p.policy.mutedUntil && p.policy.mutedUntil > Date.now()
     console.log(
-      `\n${p.online ? "●" : "○"} ${p.label}${p.isMachine ? " (a machine)" : ""}  ${p.fingerprint}  ${p.policy.delivery}${muted ? " (muted)" : ""}${p.unread ? `  ${p.unread} unread` : ""}`,
+      `\n  ${p.online ? "●" : "○"} ${p.label}${p.isMachine ? " (a machine)" : ""}  ${p.fingerprint}  ${p.policy.delivery}${muted ? " (muted)" : ""}${p.unread ? `  ${p.unread} unread` : ""}`,
     )
-    if (!p.sessions.length) console.log(`      no sessions reported  (presence ${ago(p.presenceAt)})`)
-    for (const s of p.sessions) console.log(`      ${s.name}  ${s.cwd}  ${s.status}  ${ago(s.lastSeen)}`)
+    if (!p.sessions.length) console.log(`        no sessions reported  (presence ${ago(p.presenceAt)})`)
+    for (const s of p.sessions) console.log(`        ${s.name}  ${s.cwd}  ${s.status}  ${ago(s.lastSeen)}`)
   }
   console.log()
 }
@@ -484,13 +491,15 @@ Token figures are a rough estimate from message length, for orientation only.\n`
 async function status() {
   const id = loadIdentity()
   if (!id) return console.log("crosstalk: not set up. Run /crosstalk:pair --host.")
-  console.log(`identity  ${id.label}  ${fingerprint(id.ed.pub)}`)
-  console.log(`relay     ${loadRelay().url}`)
-  console.log(`peers     ${Object.keys(loadPeers()).join(", ") || "none"}`)
-  if (!daemonRunning()) return console.log("daemon    not running")
+  heading()
+  console.log(`  identity  ${id.label}  ${fingerprint(id.ed.pub)}`)
+  console.log(`  relay     ${loadRelay().url}`)
+  console.log(`  peers     ${Object.keys(loadPeers()).join(", ") || "none"}`)
+  if (!daemonRunning()) return console.log("  daemon    not running\n")
   const r = await request({ op: "status" })
-  console.log(`daemon    running, relay ${r.relay}`)
-  for (const s of r.sessions) console.log(`          ${s.name}  ${s.cwd}`)
+  console.log(`  daemon    running, relay ${r.relay}`)
+  for (const s of r.sessions) console.log(`            ${s.name}  ${s.cwd}`)
+  console.log()
 }
 
 async function doctor() {
@@ -596,12 +605,12 @@ async function doctor() {
     }
   }
 
-  console.log()
+  heading()
   for (const [name, ok, detail] of rows) {
-    console.log(`${ok === null ? "·" : ok ? "✓" : "✗"}  ${name.padEnd(20)} ${detail}`)
+    console.log(`  ${ok === null ? "·" : ok ? "✓" : "✗"}  ${name.padEnd(20)} ${detail}`)
   }
   const bad = rows.filter(([, ok]) => ok === false)
-  console.log(bad.length ? `\n${bad.length} thing(s) to fix above.\n` : `\nAll good.\n`)
+  console.log(bad.length ? `\n  ${bad.length} thing(s) to fix above.\n` : `\n  All good.\n`)
 }
 
 async function daemon() {
@@ -850,7 +859,7 @@ async function post() {
 async function attention() {
   await ensureDaemon(ROOT_DIR)
   const r = await request({ op: "attention" })
-  console.log()
+  heading()
   console.log(`  budget       ${r.budget} an hour, ${r.used} used in the last hour`)
   console.log(`  held         ${r.held} waiting for you to go idle`)
   const rows = Object.entries(r.bySource ?? {}) as [string, number][]

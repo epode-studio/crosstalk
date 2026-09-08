@@ -3,10 +3,11 @@
 # the machine has and runs the prebuilt bundle, so installing the plugin never
 # requires a toolchain.
 #
-#   crosstalk cli peers
+#   crosstalk peers
+#   crosstalk install goose
 #   crosstalk daemon
 #   crosstalk server
-#   crosstalk hook-session-start
+#   crosstalk hook
 #   crosstalk relay
 #
 # Set CROSSTALK_RUNTIME to force one.
@@ -16,11 +17,19 @@ set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 if [ $# -eq 0 ]; then
-  echo "usage: crosstalk <cli|daemon|server|hook-session-start|relay> [args...]" >&2
+  echo "usage: crosstalk <command> [args...]   (try: crosstalk status)" >&2
   exit 64
 fi
 what=$1
 shift
+
+# Only these are real entry points. Everything else is a CLI subcommand, so
+# `crosstalk install goose` and `crosstalk post "..."` work as written rather
+# than needing a `cli` in front of them.
+case "$what" in
+  cli|daemon|server|hook|relay) ;;
+  *) set -- "$what" "$@"; what=cli ;;
+esac
 
 runtime=""
 forced=${CROSSTALK_RUNTIME-}

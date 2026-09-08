@@ -446,7 +446,7 @@ function notifyInvitation(room: rooms.Room) {
     .filter((m) => m.fingerprint !== myFingerprint())
     .map((m) => m.label)
   injectNotice(
-    { socket: target.socket, replyTo: target.socket, fromName: `crosstalk:invite` },
+    { socket: target.socket, replyTo: target.socket, fromName: `crosstalk ◢ invite` },
     {
       count: 1,
       peer: room.pending!.invitedBy,
@@ -596,7 +596,7 @@ function onEnvelope(
   const opts = {
     socket: target.socket,
     replyTo: target.socket,
-    fromName: `crosstalk:${peerLabel}/${env.fromSession}`,
+    fromName: `crosstalk ◢ ${peerLabel}/${env.fromSession}`,
     // Deliberately no token. Presenting the session's own messaging token would
     // make this a verified own-child message, which skips the approval hold
     // Claude Code applies to unverified peers. A different person's text must
@@ -924,7 +924,7 @@ setInterval(() => {
     }
     if (push(s.sessionId, { push: "arrival", ...notice })) continue
     injectNotice(
-      { socket: s.socket, replyTo: s.socket, fromName: `crosstalk:${newest.from}` },
+      { socket: s.socket, replyTo: s.socket, fromName: `crosstalk ◢ ${newest.from}` },
       notice,
     ).catch((e) => log(`idle flush failed: ${e.message}`))
   }
@@ -1082,7 +1082,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       usage.record(source, "recv", h.text.length, decision.action !== "quiet")
       if (decision.action !== "quiet" && target.socket)
         injectNotice(
-          { socket: target.socket, replyTo: target.socket, fromName: `crosstalk:${source}` },
+          { socket: target.socket, replyTo: target.socket, fromName: `crosstalk ◢ ${source}` },
           { count: 1, peer: source, peerSession: "-", intent, kind: "message", local: true },
         ).catch(() => {})
       return { ok: true, source, action: decision.action }

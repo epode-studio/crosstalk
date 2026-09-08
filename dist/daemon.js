@@ -1114,7 +1114,7 @@ function notifyInvitation(room) {
   if (!target)
     return;
   const others = Object.values(room.members).filter((m) => m.fingerprint !== myFingerprint()).map((m) => m.label);
-  injectNotice({ socket: target.socket, replyTo: target.socket, fromName: `crosstalk:invite` }, {
+  injectNotice({ socket: target.socket, replyTo: target.socket, fromName: `crosstalk \u25E2 invite` }, {
     count: 1,
     peer: room.pending.invitedBy,
     peerSession: `#${room.name}`,
@@ -1239,7 +1239,7 @@ function onEnvelope(peerLabel, env, ctx) {
   const opts = {
     socket: target.socket,
     replyTo: target.socket,
-    fromName: `crosstalk:${peerLabel}/${env.fromSession}`
+    fromName: `crosstalk \u25E2 ${peerLabel}/${env.fromSession}`
   };
   if (decision.interrupts && !withinNoticeBudget()) {
     log(`notice budget spent (${NOTICE_BUDGET_PER_HOUR}/h); holding ${env.id} until idle`);
@@ -1532,7 +1532,7 @@ setInterval(() => {
     };
     if (push(s.sessionId, { push: "arrival", ...notice }))
       continue;
-    injectNotice({ socket: s.socket, replyTo: s.socket, fromName: `crosstalk:${newest.from}` }, notice).catch((e) => log(`idle flush failed: ${e.message}`));
+    injectNotice({ socket: s.socket, replyTo: s.socket, fromName: `crosstalk \u25E2 ${newest.from}` }, notice).catch((e) => log(`idle flush failed: ${e.message}`));
   }
 }, 3000);
 function publishPresence() {
@@ -1665,7 +1665,7 @@ async function handle(req, sock) {
       hold(target.sessionId, h);
       record(source, "recv", h.text.length, decision.action !== "quiet");
       if (decision.action !== "quiet" && target.socket)
-        injectNotice({ socket: target.socket, replyTo: target.socket, fromName: `crosstalk:${source}` }, { count: 1, peer: source, peerSession: "-", intent, kind: "message", local: true }).catch(() => {});
+        injectNotice({ socket: target.socket, replyTo: target.socket, fromName: `crosstalk \u25E2 ${source}` }, { count: 1, peer: source, peerSession: "-", intent, kind: "message", local: true }).catch(() => {});
       return { ok: true, source, action: decision.action };
     }
     case "attention": {

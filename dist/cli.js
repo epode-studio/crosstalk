@@ -2963,6 +2963,9 @@ var VALUE_FLAGS = new Set([
   "--text"
 ]);
 var DEFAULT_RELAY = process.env.CROSSTALK_DEFAULT_RELAY ?? "wss://crosstalk-relay.billowing-poetry-4cd6.workers.dev";
+var heading = () => console.log(`
+  \u25E2\u25E2\u25E2 crosstalk
+`);
 var flag = (f, d) => {
   const i = argv.indexOf(f);
   return i === -1 ? d : argv[i + 1];
@@ -3283,24 +3286,24 @@ async function peers() {
   if (!await ensureDaemon(ROOT_DIR))
     die("daemon is not running; see ~/.claude/crosstalk/daemon.log");
   const r = await request({ op: "peers" });
-  console.log(`
-you   ${r.me.label}   relay ${r.relay}`);
+  heading();
+  console.log(`  you   ${r.me.label}   relay ${r.relay}`);
   for (const s of r.me.sessions)
-    console.log(`      ${s.name}  ${s.cwd}  ${s.status}`);
+    console.log(`        ${s.name}  ${s.cwd}  ${s.status}`);
   if (!r.peers.length) {
     console.log(`
-No peers yet. Run /crosstalk:pair --host to invite someone.
+  No peers yet. Run /crosstalk:pair --host to invite someone.
 `);
     return;
   }
   for (const p of r.peers) {
     const muted = p.policy.mutedUntil && p.policy.mutedUntil > Date.now();
     console.log(`
-${p.online ? "\u25CF" : "\u25CB"} ${p.label}${p.isMachine ? " (a machine)" : ""}  ${p.fingerprint}  ${p.policy.delivery}${muted ? " (muted)" : ""}${p.unread ? `  ${p.unread} unread` : ""}`);
+  ${p.online ? "\u25CF" : "\u25CB"} ${p.label}${p.isMachine ? " (a machine)" : ""}  ${p.fingerprint}  ${p.policy.delivery}${muted ? " (muted)" : ""}${p.unread ? `  ${p.unread} unread` : ""}`);
     if (!p.sessions.length)
-      console.log(`      no sessions reported  (presence ${ago(p.presenceAt)})`);
+      console.log(`        no sessions reported  (presence ${ago(p.presenceAt)})`);
     for (const s of p.sessions)
-      console.log(`      ${s.name}  ${s.cwd}  ${s.status}  ${ago(s.lastSeen)}`);
+      console.log(`        ${s.name}  ${s.cwd}  ${s.status}  ${ago(s.lastSeen)}`);
   }
   console.log();
 }
@@ -3361,15 +3364,18 @@ async function status() {
   const id = loadIdentity();
   if (!id)
     return console.log("crosstalk: not set up. Run /crosstalk:pair --host.");
-  console.log(`identity  ${id.label}  ${fingerprint(id.ed.pub)}`);
-  console.log(`relay     ${loadRelay().url}`);
-  console.log(`peers     ${Object.keys(loadPeers()).join(", ") || "none"}`);
+  heading();
+  console.log(`  identity  ${id.label}  ${fingerprint(id.ed.pub)}`);
+  console.log(`  relay     ${loadRelay().url}`);
+  console.log(`  peers     ${Object.keys(loadPeers()).join(", ") || "none"}`);
   if (!daemonRunning())
-    return console.log("daemon    not running");
+    return console.log(`  daemon    not running
+`);
   const r = await request({ op: "status" });
-  console.log(`daemon    running, relay ${r.relay}`);
+  console.log(`  daemon    running, relay ${r.relay}`);
   for (const s of r.sessions)
-    console.log(`          ${s.name}  ${s.cwd}`);
+    console.log(`            ${s.name}  ${s.cwd}`);
+  console.log();
 }
 async function doctor() {
   const rows = [];
@@ -3452,15 +3458,15 @@ async function doctor() {
       rows.push(["daemon \u2194 relay", false, e.message]);
     }
   }
-  console.log();
+  heading();
   for (const [name, ok, detail] of rows) {
-    console.log(`${ok === null ? "\xB7" : ok ? "\u2713" : "\u2717"}  ${name.padEnd(20)} ${detail}`);
+    console.log(`  ${ok === null ? "\xB7" : ok ? "\u2713" : "\u2717"}  ${name.padEnd(20)} ${detail}`);
   }
   const bad = rows.filter(([, ok]) => ok === false);
   console.log(bad.length ? `
-${bad.length} thing(s) to fix above.
+  ${bad.length} thing(s) to fix above.
 ` : `
-All good.
+  All good.
 `);
 }
 async function daemon() {
@@ -3717,7 +3723,7 @@ async function post() {
 async function attention() {
   await ensureDaemon(ROOT_DIR);
   const r = await request({ op: "attention" });
-  console.log();
+  heading();
   console.log(`  budget       ${r.budget} an hour, ${r.used} used in the last hour`);
   console.log(`  held         ${r.held} waiting for you to go idle`);
   const rows = Object.entries(r.bySource ?? {});

@@ -309,6 +309,40 @@ case "$OUT" in
   *) ok "hermes gets context and nothing else" ;;
 esac
 
+# --- the label a person actually sees ------------------------------------------
+#
+# Claude Code renders from-name to the user and shows the same string to the
+# model, so it carries the brand and the fact that this came from someone else.
+echo
+echo "the arriving-message label"
+LBL=$(bun -e '
+  const net = await import("node:net")
+  const fs = await import("node:fs")
+  const os = await import("node:os")
+  const path = await import("node:path")
+  const sock = path.join(os.tmpdir(), `ct-label-${process.pid}.sock`)
+  const got = new Promise((res) => {
+    const srv = net.createServer((c) => {
+      let buf = ""
+      c.on("data", (d) => (buf += d))
+      c.on("end", () => { res(buf); srv.close() })
+    })
+    srv.listen(sock)
+  })
+  const { injectNotice } = await import("./src/inject.ts")
+  await injectNotice({ socket: sock, fromName: "crosstalk \u25e2 marie/api" },
+    { count: 1, peer: "marie", peerSession: "api", intent: "fyi", kind: "message" })
+  const raw = await got
+  try { fs.unlinkSync(sock) } catch {}
+  console.log(JSON.parse(raw.trim().split("\n").pop()).message.content)
+' 2>&1)
+has "$LBL" 'from-name="crosstalk ◢ marie/api"' "the label carries the mark and the name"
+has "$LBL" 'cross-session-message' "it is still the framing Claude Code expects"
+case "$LBL" in
+  *"marie</"*|*"<marie"*) bad "a peer name cannot break out of the attribute" ;;
+  *) ok "a peer name cannot break out of the attribute" ;;
+esac
+
 # --- the MCP server ------------------------------------------------------------
 #
 # For a client with no hook this is the whole of crosstalk, so it is checked

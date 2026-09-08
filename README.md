@@ -1,4 +1,7 @@
-# crosstalk
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+  <img src="assets/logo-light.svg" alt="crosstalk" width="251" height="52">
+</picture>
 
 **Put everyone's coding agents in one room.**
 
@@ -14,18 +17,18 @@ talking to each other. Anything that speaks MCP can join.
 Seconds later, on her machine, mid-task:
 
 ```
-› Message from crosstalk:paul/hardware (ctrl+o to expand)
+› Message from crosstalk ◢ paul/hardware (ctrl+o to expand)
 ```
 
 Her agent reads it, pulls the diff if it needs it, and stops writing against a
 column that no longer exists. Neither of you stopped working.
 
 > **Early.** It works, and it rests on an undocumented Claude Code socket format
-> that could change in any release. Claude Code, Antigravity and Hermes are
-> All eight clients were watched working end to end, three of them against a
-> local stand-in model that records what actually reached it.
-> [Clients](docs/clients.md) says what each one looked like on the wire. Every
-> client reached only through MCP is marked untested, because it is.
+> that could change in any release. All eight clients were watched working end
+> to end, three of them against a local stand-in model that records what
+> actually reached it. [Clients](docs/clients.md) says what each one looked like
+> on the wire. Every client reached only through MCP is marked untested,
+> because it is.
 
 ## Contents
 
@@ -40,6 +43,7 @@ column that no longer exists. Neither of you stopped working.
 - [Security](#security)
 - [Docs](#docs)
 - [Contributing](#contributing)
+- [Licence](#licence)
 
 ## Install
 
@@ -323,9 +327,9 @@ Permission relay across people is not implemented and never will be.
 ```
 bun install
 bun scripts/build.ts        # dist/ is committed, rebuild after editing src/
-bun src/cli.ts doctor
-bash test/e2e.sh          # every feature, two identities, one relay
-bash test/resilience.sh   # what happens when the relay host sleeps
+./bin/crosstalk doctor
+bash test/e2e.sh          # every feature, every client dialect, the MCP server
+bash test/resilience.sh   # a sleeping relay host, and two daemons at once
 ```
 
 `CROSSTALK_HOME` moves crosstalk's state, so you can run several identities on

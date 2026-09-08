@@ -27,7 +27,13 @@ export type InjectOptions = {
   token?: string
 }
 
-/** Peer-controlled values that end up inside a tag attribute. */
+/**
+ * Peer-controlled values that end up inside a tag attribute.
+ *
+ * The mark in a sender's label is ours, not theirs: this strips the characters
+ * that could close a tag, and everything crosstalk puts in front of a name is
+ * added after that.
+ */
 const attr = (v: string) =>
   String(v)
     .replace(/[<>"'&\r\n]/g, "")
