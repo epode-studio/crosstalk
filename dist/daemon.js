@@ -2,10 +2,10 @@
 // @bun
 
 // src/daemon.ts
-import fs9 from "fs";
+import fs10 from "fs";
 import net2 from "net";
-import path11 from "path";
-import crypto6 from "crypto";
+import path12 from "path";
+import crypto7 from "crypto";
 
 // src/config.ts
 import fs from "node:fs";
@@ -715,6 +715,112 @@ function digest(rooms, cwd, s = load4(), maxBytes = 2000) {
 `);
 }
 
+// src/tasks.ts
+import fs9 from "node:fs";
+import path11 from "node:path";
+import crypto6 from "node:crypto";
+var FILE7 = path11.join(ROOT2, "tasks.json");
+var newTaskId = () => "t_" + crypto6.randomBytes(4).toString("hex");
+function load5() {
+  try {
+    const raw = JSON.parse(fs9.readFileSync(FILE7, "utf8"));
+    const out = {};
+    for (const [room, list] of Object.entries(raw))
+      if (Array.isArray(list))
+        out[room] = list.filter((t) => t?.id && t?.text);
+    return out;
+  } catch {
+    return {};
+  }
+}
+function save5(s) {
+  fs9.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+  const tmp = `${FILE7}.tmp`;
+  fs9.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs9.renameSync(tmp, FILE7);
+}
+var openTasks = (room, s = load5()) => (s[room] ?? []).filter((t) => t.state !== "done");
+function apply2(room, op, s = load5()) {
+  const list = s[room] ??= [];
+  const find = (id) => list.find((t2) => t2.id === id);
+  if (op.op === "add") {
+    if (find(op.task.id))
+      return false;
+    list.push({ ...op.task, tags: op.task.tags ?? [], state: op.task.state ?? "open" });
+    save5(s);
+    return true;
+  }
+  const t = find(op.id);
+  if (!t)
+    return false;
+  if (op.op === "claim") {
+    if (t.state === "claimed" && t.claimedBy && t.claimedBy !== op.by)
+      return false;
+    if (t.state === "done")
+      return false;
+    t.state = "claimed";
+    t.claimedBy = op.by;
+    t.claimedAt = op.at;
+    save5(s);
+    return true;
+  }
+  if (op.op === "release") {
+    if (t.claimedBy !== op.by)
+      return false;
+    t.state = "open";
+    delete t.claimedBy;
+    delete t.claimedAt;
+    save5(s);
+    return true;
+  }
+  if (op.op === "done") {
+    if (t.state === "done")
+      return false;
+    t.state = "done";
+    t.doneBy = op.by;
+    t.doneAt = op.at;
+    if (op.note)
+      t.note = op.note;
+    save5(s);
+    return true;
+  }
+  if (op.op === "drop") {
+    s[room] = list.filter((x) => x.id !== op.id);
+    save5(s);
+    return true;
+  }
+  return false;
+}
+function waitingFor(who, rooms, s = load5()) {
+  const out = [];
+  for (const room of rooms)
+    for (const t of openTasks(room, s))
+      if (t.state === "open" && (!t.for || t.for === who))
+        out.push({ room, task: t });
+      else if (t.state === "claimed" && t.claimedBy === who)
+        out.push({ room, task: t });
+  return out;
+}
+function digest2(who, rooms, s = load5()) {
+  const mine = waitingFor(who, rooms, s);
+  if (!mine.length)
+    return null;
+  const lines = mine.slice(0, 10).map(({ room, task }) => {
+    const state = task.state === "claimed" ? `you claimed this` : task.for ? `for you, from ${task.by}` : `open, from ${task.by}`;
+    return `- ${task.id}  ${task.text}  (${state}, #${room})`;
+  });
+  return [
+    `<crosstalk-tasks count="${mine.length}">`,
+    `Work agreed in a room you are in. Claim one before starting it, so nobody`,
+    `does the same thing twice, and say so when it is done.`,
+    ``,
+    ...lines,
+    ...mine.length > lines.length ? [``, `${mine.length - lines.length} more.`] : [],
+    `</crosstalk-tasks>`
+  ].join(`
+`);
+}
+
 // src/daemon.ts
 var identity = loadIdentity();
 if (!identity) {
@@ -1046,6 +1152,8 @@ function onEnvelope(peerLabel, env, ctx) {
     return acceptRoomKey(peerLabel, env);
   if (env.kind === "fact" || env.kind === "fact_sync")
     return acceptFacts(peerLabel, env);
+  if (env.kind === "task" || env.kind === "task_sync")
+    return acceptTasks(peerLabel, env);
   const tctx = {
     room: ctx?.room?.name ?? (env.room ? env.room.replace(/^#/, "") : undefined),
     paired: !ctx?.strangerInRoom,
@@ -1058,7 +1166,7 @@ function onEnvelope(peerLabel, env, ctx) {
     if (env.correlation)
       sendEnvelope(peerLabel, {
         v: 1,
-        id: crypto6.randomUUID(),
+        id: crypto7.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: "-",
@@ -1169,7 +1277,7 @@ function acceptRoomKey(peerLabel, env) {
 function sendRoomKey(peerLabel, room) {
   return sendEnvelope(peerLabel, {
     v: 1,
-    id: crypto6.randomUUID(),
+    id: crypto7.randomUUID(),
     ts: Date.now(),
     from: identity.label,
     fromSession: "-",
@@ -1247,6 +1355,59 @@ function acceptFacts(peerLabel, env) {
   if (env.kind === "fact_sync" && !ops?.length)
     shareFacts(peerLabel, room);
 }
+function acceptTasks(peerLabel, env) {
+  const room = (env.room ?? "").replace(/^#/, "");
+  if (!room)
+    return;
+  const level = levelFor(peerLabel, { room, paired: !!loadPeers()[peerLabel] });
+  if (!atLeast2(level, "ask"))
+    return log(`ignored a task change from ${peerLabel}: they are at ${level}`);
+  const ops = env.kind === "task_sync" ? env.task : [env.task];
+  let changed = 0;
+  for (const op of ops ?? [])
+    if (op && apply2(room, op))
+      changed++;
+  if (changed)
+    log(`${changed} task change(s) in #${room} from ${peerLabel}`);
+  if (env.kind === "task_sync" && !ops?.length) {
+    const all = openTasks(room).map((task) => ({ op: "add", task }));
+    if (all.length)
+      sendEnvelope(peerLabel, {
+        v: 1,
+        id: crypto7.randomUUID(),
+        ts: Date.now(),
+        from: identity.label,
+        fromSession: "-",
+        to: peerLabel,
+        kind: "task_sync",
+        intent: "fyi",
+        text: "",
+        room: `#${room}`,
+        task: all
+      });
+  }
+}
+function broadcastTask(room, op) {
+  const r = byName(room);
+  const members = r ? Object.values(r.members).map((m) => Object.values(loadPeers()).find((p) => p.fingerprint === m.fingerprint)?.label).filter((x) => !!x) : Object.keys(loadPeers()).filter((label) => label === room);
+  for (const label of members) {
+    if (label === identity.label)
+      continue;
+    sendEnvelope(label, {
+      v: 1,
+      id: crypto7.randomUUID(),
+      ts: Date.now(),
+      from: identity.label,
+      fromSession: "-",
+      to: label,
+      kind: "task",
+      intent: "fyi",
+      text: "",
+      room: `#${room}`,
+      task: op
+    });
+  }
+}
 function broadcastFact(room, op) {
   const r = byName(room);
   const members = r ? Object.values(r.members).map((m) => Object.values(loadPeers()).find((p) => p.fingerprint === m.fingerprint)?.label).filter((x) => !!x) : Object.keys(loadPeers()).filter((label) => label === room);
@@ -1255,7 +1416,7 @@ function broadcastFact(room, op) {
       continue;
     sendEnvelope(label, {
       v: 1,
-      id: crypto6.randomUUID(),
+      id: crypto7.randomUUID(),
       ts: Date.now(),
       from: identity.label,
       fromSession: "-",
@@ -1274,7 +1435,7 @@ function shareFacts(peerLabel, room) {
     return;
   sendEnvelope(peerLabel, {
     v: 1,
-    id: crypto6.randomUUID(),
+    id: crypto7.randomUUID(),
     ts: Date.now(),
     from: identity.label,
     fromSession: "-",
@@ -1295,7 +1456,7 @@ function requestFactSync() {
     for (const label of Object.keys(loadPeers()))
       sendEnvelope(label, {
         v: 1,
-        id: crypto6.randomUUID(),
+        id: crypto7.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: "-",
@@ -1305,6 +1466,21 @@ function requestFactSync() {
         text: "",
         room: `#${room}`,
         fact: []
+      });
+  for (const room of new Set(roomNames))
+    for (const label of Object.keys(loadPeers()))
+      sendEnvelope(label, {
+        v: 1,
+        id: crypto7.randomUUID(),
+        ts: Date.now(),
+        from: identity.label,
+        fromSession: "-",
+        to: label,
+        kind: "task_sync",
+        intent: "fyi",
+        text: "",
+        room: `#${room}`,
+        task: []
       });
 }
 var lastStatus = new Map;
@@ -1340,7 +1516,7 @@ function publishPresence() {
   for (const label of Object.keys(loadPeers())) {
     sendEnvelope(label, {
       v: 1,
-      id: crypto6.randomUUID(),
+      id: crypto7.randomUUID(),
       ts: Date.now(),
       from: identity.label,
       fromSession: "-",
@@ -1428,7 +1604,7 @@ async function handle(req, sock) {
       const intent = req.intent ?? "fyi";
       const decision = triage("notify", intent, "message", statusOf(target.sessionId));
       const h = {
-        id: crypto6.randomUUID(),
+        id: crypto7.randomUUID(),
         from: source,
         fromSession: "-",
         intent,
@@ -1461,6 +1637,60 @@ async function handle(req, sock) {
         used,
         held: Object.values(held).flat().filter((m) => !m.readAt && !m.surfaced).length,
         bySource
+      };
+    }
+    case "tasks": {
+      const store = load5();
+      const roomNames = [
+        ...Object.keys(loadPeers()),
+        ...Object.values(load3()).map((r) => r.name)
+      ];
+      if (req.write) {
+        const room = normalise(String(req.room ?? roomNames[0] ?? ""));
+        if (!room)
+          return { ok: false, error: "no room to put work in; pair with someone first" };
+        const now = Date.now();
+        let op;
+        if (req.write === "add") {
+          const text = String(req.text ?? "").trim();
+          if (!text)
+            return { ok: false, error: "a task needs some text" };
+          op = {
+            op: "add",
+            task: {
+              id: newTaskId(),
+              text,
+              by: identity.label,
+              at: now,
+              for: req.for ? String(req.for) : undefined,
+              state: "open",
+              tags: (req.tags ?? []).map(String)
+            }
+          };
+        } else if (req.write === "claim") {
+          op = { op: "claim", id: String(req.id), by: identity.label, at: now };
+        } else if (req.write === "release") {
+          op = { op: "release", id: String(req.id), by: identity.label, at: now };
+        } else if (req.write === "done") {
+          op = { op: "done", id: String(req.id), by: identity.label, at: now, note: req.note };
+        } else {
+          op = { op: "drop", id: String(req.id), by: identity.label, at: now };
+        }
+        const changed = apply2(room, op, store);
+        if (changed)
+          broadcastTask(room, op);
+        if (!changed && req.write === "claim")
+          return {
+            ok: false,
+            error: "somebody else has that one. Pick a different task rather than doing it twice."
+          };
+        return { ok: changed, room, op: req.write, id: op.task?.id ?? req.id };
+      }
+      return {
+        ok: true,
+        rooms: roomNames,
+        tasks: Object.fromEntries([...new Set(roomNames)].map((r) => [r, openTasks(r, store)])),
+        digest: digest2(identity.label, [...new Set(roomNames)], store)
       };
     }
     case "facts": {
@@ -1648,7 +1878,7 @@ async function handle(req, sock) {
           return { ok: false, error: `no key for #${room.name}` };
         const env2 = {
           v: 1,
-          id: crypto6.randomUUID(),
+          id: crypto7.randomUUID(),
           ts: Date.now(),
           from: identity.label,
           fromSession: sessions.get(req.sessionId)?.name ?? "-",
@@ -1676,7 +1906,7 @@ async function handle(req, sock) {
       const [label, session] = String(req.to).split("/");
       const env = {
         v: 1,
-        id: crypto6.randomUUID(),
+        id: crypto7.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: sessions.get(req.sessionId)?.name ?? "-",
@@ -1692,7 +1922,7 @@ async function handle(req, sock) {
         thread: req.thread,
         replyTo: req.replyTo,
         room: req.room,
-        correlation: req.op === "ask" ? crypto6.randomUUID() : undefined
+        correlation: req.op === "ask" ? crypto7.randomUUID() : undefined
       };
       if (req.unprompted) {
         if (!String(req.because ?? "").trim())
@@ -1733,7 +1963,7 @@ async function handle(req, sock) {
       const [label] = String(req.to).split("/");
       const env = {
         v: 1,
-        id: crypto6.randomUUID(),
+        id: crypto7.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: sessions.get(req.sessionId)?.name ?? "-",
@@ -1837,7 +2067,7 @@ async function handle(req, sock) {
         const [label] = String(req.tell).split("/");
         sendEnvelope(label, {
           v: 1,
-          id: crypto6.randomUUID(),
+          id: crypto7.randomUUID(),
           ts: Date.now(),
           from: identity.label,
           fromSession: sessions.get(req.sessionId)?.name ?? "-",
@@ -1866,9 +2096,9 @@ ${req.rationale}` : ""}`
   }
 }
 try {
-  fs9.unlinkSync(P.daemonSock);
+  fs10.unlinkSync(P.daemonSock);
 } catch {}
-fs9.mkdirSync(path11.dirname(P.daemonSock), { recursive: true, mode: 448 });
+fs10.mkdirSync(path12.dirname(P.daemonSock), { recursive: true, mode: 448 });
 var control = net2.createServer((sock) => {
   let rest = "";
   sock.on("data", async (buf) => {
@@ -1894,25 +2124,25 @@ var control = net2.createServer((sock) => {
   sock.on("error", () => {});
 });
 try {
-  const running = Number(fs9.readFileSync(P.daemonLock, "utf8"));
-  if (running && running !== process.pid && fs9.existsSync(P.daemonSock)) {
+  const running = Number(fs10.readFileSync(P.daemonLock, "utf8"));
+  if (running && running !== process.pid && fs10.existsSync(P.daemonSock)) {
     process.kill(running, 0);
     console.error(`crosstalk: a daemon is already running as pid ${running}`);
     process.exit(0);
   }
 } catch {}
 control.listen(P.daemonSock, () => {
-  fs9.chmodSync(P.daemonSock, 384);
-  fs9.writeFileSync(P.daemonLock, String(process.pid), { mode: 384 });
+  fs10.chmodSync(P.daemonSock, 384);
+  fs10.writeFileSync(P.daemonLock, String(process.pid), { mode: 384 });
   log(`daemon up as "${identity.label}" on ${P.daemonSock}`);
   connect();
 });
 var bye = () => {
   try {
-    fs9.unlinkSync(P.daemonSock);
+    fs10.unlinkSync(P.daemonSock);
   } catch {}
   try {
-    fs9.unlinkSync(P.daemonLock);
+    fs10.unlinkSync(P.daemonLock);
   } catch {}
   process.exit(0);
 };

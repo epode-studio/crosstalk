@@ -37,6 +37,7 @@ import { appendDecision } from "./decisions.ts"
 import * as usage from "./usage.ts"
 import * as rooms from "./rooms.ts"
 import * as facts from "./facts.ts"
+import * as tasks from "./tasks.ts"
 import type { Envelope, Frame, Intent, Kind, SessionPresence, Slice } from "./protocol.ts"
 
 const identity = loadIdentity()
@@ -464,6 +465,7 @@ function onEnvelope(
   if (env.kind === "room_key") return acceptRoomKey(peerLabel, env)
 
   if (env.kind === "fact" || env.kind === "fact_sync") return acceptFacts(peerLabel, env)
+  if (env.kind === "task" || env.kind === "task_sync") return acceptTasks(peerLabel, env)
 
   const tctx: trust.Context = {
     room: ctx?.room?.name ?? (env.room ? env.room.replace(/^#/, "") : undefined),
@@ -687,6 +689,63 @@ function acceptFacts(peerLabel: string, env: Envelope) {
   if (env.kind === "fact_sync" && !ops?.length) shareFacts(peerLabel, room)
 }
 
+/** A task op from a peer. Writing needs "ask", same as facts. */
+function acceptTasks(peerLabel: string, env: Envelope) {
+  const room = (env.room ?? "").replace(/^#/, "")
+  if (!room) return
+  const level = trust.levelFor(peerLabel, { room, paired: !!loadPeers()[peerLabel] })
+  if (!trust.atLeast(level, "ask"))
+    return log(`ignored a task change from ${peerLabel}: they are at ${level}`)
+
+  const ops = env.kind === "task_sync" ? (env.task as tasks.TaskOp[]) : [env.task as tasks.TaskOp]
+  let changed = 0
+  for (const op of ops ?? []) if (op && tasks.apply(room, op)) changed++
+  if (changed) log(`${changed} task change(s) in #${room} from ${peerLabel}`)
+
+  if (env.kind === "task_sync" && !ops?.length) {
+    const all: tasks.TaskOp[] = tasks.openTasks(room).map((task) => ({ op: "add", task }))
+    if (all.length)
+      sendEnvelope(peerLabel, {
+        v: 1,
+        id: crypto.randomUUID(),
+        ts: Date.now(),
+        from: identity!.label,
+        fromSession: "-",
+        to: peerLabel,
+        kind: "task_sync",
+        intent: "fyi",
+        text: "",
+        room: `#${room}`,
+        task: all,
+      })
+  }
+}
+
+function broadcastTask(room: string, op: tasks.TaskOp) {
+  const r = rooms.byName(room)
+  const members = r
+    ? Object.values(r.members)
+        .map((m) => Object.values(loadPeers()).find((p) => p.fingerprint === m.fingerprint)?.label)
+        .filter((x): x is string => !!x)
+    : Object.keys(loadPeers()).filter((label) => label === room)
+  for (const label of members) {
+    if (label === identity!.label) continue
+    sendEnvelope(label, {
+      v: 1,
+      id: crypto.randomUUID(),
+      ts: Date.now(),
+      from: identity!.label,
+      fromSession: "-",
+      to: label,
+      kind: "task",
+      intent: "fyi",
+      text: "",
+      room: `#${room}`,
+      task: op,
+    })
+  }
+}
+
 function broadcastFact(room: string, op: facts.Op) {
   const r = rooms.byName(room)
   const members = r
@@ -751,6 +810,23 @@ function requestFactSync() {
         text: "",
         room: `#${room}`,
         fact: [],
+      })
+
+  // Work waiting in a room matters as much as what the room knows.
+  for (const room of new Set(roomNames))
+    for (const label of Object.keys(loadPeers()))
+      sendEnvelope(label, {
+        v: 1,
+        id: crypto.randomUUID(),
+        ts: Date.now(),
+        from: identity!.label,
+        fromSession: "-",
+        to: label,
+        kind: "task_sync",
+        intent: "fyi",
+        text: "",
+        room: `#${room}`,
+        task: [],
       })
 }
 
@@ -927,6 +1003,62 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         used,
         held: Object.values(held).flat().filter((m) => !m.readAt && !m.surfaced).length,
         bySource,
+      }
+    }
+
+    case "tasks": {
+      const store = tasks.load()
+      const roomNames = [
+        ...Object.keys(loadPeers()),
+        ...Object.values(rooms.load()).map((r) => r.name),
+      ]
+      if (req.write) {
+        const room = rooms.normalise(String(req.room ?? roomNames[0] ?? ""))
+        if (!room) return { ok: false, error: "no room to put work in; pair with someone first" }
+        const now = Date.now()
+        let op: tasks.TaskOp
+        if (req.write === "add") {
+          const text = String(req.text ?? "").trim()
+          if (!text) return { ok: false, error: "a task needs some text" }
+          op = {
+            op: "add",
+            task: {
+              id: tasks.newTaskId(),
+              text,
+              by: identity!.label,
+              at: now,
+              for: req.for ? String(req.for) : undefined,
+              state: "open",
+              tags: (req.tags ?? []).map(String),
+            },
+          }
+        } else if (req.write === "claim") {
+          op = { op: "claim", id: String(req.id), by: identity!.label, at: now }
+        } else if (req.write === "release") {
+          op = { op: "release", id: String(req.id), by: identity!.label, at: now }
+        } else if (req.write === "done") {
+          op = { op: "done", id: String(req.id), by: identity!.label, at: now, note: req.note }
+        } else {
+          op = { op: "drop", id: String(req.id), by: identity!.label, at: now }
+        }
+        const changed = tasks.apply(room, op, store)
+        if (changed) broadcastTask(room, op)
+        // A refused claim is the whole point of claiming, so say so plainly.
+        if (!changed && req.write === "claim")
+          return {
+            ok: false,
+            error:
+              "somebody else has that one. Pick a different task rather than doing it twice.",
+          }
+        return { ok: changed, room, op: req.write, id: (op as any).task?.id ?? req.id }
+      }
+      return {
+        ok: true,
+        rooms: roomNames,
+        tasks: Object.fromEntries(
+          [...new Set(roomNames)].map((r) => [r, tasks.openTasks(r, store)]),
+        ),
+        digest: tasks.digest(identity!.label, [...new Set(roomNames)], store),
       }
     }
 

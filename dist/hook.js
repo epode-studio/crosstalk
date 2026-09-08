@@ -245,8 +245,14 @@ var say = (extra) => {
 if (isSessionStart) {
   await registerSession();
   try {
-    const r = await request({ op: "facts", cwd }, 6000);
-    say(r?.digest ?? undefined);
+    const [f, t] = await Promise.all([
+      request({ op: "facts", cwd }, 6000).catch(() => null),
+      request({ op: "tasks" }, 6000).catch(() => null)
+    ]);
+    const parts = [f?.digest, t?.digest].filter(Boolean);
+    say(parts.length ? parts.join(`
+
+`) : undefined);
   } catch {
     say();
   }

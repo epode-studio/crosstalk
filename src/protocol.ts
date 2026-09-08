@@ -12,6 +12,8 @@ export type Kind =
   | "room_key"
   | "fact"
   | "fact_sync"
+  | "task"
+  | "task_sync"
 
 export type Slice = {
   kind: "diff" | "file" | "turns" | "text"
@@ -47,6 +49,8 @@ export type Envelope = {
   presence?: SessionPresence[]
   /** A working-set operation, on kind "fact", or a set of them on "fact_sync". */
   fact?: unknown
+  /** A task operation, on kind "task", or a set of them on "task_sync". */
+  task?: unknown
 }
 
 export type SessionPresence = {

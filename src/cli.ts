@@ -47,6 +47,7 @@ import { spawn, execFileSync } from "node:child_process"
 const argv = process.argv.slice(2)
 const cmd = argv[0] ?? "status"
 const VALUE_FLAGS = new Set([
+  "--for",
   "--label",
   "--phrase",
   "--relay",
@@ -856,6 +857,49 @@ async function attention() {
 `)
 }
 
+async function tasksCmd() {
+  await ensureDaemon(ROOT_DIR)
+  const verb = positional[0]
+  if (verb === "add") {
+    const r = await request({
+      op: "tasks",
+      write: "add",
+      text: positional.slice(1).join(" "),
+      for: flag("--for"),
+    })
+    return console.log(r.ok ? `added ${r.id} to #${r.room}` : `not added: ${r.error}`)
+  }
+  if (verb === "claim" || verb === "done" || verb === "release" || verb === "drop") {
+    const r = await request({
+      op: "tasks",
+      write: verb,
+      id: positional[1],
+      note: positional.slice(2).join(" ") || undefined,
+    })
+    return console.log(r.ok ? `${verb}: ${positional[1]}` : r.error ?? "nothing changed")
+  }
+  const r = await request({ op: "tasks" })
+  const all = Object.entries(r.tasks ?? {}) as [string, any[]][]
+  if (!all.some(([, t]) => t.length)) {
+    console.log(`
+  Nothing on the list.
+
+    /crosstalk:tasks add "wire the upload retry" --for marie
+`)
+    return
+  }
+  for (const [room, list] of all) {
+    if (!list.length) continue
+    console.log(`\n  #${room}`)
+    for (const t of list) {
+      const who = t.state === "claimed" ? `claimed by ${t.claimedBy}` : t.for ? `for ${t.for}` : "open"
+      console.log(`    ${t.id}  ${t.text}`)
+      console.log(`${" ".repeat(12)}${who}, from ${t.by}`)
+    }
+  }
+  console.log()
+}
+
 async function factsCmd() {
   await ensureDaemon(ROOT_DIR)
   const verb = positional[0]
@@ -904,6 +948,7 @@ const commands: Record<string, () => Promise<void>> = {
   post,
   attention,
   facts: factsCmd,
+  tasks: tasksCmd,
   rename,
   trust: trustCmd,
   room,
