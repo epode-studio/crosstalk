@@ -52,7 +52,9 @@ you broke off to explain anything.
 
 - [Who can interrupt you](#who-can-interrupt-you)
 
-- [Things that are not people](#things-that-are-not-people)
+- [Let your own machine interrupt you](#let-your-own-machine-interrupt-you)
+
+- [Put a bot in a room](#put-a-bot-in-a-room)
 
 - [Commands](#commands)
 
@@ -123,6 +125,9 @@ args:    ["server"]
 > reached only through MCP is marked untested, because it is.
 
 ## Pair
+
+Once, with each person. After this their agent and yours can reach each other
+from anywhere, and neither of you does it again.
 
 **1.** Start it.
 
@@ -263,6 +268,9 @@ reasoning survives in the codebase rather than in a chat log nobody reopens.
 
 ## Rooms
 
+So you are not sending the same thing to four people one at a time, and so
+someone who joins in a month arrives to the facts and tasks already there.
+
 Everything is a room. Pairing with one person makes a room of two, and
 `/crosstalk:room` lists everything you are in:
 
@@ -284,6 +292,9 @@ A room outlives every session. Close your laptop for a week and it is still
 there, with the same people, the same facts, and anything they sent you waiting.
 
 ## Who can interrupt you
+
+Being reachable is only worth it if you can say how much. One person mid-incident
+should be able to stop you; the same person on a quiet Tuesday should not.
 
 One dial per source, where each step includes the ones below it:
 
@@ -328,25 +339,49 @@ held quietly costs nothing and is not counted.
   jo              2  ●
 ```
 
-## Things that are not people
+## Let your own machine interrupt you
 
-Anything on your machine can put a line on your screen without pairing, because
-it is you talking to yourself. This is what `/crosstalk:install path` is for:
+Long jobs finish while you are looking at something else. This is how they tell
+your agent instead of telling nobody.
 
 ```
 crosstalk post "migration finished, 1.2M rows"
-crosstalk post "build failed on main" --intent blocking --source ci
 ```
 
-Something that lives in a room, like a build watcher everyone can see, pairs like
-a person but declares itself:
+It runs on your machine and reaches your own sessions. No pairing, because it is
+you talking to yourself. Something local has to call it:
+
+```
+# .git/hooks/post-merge
+crosstalk post "someone merged into main; this branch may be behind"
+
+# a test run you stopped watching
+npm test || crosstalk post "tests failed" --intent blocking --source ci
+```
+
+`--intent blocking` is what reaches you mid-task. Without it the message waits
+until you are idle.
+
+This needs `crosstalk` on your PATH, which is what `/crosstalk:install path`
+does. A hosted runner on someone else's infrastructure cannot do any of this: it
+has no way to reach your laptop. That is the next section.
+
+## Put a bot in a room
+
+A build watcher that everyone should hear, running somewhere that is not your
+machine, needs an identity of its own. It pairs like a person:
 
 ```
 /crosstalk:pair --agent
 ```
 
-It shows as a machine, it starts at `notify`, and no amount of trust raises it
-past that. A build bot cannot take over anyone's session.
+Now it reaches everyone in the room, wherever they are, through the same relay
+people use. One deploy notice, every agent on the team hears it, nobody relays
+anything by hand.
+
+It shows as a machine and starts at `notify`, and no amount of trust raises it
+past that. A build bot can tell the room the deploy failed. It can never put
+words inside anyone's turn.
 
 ## Commands
 

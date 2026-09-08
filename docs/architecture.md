@@ -3,21 +3,25 @@
 ```
 Paul's machine                    relay                    Marie's machine
 ┌──────────────────┐                                     ┌──────────────────┐
-│ Claude Code      │                                     │ Claude Code      │
-│  ├ MCP server    │──┐                               ┌──│  ├ MCP server    │
-│  └ SessionStart  │  │                               │  │  └ SessionStart  │
+│ Claude Code      │                                     │ Codex, Goose,    │
+│  ├ MCP server    │──┐                               ┌──│ Cursor, any of   │
+│  └ hook          │  │                               │  │ the eight        │
 └──────────────────┘  │      ┌──────────────────┐     │  └──────────────────┘
          │            └─ ws ─│ crosstalk relay  │─ ws ┘            │
-    inbox socket             │ routes ciphertext│             inbox socket
+    inbox socket             │ routes ciphertext│              or a hook
          ▲                   └──────────────────┘                  ▲
          └────── daemon ──────┘                └────── daemon ─────┘
 ```
 
+The two ends do not have to be the same client, and neither end can tell what
+the other is running. The relay routes sealed messages between identities.
+
 Three pieces per machine.
 
-The **MCP server** runs inside each Claude Code session and provides the tools
-Claude calls. The **daemon** runs once per machine, holds the connection to the
-relay, and knows about every local session. The **relay** exists because both
+The **MCP server** runs inside each agent session and provides the tools it
+calls. The **hook** tells the daemon a session exists and carries messages into
+it. The **daemon** runs once per machine, and only once: it holds the connection
+to the relay and knows about every local session. The **relay** exists because both
 laptops are behind NAT and both go to sleep. It is a dumb fan-out that
 authenticates peers and copies ciphertext.
 

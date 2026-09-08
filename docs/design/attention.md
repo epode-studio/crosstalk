@@ -1,12 +1,14 @@
-# Design: what an agent pays attention to
+# What an agent pays attention to
 
-Status: draft for argument, nothing built yet.
+How interruption works, and why it works this way. All four pieces below are
+built: the trust ladder is `src/trust.ts`, triage is `src/policy.ts`, the budget
+lives in the daemon, facts are `src/facts.ts`.
 
 Crosstalk started as messaging between two people's Claude Code sessions. What it
 turned into is an identity, a room, and a sealed transport that does not care
 which client is on either end. Messaging is one thing that runs on top of that.
 
-This designs four pieces at once, because three of them depend on the fourth.
+Four pieces, because three of them depend on the fourth.
 
 ```
         trust ladder            what a source is allowed to do to you
@@ -23,12 +25,7 @@ This designs four pieces at once, because three of them depend on the fourth.
 
 ## 1. Trust ladder
 
-Today a peer has `delivery` (notify, deliver, quiet) and `allowAsk` (on, off),
-and someone sharing a room you never paired with is a special case in the code.
-Three concepts describing one thing.
-
-Replace all of it with a single level per source, where each level contains the
-ones below it:
+There is a single level per source, and each level contains the ones below it:
 
 | Level | They may |
 |---|---|
@@ -57,8 +54,9 @@ binary: either everyone can interrupt you or the room is a mailbox. A ladder is
 also honest about the fact that these permissions are ordered, which the current
 two-field version hides.
 
-**What this replaces.** `policy.delivery`, `policy.allowAsk`, and the
-`strangerInRoom` branch in the daemon. One value, one place.
+**What this replaced.** `policy.delivery`, `policy.allowAsk`, and the
+`strangerInRoom` branch in the daemon. One value, one place. The old settings are
+still read once, so an existing setup migrates rather than resetting.
 
 ---
 
@@ -129,8 +127,11 @@ Facts sync through the room as sealed envelopes like everything else: `fact.add`
 recorded, so two people editing the same fact produces a visible supersede rather
 than a silent overwrite.
 
-Both agents read the set at `SessionStart` through the hook that already exists,
-which injects it as additional context on Claude Code and Codex alike.
+Every agent gets the set once per session, through the hook that already exists,
+on the first event that client can actually carry text on. That is not always
+the one called session start: on Kimi it is the first prompt, on Goose it is the
+end of a turn. The daemon hands it over once, so it does not matter which event
+arrives first.
 
 ```
 /crosstalk:facts                        what the room holds
