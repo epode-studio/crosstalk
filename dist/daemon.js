@@ -2,9 +2,9 @@
 // @bun
 
 // src/daemon.ts
-import fs6 from "fs";
+import fs8 from "fs";
 import net2 from "net";
-import path7 from "path";
+import path10 from "path";
 import crypto5 from "crypto";
 
 // src/config.ts
@@ -315,77 +315,187 @@ function injectMessage(opts, m) {
 `));
 }
 
+// src/trust.ts
+import path4 from "node:path";
+
+// src/config.ts
+import os3 from "node:os";
+import path3 from "node:path";
+var ROOT2 = process.env.CROSSTALK_HOME ?? path3.join(os3.homedir(), ".claude", "crosstalk");
+var P2 = {
+  root: ROOT2,
+  identity: path3.join(ROOT2, "identity.json"),
+  peers: path3.join(ROOT2, "peers.json"),
+  policy: path3.join(ROOT2, "policy.json"),
+  relay: path3.join(ROOT2, "relay.json"),
+  queue: path3.join(ROOT2, "queue.json"),
+  parked: path3.join(ROOT2, "parked.json"),
+  sessions: path3.join(ROOT2, "sessions.json"),
+  outbox: path3.join(ROOT2, "outbox.json"),
+  usage: path3.join(ROOT2, "usage.json"),
+  daemonSock: path3.join(ROOT2, "daemon.sock"),
+  daemonLock: path3.join(ROOT2, "daemon.lock"),
+  log: path3.join(ROOT2, "daemon.log")
+};
+
+// src/trust.ts
+var LEVELS = ["mute", "notify", "ask", "handoff", "deliver"];
+var rank = (l) => LEVELS.indexOf(l);
+var atLeast = (have, need) => rank(have) >= rank(need);
+var FILE = path4.join(ROOT2, "trust.json");
+
 // src/policy.ts
-function triage(policy, intent, kind, receiverStatus, now = Date.now()) {
-  if (policy.mutedUntil && policy.mutedUntil > now) {
-    return { action: "quiet", why: `muted for ${Math.ceil((policy.mutedUntil - now) / 60000)}m` };
-  }
-  if (policy.delivery === "deliver") {
-    return { action: "deliver", why: "peer is set to deliver" };
-  }
-  if (policy.delivery === "quiet") {
-    if (intent === "blocking")
-      return { action: "notify", why: "blocking intent lifts quiet to notify" };
-    return { action: "quiet", why: "peer is set to quiet" };
-  }
+var REQUIRES = {
+  ask: "ask",
+  handoff: "handoff"
+};
+function triage(level, intent, kind, receiverStatus, muted = false) {
+  if (level === "mute")
+    return { action: "drop", why: "muted permanently at this level", interrupts: false };
+  if (muted)
+    return { action: "quiet", why: "held while muted", interrupts: false };
+  const needed = REQUIRES[kind];
+  if (needed && !atLeast(level, needed))
+    return {
+      action: "refuse",
+      why: `a ${kind} needs ${needed}, and this source is at ${level}`,
+      interrupts: false
+    };
+  if (kind === "answer")
+    return { action: "notify", why: "an answer you asked for", interrupts: true };
+  if (level === "deliver")
+    return { action: "deliver", why: "this source is set to deliver", interrupts: true };
   const idle = receiverStatus === "idle";
-  if (kind === "answer") {
-    return { action: "notify", why: "answer to a question this session asked" };
+  if (intent === "fyi" && !idle)
+    return { action: "quiet", why: "fyi while busy, held until idle", interrupts: false };
+  return { action: "notify", why: `${intent} intent, session ${receiverStatus}`, interrupts: true };
+}
+
+// src/trust.ts
+import fs3 from "node:fs";
+import path5 from "node:path";
+var LEVELS2 = ["mute", "notify", "ask", "handoff", "deliver"];
+var rank2 = (l) => LEVELS2.indexOf(l);
+var atLeast2 = (have, need) => rank2(have) >= rank2(need);
+var lower = (a, b) => rank2(a) <= rank2(b) ? a : b;
+var isLevel = (s) => LEVELS2.includes(s);
+var FILE2 = path5.join(ROOT2, "trust.json");
+var DEFAULT_TRUST = {
+  rooms: {},
+  people: {},
+  default: "ask",
+  muted: {}
+};
+var ROOM_DEFAULT = "notify";
+function load() {
+  try {
+    const raw = JSON.parse(fs3.readFileSync(FILE2, "utf8"));
+    return {
+      rooms: raw.rooms ?? {},
+      people: raw.people ?? {},
+      default: isLevel(raw.default) ? raw.default : DEFAULT_TRUST.default,
+      muted: raw.muted ?? {}
+    };
+  } catch {
+    return migrate();
   }
-  if (intent === "fyi" && !idle) {
-    return { action: "quiet", why: "fyi while busy, batched until idle" };
+}
+function save(t) {
+  fs3.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+  const tmp = `${FILE2}.tmp`;
+  fs3.writeFileSync(tmp, JSON.stringify(t, null, 2), { mode: 384 });
+  fs3.renameSync(tmp, FILE2);
+}
+function migrate() {
+  const t = { ...DEFAULT_TRUST, rooms: {}, people: {}, muted: {} };
+  try {
+    const old = JSON.parse(fs3.readFileSync(path5.join(ROOT2, "policy.json"), "utf8"));
+    const asLevel = (p) => p?.delivery === "deliver" ? "deliver" : p?.delivery === "quiet" ? "notify" : p?.allowAsk ? "ask" : "notify";
+    if (old?.default)
+      t.default = asLevel(old.default);
+    for (const [name, p] of Object.entries(old?.peers ?? {})) {
+      t.people[name] = asLevel(p);
+      if (p.mutedUntil)
+        t.muted[name] = p.mutedUntil;
+    }
+    save(t);
+  } catch {}
+  return t;
+}
+function levelFor(person, ctx, t = load()) {
+  const pinned = t.people[person];
+  const roomLevel = ctx.room ? t.rooms[ctx.room] : undefined;
+  let level = pinned ?? roomLevel ?? (ctx.room ? ROOM_DEFAULT : t.default);
+  if (!ctx.paired)
+    level = lower(level, "notify");
+  if (ctx.machine)
+    level = lower(level, "notify");
+  return level;
+}
+function isMuted(person, ctx, t = load(), now = Date.now()) {
+  if ((t.muted[person] ?? 0) > now)
+    return true;
+  if (ctx.room && (t.muted[`#${ctx.room}`] ?? 0) > now)
+    return true;
+  return false;
+}
+
+// src/outbound.ts
+import fs4 from "node:fs";
+import path6 from "node:path";
+var FILE3 = path6.join(ROOT2, "outbound.json");
+var WINDOW_MS = 60 * 60000;
+var UNPROMPTED_PER_HOUR = Number(process.env.CROSSTALK_UNPROMPTED_PER_HOUR ?? 5);
+var read = () => {
+  try {
+    return JSON.parse(fs4.readFileSync(FILE3, "utf8"));
+  } catch {
+    return {};
   }
-  return { action: "notify", why: `${intent} intent, session ${receiverStatus}` };
+};
+var write = (l) => {
+  try {
+    fs4.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+    fs4.writeFileSync(FILE3, JSON.stringify(l), { mode: 384 });
+  } catch {}
+};
+function spend(peer, now = Date.now()) {
+  const log = read();
+  const recent = (log[peer] ?? []).filter((t) => now - t < WINDOW_MS);
+  if (recent.length >= UNPROMPTED_PER_HOUR)
+    return { ok: false, left: 0 };
+  recent.push(now);
+  log[peer] = recent;
+  write(log);
+  return { ok: true, left: UNPROMPTED_PER_HOUR - recent.length };
 }
 
 // src/decisions.ts
-import fs3 from "node:fs";
-import path3 from "node:path";
+import fs5 from "node:fs";
+import path7 from "node:path";
 var HEADER = `# Decisions
 
 Appended by crosstalk when either side marks something settled. Newest last.
 `;
 function appendDecision(repoRoot, d, file = "DECISIONS.md") {
-  const target = path3.join(repoRoot, file);
-  if (!fs3.existsSync(target))
-    fs3.writeFileSync(target, HEADER);
+  const target = path7.join(repoRoot, file);
+  if (!fs5.existsSync(target))
+    fs5.writeFileSync(target, HEADER);
   const when = new Date(d.ts).toISOString().replace("T", " ").slice(0, 16);
   const who = d.session ? `${d.by}/${d.session}` : d.by;
   const lines = [``, `## ${d.text}`, ``, `- ${when} · ${who}`];
   if (d.rationale)
     lines.push(`- ${d.rationale}`);
-  fs3.appendFileSync(target, lines.join(`
+  fs5.appendFileSync(target, lines.join(`
 `) + `
 `);
   return target;
 }
 
 // src/usage.ts
-import fs4 from "node:fs";
-import path5 from "node:path";
-
-// src/config.ts
-import os3 from "node:os";
-import path4 from "node:path";
-var ROOT2 = process.env.CROSSTALK_HOME ?? path4.join(os3.homedir(), ".claude", "crosstalk");
-var P2 = {
-  root: ROOT2,
-  identity: path4.join(ROOT2, "identity.json"),
-  peers: path4.join(ROOT2, "peers.json"),
-  policy: path4.join(ROOT2, "policy.json"),
-  relay: path4.join(ROOT2, "relay.json"),
-  queue: path4.join(ROOT2, "queue.json"),
-  parked: path4.join(ROOT2, "parked.json"),
-  sessions: path4.join(ROOT2, "sessions.json"),
-  outbox: path4.join(ROOT2, "outbox.json"),
-  usage: path4.join(ROOT2, "usage.json"),
-  daemonSock: path4.join(ROOT2, "daemon.sock"),
-  daemonLock: path4.join(ROOT2, "daemon.lock"),
-  log: path4.join(ROOT2, "daemon.log")
-};
-
-// src/usage.ts
-var FILE = path5.join(ROOT2, "usage.json");
+import fs6 from "node:fs";
+import path8 from "node:path";
+var FILE4 = path8.join(ROOT2, "usage.json");
 var empty = () => ({
   sentMessages: 0,
   sentChars: 0,
@@ -395,21 +505,21 @@ var empty = () => ({
   firstAt: Date.now(),
   lastAt: Date.now()
 });
-function load() {
+function load2() {
   try {
-    return JSON.parse(fs4.readFileSync(FILE, "utf8"));
+    return JSON.parse(fs6.readFileSync(FILE4, "utf8"));
   } catch {
     return {};
   }
 }
-function save(u) {
+function save2(u) {
   try {
-    fs4.mkdirSync(ROOT2, { recursive: true, mode: 448 });
-    fs4.writeFileSync(FILE, JSON.stringify(u, null, 2), { mode: 384 });
+    fs6.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+    fs6.writeFileSync(FILE4, JSON.stringify(u, null, 2), { mode: 384 });
   } catch {}
 }
 function record(peer, direction, chars, delivered = false) {
-  const u = load();
+  const u = load2();
   const p = u[peer] ??= empty();
   if (direction === "sent") {
     p.sentMessages++;
@@ -421,10 +531,10 @@ function record(peer, direction, chars, delivered = false) {
       p.recvDelivered++;
   }
   p.lastAt = Date.now();
-  save(u);
+  save2(u);
 }
 var estTokens = (chars) => Math.round(chars / 4);
-function summarise(u = load()) {
+function summarise(u = load2()) {
   const rows = Object.entries(u).map(([peer, p]) => ({
     peer,
     sent: p.sentMessages,
@@ -446,14 +556,14 @@ function summarise(u = load()) {
 }
 
 // src/rooms.ts
-import fs5 from "node:fs";
-import path6 from "node:path";
+import fs7 from "node:fs";
+import path9 from "node:path";
 import crypto4 from "node:crypto";
-var FILE2 = path6.join(ROOT2, "rooms.json");
+var FILE5 = path9.join(ROOT2, "rooms.json");
 var isRoomRecord = (v) => !!v && typeof v === "object" && typeof v.id === "string" && typeof v.name === "string" && typeof v.members === "object";
-var load2 = () => {
+var load3 = () => {
   try {
-    const raw = JSON.parse(fs5.readFileSync(FILE2, "utf8"));
+    const raw = JSON.parse(fs7.readFileSync(FILE5, "utf8"));
     const out = {};
     for (const [k, v] of Object.entries(raw))
       if (isRoomRecord(v))
@@ -463,11 +573,11 @@ var load2 = () => {
     return {};
   }
 };
-function save2(r) {
-  fs5.mkdirSync(ROOT2, { recursive: true, mode: 448 });
-  const tmp = `${FILE2}.tmp`;
-  fs5.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 384 });
-  fs5.renameSync(tmp, FILE2);
+function save3(r) {
+  fs7.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+  const tmp = `${FILE5}.tmp`;
+  fs7.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 384 });
+  fs7.renameSync(tmp, FILE5);
 }
 var newRoomId = () => crypto4.randomBytes(8).toString("hex");
 var newRoomKey = () => crypto4.randomBytes(32).toString("base64");
@@ -481,13 +591,13 @@ function oneToOneId(a, b) {
   const pair = [a, b].sort().join("|");
   return "1to1" + crypto4.createHash("sha256").update("crosstalk/room/1to1|" + pair).digest("hex").slice(0, 12);
 }
-function byName(name, state = load2()) {
+function byName(name, state = load3()) {
   const n = normalise(name);
   return Object.values(state).find((r) => normalise(r.name) === n && !r.pending);
 }
-function upsert(room, state = load2()) {
+function upsert(room, state = load3()) {
   state[room.id] = room;
-  save2(state);
+  save3(state);
   return state;
 }
 
@@ -679,9 +789,9 @@ function connect() {
     if (f.t === "rooms")
       return f.rooms.forEach(onRoster);
     if (f.t === "room_gone") {
-      const st = load2();
+      const st = load3();
       delete st[f.roomId];
-      save2(st);
+      save3(st);
       return;
     }
     if (f.t === "room_deliver")
@@ -723,13 +833,13 @@ function sendEnvelope(peerLabel, env) {
 }
 var myFingerprint = () => fingerprint(identity.ed.pub);
 function onRoster(r) {
-  const st = load2();
+  const st = load3();
   const existing = st[r.id];
   const me = myFingerprint();
   const mine = r.members.find((m) => m.fingerprint === me);
   if (!mine) {
     delete st[r.id];
-    save2(st);
+    save3(st);
     return;
   }
   const room = existing ?? {
@@ -766,7 +876,7 @@ function notifyInvitation(room) {
   }).catch(() => {});
 }
 function onRoomBody(f) {
-  const st = load2();
+  const st = load3();
   const room = st[f.roomId];
   if (!room || room.pending)
     return log(`dropped room message for a room we have not joined`);
@@ -819,12 +929,15 @@ function onEnvelope(peerLabel, env, ctx) {
   }
   if (env.kind === "room_key")
     return acceptRoomKey(peerLabel, env);
-  let pol = policyFor(peerLabel);
-  if (ctx?.strangerInRoom) {
-    pol = { ...pol, delivery: pol.delivery === "quiet" ? "quiet" : "notify", allowAsk: false };
-  }
-  if (env.kind === "ask" && !pol.allowAsk) {
-    log(`refused ask from ${peerLabel}: allowAsk is off`);
+  const tctx = {
+    room: ctx?.room?.name ?? (env.room ? env.room.replace(/^#/, "") : undefined),
+    paired: !ctx?.strangerInRoom,
+    machine: !!loadPeers()[peerLabel]?.isMachine
+  };
+  const level = levelFor(peerLabel, tctx);
+  const muted = isMuted(peerLabel, tctx);
+  if (env.kind === "ask" && !atLeast2(level, "ask")) {
+    log(`refused ask from ${peerLabel}: they are at ${level}`);
     if (env.correlation)
       sendEnvelope(peerLabel, {
         v: 1,
@@ -836,7 +949,7 @@ function onEnvelope(peerLabel, env, ctx) {
         kind: "answer",
         intent: "fyi",
         correlation: env.correlation,
-        text: ctx?.strangerInRoom ? "Refused: we share a room but have never paired, and questions from someone unpaired are not accepted. Send a message instead." : "Refused: questions are switched off for you here. An inbound question starts a turn and spends tokens on this machine, so it stays off until they run /crosstalk:policy <name> --allow-ask. Send a message instead."
+        text: ctx?.strangerInRoom ? "Refused: we share a room but have never paired, and a question from someone unpaired is capped at a notice. Send a message instead." : `Refused: you are at "${level}" here, and a question needs "ask". They can raise it with /crosstalk:trust. Send a message instead.`
       });
     return;
   }
@@ -846,7 +959,9 @@ function onEnvelope(peerLabel, env, ctx) {
     persistParked();
     return log(`no local session registered yet; parked message from ${peerLabel}`);
   }
-  const decision = { ...triage(pol, env.intent, env.kind, statusOf(target.sessionId)) };
+  const decision = { ...triage(level, env.intent, env.kind, statusOf(target.sessionId), muted) };
+  if (decision.action === "drop")
+    return log(`dropped ${env.kind} from ${peerLabel}: ${decision.why}`);
   const h = {
     id: env.id,
     from: peerLabel,
@@ -874,7 +989,7 @@ function onEnvelope(peerLabel, env, ctx) {
     replyTo: target.socket,
     fromName: `crosstalk:${peerLabel}/${env.fromSession}`
   };
-  if (decision.action !== "quiet" && !withinNoticeBudget()) {
+  if (decision.interrupts && !withinNoticeBudget()) {
     log(`notice budget spent (${NOTICE_BUDGET_PER_HOUR}/h); holding ${env.id} until idle`);
     decision.action = "quiet";
   }
@@ -907,7 +1022,7 @@ function acceptRoomKey(peerLabel, env) {
   const k = env.presence;
   if (!k?.roomId || !k.key)
     return;
-  const st = load2();
+  const st = load3();
   const room = st[k.roomId] ?? {
     id: k.roomId,
     name: k.name,
@@ -1112,7 +1227,7 @@ async function handle(req, sock) {
       return { ok: true, label: identity.label };
     }
     case "rooms": {
-      const st = load2();
+      const st = load3();
       const me = myFingerprint();
       const direct = Object.values(loadPeers()).map((p) => ({
         id: oneToOneId(me, p.fingerprint),
@@ -1174,7 +1289,7 @@ async function handle(req, sock) {
     case "room_accept":
     case "room_decline":
     case "room_leave": {
-      const st = load2();
+      const st = load3();
       const room = Object.values(st).find((r) => normalise(r.name) === normalise(req.room));
       if (!room)
         return { ok: false, error: `no room called "#${req.room}" here` };
@@ -1185,7 +1300,7 @@ async function handle(req, sock) {
         upsert(room, st);
       } else {
         delete st[room.id];
-        save2(st);
+        save3(st);
       }
       return { ok: true, room: room.name };
     }
@@ -1227,7 +1342,7 @@ async function handle(req, sock) {
         if (!room)
           return {
             ok: false,
-            error: `no room called "${req.to}". You are in: ${[...Object.keys(loadPeers()), ...Object.values(load2()).map((r2) => "#" + r2.name)].join(", ") || "nothing yet"}`
+            error: `no room called "${req.to}". You are in: ${[...Object.keys(loadPeers()), ...Object.values(load3()).map((r2) => "#" + r2.name)].join(", ") || "nothing yet"}`
           };
         if (room.pending)
           return { ok: false, error: `you have not accepted the invitation to #${room.name} yet` };
@@ -1273,13 +1388,28 @@ async function handle(req, sock) {
         toSession: session,
         kind: req.op === "send" ? req.kind ?? "message" : req.op,
         intent: req.intent ?? (req.op === "ask" ? "question" : "fyi"),
-        text: String(req.text ?? ""),
+        text: req.unprompted ? `${String(req.text ?? "")}
+
+(sent without being asked, because: ${String(req.because).trim()})` : String(req.text ?? ""),
         slices: req.slices,
         thread: req.thread,
         replyTo: req.replyTo,
         room: req.room,
         correlation: req.op === "ask" ? crypto5.randomUUID() : undefined
       };
+      if (req.unprompted) {
+        if (!String(req.because ?? "").trim())
+          return {
+            ok: false,
+            error: "an unprompted message has to say why it affects them. Pass a one line reason as because, or wait until your user asks you to send it."
+          };
+        const budget = spend(label);
+        if (!budget.ok)
+          return {
+            ok: false,
+            error: `you have used all ${UNPROMPTED_PER_HOUR} unprompted messages to ${label} this hour. Keep this until your user asks, or until the hour turns over.`
+          };
+      }
       const r = sendEnvelope(label, env);
       if (!r.ok)
         return { ok: false, error: r.error };
@@ -1362,7 +1492,7 @@ async function handle(req, sock) {
         ok: true,
         me: { label: identity.label, sessions: localPresence() },
         relay: ws?.readyState === 1 ? "connected" : "disconnected",
-        rooms: load2(),
+        rooms: load3(),
         peers: Object.values(peers).map((p) => ({
           label: p.label,
           fingerprint: p.fingerprint,
@@ -1438,9 +1568,9 @@ ${req.rationale}` : ""}`
   }
 }
 try {
-  fs6.unlinkSync(P.daemonSock);
+  fs8.unlinkSync(P.daemonSock);
 } catch {}
-fs6.mkdirSync(path7.dirname(P.daemonSock), { recursive: true, mode: 448 });
+fs8.mkdirSync(path10.dirname(P.daemonSock), { recursive: true, mode: 448 });
 var control = net2.createServer((sock) => {
   let rest = "";
   sock.on("data", async (buf) => {
@@ -1466,25 +1596,25 @@ var control = net2.createServer((sock) => {
   sock.on("error", () => {});
 });
 try {
-  const running = Number(fs6.readFileSync(P.daemonLock, "utf8"));
-  if (running && running !== process.pid && fs6.existsSync(P.daemonSock)) {
+  const running = Number(fs8.readFileSync(P.daemonLock, "utf8"));
+  if (running && running !== process.pid && fs8.existsSync(P.daemonSock)) {
     process.kill(running, 0);
     console.error(`crosstalk: a daemon is already running as pid ${running}`);
     process.exit(0);
   }
 } catch {}
 control.listen(P.daemonSock, () => {
-  fs6.chmodSync(P.daemonSock, 384);
-  fs6.writeFileSync(P.daemonLock, String(process.pid), { mode: 384 });
+  fs8.chmodSync(P.daemonSock, 384);
+  fs8.writeFileSync(P.daemonLock, String(process.pid), { mode: 384 });
   log(`daemon up as "${identity.label}" on ${P.daemonSock}`);
   connect();
 });
 var bye = () => {
   try {
-    fs6.unlinkSync(P.daemonSock);
+    fs8.unlinkSync(P.daemonSock);
   } catch {}
   try {
-    fs6.unlinkSync(P.daemonLock);
+    fs8.unlinkSync(P.daemonLock);
   } catch {}
   process.exit(0);
 };

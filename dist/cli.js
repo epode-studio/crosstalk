@@ -838,16 +838,72 @@ function summarise(u = load()) {
   };
 }
 
-// src/paths.ts
+// src/trust.ts
+import fs5 from "node:fs";
 import path6 from "node:path";
+var LEVELS = ["mute", "notify", "ask", "handoff", "deliver"];
+var isLevel = (s) => LEVELS.includes(s);
+var DESCRIPTION = {
+  mute: "nothing reaches you",
+  notify: "a line on your screen; their words stay behind a tool call",
+  ask: "also a question that costs you a turn",
+  handoff: "also a work item with state and files",
+  deliver: "also their words inside your turn"
+};
+var FILE2 = path6.join(ROOT2, "trust.json");
+var DEFAULT_TRUST = {
+  rooms: {},
+  people: {},
+  default: "ask",
+  muted: {}
+};
+var ROOM_DEFAULT = "notify";
+function load2() {
+  try {
+    const raw = JSON.parse(fs5.readFileSync(FILE2, "utf8"));
+    return {
+      rooms: raw.rooms ?? {},
+      people: raw.people ?? {},
+      default: isLevel(raw.default) ? raw.default : DEFAULT_TRUST.default,
+      muted: raw.muted ?? {}
+    };
+  } catch {
+    return migrate();
+  }
+}
+function save(t) {
+  fs5.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+  const tmp = `${FILE2}.tmp`;
+  fs5.writeFileSync(tmp, JSON.stringify(t, null, 2), { mode: 384 });
+  fs5.renameSync(tmp, FILE2);
+}
+function migrate() {
+  const t = { ...DEFAULT_TRUST, rooms: {}, people: {}, muted: {} };
+  try {
+    const old = JSON.parse(fs5.readFileSync(path6.join(ROOT2, "policy.json"), "utf8"));
+    const asLevel = (p) => p?.delivery === "deliver" ? "deliver" : p?.delivery === "quiet" ? "notify" : p?.allowAsk ? "ask" : "notify";
+    if (old?.default)
+      t.default = asLevel(old.default);
+    for (const [name, p] of Object.entries(old?.peers ?? {})) {
+      t.people[name] = asLevel(p);
+      if (p.mutedUntil)
+        t.muted[name] = p.mutedUntil;
+    }
+    save(t);
+  } catch {}
+  return t;
+}
+
+// src/paths.ts
+import path7 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
-var dirOf2 = (metaUrl) => path6.dirname(fileURLToPath2(metaUrl));
-var rootFrom2 = (metaUrl) => path6.join(dirOf2(metaUrl), "..");
-var shim2 = (root) => path6.join(root, "bin", "crosstalk");
+var dirOf2 = (metaUrl) => path7.dirname(fileURLToPath2(metaUrl));
+var rootFrom2 = (metaUrl) => path7.join(dirOf2(metaUrl), "..");
+var shim2 = (root) => path7.join(root, "bin", "crosstalk");
 
 // src/cli.ts
-import fs5 from "fs";
-import path7 from "path";
+import fs6 from "fs";
+import path8 from "path";
 import { spawn as spawn3, execFileSync as execFileSync4 } from "child_process";
 var argv = process.argv.slice(2);
 var cmd = argv[0] ?? "status";
@@ -872,8 +928,8 @@ var positional = (() => {
   return out;
 })();
 var ROOT_DIR = rootFrom2(import.meta.url);
-var RELAY_PID = path7.join(ROOT, "relay.pid");
-var TUNNEL_PID = path7.join(ROOT, "tunnel.pid");
+var RELAY_PID = path8.join(ROOT, "relay.pid");
+var TUNNEL_PID = path8.join(ROOT, "tunnel.pid");
 var httpBase = (ws = loadRelay().url) => ws.replace(/^ws/, "http").replace(/\/ws$/, "");
 var die = (m) => {
   console.error(m);
@@ -902,7 +958,7 @@ function identityOrCreate() {
 }
 var relayPid = () => {
   try {
-    const pid = Number(fs5.readFileSync(RELAY_PID, "utf8"));
+    const pid = Number(fs6.readFileSync(RELAY_PID, "utf8"));
     process.kill(pid, 0);
     return pid;
   } catch {
@@ -937,14 +993,14 @@ async function startRelay(port = Number(flag("--port", "8787"))) {
     if (await relayReachable(url2))
       return url2;
   }
-  const out = fs5.openSync(path7.join(ROOT, "relay.log"), "a");
+  const out = fs6.openSync(path8.join(ROOT, "relay.log"), "a");
   const child = spawn3(shim2(ROOT_DIR), ["relay", "--host", "0.0.0.0", "--port", String(port)], {
     detached: true,
     stdio: ["ignore", out, out]
   });
   child.unref();
-  fs5.mkdirSync(ROOT, { recursive: true, mode: 448 });
-  fs5.writeFileSync(RELAY_PID, String(child.pid), { mode: 384 });
+  fs6.mkdirSync(ROOT, { recursive: true, mode: 448 });
+  fs6.writeFileSync(RELAY_PID, String(child.pid), { mode: 384 });
   const url = `ws://${addr.host}:${port}`;
   saveRelay(url);
   for (let i = 0;i < 40; i++) {
@@ -960,14 +1016,14 @@ Install it yourself (brew install cloudflared) and try again, or drop --public
 and pair on the same network.`);
     console.log("opening a public tunnel, this takes a few seconds");
     try {
-      const t = await openTunnel(bin, port, path7.join(ROOT, "tunnel.log"));
-      fs5.writeFileSync(TUNNEL_PID, String(t.pid), { mode: 384 });
+      const t = await openTunnel(bin, port, path8.join(ROOT, "tunnel.log"));
+      fs6.writeFileSync(TUNNEL_PID, String(t.pid), { mode: 384 });
       saveRelay(`wss://${t.host}`);
       console.log(`relay reachable at ${t.url}`);
       return `wss://${t.host}`;
     } catch (e) {
       die(`the tunnel did not come up: ${e.message}
-See ${path7.join(ROOT, "tunnel.log")}`);
+See ${path8.join(ROOT, "tunnel.log")}`);
     }
   }
   console.log(`relay running on ${url}   (${addr.kind}, ${addr.note})`);
@@ -984,10 +1040,10 @@ async function relay() {
     if (!pid)
       return console.log("no relay started by crosstalk is running");
     process.kill(pid, "SIGTERM");
-    fs5.rmSync(RELAY_PID, { force: true });
+    fs6.rmSync(RELAY_PID, { force: true });
     try {
-      process.kill(Number(fs5.readFileSync(TUNNEL_PID, "utf8")), "SIGTERM");
-      fs5.rmSync(TUNNEL_PID, { force: true });
+      process.kill(Number(fs6.readFileSync(TUNNEL_PID, "utf8")), "SIGTERM");
+      fs6.rmSync(TUNNEL_PID, { force: true });
       console.log("tunnel closed");
     } catch {}
     return console.log("relay stopped");
@@ -1266,23 +1322,23 @@ async function doctor() {
   const rows = [];
   const id = loadIdentity();
   const socket = process.env.CLAUDE_CODE_MESSAGING_SOCKET;
-  rows.push(["runtime", true, `${path7.basename(process.execPath)} ${process.version ?? ""}`.trim()]);
+  rows.push(["runtime", true, `${path8.basename(process.execPath)} ${process.version ?? ""}`.trim()]);
   rows.push(["identity", !!id, id ? `${id.label}  ${fingerprint(id.ed.pub)}` : "none, run /crosstalk:pair --host"]);
   rows.push([
     "peers",
     Object.keys(loadPeers()).length > 0,
     Object.keys(loadPeers()).join(", ") || "none paired yet"
   ]);
-  rows.push(["inbox socket", !!socket && fs5.existsSync(socket), socket ?? "CLAUDE_CODE_MESSAGING_SOCKET not set"]);
+  rows.push(["inbox socket", !!socket && fs6.existsSync(socket), socket ?? "CLAUDE_CODE_MESSAGING_SOCKET not set"]);
   rows.push([
     "messaging token",
     !!process.env.CLAUDE_CODE_MESSAGING_TOKEN,
     process.env.CLAUDE_CODE_MESSAGING_TOKEN ? "present" : "missing, messages arrive as anonymous peers"
   ]);
-  const sessionsDir = path7.join(process.env.HOME ?? "", ".claude", "sessions");
+  const sessionsDir = path8.join(process.env.HOME ?? "", ".claude", "sessions");
   let visible = 0;
   try {
-    visible = fs5.readdirSync(sessionsDir).filter((f) => f.endsWith(".json")).length;
+    visible = fs6.readdirSync(sessionsDir).filter((f) => f.endsWith(".json")).length;
   } catch {}
   rows.push(["session registry", visible > 0, `${visible} entries in ${sessionsDir}`]);
   const relayUrl = loadRelay().url;
@@ -1336,7 +1392,7 @@ async function daemon() {
   const sub = positional[0] ?? "start";
   if (sub === "stop" || sub === "restart") {
     try {
-      process.kill(Number(fs5.readFileSync(P.daemonLock, "utf8")), "SIGTERM");
+      process.kill(Number(fs6.readFileSync(P.daemonLock, "utf8")), "SIGTERM");
       console.log("daemon stopped");
     } catch {
       console.log("daemon was not running");
@@ -1490,32 +1546,90 @@ usage: /crosstalk:rename <current> <new>
     savePolicy(pol);
   }
   try {
-    const uPath = path7.join(ROOT, "usage.json");
-    const u = JSON.parse(fs5.readFileSync(uPath, "utf8"));
+    const uPath = path8.join(ROOT, "usage.json");
+    const u = JSON.parse(fs6.readFileSync(uPath, "utf8"));
     if (u[a]) {
       u[b] = u[a];
       delete u[a];
-      fs5.writeFileSync(uPath, JSON.stringify(u, null, 2), { mode: 384 });
+      fs6.writeFileSync(uPath, JSON.stringify(u, null, 2), { mode: 384 });
     }
   } catch {}
   try {
-    const qPath = path7.join(ROOT, "queue.json");
-    const q = JSON.parse(fs5.readFileSync(qPath, "utf8"));
+    const qPath = path8.join(ROOT, "queue.json");
+    const q = JSON.parse(fs6.readFileSync(qPath, "utf8"));
     let touched = 0;
     for (const msgs of Object.values(q))
       for (const m of msgs)
         if (m.from === a)
           m.from = b, touched++;
     if (touched)
-      fs5.writeFileSync(qPath, JSON.stringify(q, null, 2), { mode: 384 });
+      fs6.writeFileSync(qPath, JSON.stringify(q, null, 2), { mode: 384 });
   } catch {}
   console.log(`"${a}" is "${b}" now, still ${peer.fingerprint}.`);
   if (daemonRunning())
     console.log("Restart the daemon so it picks this up: crosstalk daemon restart");
 }
+async function trustCmd() {
+  const t = load2();
+  const level = positional.find((a) => isLevel(a));
+  const who = positional.find((a) => a !== level);
+  const room2 = flag("--in");
+  if (!who && !level) {
+    console.log();
+    console.log(`  default${" ".repeat(12)}${t.default}`);
+    const rooms = Object.entries(t.rooms);
+    if (rooms.length) {
+      console.log(`
+  rooms`);
+      for (const [n, l] of rooms)
+        console.log(`    #${n.padEnd(16)}${l}`);
+    }
+    const people = Object.entries(t.people);
+    if (people.length) {
+      console.log(`
+  pinned people`);
+      for (const [n, l] of people)
+        console.log(`    ${n.padEnd(17)}${l}`);
+    }
+    console.log(`
+  levels, each including the ones before it
+`);
+    for (const l of LEVELS)
+      console.log(`    ${l.padEnd(10)}${DESCRIPTION[l]}`);
+    console.log(`
+  /crosstalk:trust marie ask          pin a person
+  /crosstalk:trust incident deliver   set a room, for everyone in it
+  /crosstalk:trust marie mute --in ideas
+`);
+    return;
+  }
+  if (!level)
+    die(`give a level: ${LEVELS.join(", ")}`);
+  if (!who) {
+    t.default = level;
+    save(t);
+    return console.log(`anyone you have paired with, by default: ${level}`);
+  }
+  const isPerson = !!loadPeers()[who];
+  if (room2) {
+    t.people[who] = level;
+    t.rooms[room2] = t.rooms[room2] ?? ROOM_DEFAULT;
+    save(t);
+    return console.log(`${who} is "${level}" (pinned, so it applies in #${room2} too)`);
+  }
+  if (isPerson) {
+    t.people[who] = level;
+    save(t);
+    return console.log(`${who}: ${level}`);
+  }
+  t.rooms[who.replace(/^#/, "")] = level;
+  save(t);
+  console.log(`#${who.replace(/^#/, "")}: ${level} for everyone in it`);
+}
 var commands = {
   pair,
   rename,
+  trust: trustCmd,
   room,
   secure,
   peers,

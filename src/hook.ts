@@ -33,17 +33,30 @@ try {
   hook = JSON.parse(input || "{}")
 } catch {}
 
-/** Both clients name the event, in one field or another. */
+/**
+ * Every client names the event, each in its own field. Claude Code, Codex and
+ * Gemini CLI all take the same output shape, so once the name is known the rest
+ * of this file does not care which one it is talking to.
+ */
 const eventName: string =
   hook.hook_event_name ??
   hook.hookEventName ??
+  hook.event_name ??
   hook.hook_event?.type ??
   hook.event_type ??
+  hook.event ??
   process.argv[2] ??
   "SessionStart"
 
+/** Gemini calls its turn start BeforeAgent, Claude Code calls it UserPromptSubmit. */
+const isSessionStart = /^SessionStart$/i.test(eventName)
+
 const sessionId: string | undefined =
-  hook.session_id ?? hook.sessionId ?? hook.thread_id ?? process.env.CLAUDE_CODE_SESSION_ID
+  hook.session_id ??
+  hook.sessionId ??
+  hook.thread_id ??
+  hook.conversation_id ??
+  process.env.CLAUDE_CODE_SESSION_ID
 const cwd: string = hook.cwd ?? process.cwd()
 
 /** Nothing to do until someone has paired. */
@@ -107,7 +120,7 @@ const say = (extra?: string) => {
   process.exit(0)
 }
 
-if (/SessionStart/i.test(eventName)) {
+if (isSessionStart) {
   await registerSession()
   say()
 }

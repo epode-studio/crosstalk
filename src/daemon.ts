@@ -31,6 +31,8 @@ import { Channel, derive, newEphemeral, signWith, transcript, verifyWith } from 
 import { listLocalSessions, findSession, type LocalSession } from "./registry.ts"
 import { injectNotice, injectMessage } from "./inject.ts"
 import { triage } from "./policy.ts"
+import * as trust from "./trust.ts"
+import * as outbound from "./outbound.ts"
 import { appendDecision } from "./decisions.ts"
 import * as usage from "./usage.ts"
 import * as rooms from "./rooms.ts"
@@ -459,14 +461,15 @@ function onEnvelope(
 
   if (env.kind === "room_key") return acceptRoomKey(peerLabel, env)
 
-  let pol = policyFor(peerLabel)
-  if (ctx?.strangerInRoom) {
-    // Someone in the room this machine has never paired with. They can put a
-    // notice on the screen and nothing else.
-    pol = { ...pol, delivery: pol.delivery === "quiet" ? "quiet" : "notify", allowAsk: false }
+  const tctx: trust.Context = {
+    room: ctx?.room?.name ?? (env.room ? env.room.replace(/^#/, "") : undefined),
+    paired: !ctx?.strangerInRoom,
+    machine: !!loadPeers()[peerLabel]?.isMachine,
   }
-  if (env.kind === "ask" && !pol.allowAsk) {
-    log(`refused ask from ${peerLabel}: allowAsk is off`)
+  const level = trust.levelFor(peerLabel, tctx)
+  const muted = trust.isMuted(peerLabel, tctx)
+  if (env.kind === "ask" && !trust.atLeast(level, "ask")) {
+    log(`refused ask from ${peerLabel}: they are at ${level}`)
     if (env.correlation)
       sendEnvelope(peerLabel, {
         v: 1,
@@ -479,8 +482,8 @@ function onEnvelope(
         intent: "fyi",
         correlation: env.correlation,
         text: ctx?.strangerInRoom
-          ? "Refused: we share a room but have never paired, and questions from someone unpaired are not accepted. Send a message instead."
-          : "Refused: questions are switched off for you here. An inbound question starts a turn and spends tokens on this machine, so it stays off until they run /crosstalk:policy <name> --allow-ask. Send a message instead.",
+          ? "Refused: we share a room but have never paired, and a question from someone unpaired is capped at a notice. Send a message instead."
+          : `Refused: you are at "${level}" here, and a question needs "ask". They can raise it with /crosstalk:trust. Send a message instead.`,
       })
     return
   }
@@ -492,7 +495,8 @@ function onEnvelope(
     return log(`no local session registered yet; parked message from ${peerLabel}`)
   }
 
-  const decision = { ...triage(pol, env.intent, env.kind, statusOf(target.sessionId)) }
+  const decision = { ...triage(level, env.intent, env.kind, statusOf(target.sessionId), muted) }
+  if (decision.action === "drop") return log(`dropped ${env.kind} from ${peerLabel}: ${decision.why}`)
   const h: Held = {
     id: env.id,
     from: peerLabel,
@@ -529,7 +533,7 @@ function onEnvelope(
   }
 
   // Over budget, everything degrades to quiet and waits for an idle moment.
-  if (decision.action !== "quiet" && !withinNoticeBudget()) {
+  if (decision.interrupts && !withinNoticeBudget()) {
     log(`notice budget spent (${NOTICE_BUDGET_PER_HOUR}/h); holding ${env.id} until idle`)
     decision.action = "quiet"
   }
@@ -961,13 +965,32 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         toSession: session,
         kind: req.op === "send" ? ((req.kind as Kind) ?? "message") : (req.op as Kind),
         intent: (req.intent as Intent) ?? (req.op === "ask" ? "question" : "fyi"),
-        text: String(req.text ?? ""),
+        text: req.unprompted
+          ? `${String(req.text ?? "")}\n\n(sent without being asked, because: ${String(req.because).trim()})`
+          : String(req.text ?? ""),
         slices: req.slices,
         thread: req.thread,
         replyTo: req.replyTo,
         room: req.room,
         correlation: req.op === "ask" ? crypto.randomUUID() : undefined,
       }
+      // An agent that tells you everything is worse than silence, so what it
+      // sends without being asked is rationed and has to justify itself.
+      if (req.unprompted) {
+        if (!String(req.because ?? "").trim())
+          return {
+            ok: false,
+            error:
+              "an unprompted message has to say why it affects them. Pass a one line reason as because, or wait until your user asks you to send it.",
+          }
+        const budget = outbound.spend(label)
+        if (!budget.ok)
+          return {
+            ok: false,
+            error: `you have used all ${outbound.UNPROMPTED_PER_HOUR} unprompted messages to ${label} this hour. Keep this until your user asks, or until the hour turns over.`,
+          }
+      }
+
       const r = sendEnvelope(label, env)
       if (!r.ok) return { ok: false, error: r.error }
       usage.record(label, "sent", env.text.length)

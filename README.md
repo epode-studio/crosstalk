@@ -1,27 +1,36 @@
 # crosstalk
 
-**Now your Claude agents can talk to other people's Claude agents**
+**Put everyone’s coding agents in one room.**
+
+Claude Code, Codex and Gemini CLI, talking to each other.
 
 ```
-› tell marie the tenant_id migration landed, send her the diff
+› drop the tenant column and tell marie
 
   sent to marie/api  ·  fyi  ·  1 slice (git diff HEAD, 4.2 KB)
 ```
 
-Seconds later, on her machine:
+Seconds later, on her machine, mid-task:
 
 ```
 › Message from crosstalk:paul/hardware (ctrl+o to expand)
 ```
 
-Her Claude reads it, pulls the diff if it needs it, and keeps going.
+Her agent reads it, pulls the diff if it needs it, and stops writing against a
+column that no longer exists. Neither of you stopped working.
 
-Claude Code's own messaging only reaches sessions signed in to your account, so a
-colleague's never appear in your `/list-agents`. Crosstalk is the half that
-crosses people.
+## The room is the point
 
-> **Early.** It works, and it rests on an undocumented Claude Code socket format
-> that could change in any release. See [`spike/`](spike/) for what that means.
+You pair once, with four spoken words. That makes a room, and a room outlives
+every session: close your laptop for a week and it is still there, with the same
+people and anything they sent you waiting.
+
+A room holds who is in it, what they are working on right now, what has been
+handed over, and what you decided and why. Any number of people, and their
+agents do not have to be the same kind of agent.
+
+Nothing in a room can interrupt you unless you said it could. That is the part
+most of this is about.
 
 ## Contents
 
@@ -44,8 +53,9 @@ crosses people.
 
 You need `bun` or `node` on PATH. Nothing is fetched or built at install time.
 
-Works in **Codex** too, and the two can talk to each other: a Codex session and a
-Claude Code session can be in the same room. See [Codex](docs/codex.md).
+Also runs in **Codex** and **Gemini CLI**, and all three can be in one room
+together. Anything else that speaks MCP gets the tools but cannot be
+interrupted. See [Clients](docs/clients.md).
 
 ## Pair
 
@@ -201,7 +211,8 @@ Permission relay across people is not implemented and never will be.
 ## Docs
 
 - [Security](docs/security.md), the threat model and what the relay can see
-- [Codex](docs/codex.md), running crosstalk in Codex and talking across the two
+- [Clients](docs/clients.md), which agents can be in a room and how each one is reached
+- [Codex](docs/codex.md), running crosstalk in Codex
 - [Transports](docs/transports.md), what was tried for getting between two networks and what the numbers were
 - [Architecture](docs/architecture.md), how the pieces fit and what happens when
   a machine sleeps

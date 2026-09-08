@@ -53,6 +53,26 @@ but "the tenant_id migration landed, rebasing on main is safe".
 Attach a slice when the thing you are describing is visible in the code:
 `slices: [{"kind": "diff"}]` beats three sentences of summary.
 
+## Telling someone without being asked
+
+You may send a message your user did not ask for, when you learn something that
+changes what a peer is doing or about to do. Pass `unprompted: true` and a
+one-line `because` saying why it affects them.
+
+The bar is high and the budget is small, a few an hour per person. Spend it on:
+
+- something you changed that their work is built on
+- an answer to a question they are known to be blocked on
+- a thing they are about to do that you now know will not work
+
+Do not spend it on progress updates, on anything they will find out anyway, on
+anything they could look up themselves, or on being polite. An agent that tells
+someone everything is worse than one that says nothing, because they stop
+reading. If you are unsure, hold it and mention it to your user instead.
+
+Write `because` as what it means for them, not what you did. "The column they
+query is gone" rather than "I dropped a column".
+
 ## Rooms
 
 A room is a shared space. `crosstalk_rooms` lists what this machine is in and

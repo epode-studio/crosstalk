@@ -187,8 +187,9 @@ var hook = {};
 try {
   hook = JSON.parse(input || "{}");
 } catch {}
-var eventName = hook.hook_event_name ?? hook.hookEventName ?? hook.hook_event?.type ?? hook.event_type ?? process.argv[2] ?? "SessionStart";
-var sessionId = hook.session_id ?? hook.sessionId ?? hook.thread_id ?? process.env.CLAUDE_CODE_SESSION_ID;
+var eventName = hook.hook_event_name ?? hook.hookEventName ?? hook.event_name ?? hook.hook_event?.type ?? hook.event_type ?? hook.event ?? process.argv[2] ?? "SessionStart";
+var isSessionStart = /^SessionStart$/i.test(eventName);
+var sessionId = hook.session_id ?? hook.sessionId ?? hook.thread_id ?? hook.conversation_id ?? process.env.CLAUDE_CODE_SESSION_ID;
 var cwd = hook.cwd ?? process.cwd();
 if (!loadIdentity() || !sessionId) {
   process.stdout.write(JSON.stringify({ continue: true }));
@@ -241,7 +242,7 @@ var say = (extra) => {
   process.stdout.write(JSON.stringify(out));
   process.exit(0);
 };
-if (/SessionStart/i.test(eventName)) {
+if (isSessionStart) {
   await registerSession();
   say();
 }

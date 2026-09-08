@@ -194,12 +194,58 @@ The ladder first, because the other three are expressed in terms of it. The
 budget second, because it is where sources other than people first appear. Then
 the working set and non-human members, which are independent of each other.
 
+## Settled
+
+**A room outlives every session.** Pairing is permanent, a room is durable, a
+session lasts an afternoon. The room holds the roster and the key on each
+member's machine and on the relay, so closing a laptop for a week changes
+nothing and messages sent meanwhile are waiting. Presence is the only part that
+is per-session, which is why `/crosstalk:peers` shows sessions coming and going
+while the room stays. Everything below depends on that: a working set only means
+anything because the place holding it outlasts the conversations.
+
+**Trust belongs to the room, with people pinned.** A room carries a loudness that
+applies to everyone in it, and a person can be pinned above or below it. Setting
+it per person meant eight decisions for a room of eight, and making them again
+for the next room. What varies is what a room is for, not who is in it.
+
+**Facts live in the room and carry tags.** Injection filters by where you are, so
+a fact tagged with the firmware repo does not load in the web one, and an
+untagged fact always applies. Rooms are not repositories, and tags generalise
+past repositories to features or decision areas.
+
+**Facts stop being single-authored.** Any member can confirm a fact, which resets
+its age and adds their name. A fact Marie wrote and Jo confirmed is Jo's fact
+too, so Marie leaving changes nothing about it. Departure only matters for claims
+nobody else ever backed, which are exactly the ones to be suspicious of.
+
+Facts are never deleted because an author left, because who wrote a claim and
+whether it is true are different questions. Age is the signal shown, not
+authorship: "unconfirmed since March" rather than "written by someone who left".
+When a member actually leaves, which is the one moment the system observes, the
+others are asked once whether to review the claims nobody else confirmed. Anyone
+can supersede anything, and superseding records who and why.
+
+Writing to the set needs at least `ask` level, so someone in a shared room you
+never paired with can read facts but not leave any behind.
+
+**The ceiling counts interruptions, not arrivals.** A message held quietly costs
+nothing and should not spend budget. Fixing what is counted makes a flat forty an
+hour correct, and a circuit breaker should stay dumb enough to explain at 2am.
+
+**Agents reach other people's agents when a human asks.** Unprompted contact is
+one sentence in the skill and worth trying later, bounded on the sending side by
+a budget of unprompted messages an hour per peer, each of which must say why it
+is relevant. The receiving side needs no change, because the ladder and the
+budget already govern what any message can do regardless of who chose to send it.
+The failure to watch is not cost, it is an agent that tells you everything, at
+which point you stop reading.
+
+**Nothing is spawned anywhere.** Each person runs their own agent on their own
+machine, and the relay is a pipe that cannot read what passes through it. A
+member that is not a person runs on somebody's hardware and somebody's tokens,
+and it is always clear whose.
+
 ## Open questions
 
-- Should a trust level be per room by default rather than per person, given the
-  same colleague is worth different things in different rooms?
-- Does the working set belong to a room, or to a repository? A pair working on
-  two codebases probably wants two sets, and rooms are not repositories.
-- Should the budget be per hour, or should it adapt to how long a session has
-  been idle? A ceiling that never moves is easy to explain and slightly wrong.
-- What happens to a fact when the person who wrote it leaves the room?
+Nothing outstanding. Everything above was decided in review.

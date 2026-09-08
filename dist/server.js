@@ -16497,6 +16497,14 @@ mcp.setRequestHandler(ListToolsRequestSchema2, async () => ({
             description: "Decides when this lands on their side. Be honest."
           },
           reply_to: { type: "string", description: "Message id this answers" },
+          unprompted: {
+            type: "boolean",
+            description: "True when you decided to send this rather than your user asking you to. Rationed per peer per hour, and requires a reason."
+          },
+          because: {
+            type: "string",
+            description: "Required when unprompted: one line on why this changes what they are doing. Not what you did, what it means for them."
+          },
           from_agent: {
             type: "string",
             description: "If you are a subagent or teammate rather than the main conversation, your name. The message goes out under the session's name either way; this says which agent wrote it."
@@ -16629,6 +16637,8 @@ mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
           thread: a.thread,
           replyTo: a.reply_to,
           fromAgent: a.from_agent,
+          unprompted: !!a.unprompted,
+          because: a.because,
           slices: await buildSlices(a.slices)
         });
         if (!r.ok)

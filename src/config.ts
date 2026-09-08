@@ -44,6 +44,8 @@ export type Peer = {
   pairedAt: number
   /** The machine they paired from, shown when two peers share a name. */
   machine?: string
+  /** True when this member is not a person. Capped at a notice, always. */
+  isMachine?: boolean
 }
 
 export type Delivery = "notify" | "deliver" | "quiet"

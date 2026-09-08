@@ -36,6 +36,7 @@ import {
 import { ensureDaemon, daemonRunning, request } from "./client.ts"
 import { ensureCloudflared, openTunnel } from "./tunnel.ts"
 import { summarise } from "./usage.ts"
+import * as trust from "./trust.ts"
 import { rootFrom, shim } from "./paths.ts"
 import fs from "node:fs"
 import path from "node:path"
@@ -736,9 +737,65 @@ async function rename() {
     console.log("Restart the daemon so it picks this up: crosstalk daemon restart")
 }
 
+async function trustCmd() {
+  const t = trust.load()
+  const level = positional.find((a) => trust.isLevel(a)) as trust.Level | undefined
+  const who = positional.find((a) => a !== level)
+  const room = flag("--in")
+
+  if (!who && !level) {
+    console.log()
+    console.log(`  default${" ".repeat(12)}${t.default}`)
+    const rooms = Object.entries(t.rooms)
+    if (rooms.length) {
+      console.log("\n  rooms")
+      for (const [n, l] of rooms) console.log(`    #${n.padEnd(16)}${l}`)
+    }
+    const people = Object.entries(t.people)
+    if (people.length) {
+      console.log("\n  pinned people")
+      for (const [n, l] of people) console.log(`    ${n.padEnd(17)}${l}`)
+    }
+    console.log("\n  levels, each including the ones before it\n")
+    for (const l of trust.LEVELS) console.log(`    ${l.padEnd(10)}${trust.DESCRIPTION[l]}`)
+    console.log(`
+  /crosstalk:trust marie ask          pin a person
+  /crosstalk:trust incident deliver   set a room, for everyone in it
+  /crosstalk:trust marie mute --in ideas
+`)
+    return
+  }
+
+  if (!level) die(`give a level: ${trust.LEVELS.join(", ")}`)
+  if (!who) {
+    t.default = level
+    trust.save(t)
+    return console.log(`anyone you have paired with, by default: ${level}`)
+  }
+
+  // A name that matches a room you are in sets the room, unless --in says
+  // otherwise or the name is someone you paired with.
+  const isPerson = !!loadPeers()[who]
+  if (room) {
+    t.people[who] = level
+    t.rooms[room] = t.rooms[room] ?? trust.ROOM_DEFAULT
+    trust.save(t)
+    return console.log(`${who} is "${level}" (pinned, so it applies in #${room} too)`)
+  }
+  if (isPerson) {
+    t.people[who] = level
+    trust.save(t)
+    return console.log(`${who}: ${level}`)
+  }
+  t.rooms[who.replace(/^#/, "")] = level
+  trust.save(t)
+  console.log(`#${who.replace(/^#/, "")}: ${level} for everyone in it`)
+}
+
 const commands: Record<string, () => Promise<void>> = {
   pair,
   rename,
+  trust: trustCmd,
   room,
   secure,
   peers,
