@@ -1235,6 +1235,48 @@ terminal and answer yes twice, or run it with --accept-hooks. Check with:
   hermes hooks list`)
 }
 
+
+/**
+ * Goose reads plugins from ~/.agents/plugins/<name>/, with hooks in
+ * hooks/hooks.json inside. It cannot add context to a turn, so only Stop is
+ * registered: refusing to let a turn end is the one way to put a message in
+ * front of its model. SessionStart is registered too, but only so the session
+ * shows up in `crosstalk peers`.
+ */
+async function installGoose() {
+  const bin = shim(rootFrom(import.meta.url))
+  const dir = path.join(os.homedir(), ".agents", "plugins", "crosstalk")
+  fs.mkdirSync(path.join(dir, "hooks"), { recursive: true })
+  fs.writeFileSync(
+    path.join(dir, "plugin.json"),
+    JSON.stringify(
+      {
+        name: "crosstalk",
+        version: "0.1.0",
+        description: "Messages from other people's coding agents, delivered into this session.",
+      },
+      null,
+      2,
+    ) + "\n",
+  )
+  const group = (command: string) => ({ hooks: [{ type: "command", command }] })
+  fs.writeFileSync(
+    path.join(dir, "hooks", "hooks.json"),
+    JSON.stringify(
+      { hooks: { SessionStart: [group(`"${bin}" hook`)], Stop: [group(`"${bin}" hook`)] } },
+      null,
+      2,
+    ) + "\n",
+  )
+  console.log(`hooks    ${path.join(dir, "hooks", "hooks.json")}`)
+  console.log(`tools    add the MCP server: goose mcp add crosstalk -- ${bin} server`)
+  console.log(`
+Goose has no way to add text to a turn, so a message arrives when the agent
+tries to finish one: the hook refuses the stop and hands over the notice. That
+means it is heard between turns rather than during one, and it gets no working
+set of facts on start.`)
+}
+
 /** Everything a client needs, per client. */
 async function install() {
   const who = (positional[0] ?? "").toLowerCase()
@@ -1242,7 +1284,8 @@ async function install() {
   if (who === "qwen") return installQwen()
   if (who === "kimi") return installKimi()
   if (who === "hermes") return installHermes()
-  die(`usage: crosstalk install <agy|qwen|kimi|hermes>
+  if (who === "goose") return installGoose()
+  die(`usage: crosstalk install <agy|qwen|kimi|hermes|goose>
 
 Claude Code and Codex install as a plugin instead:
   /plugin marketplace add epode-studio/crosstalk

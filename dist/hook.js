@@ -197,6 +197,7 @@ var eventName = hook.hook_event_name ?? hook.hookEventName ?? hook.event_name ??
 var isAgy = typeof hook.conversationId === "string";
 var isKimi = client === "kimi";
 var isHermes = /^(pre|post|on)_[a-z_]+$/.test(eventName);
+var isGoose = typeof hook.event === "string" && !hook.hook_event_name && !hook.hookEventName;
 var sessionId = hook.session_id ?? hook.sessionId ?? hook.thread_id ?? hook.conversation_id ?? hook.conversationId ?? process.env.CLAUDE_CODE_SESSION_ID ?? process.env.ANTIGRAVITY_CONVERSATION_ID;
 var isSessionStart = isAgy ? /^PreInvocation$/i.test(eventName) && Number(hook.invocationNum ?? 0) === 0 : isHermes ? /^pre_llm_call$/.test(eventName) && hook.extra?.is_first_turn === true : /^SessionStart$/i.test(eventName);
 var AGENT_DIRS = new Set([".agents", ".agent", "_agents", "_agent"]);
@@ -209,9 +210,10 @@ function agyCwd() {
     return path5.dirname(here);
   return here;
 }
-var cwd = hook.cwd ?? (isAgy ? agyCwd() : process.cwd());
+var cwd = hook.cwd ?? hook.working_dir ?? (isAgy ? agyCwd() : process.cwd());
+var DELIVERS = isGoose ? /^Stop$/i : /^(SessionStart|UserPromptSubmit|PreToolUse|PostToolUse|PreInvocation|pre_llm_call)$/i;
 if (!loadIdentity() || !sessionId) {
-  process.stdout.write(JSON.stringify(isAgy || isHermes || isKimi ? {} : { continue: true }));
+  process.stdout.write(JSON.stringify(isGoose ? { decision: "allow" } : isAgy || isHermes || isKimi ? {} : { continue: true }));
   process.exit(0);
 }
 var root = rootFrom2(import.meta.url);
@@ -267,6 +269,10 @@ var say = (extra) => {
     process.stdout.write(JSON.stringify(extra ? { message: extra } : {}));
     process.exit(0);
   }
+  if (isGoose) {
+    process.stdout.write(JSON.stringify(extra ? { decision: "block", reason: extra } : { decision: "allow" }));
+    process.exit(0);
+  }
   const out = { continue: true };
   if (extra)
     out.hookSpecificOutput = { hookEventName: eventName, additionalContext: extra };
@@ -277,6 +283,8 @@ if (!isSessionStart && (/^PreInvocation$/i.test(eventName) || /^(pre_llm_call|on
   await registerSession();
 if (isSessionStart) {
   await registerSession();
+  if (!DELIVERS.test(eventName))
+    say();
   try {
     const [f, t, n] = await Promise.all([
       request({ op: "facts", cwd }, 6000).catch(() => null),
@@ -291,7 +299,6 @@ if (isSessionStart) {
     say();
   }
 }
-var DELIVERS = /^(SessionStart|UserPromptSubmit|PreToolUse|PostToolUse|PreInvocation|pre_llm_call)$/i;
 if (!DELIVERS.test(eventName))
   say();
 say(await pendingNotice() ?? undefined);

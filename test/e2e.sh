@@ -231,6 +231,24 @@ case "$KIMI" in
   *) ok "kimi gets message and nothing else" ;;
 esac
 
+# Goose is the mirror image of the others: it never adds context, but a Stop
+# hook that refuses to let the turn end has its reason put in front of the
+# model. An object it cannot find a decision in counts as the hook failing, so
+# saying nothing has to be said as "allow".
+GOOSE_START='{"event":"SessionStart","session_id":"gs1","working_dir":"/tmp"}'
+GOOSE_STOP='{"event":"Stop","session_id":"gs1","working_dir":"/tmp"}'
+OUT=$(echo "$GOOSE_START" | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts 2>&1)
+check "$OUT" '{"decision":"allow"}' "goose session start allows and says nothing"
+rpc "$A" '{"op":"post","text":"a goose message","intent":"fyi","source":"ci"}' >/dev/null
+sleep 1
+OUT=$(echo "$GOOSE_STOP" | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts 2>&1)
+has "$OUT" '"decision":"block"' "goose delivers by refusing to stop"
+has "$OUT" '"reason"' "goose carries the notice as the reason"
+case "$OUT" in
+  *hookSpecificOutput*|*additionalContext*|*continue*) bad "goose gets a decision and nothing else" ;;
+  *) ok "goose gets a decision and nothing else" ;;
+esac
+
 # Hermes names events in snake_case, reads back a `context` string, and reads it
 # on pre_llm_call only. Asking for a notice consumes it, so on_session_start
 # must stay silent or it swallows one into an answer nobody reads.

@@ -9,8 +9,8 @@ What differs between them is only how a message gets into a running session.
 
 ## Delivery works
 
-These six can be interrupted: a message arrives during a turn, without the agent
-having to think to go and look.
+All seven can be reached without the agent having to think to go and look. Six
+of them can be interrupted mid-turn; Goose is heard between turns instead.
 
 | Client | Where hooks live | How text gets in |
 |---|---|---|
@@ -18,10 +18,11 @@ having to think to go and look.
 | **Codex** | plugin | `hookSpecificOutput.additionalContext` |
 | **Antigravity (`agy`)** | `~/.gemini/config/hooks.json` | `injectSteps` on `PreInvocation` |
 | **Qwen Code** | `~/.qwen/settings.json` | `hookSpecificOutput.additionalContext` |
-| **Kimi Code** | `~/.kimi-code/config.toml` | `message`, which Kimi wraps in `<hook_result>` |
+| **Kimi Code** | `~/.kimi-code/config.toml` | `message`, wrapped in `<hook_result>` |
 | **Hermes** | `~/.hermes/config.yaml` | `context` on `pre_llm_call` |
+| **Goose** | `~/.agents/plugins/crosstalk/` | a `Stop` hook that refuses to end the turn |
 
-One binary serves all six. `bin/crosstalk hook` reads the payload on stdin,
+One binary serves all seven. `bin/crosstalk hook` reads the payload on stdin,
 works out which client sent it, and answers in that client's own format.
 
 Each gets its own field and nothing else. Writing several at once to cover every
@@ -35,13 +36,17 @@ its payload is identical to Claude Code's. Its config names it instead, with
 
 Then one rule that matters more than it looks. Asking the daemon for a notice
 consumes it, so an event that cannot deliver must not ask: it would take the
-notice and drop it. Two clients make that concrete. Hermes reads a hook's answer
-on `pre_llm_call` and nowhere else. And in Codex the `Stop` event has no
+notice and drop it. Three clients make that concrete. Hermes reads a hook's
+answer on `pre_llm_call` and nowhere else. In Codex the `Stop` event has no
 `hookSpecificOutput` field at all, so a notice returned there is not ignored, it
-invalidates the object it arrived in. So only these events ever ask:
+invalidates the object it arrived in. And Goose is the exact reverse: `Stop` is
+the only event that can put anything in front of its model. So the events that
+ask are:
 
 ```
-SessionStart  UserPromptSubmit  PreToolUse  PostToolUse  PreInvocation  pre_llm_call
+Goose            Stop
+everything else  SessionStart  UserPromptSubmit  PreToolUse  PostToolUse
+                 PreInvocation  pre_llm_call
 ```
 
 ### Claude Code and Codex
@@ -73,6 +78,7 @@ crosstalk install agy
 crosstalk install qwen
 crosstalk install kimi
 crosstalk install hermes
+crosstalk install goose
 ```
 
 Each writes its client's hook config, leaves anything already in that file
@@ -81,16 +87,6 @@ alone, and can be run twice without doubling up.
 Hermes asks before it will run a hook it has not seen. After installing, start it
 once and answer yes twice, or run it with `--accept-hooks`. `hermes hooks list`
 shows what is approved.
-
-## Presence only
-
-**Goose** has the same hook shape and the same event names, and its payload
-carries `session_id` and `working_dir`, so a session can register and show up in
-`crosstalk peers`. Its hooks cannot add text to the model's context: stdout is
-read for a decision on `PreToolUse` and `Stop` and nothing else. So a Goose
-session can be seen and sent to, but it reads its messages through the tools
-when its agent looks, rather than being interrupted. There is no installer for
-it yet.
 
 ## Tools only
 
@@ -139,10 +135,14 @@ Its own reference is on disk at
 
 ## How honest this page is
 
+Everything below was either watched working on this machine, or read out of the
+source the client actually ships. Nothing here is from a client's documentation
+alone, because on two of them the documentation was wrong.
+
 **Claude Code** is tested end to end across two physical machines: pairing,
 presence, messages, rooms, questions and answers.
 
-**Antigravity 0.x (`agy`)** is tested live. A session registers, a posted message
+**Antigravity (`agy`)** is tested live. A session registers, a posted message
 reaches it mid-turn as an injected step, and `crosstalk_read` returns the content
 through the MCP server.
 
@@ -150,39 +150,51 @@ through the MCP server.
 the first `pre_llm_call` delivers the facts, the tasks and the pending-message
 notice, all three quoted back by the model.
 
-**Qwen Code 0.23.0** is half tested. The hook fires and registers a session with
-the right working directory, which proves the config `crosstalk install qwen`
-writes is accepted and the payload parses. Injection is unproven: this machine
-has no Qwen auth configured, so no model call ever happened.
+**Codex 0.153.4** runs the hook but has not delivered yet, and the reason is now
+known: **a new hook is untrusted and Codex never executes it.** The trust state
+in `~/.codex/config.toml` is keyed per handler, down to its index in the file:
 
-**Codex 0.153.4** is half tested. Its own output shows `hook: SessionStart` and
-`hook: Stop` running, and the daemon registered the session, so hooks fire and
-the payload parses. Injection has not been seen working, and testing stopped
-when Codex started returning 401 from its own API.
+```toml
+[hooks.state."/Users/you/.codex/hooks.json:session_start:0:0"]
+trusted_hash = "sha256:…"
+```
 
-Two reasons it would not have worked are now fixed, both found by reading
-`codex-rs/hooks/src/schema.rs` rather than by guessing. Every output struct
-there carries `#[serde(deny_unknown_fields)]`, and the only top-level fields it
-allows are `continue`, `stopReason`, `suppressOutput`, `systemMessage` and
-`hookSpecificOutput`. Crosstalk was sending a sixth, `message`, added for Kimi,
-which invalidated every hook answer it ever gave Codex. And `Stop` has no
-`hookSpecificOutput` at all, so returning a notice there both lost the notice
-and voided the object. `test/e2e.sh` now checks every event's output against
-that field list.
+Run `/hooks` in the Codex TUI once and trust it. Until then the hook is loaded,
+listed, and skipped. Because the key includes the handler's index, inserting a
+hook *ahead* of an existing one also invalidates that one's trust, so crosstalk
+appends.
 
-Codex also has a hook trust gate: a hook runs only when its hash matches a
-`trusted_hash` in state, or the source is managed. That is not ruled out as a
-further obstacle.
+Two things that would have broken it anyway are fixed, both found in
+`codex-rs/hooks/src/schema.rs`. Every output struct is `deny_unknown_fields`,
+and the allowed top-level fields are only `continue`, `stopReason`,
+`suppressOutput`, `systemMessage` and `hookSpecificOutput`. And `Stop` has no
+`hookSpecificOutput` at all. `test/e2e.sh` checks every event against that list.
 
-**Kimi Code 0.36.0** is untested. This machine is not logged in and Kimi exits
-before running a hook. What is verified is the hook engine in the shipped
-bundle: the config is a TOML `[[hooks]]` array with `event`, `command`,
-`matcher` and `timeout`; the payload is snake_case with `hook_event_name`,
-`session_id` and `cwd`; and `renderHookResult` wraps a returned `message` in a
-`<hook_result hook_event="…">` tag that goes to the model.
+**Qwen Code 0.23.0** is half tested and fully read. Live: the hook fires and
+registers a session with the right working directory. In source,
+`Client.fireSessionStartHook` returns `output.getAdditionalContext()` and
+applies it to the session, so `SessionStart` really is a delivery point there
+and the shape crosstalk sends is the shape it wants. Not seen end to end because
+this machine has no Qwen auth configured.
 
-**Goose** is from its documentation only. What is installed here is the desktop
-app, which ships no CLI on PATH.
+**Goose 1.49.0** is read, not run: it exits at `No provider configured` before
+any hook fires. Its own docs say hooks cannot inject context and that is true as
+stated, but it undersells what is possible. In
+`crates/goose/src/agents/state_machine/ops_stop_hook.rs`, a `Stop` hook that
+answers `{"decision":"block","reason":"…"}` makes Goose build
+`Message::user().with_text(reason).with_visibility(false, true)` and push it into
+the conversation: hidden from the person, read by the model. So Goose can be
+reached, just at the end of a turn rather than during one, and it gets no working
+set of facts on start. Note that in `classify_output` an exit-0 object with no
+`decision` key counts as the hook having *failed*, which is why crosstalk says
+`{"decision":"allow"}` rather than staying quiet.
+
+**Kimi Code 0.36.0** is read, not run: this machine is not logged in and Kimi
+exits before running a hook. Its config is a TOML `[[hooks]]` array with `event`,
+`command`, `matcher` and `timeout`; the payload is snake_case with
+`hook_event_name`, `session_id` and `cwd`; and `renderHookResult` wraps a
+returned `message` in a `<hook_result hook_event="…">` tag that goes to the
+model.
 
 If any of them misbehaves, `bin/crosstalk hook` reads a payload on stdin and
 prints its answer, so it is a one-line thing to check.

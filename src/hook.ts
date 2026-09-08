@@ -76,6 +76,14 @@ const isKimi = client === "kimi"
  */
 const isHermes = /^(pre|post|on)_[a-z_]+$/.test(eventName)
 
+/**
+ * Goose names the event in `event` where everyone else uses hook_event_name,
+ * and that is the whole difference in the payload. In the answer it is the odd
+ * one out entirely: it reads a decision, never context. An object without a
+ * `decision` key is not ignored there, it counts as the hook having failed.
+ */
+const isGoose = typeof hook.event === "string" && !hook.hook_event_name && !hook.hookEventName
+
 const sessionId: string | undefined =
   hook.session_id ??
   hook.sessionId ??
@@ -116,11 +124,31 @@ function agyCwd(): string {
   if (AGENT_DIRS.has(path.basename(here))) return path.dirname(here)
   return here
 }
-const cwd: string = hook.cwd ?? (isAgy ? agyCwd() : process.cwd())
+const cwd: string = hook.cwd ?? hook.working_dir ?? (isAgy ? agyCwd() : process.cwd())
+
+/**
+ * Every event that can carry text to the model, and no others.
+ *
+ * Asking the daemon for a notice consumes it, so an event that cannot deliver
+ * must not ask: it would take the notice and drop it. Three clients make this
+ * concrete. Hermes reads a hook's answer on pre_llm_call and nowhere else.
+ * Codex parses each event against its own schema with deny_unknown_fields,
+ * where Stop has no hookSpecificOutput field at all, so a notice returned there
+ * does not get ignored, it throws away the whole object it arrived in. And
+ * Goose is the mirror image: Stop is the only event that puts anything in front
+ * of its model, by refusing to let the turn end.
+ */
+const DELIVERS = isGoose
+  ? /^Stop$/i
+  : /^(SessionStart|UserPromptSubmit|PreToolUse|PostToolUse|PreInvocation|pre_llm_call)$/i
 
 /** Nothing to do until someone has paired. */
 if (!loadIdentity() || !sessionId) {
-  process.stdout.write(JSON.stringify(isAgy || isHermes || isKimi ? {} : { continue: true }))
+  process.stdout.write(
+    JSON.stringify(
+      isGoose ? { decision: "allow" } : isAgy || isHermes || isKimi ? {} : { continue: true },
+    ),
+  )
   process.exit(0)
 }
 
@@ -179,6 +207,12 @@ async function pendingNotice(): Promise<string | null> {
  * agy takes steps, Hermes takes a `context` string, Kimi Code takes a plain
  * `message` and wraps it in a <hook_result> tag itself.
  *
+ * Goose has no way to add context at all. What it has is a Stop hook that can
+ * refuse to let the turn end, and the reason it gives is put into the
+ * conversation as a message the model reads and the user does not see. So on
+ * Goose the text is the reason, and saying nothing has to be said as "allow":
+ * an object it cannot find a decision in counts as the hook having failed.
+ *
  * Each gets that field and nothing else. Writing several at once looks free but
  * is not: Codex parses its output with deny_unknown_fields, so one stray key
  * throws away the whole object and the message silently never arrives.
@@ -196,6 +230,12 @@ const say = (extra?: string) => {
     process.stdout.write(JSON.stringify(extra ? { message: extra } : {}))
     process.exit(0)
   }
+  if (isGoose) {
+    process.stdout.write(
+      JSON.stringify(extra ? { decision: "block", reason: extra } : { decision: "allow" }),
+    )
+    process.exit(0)
+  }
   const out: any = { continue: true }
   if (extra) out.hookSpecificOutput = { hookEventName: eventName, additionalContext: extra }
   process.stdout.write(JSON.stringify(out))
@@ -211,6 +251,11 @@ if (!isSessionStart && (/^PreInvocation$/i.test(eventName) || /^(pre_llm_call|on
 
 if (isSessionStart) {
   await registerSession()
+  // Goose is the one client whose session start cannot carry text: only
+  // PreToolUse and Stop are asked for a decision, and only a Stop refusal puts
+  // anything in front of the model. So it registers here and waits, and its
+  // messages arrive when a turn tries to end. It gets no working set.
+  if (!DELIVERS.test(eventName)) say()
   // What the room already knows, so nobody explains it again. A session with no
   // inbox socket is only ever reached from here, so anything already waiting has
   // to come along too, or it would sit until the next event.
@@ -226,19 +271,6 @@ if (isSessionStart) {
     say()
   }
 }
-
-/**
- * Every event that can carry text to the model, and no others.
- *
- * Asking the daemon for a notice consumes it, so an event that cannot deliver
- * must not ask: it would take the notice and drop it. Two clients make this
- * concrete. Hermes reads a hook's answer on pre_llm_call and nowhere else. And
- * Codex parses each event against its own schema with deny_unknown_fields,
- * where Stop has no hookSpecificOutput field at all, so a notice returned there
- * does not get ignored, it throws away the whole object it arrived in.
- */
-const DELIVERS =
-  /^(SessionStart|UserPromptSubmit|PreToolUse|PostToolUse|PreInvocation|pre_llm_call)$/i
 
 if (!DELIVERS.test(eventName)) say()
 
