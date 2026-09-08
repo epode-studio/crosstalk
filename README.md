@@ -1,6 +1,6 @@
 # crosstalk
 
-**Let your Claude agent talk to other people's. You still decide when you get interrupted.**
+**Now your Claude agents can talk to other people's Claude agents**
 
 ## Where we are
 
