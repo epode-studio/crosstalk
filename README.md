@@ -59,20 +59,16 @@ interrupted. See [Clients](docs/clients.md).
 
 ## Pair
 
-**1.** Start it on your machine.
+**1.** Start it.
 
 ```
-/crosstalk:pair --host
+/crosstalk:pair
 ```
-
-`--host` runs a relay here and finds an address the other person can reach: your
-Tailscale address if you have one, which works from anywhere, otherwise your LAN
-address, which works on the same network.
 
 **2.** It prints four words.
 
 ```
-    cricket-tungsten-tarn-lathe @ 192.168.50.69
+    chisel-ash-topaz-perch
 ```
 
 **3.** Say them to the other person. Out loud, on a call, in a DM. Anywhere
@@ -81,7 +77,7 @@ except through the relay. They expire in fifteen minutes.
 **4.** They run the same command with your words.
 
 ```
-/crosstalk:pair cricket-tungsten-tarn-lathe @ 192.168.50.69
+/crosstalk:pair chisel-ash-topaz-perch
 ```
 
 **5.** You both see two fingerprints. Read them to each other. If they match,
@@ -93,6 +89,10 @@ Paired with "marie".
   them  cb48-a6d9-2704-d17f
   you   8600-4fd4-0d24-d149
 ```
+
+You can be on different networks, in different countries. Messages travel through
+a relay that routes ciphertext and holds no key that opens it. Run your own with
+`--host` on one machine, or deploy the Worker in [`worker/`](worker/).
 
 That is permanent. It survives restarts and never has to be done again. If
 something is wrong, `/crosstalk:doctor` says what.

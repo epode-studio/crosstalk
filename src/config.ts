@@ -188,7 +188,9 @@ export function policyFor(label: string, policy = loadPolicy()): PeerPolicy {
 
 /** `pub` is the relay's Ed25519 identity, pinned so it cannot be swapped out. */
 export const loadRelay = (): { url: string; pub?: string } =>
-  readJson(P.relay, { url: process.env.CROSSTALK_RELAY ?? "ws://127.0.0.1:8787" })
+  readJson(P.relay, {
+    url: process.env.CROSSTALK_RELAY ?? "wss://crosstalk-relay.billowing-poetry-4cd6.workers.dev",
+  })
 
 export const saveRelay = (url: string, pub?: string) => {
   const current = loadRelay()

@@ -98,7 +98,9 @@ var savePolicy = (p) => writeJson(P.policy, p);
 function policyFor(label, policy = loadPolicy()) {
   return { ...policy.default, ...policy.peers[label] ?? {} };
 }
-var loadRelay = () => readJson(P.relay, { url: process.env.CROSSTALK_RELAY ?? "ws://127.0.0.1:8787" });
+var loadRelay = () => readJson(P.relay, {
+  url: process.env.CROSSTALK_RELAY ?? "wss://crosstalk-relay.billowing-poetry-4cd6.workers.dev"
+});
 var loadQueue = () => readJson(P.queue, {});
 var saveQueue = (q) => writeJson(P.queue, q);
 var loadOutbox = () => readJson(P.outbox, []);

@@ -46,8 +46,14 @@ import { spawn, execFileSync } from "node:child_process"
 const argv = process.argv.slice(2)
 const cmd = argv[0] ?? "status"
 const VALUE_FLAGS = new Set(["--label", "--phrase", "--relay", "--port", "--address"])
-/** Set this to a relay you host, and an invite becomes four words and nothing else. */
-const DEFAULT_RELAY = process.env.CROSSTALK_DEFAULT_RELAY ?? ""
+/**
+ * The relay everyone uses unless they say otherwise. It runs as a Cloudflare
+ * Worker, routes ciphertext, and holds no key that opens anything. Because
+ * everyone is already pointed at it, an invite is four words and nothing else.
+ *
+ * Point somewhere else with --relay, or run your own: see deploy/ and worker/.
+ */
+const DEFAULT_RELAY = process.env.CROSSTALK_DEFAULT_RELAY ?? "wss://crosstalk-relay.billowing-poetry-4cd6.workers.dev"
 const flag = (f: string, d?: string) => {
   const i = argv.indexOf(f)
   return i === -1 ? d : argv[i + 1]
@@ -304,9 +310,12 @@ Paired with "${peer.label}".
   them  ${peer.fingerprint}
   you   ${fingerprint(id.ed.pub)}
 
-Check both against what they see. Their messages arrive as "notify": you get a
-notice, and their words stay behind the crosstalk_read tool until your Claude
-fetches them. Change that per peer with /crosstalk:policy.`)
+Read both to each other. If they match, nobody is in the middle.
+
+They start at "ask": they can put a line on your screen, and their agent can ask
+yours a question. Their words never enter your session unless you raise them.
+
+  /crosstalk:trust`)
     return
   }
 
@@ -341,8 +350,9 @@ fetches them. Change that per peer with /crosstalk:policy.`)
         : await whereToSay(port)
   const invite = formatInvite(phrase, where?.token ?? null, port)
 
-  const reachNote =
-    where?.reach === "anywhere"
+  const reachNote = !where
+    ? "They can be anywhere. Both of you reach the same relay, which routes\nciphertext and holds no key that opens it."
+    : where.reach === "anywhere"
       ? "They can be anywhere."
       : where?.reach === "same network"
         ? "They have to be on the same network as you. For anywhere, put both machines on\na tailnet with Tailscale and run this again, or host a relay: see deploy/."
@@ -391,7 +401,12 @@ Paired with "${peer.label}".
   them  ${peer.fingerprint}
   you   ${fingerprint(id.ed.pub)}
 
-Read both aloud and check they match. Their messages arrive as "notify".`)
+Read both to each other. If they match, nobody is in the middle.
+
+They start at "ask": a line on your screen, and their agent may ask yours a
+question. Nothing they do puts their words inside your turn.
+
+  /crosstalk:trust`)
       return
     }
     await new Promise((r) => setTimeout(r, 1000))
