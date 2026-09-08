@@ -1,5 +1,12 @@
-spike/capture/
 node_modules/
 .DS_Store
+
+# runtime state, never source
+spike/capture/
 crosstalk-rooms.json
+crosstalk-rooms-buffer.json
 crosstalk-relay-identity.json
+
+# local wrangler state and its durable object databases
+worker/.wrangler/
+worker/node_modules/
