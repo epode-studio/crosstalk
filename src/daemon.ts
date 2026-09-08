@@ -729,10 +729,24 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
 
     case "rooms": {
       const st = rooms.load()
+      const me = myFingerprint()
+      // Every person you paired with is a room of two, derived on the spot.
+      const direct = Object.values(loadPeers()).map((p) => ({
+        id: rooms.oneToOneId(me, p.fingerprint),
+        name: p.label,
+        kind: "direct" as const,
+        pending: null,
+        members: [
+          { label: identity!.label, state: "joined" as const, paired: true, you: true },
+          { label: p.label, state: "joined" as const, paired: true, you: false },
+        ],
+      }))
       return {
         ok: true,
-        me: myFingerprint(),
+        me,
+        direct,
         rooms: Object.values(st).map((r) => ({
+          kind: "shared" as const,
           id: r.id,
           name: r.name,
           pending: r.pending ?? null,
@@ -823,9 +837,17 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       // this machine paired with directly, so nothing here widens who can
       // reach us.
       if (rooms.isRoom(String(req.to))) {
+        const named = rooms.normalise(String(req.to))
+        // A room of two is the person, so send it the way we always have.
+        const asPerson = loadPeers()[named]
+        if (asPerson) return handle({ ...req, to: named }, sock)
         if (req.op === "ask") return { ok: false, error: "ask goes to one person, not a room" }
         const room = rooms.byName(String(req.to))
-        if (!room) return { ok: false, error: `no room called "${req.to}" here` }
+        if (!room)
+          return {
+            ok: false,
+            error: `no room called "${req.to}". You are in: ${[...Object.keys(loadPeers()), ...Object.values(rooms.load()).map((r) => "#" + r.name)].join(", ") || "nothing yet"}`,
+          }
         if (room.pending)
           return { ok: false, error: `you have not accepted the invitation to #${room.name} yet` }
         const key = rooms.keyFor(room)

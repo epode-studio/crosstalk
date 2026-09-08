@@ -83,6 +83,29 @@ export const keyFor = (room: Room, epoch = room.epoch): Buffer | null => {
 export const normalise = (name: string) => String(name ?? "").trim().replace(/^#/, "").toLowerCase()
 export const isRoom = (to: string) => to.startsWith("#")
 
+/**
+ * Pairing with one person is a room of two. It is derived rather than stored:
+ * both sides compute the same id from the two fingerprints, and the key is the
+ * pairwise key they already share, so there is nothing to agree on and nothing
+ * to go stale. Everything a person can be in is a room; some rooms happen to
+ * have two people in them.
+ */
+export function oneToOneId(a: string, b: string): string {
+  const pair = [a, b].sort().join("|")
+  return (
+    "1to1" +
+    crypto.createHash("sha256").update("crosstalk/room/1to1|" + pair).digest("hex").slice(0, 12)
+  )
+}
+
+export type AnyRoom = {
+  id: string
+  name: string
+  kind: "direct" | "shared"
+  pending?: { invitedBy: string; at: number } | null
+  members: { label: string; state: "invited" | "joined"; paired: boolean; you: boolean }[]
+}
+
 /** Find a joined room by its human name, which is unique on this machine. */
 export function byName(name: string, state = load()): Room | undefined {
   const n = normalise(name)

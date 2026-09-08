@@ -34,6 +34,7 @@ import {
   expandAddress,
 } from "./net.ts"
 import { ensureDaemon, daemonRunning, request } from "./client.ts"
+import { ensureCloudflared, openTunnel } from "./tunnel.ts"
 import { summarise } from "./usage.ts"
 import { rootFrom, shim } from "./paths.ts"
 import fs from "node:fs"
@@ -66,6 +67,7 @@ const positional = (() => {
 
 const ROOT_DIR = rootFrom(import.meta.url)
 const RELAY_PID = path.join(ROOT, "relay.pid")
+const TUNNEL_PID = path.join(ROOT, "tunnel.pid")
 const httpBase = (ws = loadRelay().url) => ws.replace(/^ws/, "http").replace(/\/ws$/, "")
 
 const die = (m: string): never => {
@@ -145,6 +147,24 @@ async function startRelay(port = Number(flag("--port", "8787"))): Promise<string
     if (await relayReachable(url, 500)) break
     await new Promise((r) => setTimeout(r, 100))
   }
+  if (has("--public")) {
+    const bin = await ensureCloudflared((n) => console.log(n))
+    if (!bin)
+      die(
+        "could not get cloudflared, which --public needs.\nInstall it yourself (brew install cloudflared) and try again, or drop --public\nand pair on the same network.",
+      )
+    console.log("opening a public tunnel, this takes a few seconds")
+    try {
+      const t = await openTunnel(bin!, port, path.join(ROOT, "tunnel.log"))
+      fs.writeFileSync(TUNNEL_PID, String(t.pid), { mode: 0o600 })
+      saveRelay(`wss://${t.host}`)
+      console.log(`relay reachable at ${t.url}`)
+      return `wss://${t.host}`
+    } catch (e) {
+      die(`the tunnel did not come up: ${(e as Error).message}\nSee ${path.join(ROOT, "tunnel.log")}`)
+    }
+  }
+
   console.log(`relay running on ${url}   (${addr.kind}, ${addr.note})`)
   const others = allAddresses().filter((a) => a.host !== addr.host)
   if (others.length)
@@ -161,6 +181,11 @@ async function relay() {
     if (!pid) return console.log("no relay started by crosstalk is running")
     process.kill(pid, "SIGTERM")
     fs.rmSync(RELAY_PID, { force: true })
+    try {
+      process.kill(Number(fs.readFileSync(TUNNEL_PID, "utf8")), "SIGTERM")
+      fs.rmSync(TUNNEL_PID, { force: true })
+      console.log("tunnel closed")
+    } catch {}
     return console.log("relay stopped")
   }
   if (sub === "start") {
@@ -225,10 +250,10 @@ async function pair() {
       const port = inv.port ?? 8787
       const tried: string[] = []
       let found: string | null = null
-      for (const host of expandAddress(inv.where)) {
-        tried.push(host)
-        if (await relayReachable(`ws://${host}:${port}`, 2500)) {
-          found = `ws://${host}:${port}`
+      for (const candidate of expandAddress(inv.where, port)) {
+        tried.push(candidate)
+        if (await relayReachable(candidate, 3000)) {
+          found = candidate
           break
         }
       }
@@ -302,8 +327,17 @@ fetches them. Change that per peer with /crosstalk:policy.`)
   })
   if (!res.ok) die(`the relay at ${httpBase(url)} refused the pairing offer`)
 
-  const port = Number(new URL(url.replace(/^ws/, "http")).port || 8787)
-  const where = url === DEFAULT_RELAY ? null : await whereToSay(port)
+  const asHttp = new URL(url.replace(/^ws/, "http"))
+  const port = Number(asHttp.port || (asHttp.protocol === "https:" ? 443 : 8787))
+  const tunnelSub = asHttp.hostname.endsWith(".trycloudflare.com")
+    ? asHttp.hostname.replace(".trycloudflare.com", "")
+    : null
+  const where =
+    url === DEFAULT_RELAY
+      ? null
+      : tunnelSub
+        ? { token: tunnelSub, reach: "anywhere" as const, how: "a throwaway tunnel" }
+        : await whereToSay(port)
   const invite = formatInvite(phrase, where?.token ?? null, port)
 
   const reachNote =
@@ -312,6 +346,9 @@ fetches them. Change that per peer with /crosstalk:policy.`)
       : where?.reach === "same network"
         ? "They have to be on the same network as you. For anywhere, put both machines on\na tailnet with Tailscale and run this again, or host a relay: see deploy/."
         : "No network address was found, so nothing outside this machine can reach it."
+  const tunnelNote = tunnelSub
+    ? "\nThis address only lasts as long as this tunnel. Close it and the two of you stop\nreaching each other, and pairing again gives a different one. For something that\nlasts, run a relay: see deploy/."
+    : ""
 
   console.log(`
 Tell them these words:
@@ -327,7 +364,7 @@ Whoever has these words can pair with you until they expire.
   reaches   ${where?.reach ?? "anywhere"}${where ? `  (${where.how})` : ""}
   expires   15 minutes
 
-${reachNote}
+${reachNote}${tunnelNote}
 
 Waiting…`)
 
@@ -547,11 +584,17 @@ async function room() {
 
   if (!verb || verb === "list") {
     const r = await request({ op: "rooms" })
-    if (!r.rooms.length) {
-      console.log("\nNo rooms. Make one:\n\n  /crosstalk:room create beta\n  /crosstalk:room invite beta marie\n")
+    const direct = r.direct ?? []
+    if (!r.rooms.length && !direct.length) {
+      console.log(
+        "\nYou are not in anything yet.\n\n  /crosstalk:pair --host          pair with someone, which makes a room of two\n  /crosstalk:room create beta     a room for several people\n",
+      )
       return
     }
     console.log()
+    if (direct.length) {
+      for (const room of direct) console.log(`  ${room.name.padEnd(16)}just the two of you`)
+    }
     for (const room of r.rooms) {
       const who = room.members
         .map((m: any) => m.label + (m.you ? " (you)" : "") + (m.state === "invited" ? " (invited)" : "") + (!m.paired && !m.you ? " ·not paired" : ""))

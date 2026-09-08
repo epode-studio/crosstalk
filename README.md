@@ -114,7 +114,16 @@ repo right now" stops being a question you interrupt her to ask.
 
 ## Rooms
 
-A shared space. Everyone sees the same roster and any member can add anyone else.
+Everything is a room. Pairing with one person makes a room of two, and
+`/crosstalk:room` lists everything you are in:
+
+```
+  marie           just the two of you
+  #beta           paul, marie, jo
+```
+
+A bigger room is a shared space: everyone sees the same roster and any member can
+add anyone else.
 
 ```
 /crosstalk:room create beta
@@ -189,6 +198,7 @@ Permission relay across people is not implemented and never will be.
 ## Docs
 
 - [Security](docs/security.md), the threat model and what the relay can see
+- [Transports](docs/transports.md), what was tried for getting between two networks and what the numbers were
 - [Architecture](docs/architecture.md), how the pieces fit and what happens when
   a machine sleeps
 - [Testing across two computers](test/two-machines.md)

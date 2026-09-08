@@ -183,25 +183,44 @@ export async function whereToSay(port: number): Promise<Where> {
  * is completed from this machine's own subnet, on the assumption that two people
  * pairing are usually on the same network.
  */
-export function expandAddress(token: string): string[] {
+/**
+ * Every relay URL a given token could mean, in the order worth trying. A bare
+ * name might be a tailnet name, a machine on this network, or a throwaway
+ * tunnel, and probing all three costs a second. A bare number is completed from
+ * this machine's own subnet, since two people pairing are usually on one
+ * network.
+ */
+export function expandAddress(token: string, port: number): string[] {
   const t = token.trim().replace(/^@/, "").trim()
   const out: string[] = []
-  const add = (h: string) => {
-    if (h && !out.includes(h)) out.push(h)
+  const add = (u: string) => {
+    if (u && !out.includes(u)) out.push(u)
+  }
+
+  if (/^https?:\/\//i.test(t)) {
+    add(t.replace(/^http/, "ws").replace(/\/$/, ""))
+    return out
+  }
+
+  if (/\./.test(t) && /[a-z]/i.test(t)) {
+    // Already a full hostname. A tunnel is always TLS on 443.
+    add(t.endsWith("trycloudflare.com") ? `wss://${t}` : `ws://${t}:${port}`)
+    return out
   }
 
   if (/^[a-z0-9][a-z0-9-]*$/i.test(t) && !/^\d+$/.test(t)) {
-    // A bare name could be a tailnet name, which resolves as-is inside the
-    // tailnet, or a machine on this network, which needs .local.
-    add(t)
-    add(`${t}.local`)
+    add(`ws://${t}:${port}`) // tailnet name, resolves as-is inside the tailnet
+    add(`ws://${t}.local:${port}`) // this network, over mDNS
+    add(`wss://${t}.trycloudflare.com`) // a throwaway tunnel
     return out
   }
 
   const mine = bestAddress().host
   const parts = mine.split(".")
-  if (/^\d{1,3}$/.test(t) && parts.length === 4) add(`${parts[0]}.${parts[1]}.${parts[2]}.${t}`)
-  if (/^\d{1,3}\.\d{1,3}$/.test(t) && parts.length === 4) add(`${parts[0]}.${parts[1]}.${t}`)
-  add(t)
+  if (/^\d{1,3}$/.test(t) && parts.length === 4)
+    add(`ws://${parts[0]}.${parts[1]}.${parts[2]}.${t}:${port}`)
+  if (/^\d{1,3}\.\d{1,3}$/.test(t) && parts.length === 4)
+    add(`ws://${parts[0]}.${parts[1]}.${t}:${port}`)
+  add(`ws://${t}:${port}`)
   return out
 }

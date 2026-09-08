@@ -477,6 +477,10 @@ var keyFor = (room, epoch = room.epoch) => {
 };
 var normalise = (name) => String(name ?? "").trim().replace(/^#/, "").toLowerCase();
 var isRoom = (to) => to.startsWith("#");
+function oneToOneId(a, b) {
+  const pair = [a, b].sort().join("|");
+  return "1to1" + crypto4.createHash("sha256").update("crosstalk/room/1to1|" + pair).digest("hex").slice(0, 12);
+}
 function byName(name, state = load2()) {
   const n = normalise(name);
   return Object.values(state).find((r) => normalise(r.name) === n && !r.pending);
@@ -1062,10 +1066,23 @@ async function handle(req, sock) {
     }
     case "rooms": {
       const st = load2();
+      const me = myFingerprint();
+      const direct = Object.values(loadPeers()).map((p) => ({
+        id: oneToOneId(me, p.fingerprint),
+        name: p.label,
+        kind: "direct",
+        pending: null,
+        members: [
+          { label: identity.label, state: "joined", paired: true, you: true },
+          { label: p.label, state: "joined", paired: true, you: false }
+        ]
+      }));
       return {
         ok: true,
-        me: myFingerprint(),
+        me,
+        direct,
         rooms: Object.values(st).map((r) => ({
+          kind: "shared",
           id: r.id,
           name: r.name,
           pending: r.pending ?? null,
@@ -1153,11 +1170,18 @@ async function handle(req, sock) {
     case "handoff":
     case "ask": {
       if (isRoom(String(req.to))) {
+        const named = normalise(String(req.to));
+        const asPerson = loadPeers()[named];
+        if (asPerson)
+          return handle({ ...req, to: named }, sock);
         if (req.op === "ask")
           return { ok: false, error: "ask goes to one person, not a room" };
         const room = byName(String(req.to));
         if (!room)
-          return { ok: false, error: `no room called "${req.to}" here` };
+          return {
+            ok: false,
+            error: `no room called "${req.to}". You are in: ${[...Object.keys(loadPeers()), ...Object.values(load2()).map((r2) => "#" + r2.name)].join(", ") || "nothing yet"}`
+          };
         if (room.pending)
           return { ok: false, error: `you have not accepted the invitation to #${room.name} yet` };
         const key = keyFor(room);

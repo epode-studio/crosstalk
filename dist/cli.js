@@ -592,25 +592,34 @@ async function whereToSay(port) {
     return { token: addr.host, reach: "same machine", how: "no network address found" };
   return { token: addr.host, reach: "same network", how: "this machine's address" };
 }
-function expandAddress(token) {
+function expandAddress(token, port) {
   const t = token.trim().replace(/^@/, "").trim();
   const out = [];
-  const add = (h) => {
-    if (h && !out.includes(h))
-      out.push(h);
+  const add = (u) => {
+    if (u && !out.includes(u))
+      out.push(u);
   };
+  if (/^https?:\/\//i.test(t)) {
+    add(t.replace(/^http/, "ws").replace(/\/$/, ""));
+    return out;
+  }
+  if (/\./.test(t) && /[a-z]/i.test(t)) {
+    add(t.endsWith("trycloudflare.com") ? `wss://${t}` : `ws://${t}:${port}`);
+    return out;
+  }
   if (/^[a-z0-9][a-z0-9-]*$/i.test(t) && !/^\d+$/.test(t)) {
-    add(t);
-    add(`${t}.local`);
+    add(`ws://${t}:${port}`);
+    add(`ws://${t}.local:${port}`);
+    add(`wss://${t}.trycloudflare.com`);
     return out;
   }
   const mine = bestAddress().host;
   const parts = mine.split(".");
   if (/^\d{1,3}$/.test(t) && parts.length === 4)
-    add(`${parts[0]}.${parts[1]}.${parts[2]}.${t}`);
+    add(`ws://${parts[0]}.${parts[1]}.${parts[2]}.${t}:${port}`);
   if (/^\d{1,3}\.\d{1,3}$/.test(t) && parts.length === 4)
-    add(`${parts[0]}.${parts[1]}.${t}`);
-  add(t);
+    add(`ws://${parts[0]}.${parts[1]}.${t}:${port}`);
+  add(`ws://${t}:${port}`);
   return out;
 }
 
@@ -704,13 +713,105 @@ async function ensureDaemon(root = rootFrom(import.meta.url)) {
   return false;
 }
 
-// src/usage.ts
+// src/tunnel.ts
+import { spawn as spawn2, execFileSync as execFileSync3 } from "node:child_process";
 import fs3 from "node:fs";
+import os4 from "node:os";
 import path4 from "node:path";
-var FILE = path4.join(ROOT2, "usage.json");
+var BIN_DIR = path4.join(ROOT2, "bin");
+var LOCAL_BIN = path4.join(BIN_DIR, "cloudflared");
+function onPath() {
+  for (const candidate of [LOCAL_BIN, "cloudflared"]) {
+    try {
+      execFileSync3(candidate, ["--version"], { stdio: "ignore", timeout: 4000 });
+      return candidate;
+    } catch {}
+  }
+  return null;
+}
+function assetName() {
+  const arch = os4.arch() === "arm64" ? "arm64" : os4.arch() === "x64" ? "amd64" : null;
+  if (!arch)
+    return null;
+  if (process.platform === "darwin")
+    return `cloudflared-darwin-${arch}.tgz`;
+  if (process.platform === "linux")
+    return `cloudflared-linux-${arch}`;
+  return null;
+}
+async function ensureCloudflared(onProgress) {
+  const existing = onPath();
+  if (existing)
+    return existing;
+  const asset = assetName();
+  if (!asset)
+    return null;
+  const url = `https://github.com/cloudflare/cloudflared/releases/latest/download/${asset}`;
+  onProgress?.(`fetching cloudflared for ${process.platform} ${os4.arch()}`);
+  fs3.mkdirSync(BIN_DIR, { recursive: true, mode: 448 });
+  const res = await fetch(url, { redirect: "follow" });
+  if (!res.ok)
+    return null;
+  const bytes = Buffer.from(await res.arrayBuffer());
+  if (asset.endsWith(".tgz")) {
+    const tmp = path4.join(BIN_DIR, "cloudflared.tgz");
+    fs3.writeFileSync(tmp, bytes);
+    execFileSync3("tar", ["-xzf", tmp, "-C", BIN_DIR], { timeout: 60000 });
+    fs3.rmSync(tmp, { force: true });
+  } else {
+    fs3.writeFileSync(LOCAL_BIN, bytes);
+  }
+  try {
+    fs3.chmodSync(LOCAL_BIN, 493);
+  } catch {}
+  return onPath();
+}
+async function openTunnel(bin, port, logPath, timeoutMs = 60000) {
+  fs3.writeFileSync(logPath, "");
+  const out = fs3.openSync(logPath, "a");
+  const child = spawn2(bin, ["tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${port}`], {
+    detached: true,
+    stdio: ["ignore", out, out]
+  });
+  child.unref();
+  const deadline = Date.now() + timeoutMs;
+  let found = null;
+  while (Date.now() < deadline) {
+    try {
+      found = fs3.readFileSync(logPath, "utf8").match(/https:\/\/([a-z0-9-]+)\.trycloudflare\.com/i);
+    } catch {}
+    if (found)
+      break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  if (!found) {
+    try {
+      process.kill(child.pid);
+    } catch {}
+    throw new Error(`cloudflared printed no URL. See ${logPath}`);
+  }
+  const host = `${found[1]}.trycloudflare.com`;
+  while (Date.now() < deadline) {
+    try {
+      const r = await fetch(`https://${host}/health`, { signal: AbortSignal.timeout(4000) });
+      if (r.ok)
+        return { url: found[0], host, subdomain: found[1], pid: child.pid };
+    } catch {}
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  try {
+    process.kill(child.pid);
+  } catch {}
+  throw new Error(`the tunnel at ${host} never carried traffic. See ${logPath}`);
+}
+
+// src/usage.ts
+import fs4 from "node:fs";
+import path5 from "node:path";
+var FILE = path5.join(ROOT2, "usage.json");
 function load() {
   try {
-    return JSON.parse(fs3.readFileSync(FILE, "utf8"));
+    return JSON.parse(fs4.readFileSync(FILE, "utf8"));
   } catch {
     return {};
   }
@@ -738,16 +839,16 @@ function summarise(u = load()) {
 }
 
 // src/paths.ts
-import path5 from "node:path";
+import path6 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
-var dirOf2 = (metaUrl) => path5.dirname(fileURLToPath2(metaUrl));
-var rootFrom2 = (metaUrl) => path5.join(dirOf2(metaUrl), "..");
-var shim2 = (root) => path5.join(root, "bin", "crosstalk");
+var dirOf2 = (metaUrl) => path6.dirname(fileURLToPath2(metaUrl));
+var rootFrom2 = (metaUrl) => path6.join(dirOf2(metaUrl), "..");
+var shim2 = (root) => path6.join(root, "bin", "crosstalk");
 
 // src/cli.ts
-import fs4 from "fs";
-import path6 from "path";
-import { spawn as spawn2, execFileSync as execFileSync3 } from "child_process";
+import fs5 from "fs";
+import path7 from "path";
+import { spawn as spawn3, execFileSync as execFileSync4 } from "child_process";
 var argv = process.argv.slice(2);
 var cmd = argv[0] ?? "status";
 var VALUE_FLAGS = new Set(["--label", "--phrase", "--relay", "--port", "--address"]);
@@ -771,7 +872,8 @@ var positional = (() => {
   return out;
 })();
 var ROOT_DIR = rootFrom2(import.meta.url);
-var RELAY_PID = path6.join(ROOT, "relay.pid");
+var RELAY_PID = path7.join(ROOT, "relay.pid");
+var TUNNEL_PID = path7.join(ROOT, "tunnel.pid");
 var httpBase = (ws = loadRelay().url) => ws.replace(/^ws/, "http").replace(/\/ws$/, "");
 var die = (m) => {
   console.error(m);
@@ -800,7 +902,7 @@ function identityOrCreate() {
 }
 var relayPid = () => {
   try {
-    const pid = Number(fs4.readFileSync(RELAY_PID, "utf8"));
+    const pid = Number(fs5.readFileSync(RELAY_PID, "utf8"));
     process.kill(pid, 0);
     return pid;
   } catch {
@@ -835,20 +937,38 @@ async function startRelay(port = Number(flag("--port", "8787"))) {
     if (await relayReachable(url2))
       return url2;
   }
-  const out = fs4.openSync(path6.join(ROOT, "relay.log"), "a");
-  const child = spawn2(shim2(ROOT_DIR), ["relay", "--host", "0.0.0.0", "--port", String(port)], {
+  const out = fs5.openSync(path7.join(ROOT, "relay.log"), "a");
+  const child = spawn3(shim2(ROOT_DIR), ["relay", "--host", "0.0.0.0", "--port", String(port)], {
     detached: true,
     stdio: ["ignore", out, out]
   });
   child.unref();
-  fs4.mkdirSync(ROOT, { recursive: true, mode: 448 });
-  fs4.writeFileSync(RELAY_PID, String(child.pid), { mode: 384 });
+  fs5.mkdirSync(ROOT, { recursive: true, mode: 448 });
+  fs5.writeFileSync(RELAY_PID, String(child.pid), { mode: 384 });
   const url = `ws://${addr.host}:${port}`;
   saveRelay(url);
   for (let i = 0;i < 40; i++) {
     if (await relayReachable(url, 500))
       break;
     await new Promise((r) => setTimeout(r, 100));
+  }
+  if (has("--public")) {
+    const bin = await ensureCloudflared((n) => console.log(n));
+    if (!bin)
+      die(`could not get cloudflared, which --public needs.
+Install it yourself (brew install cloudflared) and try again, or drop --public
+and pair on the same network.`);
+    console.log("opening a public tunnel, this takes a few seconds");
+    try {
+      const t = await openTunnel(bin, port, path7.join(ROOT, "tunnel.log"));
+      fs5.writeFileSync(TUNNEL_PID, String(t.pid), { mode: 384 });
+      saveRelay(`wss://${t.host}`);
+      console.log(`relay reachable at ${t.url}`);
+      return `wss://${t.host}`;
+    } catch (e) {
+      die(`the tunnel did not come up: ${e.message}
+See ${path7.join(ROOT, "tunnel.log")}`);
+    }
   }
   console.log(`relay running on ${url}   (${addr.kind}, ${addr.note})`);
   const others = allAddresses().filter((a) => a.host !== addr.host);
@@ -864,7 +984,12 @@ async function relay() {
     if (!pid)
       return console.log("no relay started by crosstalk is running");
     process.kill(pid, "SIGTERM");
-    fs4.rmSync(RELAY_PID, { force: true });
+    fs5.rmSync(RELAY_PID, { force: true });
+    try {
+      process.kill(Number(fs5.readFileSync(TUNNEL_PID, "utf8")), "SIGTERM");
+      fs5.rmSync(TUNNEL_PID, { force: true });
+      console.log("tunnel closed");
+    } catch {}
     return console.log("relay stopped");
   }
   if (sub === "start") {
@@ -916,10 +1041,10 @@ async function pair() {
       const port2 = inv.port ?? 8787;
       const tried = [];
       let found = null;
-      for (const host of expandAddress(inv.where)) {
-        tried.push(host);
-        if (await relayReachable(`ws://${host}:${port2}`, 2500)) {
-          found = `ws://${host}:${port2}`;
+      for (const candidate of expandAddress(inv.where, port2)) {
+        tried.push(candidate);
+        if (await relayReachable(candidate, 3000)) {
+          found = candidate;
           break;
         }
       }
@@ -989,11 +1114,17 @@ Run this instead and crosstalk will host one for you:
   });
   if (!res.ok)
     die(`the relay at ${httpBase(url)} refused the pairing offer`);
-  const port = Number(new URL(url.replace(/^ws/, "http")).port || 8787);
-  const where = url === DEFAULT_RELAY ? null : await whereToSay(port);
+  const asHttp = new URL(url.replace(/^ws/, "http"));
+  const port = Number(asHttp.port || (asHttp.protocol === "https:" ? 443 : 8787));
+  const tunnelSub = asHttp.hostname.endsWith(".trycloudflare.com") ? asHttp.hostname.replace(".trycloudflare.com", "") : null;
+  const where = url === DEFAULT_RELAY ? null : tunnelSub ? { token: tunnelSub, reach: "anywhere", how: "a throwaway tunnel" } : await whereToSay(port);
   const invite = formatInvite(phrase, where?.token ?? null, port);
   const reachNote = where?.reach === "anywhere" ? "They can be anywhere." : where?.reach === "same network" ? `They have to be on the same network as you. For anywhere, put both machines on
 a tailnet with Tailscale and run this again, or host a relay: see deploy/.` : "No network address was found, so nothing outside this machine can reach it.";
+  const tunnelNote = tunnelSub ? `
+This address only lasts as long as this tunnel. Close it and the two of you stop
+reaching each other, and pairing again gives a different one. For something that
+lasts, run a relay: see deploy/.` : "";
   console.log(`
 Tell them these words:
 
@@ -1008,7 +1139,7 @@ Whoever has these words can pair with you until they expire.
   reaches   ${where?.reach ?? "anywhere"}${where ? `  (${where.how})` : ""}
   expires   15 minutes
 
-${reachNote}
+${reachNote}${tunnelNote}
 
 Waiting\u2026`);
   for (let i = 0;i < 900; i++) {
@@ -1135,23 +1266,23 @@ async function doctor() {
   const rows = [];
   const id = loadIdentity();
   const socket = process.env.CLAUDE_CODE_MESSAGING_SOCKET;
-  rows.push(["runtime", true, `${path6.basename(process.execPath)} ${process.version ?? ""}`.trim()]);
+  rows.push(["runtime", true, `${path7.basename(process.execPath)} ${process.version ?? ""}`.trim()]);
   rows.push(["identity", !!id, id ? `${id.label}  ${fingerprint(id.ed.pub)}` : "none, run /crosstalk:pair --host"]);
   rows.push([
     "peers",
     Object.keys(loadPeers()).length > 0,
     Object.keys(loadPeers()).join(", ") || "none paired yet"
   ]);
-  rows.push(["inbox socket", !!socket && fs4.existsSync(socket), socket ?? "CLAUDE_CODE_MESSAGING_SOCKET not set"]);
+  rows.push(["inbox socket", !!socket && fs5.existsSync(socket), socket ?? "CLAUDE_CODE_MESSAGING_SOCKET not set"]);
   rows.push([
     "messaging token",
     !!process.env.CLAUDE_CODE_MESSAGING_TOKEN,
     process.env.CLAUDE_CODE_MESSAGING_TOKEN ? "present" : "missing, messages arrive as anonymous peers"
   ]);
-  const sessionsDir = path6.join(process.env.HOME ?? "", ".claude", "sessions");
+  const sessionsDir = path7.join(process.env.HOME ?? "", ".claude", "sessions");
   let visible = 0;
   try {
-    visible = fs4.readdirSync(sessionsDir).filter((f) => f.endsWith(".json")).length;
+    visible = fs5.readdirSync(sessionsDir).filter((f) => f.endsWith(".json")).length;
   } catch {}
   rows.push(["session registry", visible > 0, `${visible} entries in ${sessionsDir}`]);
   const relayUrl = loadRelay().url;
@@ -1168,7 +1299,7 @@ async function doctor() {
     if (process.platform === "darwin") {
       let fw = "";
       try {
-        fw = execFileSync3("/usr/libexec/ApplicationFirewall/socketfilterfw", ["--getglobalstate"], {
+        fw = execFileSync4("/usr/libexec/ApplicationFirewall/socketfilterfw", ["--getglobalstate"], {
           encoding: "utf8"
         }).trim();
       } catch {}
@@ -1205,7 +1336,7 @@ async function daemon() {
   const sub = positional[0] ?? "start";
   if (sub === "stop" || sub === "restart") {
     try {
-      process.kill(Number(fs4.readFileSync(P.daemonLock, "utf8")), "SIGTERM");
+      process.kill(Number(fs5.readFileSync(P.daemonLock, "utf8")), "SIGTERM");
       console.log("daemon stopped");
     } catch {
       console.log("daemon was not running");
@@ -1221,16 +1352,21 @@ async function room() {
   const [verb, ...rest] = positional;
   if (!verb || verb === "list") {
     const r = await request({ op: "rooms" });
-    if (!r.rooms.length) {
+    const direct = r.direct ?? [];
+    if (!r.rooms.length && !direct.length) {
       console.log(`
-No rooms. Make one:
+You are not in anything yet.
 
-  /crosstalk:room create beta
-  /crosstalk:room invite beta marie
+  /crosstalk:pair --host          pair with someone, which makes a room of two
+  /crosstalk:room create beta     a room for several people
 `);
       return;
     }
     console.log();
+    if (direct.length) {
+      for (const room2 of direct)
+        console.log(`  ${room2.name.padEnd(16)}just the two of you`);
+    }
     for (const room2 of r.rooms) {
       const who = room2.members.map((m) => m.label + (m.you ? " (you)" : "") + (m.state === "invited" ? " (invited)" : "") + (!m.paired && !m.you ? " \xB7not paired" : "")).join(", ");
       if (room2.pending) {
@@ -1354,24 +1490,24 @@ usage: /crosstalk:rename <current> <new>
     savePolicy(pol);
   }
   try {
-    const uPath = path6.join(ROOT, "usage.json");
-    const u = JSON.parse(fs4.readFileSync(uPath, "utf8"));
+    const uPath = path7.join(ROOT, "usage.json");
+    const u = JSON.parse(fs5.readFileSync(uPath, "utf8"));
     if (u[a]) {
       u[b] = u[a];
       delete u[a];
-      fs4.writeFileSync(uPath, JSON.stringify(u, null, 2), { mode: 384 });
+      fs5.writeFileSync(uPath, JSON.stringify(u, null, 2), { mode: 384 });
     }
   } catch {}
   try {
-    const qPath = path6.join(ROOT, "queue.json");
-    const q = JSON.parse(fs4.readFileSync(qPath, "utf8"));
+    const qPath = path7.join(ROOT, "queue.json");
+    const q = JSON.parse(fs5.readFileSync(qPath, "utf8"));
     let touched = 0;
     for (const msgs of Object.values(q))
       for (const m of msgs)
         if (m.from === a)
           m.from = b, touched++;
     if (touched)
-      fs4.writeFileSync(qPath, JSON.stringify(q, null, 2), { mode: 384 });
+      fs5.writeFileSync(qPath, JSON.stringify(q, null, 2), { mode: 384 });
   } catch {}
   console.log(`"${a}" is "${b}" now, still ${peer.fingerprint}.`);
   if (daemonRunning())
