@@ -125,13 +125,34 @@ Any client that speaks MCP gets the tools: it can send, read its inbox, see who
 is online and what they are working on, hand work over and record decisions.
 What it cannot do is be interrupted.
 
-That covers opencode, Zed, Cline, Continue, Amp, crush, cursor-agent and
-anything else with an MCP client. Point it at:
+That covers opencode, Zed, Cline, Continue, Amp, crush and anything else with an
+MCP client. Point it at:
 
 ```
 command: /path/to/crosstalk/bin/crosstalk
 args:    ["server"]
 ```
+
+**None of them has been tested.** Not one is installed on the machine this was
+built on, and a client's documentation has already been wrong twice here, so
+saying "it speaks MCP, therefore it works" would be the same mistake.
+
+What is tested is the server they would all be talking to. `test/mcp.ts` speaks
+JSON-RPC to it over stdio and checks that it initializes, advertises tools,
+lists all seventeen with an input schema each, answers a call with content, and
+refuses a tool it does not have. That runs as part of `test/e2e.sh`.
+
+So the untested part is narrow and nameable: how a given client launches a stdio
+server and passes it an environment. Two things already found there are worth
+knowing before adding one.
+
+- The repo's `.mcp.json` is written for Claude Code and uses
+  `${CLAUDE_PLUGIN_ROOT}`, which nothing else expands. Qwen read that file and
+  reported only that the server had failed to start. Register the server through
+  the client's own command instead, which is what `crosstalk install` does.
+- A server started by one client inherits the environment of whatever launched
+  it, including another client's session id. The daemon settles that by working
+  directory rather than trusting the id.
 
 ## What agy needed that the others did not
 
@@ -180,7 +201,7 @@ than inferred from a client's own output.
 | **Qwen Code 0.23.0** | live, against a stand-in model |
 | **Goose 1.49.0** | live, against a stand-in model |
 | **Kimi Code 0.36.0** | live, against a stand-in model |
-| **Codex 0.153.4** | hook installed, waiting on `/hooks` |
+| **Codex 0.153.4** | **untested**, hook installed and waiting on `/hooks` |
 
 What each one looked like on the wire:
 
@@ -203,7 +224,9 @@ gate itself.
 
 Nothing on this page comes from a client's documentation alone. On two of them
 the documentation was wrong: Goose's says hooks cannot inject context, and
-Qwen's implies `additionalContext` behaves the same everywhere.
+Qwen's implies `additionalContext` behaves the same everywhere. That is the
+reason every client under **Tools only** is marked untested rather than assumed
+to work.
 
 ## One daemon per machine
 

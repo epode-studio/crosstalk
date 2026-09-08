@@ -51,26 +51,46 @@ column that no longer exists. Neither of you stopped working.
 
 You need `bun` or `node` on PATH. Nothing is fetched or built at install time.
 
-Five other clients can be reached the same way, and all of them can share one
+Seven other clients can be reached the same way, and all of them can share one
 room. They do not read the plugin format, so each has a command:
 
 ```
+crosstalk install codex     # Codex
+crosstalk install cursor    # Cursor
 crosstalk install agy       # Google Antigravity
 crosstalk install qwen      # Qwen Code
 crosstalk install kimi      # Kimi Code
 crosstalk install hermes    # Hermes
 crosstalk install goose     # Goose
-crosstalk install cursor    # Cursor
-crosstalk install codex     # Codex
 ```
 
 Codex then needs one more thing, and it is easy to miss: run `codex`, then
 `/hooks`, and trust the crosstalk entries. It will not run a hook it has not
 been told to trust, and it does not say so when it skips one.
 
-Codex reads the plugin format; see [Clients](docs/clients.md) for its two lines
-of `config.toml`. Anything else that speaks MCP gets the tools but cannot be
-interrupted.
+### What has actually been run
+
+| Client | Interrupted mid-turn | Tested |
+|---|---|---|
+| Claude Code | yes | yes, across two machines |
+| Cursor | yes | yes |
+| Antigravity | yes | yes |
+| Hermes | yes | yes |
+| Qwen Code | yes | yes, against a stand-in model |
+| Kimi Code | yes | yes, against a stand-in model |
+| Goose | between turns | yes, against a stand-in model |
+| Codex | yes | **untested**, waiting on its `/hooks` approval |
+
+Anything else that speaks MCP gets the tools and cannot be interrupted:
+opencode, Zed, Cline, Continue, Amp, crush and the rest. **Untested, all of
+them.** The MCP server they would use is tested against the protocol rather than
+against any one of them, so the risk is in how a given client launches a server,
+not in the server. Point it at:
+
+```
+command: /path/to/crosstalk/bin/crosstalk
+args:    ["server"]
+```
 
 ## Pair
 

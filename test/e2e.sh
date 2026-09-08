@@ -309,6 +309,17 @@ case "$OUT" in
   *) ok "hermes gets context and nothing else" ;;
 esac
 
+# --- the MCP server ------------------------------------------------------------
+#
+# For a client with no hook this is the whole of crosstalk, so it is checked
+# against the protocol rather than against any one client.
+echo
+echo "mcp server"
+bun test/mcp.ts "$A" > "$A/mcp.log" 2>&1
+cat "$A/mcp.log"
+PASS=$((PASS + $(grep -c '  PASS  ' "$A/mcp.log")))
+FAIL=$((FAIL + $(grep -c '  FAIL  ' "$A/mcp.log")))
+
 # --- cost ----------------------------------------------------------------------
 echo
 echo "cost"
