@@ -652,10 +652,10 @@ serve({
       return json({ pub: relayIdentity.pub });
     if (url.pathname === "/slot" && method === "POST") {
       for (let attempt = 0;attempt < 20; attempt++) {
-        const slot2 = String(Math.floor(Math.random() * 9000) + 1000);
-        if (!offers.has(slot2)) {
-          offers.set(slot2, { ts: Date.now() });
-          return json({ slot: slot2 });
+        const slot = String(Math.floor(Math.random() * 9000) + 1000);
+        if (!offers.has(slot)) {
+          offers.set(slot, { ts: Date.now() });
+          return json({ slot });
         }
       }
       return json({ error: "no free slot, try again" }, 503);
@@ -694,7 +694,7 @@ serve({
       }
       if (method === "GET") {
         const e = offers.get(code);
-        if (!e?.[slot])
+        if (!e?.[part])
           return json({ error: "not ready" }, 404);
         return json({ blob: e[part] });
       }

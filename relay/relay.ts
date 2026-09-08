@@ -456,7 +456,7 @@ serve({
 
       if (method === "GET") {
         const e = offers.get(code)
-        if (!e?.[slot]) return json({ error: "not ready" }, 404)
+        if (!e?.[part]) return json({ error: "not ready" }, 404)
         return json({ blob: e[part] })
       }
     }

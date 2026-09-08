@@ -53,7 +53,8 @@ echo
 echo "pairing two identities"
 CROSSTALK_HOME="$TMP/a" bun src/cli.ts pair --label aa --relay "ws://127.0.0.1:$PORT" >"$TMP/pa.log" 2>&1 &
 for _ in $(seq 1 40); do
-  INVITE=$(grep -A2 'Tell them these words' "$TMP/pa.log" 2>/dev/null | tail -1 | sed 's/^ *//;s/ *$//')
+  # The invite is a public slot, then the secret words, then an optional address.
+  INVITE=$(sed -n 's/^    \([0-9]\{3,6\}-[a-z][a-z-]*.*\)$/\1/p' "$TMP/pa.log" | head -1)
   [ -n "$INVITE" ] && break
   sleep 0.5
 done
