@@ -565,17 +565,30 @@ var peersByFingerprint = () => {
 };
 var ws = null;
 var channel = null;
+var workerMode = false;
 var backoff = 1000;
 var pendingAsks = new Map;
 function connect() {
   const { url } = loadRelay();
-  const target = url.endsWith("/ws") ? url : url.replace(/\/$/, "") + "/ws";
-  log(`relay connecting ${target}`);
+  workerMode = process.env.CROSSTALK_RELAY_KIND === "worker" || url.startsWith("wss://");
+  const base = url.endsWith("/ws") ? url : url.replace(/\/$/, "") + "/ws";
+  const target = workerMode ? `${base}?fp=${encodeURIComponent(myFingerprint())}` : base;
+  log(`relay connecting ${base}${workerMode ? " (hosted)" : ""}`);
   const sock = new WebSocket(target);
   ws = sock;
   let eph = null;
   let pendingTranscript = null;
   sock.onmessage = (ev) => {
+    if (workerMode) {
+      let f2;
+      try {
+        f2 = JSON.parse(String(ev.data));
+        lastHeard = Date.now();
+      } catch {
+        return;
+      }
+      return onFrame(f2, null);
+    }
     if (!channel) {
       let h;
       try {
@@ -606,11 +619,14 @@ function connect() {
       channel = null;
       return sock.close();
     }
+    return onFrame(f, pendingTranscript);
+  };
+  function onFrame(f, pendingTranscript2) {
     if (f.t === "ready") {
       const pinned = loadRelay().pub;
       const sig = f.sig;
       if (pinned) {
-        if (!sig || !verifyWith(pinned, pendingTranscript, sig)) {
+        if (!sig || !verifyWith(pinned, pendingTranscript2, sig)) {
           log("RELAY IDENTITY MISMATCH: refusing this link");
           channel = null;
           return sock.close();
@@ -656,6 +672,15 @@ function connect() {
       return onRoomBody(f);
     if (f.t === "error")
       log(`relay error: ${f.message}`);
+  }
+  sock.onopen = () => {
+    if (!workerMode)
+      return;
+    backoff = 1000;
+    lastHeard = Date.now();
+    log(`relay ready as ${myFingerprint()} (hosted)`);
+    flushOutbox();
+    publishPresence();
   };
   sock.onclose = () => {
     ws = null;
@@ -911,10 +936,12 @@ function sendRoomKey(peerLabel, room) {
 var OUTBOX_TTL_MS = 24 * 60 * 60000;
 var outbox = loadOutbox();
 var relaySend = (o) => {
-  if (!ws || ws.readyState !== 1 || !channel)
+  if (!ws || ws.readyState !== 1)
+    return false;
+  if (!workerMode && !channel)
     return false;
   try {
-    ws.send(channel.seal(o));
+    ws.send(workerMode ? JSON.stringify(o) : channel.seal(o));
     return true;
   } catch {
     return false;
@@ -1106,7 +1133,7 @@ async function handle(req, sock) {
         joinedAt: Date.now()
       };
       upsert(room);
-      if (!relaySend({ t: "room_create", id, name: room.name }))
+      if (!relaySend({ t: "room_create", id, name: room.name, label: identity.label }))
         return { ok: false, error: "relay not connected" };
       return { ok: true, room: room.name, id };
     }

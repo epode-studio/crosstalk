@@ -1,0 +1,23 @@
+name = "crosstalk-relay"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+
+[[durable_objects.bindings]]
+name = "MAILBOX"
+class_name = "Mailbox"
+
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "Room"
+
+[[durable_objects.bindings]]
+name = "PAIRING"
+class_name = "Pairing"
+
+# SQLite-backed objects are the ones available on the free plan.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Mailbox", "Room", "Pairing"]
+
+[observability]
+enabled = true

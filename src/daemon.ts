@@ -158,13 +158,20 @@ const peersByFingerprint = () => {
 
 let ws: WebSocket | null = null
 let channel: Channel | null = null
+// A hosted relay is always wss, and TLS already hides the metadata that the
+// custom link layer exists to hide, so that handshake is skipped there.
+let workerMode = false
 let backoff = 1000
 const pendingAsks = new Map<string, { peer: string; resolve: (answer: Envelope) => void }>()
 
 function connect() {
   const { url } = loadRelay()
-  const target = url.endsWith("/ws") ? url : url.replace(/\/$/, "") + "/ws"
-  log(`relay connecting ${target}`)
+  // Hosted relays are wss. The override exists so the Worker can be tested
+  // against a local wrangler, which serves plain ws.
+  workerMode = process.env.CROSSTALK_RELAY_KIND === "worker" || url.startsWith("wss://")
+  const base = url.endsWith("/ws") ? url : url.replace(/\/$/, "") + "/ws"
+  const target = workerMode ? `${base}?fp=${encodeURIComponent(myFingerprint())}` : base
+  log(`relay connecting ${base}${workerMode ? " (hosted)" : ""}`)
   const sock = new WebSocket(target)
   ws = sock
 
@@ -172,6 +179,17 @@ function connect() {
   let pendingTranscript: Buffer | null = null
 
   sock.onmessage = (ev) => {
+    if (workerMode) {
+      let f: Frame
+      try {
+        f = JSON.parse(String(ev.data)) as Frame
+        lastHeard = Date.now()
+      } catch {
+        return
+      }
+      return onFrame(f, null)
+    }
+
     // Only the first frame is plaintext. Everything after it is sealed.
     if (!channel) {
       let h: any
@@ -206,6 +224,10 @@ function connect() {
       return sock.close()
     }
 
+    return onFrame(f, pendingTranscript)
+  }
+
+  function onFrame(f: Frame, pendingTranscript: Buffer | null) {
     if (f.t === "ready") {
       // The relay proves which relay it is, inside the channel. A pinned key
       // that does not match means someone is standing in the middle.
@@ -255,6 +277,15 @@ function connect() {
     }
     if (f.t === "room_deliver") return onRoomBody(f as any)
     if (f.t === "error") log(`relay error: ${f.message}`)
+  }
+
+  sock.onopen = () => {
+    if (!workerMode) return
+    backoff = 1000
+    lastHeard = Date.now()
+    log(`relay ready as ${myFingerprint()} (hosted)`)
+    flushOutbox()
+    publishPresence()
   }
 
   sock.onclose = () => {
@@ -558,9 +589,10 @@ const OUTBOX_TTL_MS = 24 * 60 * 60_000
 const outbox = loadOutbox()
 
 const relaySend = (o: unknown) => {
-  if (!ws || ws.readyState !== 1 || !channel) return false
+  if (!ws || ws.readyState !== 1) return false
+  if (!workerMode && !channel) return false
   try {
-    ws.send(channel.seal(o))
+    ws.send(workerMode ? JSON.stringify(o) : channel!.seal(o))
     return true
   } catch {
     return false
@@ -771,7 +803,8 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         joinedAt: Date.now(),
       }
       rooms.upsert(room)
-      if (!relaySend({ t: "room_create", id, name: room.name })) return { ok: false, error: "relay not connected" }
+      if (!relaySend({ t: "room_create", id, name: room.name, label: identity!.label }))
+        return { ok: false, error: "relay not connected" }
       return { ok: true, room: room.name, id }
     }
 
