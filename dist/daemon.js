@@ -1205,6 +1205,7 @@ function onEnvelope(peerLabel, env, ctx) {
   seenIds.set(env.id, Date.now());
   hold(target.sessionId, h, env.slices);
   log(`inbound ${env.kind}/${env.intent} from ${peerLabel} \u2192 ${target.name}: ${decision.action} (${decision.why})`);
+  record(peerLabel, "recv", env.text.length, decision.interrupts);
   if (!target.socket) {
     log(`held for ${target.name}, which pulls rather than being pushed to`);
     return;
@@ -1221,7 +1222,6 @@ function onEnvelope(peerLabel, env, ctx) {
   if (decision.action !== "quiet")
     h.surfaced = true;
   persist();
-  record(peerLabel, "recv", env.text.length, decision.action !== "quiet");
   if (decision.action === "deliver") {
     injectMessage(opts, {
       peer: peerLabel,
@@ -1339,10 +1339,9 @@ function flushOutbox() {
     log(`flushed ${sent} held message(s)${dropped ? `, dropped ${dropped} older than a day` : ""}`);
 }
 function acceptFacts(peerLabel, env) {
-  const room = (env.room ?? "").replace(/^#/, "");
-  if (!room)
-    return;
-  const level = levelFor(peerLabel, { room, paired: !!loadPeers()[peerLabel] });
+  const named = (env.room ?? "").replace(/^#/, "");
+  const room = named || peerLabel;
+  const level = levelFor(peerLabel, { room: named || undefined, paired: !!loadPeers()[peerLabel] });
   if (!atLeast2(level, "ask"))
     return log(`ignored a fact from ${peerLabel}: they are at ${level}, writing needs ask`);
   const ops = env.kind === "fact_sync" ? env.fact : [env.fact];
@@ -1356,10 +1355,9 @@ function acceptFacts(peerLabel, env) {
     shareFacts(peerLabel, room);
 }
 function acceptTasks(peerLabel, env) {
-  const room = (env.room ?? "").replace(/^#/, "");
-  if (!room)
-    return;
-  const level = levelFor(peerLabel, { room, paired: !!loadPeers()[peerLabel] });
+  const named = (env.room ?? "").replace(/^#/, "");
+  const room = named || peerLabel;
+  const level = levelFor(peerLabel, { room: named || undefined, paired: !!loadPeers()[peerLabel] });
   if (!atLeast2(level, "ask"))
     return log(`ignored a task change from ${peerLabel}: they are at ${level}`);
   const ops = env.kind === "task_sync" ? env.task : [env.task];
@@ -1382,7 +1380,7 @@ function acceptTasks(peerLabel, env) {
         kind: "task_sync",
         intent: "fyi",
         text: "",
-        room: `#${room}`,
+        ...byName(room) ? { room: `#${room}` } : {},
         task: all
       });
   }
@@ -1403,7 +1401,7 @@ function broadcastTask(room, op) {
       kind: "task",
       intent: "fyi",
       text: "",
-      room: `#${room}`,
+      ...byName(room) ? { room: `#${room}` } : {},
       task: op
     });
   }
@@ -1424,7 +1422,7 @@ function broadcastFact(room, op) {
       kind: "fact",
       intent: "fyi",
       text: "",
-      room: `#${room}`,
+      ...byName(room) ? { room: `#${room}` } : {},
       fact: op
     });
   }
@@ -1443,7 +1441,7 @@ function shareFacts(peerLabel, room) {
     kind: "fact_sync",
     intent: "fyi",
     text: "",
-    room: `#${room}`,
+    ...byName(room) ? { room: `#${room}` } : {},
     fact: ops
   });
 }
@@ -1464,7 +1462,7 @@ function requestFactSync() {
         kind: "fact_sync",
         intent: "fyi",
         text: "",
-        room: `#${room}`,
+        ...byName(room) ? { room: `#${room}` } : {},
         fact: []
       });
   for (const room of new Set(roomNames))
@@ -1479,7 +1477,7 @@ function requestFactSync() {
         kind: "task_sync",
         intent: "fyi",
         text: "",
-        room: `#${room}`,
+        ...byName(room) ? { room: `#${room}` } : {},
         task: []
       });
 }
@@ -1556,6 +1554,8 @@ async function handle(req, sock) {
       return;
     }
     case "register": {
+      if (req.refreshOnly && !sessions.has(req.sessionId))
+        return { ok: false, error: "not a session this daemon knows" };
       sessions.set(req.sessionId, {
         sessionId: req.sessionId,
         pid: req.pid,
@@ -1982,6 +1982,8 @@ async function handle(req, sock) {
         return { ok: true, notice: null };
       const waiting = (held[req.sessionId] ?? []).filter((m) => !m.readAt && !m.surfaced);
       if (!waiting.length)
+        return { ok: true, notice: null };
+      if (!withinNoticeBudget())
         return { ok: true, notice: null };
       for (const m of waiting)
         m.surfaced = true;

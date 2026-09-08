@@ -290,7 +290,8 @@ Permission relay across people is not implemented and never will be.
 bun install
 bun scripts/build.ts        # dist/ is committed, rebuild after editing src/
 bun src/cli.ts doctor
-bash test/resilience.sh
+bash test/e2e.sh          # every feature, two identities, one relay
+bash test/resilience.sh   # what happens when the relay host sleeps
 ```
 
 `CROSSTALK_HOME` moves crosstalk's state, so you can run several identities on

@@ -539,8 +539,10 @@ function subscribe() {
   const sock = net.createConnection(P.daemonSock, () => {
     // Re-register on every connect. The daemon restarts more often than a
     // session does, and SessionStart only fires once.
+    // Refresh, never create. A session belongs to whichever client's hook
+    // registered it; this process only inherited an environment.
     const reg = selfRegistration()
-    if (reg) sock.write(JSON.stringify(reg) + "\n")
+    if (reg) sock.write(JSON.stringify({ ...reg, refreshOnly: true }) + "\n")
     sock.write(JSON.stringify({ op: "subscribe", sessionId: SESSION_ID }) + "\n")
   })
   let rest = ""

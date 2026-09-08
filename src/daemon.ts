@@ -522,7 +522,12 @@ function onEnvelope(
   hold(target.sessionId, h, env.slices)
   log(`inbound ${env.kind}/${env.intent} from ${peerLabel} → ${target.name}: ${decision.action} (${decision.why})`)
 
-  // Nothing to push to in pull mode; the hook collects it.
+  // Account for it before anything can return early, or a client that pulls
+  // rather than being pushed to would never show up in the cost at all.
+  usage.record(peerLabel, "recv", env.text.length, decision.interrupts)
+
+  // Nothing to push to in pull mode. The hook collects it, and spends the
+  // attention budget then rather than now.
   if (!target.socket) {
     log(`held for ${target.name}, which pulls rather than being pushed to`)
     return
@@ -545,7 +550,6 @@ function onEnvelope(
   }
   if (decision.action !== "quiet") h.surfaced = true
   persist()
-  usage.record(peerLabel, "recv", env.text.length, decision.action !== "quiet")
 
   if (decision.action === "deliver") {
     injectMessage(opts, {
@@ -674,9 +678,10 @@ function flushOutbox() {
 
 /** A fact op from a peer. Writing needs "ask", so a stranger can read and not write. */
 function acceptFacts(peerLabel: string, env: Envelope) {
-  const room = (env.room ?? "").replace(/^#/, "")
-  if (!room) return
-  const level = trust.levelFor(peerLabel, { room, paired: !!loadPeers()[peerLabel] })
+  const named = (env.room ?? "").replace(/^#/, "")
+  // No room means it is the room of two we share, which I call by their name.
+  const room = named || peerLabel
+  const level = trust.levelFor(peerLabel, { room: named || undefined, paired: !!loadPeers()[peerLabel] })
   if (!trust.atLeast(level, "ask"))
     return log(`ignored a fact from ${peerLabel}: they are at ${level}, writing needs ask`)
 
@@ -691,9 +696,10 @@ function acceptFacts(peerLabel: string, env: Envelope) {
 
 /** A task op from a peer. Writing needs "ask", same as facts. */
 function acceptTasks(peerLabel: string, env: Envelope) {
-  const room = (env.room ?? "").replace(/^#/, "")
-  if (!room) return
-  const level = trust.levelFor(peerLabel, { room, paired: !!loadPeers()[peerLabel] })
+  const named = (env.room ?? "").replace(/^#/, "")
+  // No room means it is the room of two we share, which I call by their name.
+  const room = named || peerLabel
+  const level = trust.levelFor(peerLabel, { room: named || undefined, paired: !!loadPeers()[peerLabel] })
   if (!trust.atLeast(level, "ask"))
     return log(`ignored a task change from ${peerLabel}: they are at ${level}`)
 
@@ -715,7 +721,7 @@ function acceptTasks(peerLabel: string, env: Envelope) {
         kind: "task_sync",
         intent: "fyi",
         text: "",
-        room: `#${room}`,
+        ...(rooms.byName(room) ? { room: `#${room}` } : {}),
         task: all,
       })
   }
@@ -740,7 +746,8 @@ function broadcastTask(room: string, op: tasks.TaskOp) {
       kind: "task",
       intent: "fyi",
       text: "",
-      room: `#${room}`,
+      // Only a shared room has a name both sides agree on.
+      ...(rooms.byName(room) ? { room: `#${room}` } : {}),
       task: op,
     })
   }
@@ -765,7 +772,8 @@ function broadcastFact(room: string, op: facts.Op) {
       kind: "fact",
       intent: "fyi",
       text: "",
-      room: `#${room}`,
+      // Only a shared room has a name both sides agree on.
+      ...(rooms.byName(room) ? { room: `#${room}` } : {}),
       fact: op,
     })
   }
@@ -785,7 +793,7 @@ function shareFacts(peerLabel: string, room: string) {
     kind: "fact_sync",
     intent: "fyi",
     text: "",
-    room: `#${room}`,
+    ...(rooms.byName(room) ? { room: `#${room}` } : {}),
     fact: ops,
   })
 }
@@ -808,7 +816,7 @@ function requestFactSync() {
         kind: "fact_sync",
         intent: "fyi",
         text: "",
-        room: `#${room}`,
+        ...(rooms.byName(room) ? { room: `#${room}` } : {}),
         fact: [],
       })
 
@@ -825,7 +833,7 @@ function requestFactSync() {
         kind: "task_sync",
         intent: "fyi",
         text: "",
-        room: `#${room}`,
+        ...(rooms.byName(room) ? { room: `#${room}` } : {}),
         task: [],
       })
 }
@@ -915,6 +923,10 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
     }
 
     case "register": {
+      // A refresh keeps a known session current. It must not conjure one, since
+      // an MCP server started by another client inherits this one's environment.
+      if (req.refreshOnly && !sessions.has(req.sessionId))
+        return { ok: false, error: "not a session this daemon knows" }
       sessions.set(req.sessionId, {
         sessionId: req.sessionId,
         pid: req.pid,
@@ -1371,6 +1383,8 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       if (!reg || reg.socket) return { ok: true, notice: null }
       const waiting = (held[req.sessionId] ?? []).filter((m) => !m.readAt && !m.surfaced)
       if (!waiting.length) return { ok: true, notice: null }
+      // Handing something over is an interruption, so it counts like one.
+      if (!withinNoticeBudget()) return { ok: true, notice: null }
       for (const m of waiting) m.surfaced = true
       persist()
       const from = [...new Set(waiting.map((m) => `${m.from}/${m.fromSession}`))].join(", ")

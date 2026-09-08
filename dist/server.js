@@ -16849,7 +16849,7 @@ function subscribe() {
   const sock = net2.createConnection(P.daemonSock, () => {
     const reg = selfRegistration();
     if (reg)
-      sock.write(JSON.stringify(reg) + `
+      sock.write(JSON.stringify({ ...reg, refreshOnly: true }) + `
 `);
     sock.write(JSON.stringify({ op: "subscribe", sessionId: SESSION_ID }) + `
 `);
