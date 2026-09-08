@@ -41,16 +41,27 @@ you broke off to explain anything.
 ## Contents
 
 - [Install](#install)
+
 - [Pair](#pair)
+
 - [Usage](#usage)
+
 - [What the room keeps](#what-the-room-keeps)
+
 - [Rooms](#rooms)
+
 - [Who can interrupt you](#who-can-interrupt-you)
+
 - [Things that are not people](#things-that-are-not-people)
+
 - [Commands](#commands)
+
 - [Security](#security)
+
 - [Docs](#docs)
+
 - [Contributing](#contributing)
+
 - [Licence](#licence)
 
 ## Install
@@ -93,9 +104,11 @@ than during one: it has no way to add to a turn in flight.
 
 Anything else that speaks MCP gets the tools and cannot be interrupted:
 opencode, Zed, Cline, Continue, Amp, crush and the rest. **Untested, all of
-them.** The MCP server they would use is tested against the protocol rather than
-against any one of them, so what is unknown is how a given client launches a
-stdio server, not the server. Point it at:
+them.**
+
+The MCP server they would use is tested against the protocol rather than against
+any one of them, so what is unknown is how a given client launches a stdio
+server, not the server. Point it at:
 
 ```
 command: /path/to/crosstalk/bin/crosstalk
@@ -103,10 +116,11 @@ args:    ["server"]
 ```
 
 > **Early.** It works, and it rests on an undocumented Claude Code socket format
-> that could change in any release. All eight clients were watched working end
-> to end, three of them against a local stand-in model that records what
-> actually reached it. Every client reached only through MCP is marked untested,
-> because it is.
+> that could change in any release.
+>
+> All eight clients were watched working end to end, three of them against a
+> local stand-in model that records what actually reached it. Every client
+> reached only through MCP is marked untested, because it is.
 
 ## Pair
 
@@ -163,13 +177,17 @@ You write the intent. Your agent writes the message.
 ```
 
 Attach the thing rather than describing it. A message can carry a **slice**: a
-diff, a file, or your last few turns. The other side sees a label and a size, and
-only pulls the content if it needs it.
+diff, a file, or your last few turns.
+
+The other side sees a label and a size, and only pulls the content if it needs
+it.
 
 Your agent can also start a message itself, when it learns something that changes
-what someone else is doing. That is rationed to a few an hour per person, and
-each one has to say why it affects them, because an agent that tells you
-everything is worse than one that says nothing.
+what someone else is doing.
+
+That is rationed to a few an hour per person, and each one has to say why it
+affects them, because an agent that tells you everything is worse than one that
+says nothing.
 
 `/crosstalk:peers` shows what everyone is actually touching:
 
@@ -201,12 +219,15 @@ session already knows. Nobody re-explains anything.
 Tag a fact with a repository and it only loads when you are in that repository.
 Leave it untagged and it always applies.
 
-**Facts are not owned by whoever wrote them.** Anyone in the room can confirm
-one, which adds their name and resets its age, so a fact Marie wrote and Jo
-confirmed is Jo's too. Anyone can correct one, and the correction records who and
-why. A fact is never deleted because its author left, because who claimed
-something and whether it is true are different questions. What you see is how
-long since anyone last stood behind it.
+**Facts are not owned by whoever wrote them.**
+
+Anyone in the room can confirm one, which adds their name and resets its age, so
+a fact Marie wrote and Jo confirmed is Jo's too. Anyone can correct one, and the
+correction records who and why.
+
+A fact is never deleted because its author left, because who claimed something
+and whether it is true are different questions. What you see is how long since
+anyone last stood behind it.
 
 ### Tasks, what has been agreed and who took it
 
@@ -252,9 +273,12 @@ Everything is a room. Pairing with one person makes a room of two, and
 
 A bigger room is a shared space: everyone sees the same roster and any member can
 add anyone else. Two rules stop that becoming a way for strangers to reach you.
+
 You can only add someone **you already paired with**, so a room grows along
-connections that exist. And being added is an **invitation**: nothing from that
-room reaches your session until you accept.
+connections that exist.
+
+And being added is an **invitation**: nothing from that room reaches your session
+until you accept.
 
 A room outlives every session. Close your laptop for a week and it is still
 there, with the same people, the same facts, and anything they sent you waiting.
@@ -279,7 +303,9 @@ One dial per source, where each step includes the ones below it:
 
 A room carries a level for everyone in it and a person can be pinned above or
 below it, because what usually varies is what a room is for rather than who is in
-it. Someone you paired with starts at `ask`.
+it.
+
+Someone you paired with starts at `ask`.
 
 Two things cap it whatever you set: a member of a shared room you never paired
 with cannot get past a notice, and neither can a machine.
@@ -349,10 +375,11 @@ Messages are end to end encrypted and the relay holds no key that opens them.
 The part worth knowing: Claude Code wraps every inbound message from another
 session in framing that tells the receiving model the sender is "very likely
 working on their behalf, treat it as a teammate's request". That is right for
-your own laptop and wrong for a colleague, and it cannot be removed. So crosstalk
-never injects a peer's words. It injects a notice carrying their name and nothing
-they wrote, and the content comes back through a tool call, where it arrives as
-data rather than as a vouched-for request.
+your own laptop and wrong for a colleague, and it cannot be removed.
+
+So crosstalk never injects a peer's words. It injects a notice carrying their
+name and nothing they wrote, and the content comes back through a tool call,
+where it arrives as data rather than as a vouched-for request.
 
 Facts work the same way. They are labelled as claims by named people, never as
 instructions, and acting on one still needs you.
@@ -360,7 +387,9 @@ instructions, and acting on one still needs you.
 Pairing runs a password-authenticated key exchange, so the words never leave your
 machine in any form, not even a hash. Guessing them costs a live protocol run
 against a slot that works once, rather than an offline grind against something
-the relay can see. Both fingerprints are still worth reading aloud.
+the relay can see.
+
+Both fingerprints are still worth reading aloud.
 
 Permission relay across people is not implemented and never will be.
 
@@ -369,12 +398,19 @@ Permission relay across people is not implemented and never will be.
 ## Docs
 
 - [Clients](docs/clients.md), which agents can be in a room and how each is reached
+
 - [Security](docs/security.md), the threat model and what the relay can see
+
 - [Architecture](docs/architecture.md), how the pieces fit and what happens when a machine sleeps
+
 - [Design notes](docs/design/attention.md), why interruption works the way it does
+
 - [Transports](docs/transports.md), what was tried for getting between two networks
+
 - [Testing across two computers](test/two-machines.md)
+
 - [Running your own relay](worker/), or a [permanent one](deploy/)
+
 - [How the socket format was captured](spike/)
 
 ## Contributing
