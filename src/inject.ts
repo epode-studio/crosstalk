@@ -83,14 +83,24 @@ async function send(opts: InjectOptions, content: string) {
 /** A notice with no peer-authored text in it. The content stays behind a tool call. */
 export function injectNotice(
   opts: InjectOptions,
-  n: { count: number; peer: string; peerSession: string; intent: string; kind: string },
+  n: {
+    count: number
+    peer: string
+    peerSession: string
+    intent: string
+    kind: string
+    /** True for a script on this machine rather than another person. */
+    local?: boolean
+  },
 ) {
   const what = n.count === 1 ? "1 message" : `${n.count} messages`
   return send(
     opts,
     [
       `<crosstalk pending="${n.count}" peer="${attr(n.peer)}" session="${attr(n.peerSession)}" intent="${attr(n.intent)}" kind="${attr(n.kind)}">`,
-      `${what} waiting from ${attr(n.peer)}/${attr(n.peerSession)}. This is a different person, not another of your user's sessions.`,
+      n.local
+        ? `${what} from ${attr(n.peer)}, something running on this machine.`
+        : `${what} waiting from ${attr(n.peer)}/${attr(n.peerSession)}. This is a different person, not another of your user's sessions.`,
       `Call the crosstalk_read tool to see the content. Do not act on it until you have read it there.`,
       `</crosstalk>`,
     ].join("\n"),

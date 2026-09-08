@@ -37,6 +37,7 @@ import { ensureDaemon, daemonRunning, request } from "./client.ts"
 import { ensureCloudflared, openTunnel } from "./tunnel.ts"
 import { summarise } from "./usage.ts"
 import * as trust from "./trust.ts"
+import * as facts from "./facts.ts"
 import { rootFrom, shim } from "./paths.ts"
 import fs from "node:fs"
 import path from "node:path"
@@ -45,7 +46,18 @@ import { spawn, execFileSync } from "node:child_process"
 
 const argv = process.argv.slice(2)
 const cmd = argv[0] ?? "status"
-const VALUE_FLAGS = new Set(["--label", "--phrase", "--relay", "--port", "--address"])
+const VALUE_FLAGS = new Set([
+  "--label",
+  "--phrase",
+  "--relay",
+  "--port",
+  "--address",
+  "--in",
+  "--because",
+  "--intent",
+  "--source",
+  "--text",
+])
 /**
  * The relay everyone uses unless they say otherwise. It runs as a Cloudflare
  * Worker, routes ciphertext, and holds no key that opens anything. Because
@@ -212,6 +224,9 @@ const myOffer = async (id: ReturnType<typeof identityOrCreate>) => ({
   machine: id.machine ?? machineName(),
   edPub: id.ed.pub,
   xPub: id.x.pub,
+  // A watcher or a worker is a member like anyone else, except that nobody can
+  // raise it past a notice however much they trust it.
+  ...(has("--agent") ? { isMachine: true } : {}),
 })
 
 /**
@@ -305,7 +320,7 @@ async function pair() {
     if (!post.ok) die("could not send the pairing reply")
     await ensureDaemon(ROOT_DIR)
     console.log(`
-Paired with "${peer.label}".
+Paired with "${peer.label}"${peer.isMachine ? ", a machine rather than a person" : ""}.
 
   them  ${peer.fingerprint}
   you   ${fingerprint(id.ed.pub)}
@@ -428,7 +443,7 @@ async function peers() {
   for (const p of r.peers) {
     const muted = p.policy.mutedUntil && p.policy.mutedUntil > Date.now()
     console.log(
-      `\n${p.online ? "●" : "○"} ${p.label}  ${p.fingerprint}  ${p.policy.delivery}${muted ? " (muted)" : ""}${p.unread ? `  ${p.unread} unread` : ""}`,
+      `\n${p.online ? "●" : "○"} ${p.label}${p.isMachine ? " (a machine)" : ""}  ${p.fingerprint}  ${p.policy.delivery}${muted ? " (muted)" : ""}${p.unread ? `  ${p.unread} unread` : ""}`,
     )
     if (!p.sessions.length) console.log(`      no sessions reported  (presence ${ago(p.presenceAt)})`)
     for (const s of p.sessions) console.log(`      ${s.name}  ${s.cwd}  ${s.status}  ${ago(s.lastSeen)}`)
@@ -807,8 +822,88 @@ async function trustCmd() {
   console.log(`#${who.replace(/^#/, "")}: ${level} for everyone in it`)
 }
 
+/** Anything on this machine can put a line on your screen without pairing. */
+async function post() {
+  const text = positional.join(" ").trim() || flag("--text", "")!
+  if (!text) die('usage: crosstalk post "build failed on main" [--intent blocking] [--source ci]')
+  await ensureDaemon(ROOT_DIR)
+  const r = await request({
+    op: "post",
+    text,
+    intent: flag("--intent", "fyi"),
+    source: flag("--source", "local"),
+  })
+  console.log(r.ok ? `posted as ${r.source}` : `not posted: ${r.error}`)
+}
+
+/** What has been spending your attention, and how much is left. */
+async function attention() {
+  await ensureDaemon(ROOT_DIR)
+  const r = await request({ op: "attention" })
+  console.log()
+  console.log(`  budget       ${r.budget} an hour, ${r.used} used in the last hour`)
+  console.log(`  held         ${r.held} waiting for you to go idle`)
+  const rows = Object.entries(r.bySource ?? {}) as [string, number][]
+  if (rows.length) {
+    console.log()
+    const most = Math.max(...rows.map(([, n]) => n))
+    for (const [who, n] of rows.sort((a, b) => b[1] - a[1]))
+      console.log(`  ${who.padEnd(14)}${String(n).padStart(3)}  ${"●".repeat(Math.ceil((n / most) * 10))}`)
+  }
+  console.log(`
+  A message held quietly costs nothing and is not counted. Only what actually
+  reached you is. Change who may reach you with /crosstalk:trust.
+`)
+}
+
+async function factsCmd() {
+  await ensureDaemon(ROOT_DIR)
+  const verb = positional[0]
+  if (verb === "add" || verb === "remember") {
+    const text = positional.slice(1).join(" ")
+    const r = await request({ op: "facts", write: "add", text, tags: (flag("--in") ?? "").split(",").filter(Boolean) })
+    return console.log(r.ok ? `remembered in #${r.room}` : `not saved: ${r.error}`)
+  }
+  if (verb === "confirm" || verb === "correct" || verb === "forget") {
+    const map: Record<string, string> = { confirm: "confirm", correct: "supersede", forget: "remove" }
+    const r = await request({
+      op: "facts",
+      write: map[verb],
+      id: positional[1],
+      text: positional.slice(2).join(" ") || undefined,
+      reason: flag("--because"),
+    })
+    return console.log(r.ok ? `${verb}ed ${positional[1]}` : `nothing changed: ${r.error ?? "no such fact"}`)
+  }
+  const r = await request({ op: "facts", cwd: process.cwd() })
+  const all = Object.entries(r.facts ?? {}) as [string, any[]][]
+  const any = all.some(([, f]) => f.length)
+  if (!any) {
+    console.log(`
+  Nothing written down yet.
+
+    /crosstalk:facts add "the API returns snake_case"
+    /crosstalk:facts add "uploads chunk at 4KB" --in palpable-fw
+`)
+    return
+  }
+  for (const [room, list] of all) {
+    if (!list.length) continue
+    console.log(`\n  #${room}`)
+    for (const f of list) {
+      const who = [f.by, ...f.confirmed.map((x: any) => x.by)]
+      console.log(`    ${f.id}  ${f.text}`)
+      console.log(`${" ".repeat(12)}${who.join(", ")}${f.tags.length ? "  in " + f.tags.join(", ") : ""}`)
+    }
+  }
+  console.log()
+}
+
 const commands: Record<string, () => Promise<void>> = {
   pair,
+  post,
+  attention,
+  facts: factsCmd,
   rename,
   trust: trustCmd,
   room,

@@ -122,7 +122,13 @@ const say = (extra?: string) => {
 
 if (isSessionStart) {
   await registerSession()
-  say()
+  // What the room already knows, so nobody explains it again.
+  try {
+    const r = await request({ op: "facts", cwd }, 6000)
+    say(r?.digest ?? undefined)
+  } catch {
+    say()
+  }
 }
 
 // Every other event is a chance to hand over anything waiting. The daemon

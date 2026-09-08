@@ -293,7 +293,7 @@ function injectNotice(opts, n) {
   const what = n.count === 1 ? "1 message" : `${n.count} messages`;
   return send(opts, [
     `<crosstalk pending="${n.count}" peer="${attr(n.peer)}" session="${attr(n.peerSession)}" intent="${attr(n.intent)}" kind="${attr(n.kind)}">`,
-    `${what} waiting from ${attr(n.peer)}/${attr(n.peerSession)}. This is a different person, not another of your user's sessions.`,
+    n.local ? `${what} from ${attr(n.peer)}, something running on this machine.` : `${what} waiting from ${attr(n.peer)}/${attr(n.peerSession)}. This is a different person, not another of your user's sessions.`,
     `Call the crosstalk_read tool to see the content. Do not act on it until you have read it there.`,
     `</crosstalk>`
   ].join(`
@@ -1420,6 +1420,49 @@ async function handle(req, sock) {
       }
       return { ok: true, label: identity.label };
     }
+    case "post": {
+      const target = pickSession();
+      if (!target)
+        return { ok: false, error: "no session to post to" };
+      const source = String(req.source ?? "local").slice(0, 24);
+      const intent = req.intent ?? "fyi";
+      const decision = triage("notify", intent, "message", statusOf(target.sessionId));
+      const h = {
+        id: crypto6.randomUUID(),
+        from: source,
+        fromSession: "-",
+        intent,
+        kind: "message",
+        text: String(req.text ?? ""),
+        slices: [],
+        ts: Date.now()
+      };
+      if (decision.interrupts && !withinNoticeBudget())
+        decision.action = "quiet";
+      if (decision.action !== "quiet")
+        h.surfaced = true;
+      hold(target.sessionId, h);
+      record(source, "recv", h.text.length, decision.action !== "quiet");
+      if (decision.action !== "quiet" && target.socket)
+        injectNotice({ socket: target.socket, replyTo: target.socket, fromName: `crosstalk:${source}` }, { count: 1, peer: source, peerSession: "-", intent, kind: "message", local: true }).catch(() => {});
+      return { ok: true, source, action: decision.action };
+    }
+    case "attention": {
+      const now = Date.now();
+      const used = noticeTimes.filter((t) => now - t < 3600000).length;
+      const bySource = {};
+      for (const msgs of Object.values(held))
+        for (const m of msgs)
+          if (m.surfaced && now - m.ts < 3600000)
+            bySource[m.from] = (bySource[m.from] ?? 0) + 1;
+      return {
+        ok: true,
+        budget: NOTICE_BUDGET_PER_HOUR,
+        used,
+        held: Object.values(held).flat().filter((m) => !m.readAt && !m.surfaced).length,
+        bySource
+      };
+    }
     case "facts": {
       const store = load4();
       const roomNames = [
@@ -1750,6 +1793,7 @@ async function handle(req, sock) {
         peers: Object.values(peers).map((p) => ({
           label: p.label,
           fingerprint: p.fingerprint,
+          isMachine: !!p.isMachine,
           online: online.has(p.fingerprint),
           policy: policyFor(p.label, policy),
           sessions: peerPresence.get(p.label)?.sessions ?? [],

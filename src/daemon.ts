@@ -884,6 +884,52 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       return { ok: true, label: identity!.label }
     }
 
+    // Anything running on this machine can put a line on the screen. It is you
+    // talking to yourself, so it needs no identity and no pairing.
+    case "post": {
+      const target = pickSession()
+      if (!target) return { ok: false, error: "no session to post to" }
+      const source = String(req.source ?? "local").slice(0, 24)
+      const intent = (req.intent as Intent) ?? "fyi"
+      const decision = triage("notify", intent, "message", statusOf(target.sessionId))
+      const h: Held = {
+        id: crypto.randomUUID(),
+        from: source,
+        fromSession: "-",
+        intent,
+        kind: "message",
+        text: String(req.text ?? ""),
+        slices: [],
+        ts: Date.now(),
+      }
+      if (decision.interrupts && !withinNoticeBudget()) decision.action = "quiet"
+      if (decision.action !== "quiet") h.surfaced = true
+      hold(target.sessionId, h)
+      usage.record(source, "recv", h.text.length, decision.action !== "quiet")
+      if (decision.action !== "quiet" && target.socket)
+        injectNotice(
+          { socket: target.socket, replyTo: target.socket, fromName: `crosstalk:${source}` },
+          { count: 1, peer: source, peerSession: "-", intent, kind: "message", local: true },
+        ).catch(() => {})
+      return { ok: true, source, action: decision.action }
+    }
+
+    case "attention": {
+      const now = Date.now()
+      const used = noticeTimes.filter((t) => now - t < 3_600_000).length
+      const bySource: Record<string, number> = {}
+      for (const msgs of Object.values(held))
+        for (const m of msgs)
+          if (m.surfaced && now - m.ts < 3_600_000) bySource[m.from] = (bySource[m.from] ?? 0) + 1
+      return {
+        ok: true,
+        budget: NOTICE_BUDGET_PER_HOUR,
+        used,
+        held: Object.values(held).flat().filter((m) => !m.readAt && !m.surfaced).length,
+        bySource,
+      }
+    }
+
     case "facts": {
       const store = facts.load()
       const roomNames = [
@@ -1233,6 +1279,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         peers: Object.values(peers).map((p) => ({
           label: p.label,
           fingerprint: p.fingerprint,
+          isMachine: !!p.isMachine,
           online: online.has(p.fingerprint),
           policy: policyFor(p.label, policy),
           sessions: peerPresence.get(p.label)?.sessions ?? [],

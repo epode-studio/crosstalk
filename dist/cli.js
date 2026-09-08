@@ -428,6 +428,7 @@ var openOffer = (phrase, blob) => JSON.parse(open(pairingKey(phrase), blob));
 var asPeer = (o) => ({
   label: o.label,
   machine: o.machine,
+  isMachine: o.isMachine,
   edPub: o.edPub,
   xPub: o.xPub,
   fingerprint: fingerprint(o.edPub),
@@ -912,7 +913,18 @@ import path8 from "path";
 import { spawn as spawn3, execFileSync as execFileSync4 } from "child_process";
 var argv = process.argv.slice(2);
 var cmd = argv[0] ?? "status";
-var VALUE_FLAGS = new Set(["--label", "--phrase", "--relay", "--port", "--address"]);
+var VALUE_FLAGS = new Set([
+  "--label",
+  "--phrase",
+  "--relay",
+  "--port",
+  "--address",
+  "--in",
+  "--because",
+  "--intent",
+  "--source",
+  "--text"
+]);
 var DEFAULT_RELAY = process.env.CROSSTALK_DEFAULT_RELAY ?? "wss://crosstalk-relay.billowing-poetry-4cd6.workers.dev";
 var flag = (f, d) => {
   const i = argv.indexOf(f);
@@ -1066,7 +1078,8 @@ var myOffer = async (id) => ({
   label: id.label,
   machine: id.machine ?? machineName(),
   edPub: id.ed.pub,
-  xPub: id.x.pub
+  xPub: id.x.pub,
+  ...has("--agent") ? { isMachine: true } : {}
 });
 function adoptPeer(peer) {
   const peers = loadPeers();
@@ -1147,7 +1160,7 @@ printed, including the part after "at".`);
       die("could not send the pairing reply");
     await ensureDaemon(ROOT_DIR);
     console.log(`
-Paired with "${peer.label}".
+Paired with "${peer.label}"${peer.isMachine ? ", a machine rather than a person" : ""}.
 
   them  ${peer.fingerprint}
   you   ${fingerprint(id.ed.pub)}
@@ -1257,7 +1270,7 @@ No peers yet. Run /crosstalk:pair --host to invite someone.
   for (const p of r.peers) {
     const muted = p.policy.mutedUntil && p.policy.mutedUntil > Date.now();
     console.log(`
-${p.online ? "\u25CF" : "\u25CB"} ${p.label}  ${p.fingerprint}  ${p.policy.delivery}${muted ? " (muted)" : ""}${p.unread ? `  ${p.unread} unread` : ""}`);
+${p.online ? "\u25CF" : "\u25CB"} ${p.label}${p.isMachine ? " (a machine)" : ""}  ${p.fingerprint}  ${p.policy.delivery}${muted ? " (muted)" : ""}${p.unread ? `  ${p.unread} unread` : ""}`);
     if (!p.sessions.length)
       console.log(`      no sessions reported  (presence ${ago(p.presenceAt)})`);
     for (const s of p.sessions)
@@ -1640,8 +1653,86 @@ async function trustCmd() {
   save(t);
   console.log(`#${who.replace(/^#/, "")}: ${level} for everyone in it`);
 }
+async function post() {
+  const text = positional.join(" ").trim() || flag("--text", "");
+  if (!text)
+    die('usage: crosstalk post "build failed on main" [--intent blocking] [--source ci]');
+  await ensureDaemon(ROOT_DIR);
+  const r = await request({
+    op: "post",
+    text,
+    intent: flag("--intent", "fyi"),
+    source: flag("--source", "local")
+  });
+  console.log(r.ok ? `posted as ${r.source}` : `not posted: ${r.error}`);
+}
+async function attention() {
+  await ensureDaemon(ROOT_DIR);
+  const r = await request({ op: "attention" });
+  console.log();
+  console.log(`  budget       ${r.budget} an hour, ${r.used} used in the last hour`);
+  console.log(`  held         ${r.held} waiting for you to go idle`);
+  const rows = Object.entries(r.bySource ?? {});
+  if (rows.length) {
+    console.log();
+    const most = Math.max(...rows.map(([, n]) => n));
+    for (const [who, n] of rows.sort((a, b) => b[1] - a[1]))
+      console.log(`  ${who.padEnd(14)}${String(n).padStart(3)}  ${"\u25CF".repeat(Math.ceil(n / most * 10))}`);
+  }
+  console.log(`
+  A message held quietly costs nothing and is not counted. Only what actually
+  reached you is. Change who may reach you with /crosstalk:trust.
+`);
+}
+async function factsCmd() {
+  await ensureDaemon(ROOT_DIR);
+  const verb = positional[0];
+  if (verb === "add" || verb === "remember") {
+    const text = positional.slice(1).join(" ");
+    const r2 = await request({ op: "facts", write: "add", text, tags: (flag("--in") ?? "").split(",").filter(Boolean) });
+    return console.log(r2.ok ? `remembered in #${r2.room}` : `not saved: ${r2.error}`);
+  }
+  if (verb === "confirm" || verb === "correct" || verb === "forget") {
+    const map = { confirm: "confirm", correct: "supersede", forget: "remove" };
+    const r2 = await request({
+      op: "facts",
+      write: map[verb],
+      id: positional[1],
+      text: positional.slice(2).join(" ") || undefined,
+      reason: flag("--because")
+    });
+    return console.log(r2.ok ? `${verb}ed ${positional[1]}` : `nothing changed: ${r2.error ?? "no such fact"}`);
+  }
+  const r = await request({ op: "facts", cwd: process.cwd() });
+  const all = Object.entries(r.facts ?? {});
+  const any = all.some(([, f]) => f.length);
+  if (!any) {
+    console.log(`
+  Nothing written down yet.
+
+    /crosstalk:facts add "the API returns snake_case"
+    /crosstalk:facts add "uploads chunk at 4KB" --in palpable-fw
+`);
+    return;
+  }
+  for (const [room2, list] of all) {
+    if (!list.length)
+      continue;
+    console.log(`
+  #${room2}`);
+    for (const f of list) {
+      const who = [f.by, ...f.confirmed.map((x) => x.by)];
+      console.log(`    ${f.id}  ${f.text}`);
+      console.log(`${" ".repeat(12)}${who.join(", ")}${f.tags.length ? "  in " + f.tags.join(", ") : ""}`);
+    }
+  }
+  console.log();
+}
 var commands = {
   pair,
+  post,
+  attention,
+  facts: factsCmd,
   rename,
   trust: trustCmd,
   room,

@@ -244,6 +244,11 @@ var say = (extra) => {
 };
 if (isSessionStart) {
   await registerSession();
-  say();
+  try {
+    const r = await request({ op: "facts", cwd }, 6000);
+    say(r?.digest ?? undefined);
+  } catch {
+    say();
+  }
 }
 say(await pendingNotice() ?? undefined);

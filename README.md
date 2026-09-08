@@ -1,6 +1,6 @@
 # crosstalk
 
-**Put everyone’s coding agents in one room.**
+**Put everyone's coding agents in one room.**
 
 Claude Code, Codex and Gemini CLI, talking to each other.
 
@@ -19,26 +19,21 @@ Seconds later, on her machine, mid-task:
 Her agent reads it, pulls the diff if it needs it, and stops writing against a
 column that no longer exists. Neither of you stopped working.
 
-## The room is the point
-
-You pair once, with four spoken words. That makes a room, and a room outlives
-every session: close your laptop for a week and it is still there, with the same
-people and anything they sent you waiting.
-
-A room holds who is in it, what they are working on right now, what has been
-handed over, and what you decided and why. Any number of people, and their
-agents do not have to be the same kind of agent.
-
-Nothing in a room can interrupt you unless you said it could. That is the part
-most of this is about.
+> **Early.** It works and it is used daily by two people. It rests on an
+> undocumented Claude Code socket format that could change in any release, and
+> Codex and Gemini support is built to their documented hook contracts rather
+> than tested against live installs. See [`spike/`](spike/) and
+> [Clients](docs/clients.md).
 
 ## Contents
 
 - [Install](#install)
 - [Pair](#pair)
 - [Usage](#usage)
+- [What the room remembers](#what-the-room-remembers)
 - [Rooms](#rooms)
-- [Interruptions](#interruptions)
+- [Who can interrupt you](#who-can-interrupt-you)
+- [Things that are not people](#things-that-are-not-people)
 - [Commands](#commands)
 - [Security](#security)
 - [Docs](#docs)
@@ -65,10 +60,10 @@ interrupted. See [Clients](docs/clients.md).
 /crosstalk:pair
 ```
 
-**2.** It prints four words.
+**2.** It prints five words.
 
 ```
-    chisel-ash-topaz-perch
+    gale-brazier-zircon-widgeon-lackey
 ```
 
 **3.** Say them to the other person. Out loud, on a call, in a DM. Anywhere
@@ -77,7 +72,7 @@ except through the relay. They expire in fifteen minutes.
 **4.** They run the same command with your words.
 
 ```
-/crosstalk:pair chisel-ash-topaz-perch
+/crosstalk:pair gale-brazier-zircon-widgeon-lackey
 ```
 
 **5.** You both see two fingerprints. Read them to each other. If they match,
@@ -92,14 +87,14 @@ Paired with "marie".
 
 You can be on different networks, in different countries. Messages travel through
 a relay that routes ciphertext and holds no key that opens it. Run your own with
-`--host` on one machine, or deploy the Worker in [`worker/`](worker/).
+`--host`, or deploy the Worker in [`worker/`](worker/).
 
 That is permanent. It survives restarts and never has to be done again. If
 something is wrong, `/crosstalk:doctor` says what.
 
 ## Usage
 
-You write the intent. Claude writes the message.
+You write the intent. Your agent writes the message.
 
 ```
 › tell marie the migration landed and rebasing is safe
@@ -110,20 +105,47 @@ You write the intent. Claude writes the message.
 
 Attach the thing rather than describing it. A message can carry a **slice**: a
 diff, a file, or your last few turns. The other side sees a label and a size, and
-only pulls the content if it needs it, so a large diff costs them nothing unless
-it matters.
+only pulls the content if it needs it.
+
+Your agent can also start a message itself, when it learns something that changes
+what someone else is doing. That is rationed to a few an hour per person, and
+each one has to say why it affects them, because an agent that tells you
+everything is worse than one that says nothing.
 
 `/crosstalk:peers` shows what everyone is actually touching:
 
 ```
-● marie  cb48-a6d9-2704-d17f  notify  1 unread
+● marie  cb48-a6d9-2704-d17f  ask  1 unread
       api       ~/palpable       busy  12s ago
       firmware  ~/palpable-fw    idle  4m ago
 ```
 
-Every Claude Code session already records its repo and status on disk. Crosstalk
-shares yours with people you paired with, encrypted, so "is she in the firmware
-repo right now" stops being a question you interrupt her to ask.
+## What the room remembers
+
+Messages move. The room keeps.
+
+```
+› remember that the API returns snake_case, not camelCase
+```
+
+Every agent in the room reads that at the start of every session, from then on.
+Three weeks later, on a machine that has never seen this conversation, a fresh
+session already knows. Nobody re-explains anything.
+
+```
+/crosstalk:facts
+/crosstalk:facts add "uploads chunk at 4KB" --in palpable-fw
+```
+
+Tag a fact with a repository and it only loads when you are in that repository.
+Leave it untagged and it always applies.
+
+**Facts are not owned by whoever wrote them.** Anyone in the room can confirm
+one, which adds their name and resets its age, so a fact Marie wrote and Jo
+confirmed is Jo's too. Anyone can correct one, and the correction records who and
+why. A fact is never deleted because its author left, because who claimed
+something and whether it is true are different questions. What you see is how
+long since anyone last stood behind it.
 
 ## Rooms
 
@@ -136,55 +158,87 @@ Everything is a room. Pairing with one person makes a room of two, and
 ```
 
 A bigger room is a shared space: everyone sees the same roster and any member can
-add anyone else.
+add anyone else. Two rules stop that becoming a way for strangers to reach you.
+You can only add someone **you already paired with**, so a room grows along
+connections that exist. And being added is an **invitation**: nothing from that
+room reaches your session until you accept.
+
+A room outlives every session. Close your laptop for a week and it is still
+there, with the same people, the same facts, and anything they sent you waiting.
+
+## Who can interrupt you
+
+One dial per source, where each step includes the ones below it:
+
+| | |
+|---|---|
+| `mute` | nothing reaches you |
+| `notify` | a line on your screen; their words stay behind a tool call |
+| `ask` | also a question that costs you a turn |
+| `handoff` | also a work item with state and files |
+| `deliver` | also their words inside your turn |
 
 ```
-/crosstalk:room create beta
-/crosstalk:room invite beta marie jo
-/crosstalk:room accept beta
+/crosstalk:trust marie ask
+/crosstalk:trust incident deliver     everyone in that room
+/crosstalk:trust marie mute --in ideas
 ```
 
-Two rules stop a room becoming a way for strangers to reach your agent. You can
-only add someone **you already paired with**, so a room grows along connections
-that exist. And being added is an **invitation**: nothing from that room reaches
-your session until you accept.
+A room carries a level for everyone in it and a person can be pinned above or
+below it, because what usually varies is what a room is for rather than who is in
+it. Someone you paired with starts at `ask`.
 
-Someone in a room you never paired with stays a stranger. They can put a notice
-on your screen and nothing more, whatever urgency they claim. Removing someone
-rekeys the room.
+Two things cap it whatever you set: a member of a shared room you never paired
+with cannot get past a notice, and neither can a machine.
 
-## Interruptions
+The sender declares how urgent a message is, and that decides *when* it lands,
+never *whether* it can reach in. `blocking` can lift a held message to a notice.
+Nothing a sender does puts their words inside your turn.
 
-A message from someone else costs you a turn and pulls your agent off task. The
-sender says how urgent it is. Your policy for that person decides what that
-earns.
-
-| They send | You are set to | What happens |
-|---|---|---|
-| `fyi` | `notify` (default) | waits until you go idle |
-| `question` | `notify` | one dim line, content behind a tool call |
-| `blocking` | `notify` | one dim line, straight away |
-| anything | `deliver` | lands in your session mid-turn |
-| anything | `quiet` | held silently until you go idle |
-
-Nothing a sender does reaches `deliver`. Only you can, per person:
+There is a ceiling of forty interruptions an hour across everything. A message
+held quietly costs nothing and is not counted.
 
 ```
-/crosstalk:policy marie deliver
+/crosstalk:attention
+
+  budget       40 an hour, 12 used in the last hour
+  held         3 waiting for you to go idle
+
+  marie          18  ●●●●●●●●●●
+  ci             11  ●●●●●●
+  jo              2  ●
 ```
 
-There is also a ceiling of 40 notices an hour across everyone, so no group takes
-over your session. `/crosstalk:mute marie 60` holds someone for an hour without
-disconnecting.
+## Things that are not people
+
+Anything on your machine can put a line on your screen without pairing, because
+it is you talking to yourself:
+
+```
+crosstalk post "migration finished, 1.2M rows"
+crosstalk post "build failed on main" --intent blocking --source ci
+```
+
+Something that lives in a room, like a build watcher everyone can see, pairs like
+a person but declares itself:
+
+```
+/crosstalk:pair --agent
+```
+
+It shows as a machine, it starts at `notify`, and no amount of trust raises it
+past that. A build bot cannot take over anyone's session.
 
 ## Commands
 
 | | |
 |---|---|
-| `/crosstalk:pair` | Pair with someone. `--host` runs the relay for you |
+| `/crosstalk:pair` | Pair with someone. `--agent` for something that is not a person |
 | `/crosstalk:room` | Create, invite, accept, leave, kick |
+| `/crosstalk:facts` | What the room knows. Add, confirm, correct |
+| `/crosstalk:trust` | How much a person or a room may interrupt you |
+| `/crosstalk:attention` | What has been spending it |
 | `/crosstalk:peers` | Who is online and what they are working on |
-| `/crosstalk:policy` | How a person may interrupt you |
 | `/crosstalk:mute` | Hold inbound for a while |
 | `/crosstalk:rename` | Rename a peer, or yourself |
 | `/crosstalk:cost` | What this has cost, per person |
@@ -204,20 +258,27 @@ never injects a peer's words. It injects a notice carrying their name and nothin
 they wrote, and the content comes back through a tool call, where it arrives as
 data rather than as a vouched-for request.
 
+Facts work the same way. They are labelled as claims by named people, never as
+instructions, and acting on one still needs you.
+
+Pairing words are stretched with a memory-hard derivation before anything derived
+from them reaches the relay, because a relay you do not run would otherwise be
+able to grind five words out of a plain hash. Both fingerprints are still worth
+reading aloud.
+
 Permission relay across people is not implemented and never will be.
 
 [Full security notes](docs/security.md).
 
 ## Docs
 
+- [Clients](docs/clients.md), which agents can be in a room and how each is reached
 - [Security](docs/security.md), the threat model and what the relay can see
-- [Clients](docs/clients.md), which agents can be in a room and how each one is reached
-- [Codex](docs/codex.md), running crosstalk in Codex
-- [Transports](docs/transports.md), what was tried for getting between two networks and what the numbers were
-- [Architecture](docs/architecture.md), how the pieces fit and what happens when
-  a machine sleeps
+- [Architecture](docs/architecture.md), how the pieces fit and what happens when a machine sleeps
+- [Design notes](docs/design/attention.md), why interruption works the way it does
+- [Transports](docs/transports.md), what was tried for getting between two networks
 - [Testing across two computers](test/two-machines.md)
-- [Running a permanent relay](deploy/)
+- [Running your own relay](worker/), or a [permanent one](deploy/)
 - [How the socket format was captured](spike/)
 
 ## Contributing
