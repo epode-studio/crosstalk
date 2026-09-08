@@ -309,6 +309,26 @@ case "$OUT" in
   *) ok "hermes gets context and nothing else" ;;
 esac
 
+# --- when a message lands ------------------------------------------------------
+#
+# The README's opening demo turns on this: an urgent message reaches a busy
+# session, and an fyi waits for it to finish. If that ever flips, the pitch is
+# describing something the code does not do.
+echo
+echo "when a message lands"
+verdict() {
+  bun -e '
+    const { triage } = await import("./src/policy.ts")
+    const [level, intent, status] = process.argv.slice(1)
+    console.log(triage(level, intent, "message", status).action)
+  ' "$1" "$2" "$3"
+}
+check "$(verdict ask blocking busy)"  "notify" "an urgent message reaches a busy session"
+check "$(verdict ask question busy)"  "notify" "so does a question"
+check "$(verdict ask fyi busy)"       "quiet"  "an fyi waits until the session is idle"
+check "$(verdict ask fyi idle)"       "notify" "and arrives once it is"
+check "$(verdict mute blocking busy)" "drop"   "mute outranks any urgency the sender claims"
+
 # --- reaching the CLI ----------------------------------------------------------
 #
 # `crosstalk` on PATH is a symlink into the plugin, so the shim has to resolve

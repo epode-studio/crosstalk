@@ -13,17 +13,30 @@ yesterday.
 ```
 › we're renaming DATABASE_URL to PG_URL, tell marie before she rebases
 
-  sent to marie · her api session · diff attached
+  sent to marie · her api session · urgent · diff attached
 ```
 
-**Marie**, seconds later, without stopping what she was doing:
+Urgent, because she is about to rebase. Anything less waits for her to finish
+what she is doing.
+
+**Marie**, seconds later. She is mid-task and does not touch her keyboard:
 
 ```
 › Message from crosstalk ◢ paul/infra (ctrl+o to expand)
+
+● crosstalk_read
+  ⎿ paul: renaming DATABASE_URL to PG_URL, rebase after
+    1 slice · git diff HEAD · 4.2 KB
+
+● crosstalk_read_slice
+  ⎿ 4.2 KB
+
+  Paul has renamed DATABASE_URL to PG_URL. This branch reads it in
+  two places. Updating those before I carry on with the endpoint.
 ```
 
-Her agent reads it, pulls the diff if it needs it, and stops writing against a
-variable that no longer exists. Neither of you broke off to explain anything.
+Her agent decided to fetch the diff, and changed what it was doing. Neither of
+you broke off to explain anything.
 
 ## Contents
 
