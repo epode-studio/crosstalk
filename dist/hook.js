@@ -198,8 +198,10 @@ var isAgy = typeof hook.conversationId === "string";
 var isKimi = client === "kimi";
 var isHermes = /^(pre|post|on)_[a-z_]+$/.test(eventName);
 var isGoose = typeof hook.event === "string" && !hook.hook_event_name && !hook.hookEventName;
+var isCursor = typeof hook.cursor_version === "string" || Array.isArray(hook.workspace_roots);
+var CURSOR_CONTEXT_LIMIT = 1e4;
 var sessionId = hook.session_id ?? hook.sessionId ?? hook.thread_id ?? hook.conversation_id ?? hook.conversationId ?? process.env.CLAUDE_CODE_SESSION_ID ?? process.env.ANTIGRAVITY_CONVERSATION_ID;
-var isSessionStart = isAgy ? /^PreInvocation$/i.test(eventName) && Number(hook.invocationNum ?? 0) === 0 : isHermes ? /^pre_llm_call$/.test(eventName) && hook.extra?.is_first_turn === true : /^SessionStart$/i.test(eventName);
+var isSessionStart = isAgy ? /^PreInvocation$/i.test(eventName) && Number(hook.invocationNum ?? 0) === 0 : isHermes ? /^pre_llm_call$/.test(eventName) && hook.extra?.is_first_turn === true : /^(SessionStart|sessionStart)$/.test(eventName);
 var AGENT_DIRS = new Set([".agents", ".agent", "_agents", "_agent"]);
 function agyCwd() {
   const ws = hook.workspacePaths;
@@ -210,10 +212,10 @@ function agyCwd() {
     return path5.dirname(here);
   return here;
 }
-var cwd = hook.cwd ?? hook.working_dir ?? (isAgy ? agyCwd() : process.cwd());
-var DELIVERS = isGoose ? /^Stop$/i : /^(SessionStart|UserPromptSubmit|PreToolUse|PostToolUse|PreInvocation|pre_llm_call)$/i;
+var cwd = hook.cwd ?? hook.working_dir ?? hook.workspace_roots?.[0] ?? (isAgy ? agyCwd() : process.cwd());
+var DELIVERS = isGoose ? /^Stop$/i : isCursor ? /^(sessionStart|beforeSubmitPrompt|preToolUse|postToolUse|postToolUseFailure)$/ : /^(SessionStart|UserPromptSubmit|PreToolUse|PostToolUse|PreInvocation|pre_llm_call)$/i;
 if (!loadIdentity() || !sessionId) {
-  process.stdout.write(JSON.stringify(isGoose ? { decision: "allow" } : isAgy || isHermes || isKimi ? {} : { continue: true }));
+  process.stdout.write(JSON.stringify(isGoose ? { decision: "allow" } : isAgy || isHermes || isKimi || isCursor ? {} : { continue: true }));
   process.exit(0);
 }
 var root = rootFrom2(import.meta.url);
@@ -271,6 +273,13 @@ var say = (extra) => {
   }
   if (isGoose) {
     process.stdout.write(JSON.stringify(extra ? { decision: "block", reason: extra } : { decision: "allow" }));
+    process.exit(0);
+  }
+  if (isCursor) {
+    const fits = extra && extra.length > CURSOR_CONTEXT_LIMIT ? extra.slice(0, CURSOR_CONTEXT_LIMIT - 80) + `
+
+[crosstalk trimmed this to fit Cursor]` : extra;
+    process.stdout.write(JSON.stringify(fits ? { additional_context: fits } : {}));
     process.exit(0);
   }
   const out = { continue: true };

@@ -544,6 +544,19 @@ async function doctor() {
     ])
   }
 
+  // A Codex hook that has not been trusted is loaded, listed, and skipped, and
+  // Codex says nothing about it. That is worth surfacing here rather than
+  // leaving someone to wonder why their messages never arrive.
+  {
+    const pending = codexHooksNeedingTrust()
+    if (pending.length)
+      rows.push([
+        "codex hooks",
+        false,
+        `${pending.join(", ")} not trusted yet, so codex will skip them. Run codex, then /hooks, and trust the crosstalk entries.`,
+      ])
+  }
+
   const relayUrl = loadRelay().url
   const reach = await relayReachable(relayUrl)
   rows.push(["relay", reach, relayUrl])
@@ -1277,6 +1290,130 @@ means it is heard between turns rather than during one, and it gets no working
 set of facts on start.`)
 }
 
+
+/**
+ * Cursor keeps hooks in ~/.cursor/hooks.json: a version, then one flat list of
+ * command entries per step, with steps named in camelCase. It reads Claude
+ * Code's settings.json too, but under its own step names, so it gets its own
+ * file rather than relying on that.
+ */
+async function installCursor() {
+  const bin = shim(rootFrom(import.meta.url))
+  const dir = path.join(os.homedir(), ".cursor")
+  const file = path.join(dir, "hooks.json")
+  fs.mkdirSync(dir, { recursive: true })
+
+  let cfg: any = { version: 1, hooks: {} }
+  if (fs.existsSync(file)) {
+    try {
+      cfg = JSON.parse(fs.readFileSync(file, "utf8"))
+    } catch {
+      die(`${file} is not valid JSON. Fix or move it, then run this again.`)
+    }
+  }
+  cfg.version ??= 1
+  cfg.hooks ??= {}
+  for (const step of ["sessionStart", "beforeSubmitPrompt", "postToolUse"]) {
+    const others = (cfg.hooks[step] ?? []).filter(
+      (h: any) => !String(h?.command ?? "").includes("crosstalk"),
+    )
+    cfg.hooks[step] = [...others, { type: "command", command: `"${bin}" hook` }]
+  }
+  fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + "\n")
+  console.log(`hooks    ${file}`)
+  console.log(`tools    add the MCP server in ${path.join(dir, "mcp.json")}`)
+  console.log(`
+Cursor drops any injected text over 10,000 characters rather than shortening
+it, so crosstalk trims to fit and says so where it cut.`)
+}
+
+
+/** Codex names its events in snake_case inside the trust keys it writes. */
+const CODEX_EVENT_KEY: Record<string, string> = {
+  SessionStart: "session_start",
+  UserPromptSubmit: "user_prompt_submit",
+  PreToolUse: "pre_tool_use",
+  PostToolUse: "post_tool_use",
+  Stop: "stop",
+}
+
+/**
+ * Whether Codex will actually run the hooks crosstalk wrote.
+ *
+ * Codex will not run a hook it has not been told to trust. The trust lives in
+ * config.toml, keyed by file, event and the handler's position in that file,
+ * and is granted by running `/hooks` in the Codex TUI. Until then the hook is
+ * loaded, listed, and skipped in silence, which is a bad way to find out.
+ *
+ * The hash cannot be recomputed here, so this only reports whether any trust
+ * entry exists at the position crosstalk occupies. That catches the case that
+ * actually happens: a fresh install nobody has approved yet.
+ */
+function codexHooksNeedingTrust(): string[] {
+  const file = path.join(os.homedir(), ".codex", "hooks.json")
+  const conf = path.join(os.homedir(), ".codex", "config.toml")
+  if (!fs.existsSync(file)) return []
+  let hooks: any
+  try {
+    hooks = JSON.parse(fs.readFileSync(file, "utf8")).hooks ?? {}
+  } catch {
+    return []
+  }
+  let toml = ""
+  try {
+    toml = fs.readFileSync(conf, "utf8")
+  } catch {}
+  const untrusted: string[] = []
+  for (const [event, groups] of Object.entries(hooks) as [string, any[]][]) {
+    const key = CODEX_EVENT_KEY[event]
+    if (!key || !Array.isArray(groups)) continue
+    groups.forEach((group, g) => {
+      const handlers = Array.isArray(group?.hooks) ? group.hooks : [group]
+      handlers.forEach((h: any, i: number) => {
+        if (!String(h?.command ?? "").includes("crosstalk")) return
+        if (!toml.includes(`${file}:${key}:${g}:${i}`)) untrusted.push(event)
+      })
+    })
+  }
+  return untrusted
+}
+
+/**
+ * Codex reads the same plugin format as Claude Code, but a plugin has to come
+ * from a marketplace. Writing hooks.json directly is the short way in, and it
+ * appends: the trust key carries a handler's index, so putting one ahead of
+ * another revokes that other one's trust.
+ */
+async function installCodex() {
+  const bin = shim(rootFrom(import.meta.url))
+  const dir = path.join(os.homedir(), ".codex")
+  const file = path.join(dir, "hooks.json")
+  fs.mkdirSync(dir, { recursive: true })
+
+  let cfg: any = {}
+  if (fs.existsSync(file)) {
+    try {
+      cfg = JSON.parse(fs.readFileSync(file, "utf8"))
+    } catch {
+      die(`${file} is not valid JSON. Fix or move it, then run this again.`)
+    }
+  }
+  cfg.hooks ??= {}
+  for (const event of ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"]) {
+    const others = (cfg.hooks[event] ?? []).filter(
+      (g: any) => !JSON.stringify(g).includes("crosstalk"),
+    )
+    cfg.hooks[event] = [...others, { hooks: [{ type: "command", command: `"${bin}" hook` }] }]
+  }
+  fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + "\n")
+  console.log(`hooks    ${file}`)
+  console.log(`
+Codex will not run a hook until you say so, and says nothing when it skips one.
+Start codex, run /hooks, and trust the crosstalk entries. Check it took with:
+
+  crosstalk doctor`)
+}
+
 /** Everything a client needs, per client. */
 async function install() {
   const who = (positional[0] ?? "").toLowerCase()
@@ -1285,7 +1422,9 @@ async function install() {
   if (who === "kimi") return installKimi()
   if (who === "hermes") return installHermes()
   if (who === "goose") return installGoose()
-  die(`usage: crosstalk install <agy|qwen|kimi|hermes|goose>
+  if (who === "cursor" || who === "cursor-agent") return installCursor()
+  if (who === "codex") return installCodex()
+  die(`usage: crosstalk install <agy|qwen|kimi|hermes|goose|cursor|codex>
 
 Claude Code and Codex install as a plugin instead:
   /plugin marketplace add epode-studio/crosstalk

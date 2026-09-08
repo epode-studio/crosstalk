@@ -231,6 +231,45 @@ case "$KIMI" in
   *) ok "kimi gets message and nothing else" ;;
 esac
 
+# Codex will not run a hook it has not been told to trust, and says nothing when
+# it skips one, so `crosstalk doctor` has to notice. Trust is keyed by file,
+# event and the handler's index within that file.
+CX=$(mktemp -d)
+mkdir -p "$CX/.codex"
+cat > "$CX/.codex/hooks.json" <<'JSON'
+{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/other/notify.sh"}]},
+                          {"hooks":[{"type":"command","command":"/x/bin/crosstalk hook"}]}]}}
+JSON
+: > "$CX/.codex/config.toml"
+OUT=$(HOME="$CX" a doctor 2>&1)
+has "$OUT" "not trusted yet" "doctor spots an untrusted codex hook"
+printf '[hooks.state."%s/.codex/hooks.json:session_start:1:0"]\ntrusted_hash = "sha256:abc"\n' "$CX" > "$CX/.codex/config.toml"
+OUT=$(HOME="$CX" a doctor 2>&1)
+case "$OUT" in
+  *"not trusted yet"*) bad "doctor stops warning once the hook is trusted" ;;
+  *) ok "doctor stops warning once the hook is trusted" ;;
+esac
+rm -rf "$CX"
+
+# Cursor sends hook_event_name like Claude Code but names steps in camelCase and
+# reads a flat snake_case answer. It also throws away any context over 10k
+# rather than shortening it, so crosstalk shortens it first.
+CUR='{"hook_event_name":"sessionStart","session_id":"cu1","conversation_id":"cu1","cursor_version":"2026.08.11","workspace_roots":["/tmp"]}'
+OUT=$(echo "$CUR" | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts 2>&1)
+has "$OUT" '"additional_context"' "cursor gets flat additional_context"
+case "$OUT" in
+  *hookSpecificOutput*|*continue*|*decision*) bad "cursor gets additional_context and nothing else" ;;
+  *) ok "cursor gets additional_context and nothing else" ;;
+esac
+OUT=$(echo '{"hook_event_name":"afterAgentThought","session_id":"cu1","cursor_version":"x","workspace_roots":["/tmp"]}' \
+  | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts 2>&1)
+check "$OUT" "{}" "a cursor step that cannot deliver stays quiet"
+BIG=$(bun -e 'console.log("x".repeat(60000))')
+for i in 1 2 3; do a facts add "$BIG" >/dev/null 2>&1; done
+OUT=$(echo "$CUR" | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts 2>&1)
+LEN=$(echo "$OUT" | bun -e 'const o=JSON.parse(await new Response(Bun.stdin).text());console.log((o.additional_context??"").length)')
+[ "$LEN" -le 10000 ] && ok "cursor context is trimmed to fit ($LEN chars)" || bad "cursor context is $LEN chars, over the 10000 limit"
+
 # Goose is the mirror image of the others: it never adds context, but a Stop
 # hook that refuses to let the turn end has its reason put in front of the
 # model. An object it cannot find a decision in counts as the hook failing, so

@@ -84,6 +84,16 @@ const isHermes = /^(pre|post|on)_[a-z_]+$/.test(eventName)
  */
 const isGoose = typeof hook.event === "string" && !hook.hook_event_name && !hook.hookEventName
 
+/**
+ * Cursor sends hook_event_name like Claude Code but names its events in
+ * camelCase, and answers are read as flat snake_case rather than nested. It
+ * stamps every payload with its own version, which is the cleanest way to know.
+ */
+const isCursor = typeof hook.cursor_version === "string" || Array.isArray(hook.workspace_roots)
+
+/** Cursor drops any additional_context longer than this rather than trimming it. */
+const CURSOR_CONTEXT_LIMIT = 10_000
+
 const sessionId: string | undefined =
   hook.session_id ??
   hook.sessionId ??
@@ -108,7 +118,7 @@ const isSessionStart = isAgy
   ? /^PreInvocation$/i.test(eventName) && Number(hook.invocationNum ?? 0) === 0
   : isHermes
     ? /^pre_llm_call$/.test(eventName) && hook.extra?.is_first_turn === true
-    : /^SessionStart$/i.test(eventName)
+    : /^(SessionStart|sessionStart)$/.test(eventName)
 
 /**
  * agy runs a hook in the directory holding hooks.json, not the project, so
@@ -124,7 +134,8 @@ function agyCwd(): string {
   if (AGENT_DIRS.has(path.basename(here))) return path.dirname(here)
   return here
 }
-const cwd: string = hook.cwd ?? hook.working_dir ?? (isAgy ? agyCwd() : process.cwd())
+const cwd: string =
+  hook.cwd ?? hook.working_dir ?? hook.workspace_roots?.[0] ?? (isAgy ? agyCwd() : process.cwd())
 
 /**
  * Every event that can carry text to the model, and no others.
@@ -140,13 +151,19 @@ const cwd: string = hook.cwd ?? hook.working_dir ?? (isAgy ? agyCwd() : process.
  */
 const DELIVERS = isGoose
   ? /^Stop$/i
-  : /^(SessionStart|UserPromptSubmit|PreToolUse|PostToolUse|PreInvocation|pre_llm_call)$/i
+  : isCursor
+    ? /^(sessionStart|beforeSubmitPrompt|preToolUse|postToolUse|postToolUseFailure)$/
+    : /^(SessionStart|UserPromptSubmit|PreToolUse|PostToolUse|PreInvocation|pre_llm_call)$/i
 
 /** Nothing to do until someone has paired. */
 if (!loadIdentity() || !sessionId) {
   process.stdout.write(
     JSON.stringify(
-      isGoose ? { decision: "allow" } : isAgy || isHermes || isKimi ? {} : { continue: true },
+      isGoose
+        ? { decision: "allow" }
+        : isAgy || isHermes || isKimi || isCursor
+          ? {}
+          : { continue: true },
     ),
   )
   process.exit(0)
@@ -234,6 +251,16 @@ const say = (extra?: string) => {
     process.stdout.write(
       JSON.stringify(extra ? { decision: "block", reason: extra } : { decision: "allow" }),
     )
+    process.exit(0)
+  }
+  if (isCursor) {
+    // Over the limit Cursor throws the context away rather than shortening it,
+    // so shorten it here and say that is what happened.
+    const fits =
+      extra && extra.length > CURSOR_CONTEXT_LIMIT
+        ? extra.slice(0, CURSOR_CONTEXT_LIMIT - 80) + "\n\n[crosstalk trimmed this to fit Cursor]"
+        : extra
+    process.stdout.write(JSON.stringify(fits ? { additional_context: fits } : {}))
     process.exit(0)
   }
   const out: any = { continue: true }

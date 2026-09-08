@@ -9,20 +9,21 @@ What differs between them is only how a message gets into a running session.
 
 ## Delivery works
 
-All seven can be reached without the agent having to think to go and look. Six
-of them can be interrupted mid-turn; Goose is heard between turns instead.
+All eight can be reached without the agent having to think to go and look.
+Seven can be interrupted mid-turn; Goose is heard between turns instead.
 
 | Client | Where hooks live | How text gets in |
 |---|---|---|
 | **Claude Code** | plugin | inbox socket, so a notice can arrive at any moment |
-| **Codex** | plugin | `hookSpecificOutput.additionalContext` |
+| **Codex** | `~/.codex/hooks.json` | `hookSpecificOutput.additionalContext` |
+| **Cursor (`cursor-agent`)** | `~/.cursor/hooks.json` | flat `additional_context`, max 10k |
 | **Antigravity (`agy`)** | `~/.gemini/config/hooks.json` | `injectSteps` on `PreInvocation` |
 | **Qwen Code** | `~/.qwen/settings.json` | `hookSpecificOutput.additionalContext` |
 | **Kimi Code** | `~/.kimi-code/config.toml` | `message`, wrapped in `<hook_result>` |
 | **Hermes** | `~/.hermes/config.yaml` | `context` on `pre_llm_call` |
 | **Goose** | `~/.agents/plugins/crosstalk/` | a `Stop` hook that refuses to end the turn |
 
-One binary serves all seven. `bin/crosstalk hook` reads the payload on stdin,
+One binary serves all eight. `bin/crosstalk hook` reads the payload on stdin,
 works out which client sent it, and answers in that client's own format.
 
 Each gets its own field and nothing else. Writing several at once to cover every
@@ -49,27 +50,43 @@ everything else  SessionStart  UserPromptSubmit  PreToolUse  PostToolUse
                  PreInvocation  pre_llm_call
 ```
 
-### Claude Code and Codex
-
-Both read the same plugin format from the same marketplaces.
+### Claude Code
 
 ```
 /plugin marketplace add epode-studio/crosstalk
 /plugin install crosstalk@epode
 ```
 
-For Codex, in `~/.codex/config.toml`:
+### Codex
 
-```toml
-[marketplaces.epode]
-source_type = "git"
-source = "https://github.com/epode-studio/crosstalk.git"
-
-[plugins."crosstalk@epode"]
-enabled = true
+```
+crosstalk install codex
 ```
 
-### Antigravity, Qwen Code, Kimi Code, Hermes
+Then start `codex`, run **`/hooks`**, and trust the crosstalk entries. This step
+is not optional and it is not obvious: **Codex will not run a hook it has not
+been told to trust, and it says nothing when it skips one.** Everything looks
+installed and no message ever arrives.
+
+`crosstalk doctor` checks for it:
+
+```
+x  codex hooks   SessionStart, Stop not trusted yet, so codex will skip them.
+                 Run codex, then /hooks, and trust the crosstalk entries.
+```
+
+Trust is recorded in `~/.codex/config.toml`, keyed by file, event and the
+handler's position in that file:
+
+```toml
+[hooks.state."/Users/you/.codex/hooks.json:session_start:1:0"]
+trusted_hash = "sha256:..."
+```
+
+Because the key carries that position, adding a hook *ahead* of an existing one
+revokes the existing one's trust. `crosstalk install codex` always appends.
+
+### Antigravity, Qwen, Kimi, Hermes, Goose, Cursor
 
 None of these read the plugin format, so there is a command per client:
 
@@ -79,6 +96,7 @@ crosstalk install qwen
 crosstalk install kimi
 crosstalk install hermes
 crosstalk install goose
+crosstalk install cursor
 ```
 
 Each writes its client's hook config, leaves anything already in that file
@@ -87,6 +105,9 @@ alone, and can be run twice without doubling up.
 Hermes asks before it will run a hook it has not seen. After installing, start it
 once and answer yes twice, or run it with `--accept-hooks`. `hermes hooks list`
 shows what is approved.
+
+Cursor throws away any injected text over 10,000 characters rather than
+shortening it, so crosstalk trims to fit and marks where it cut.
 
 ## Tools only
 
@@ -150,19 +171,16 @@ through the MCP server.
 the first `pre_llm_call` delivers the facts, the tasks and the pending-message
 notice, all three quoted back by the model.
 
-**Codex 0.153.4** runs the hook but has not delivered yet, and the reason is now
-known: **a new hook is untrusted and Codex never executes it.** The trust state
-in `~/.codex/config.toml` is keyed per handler, down to its index in the file:
+**Cursor 2026.08.11 (`cursor-agent`)** is tested live. A session registers, and
+the facts, the tasks and the pending-message notice all arrive and were quoted
+back by the model. Note it needs `--trust` for a directory in headless mode.
 
-```toml
-[hooks.state."/Users/you/.codex/hooks.json:session_start:0:0"]
-trusted_hash = "sha256:…"
-```
-
-Run `/hooks` in the Codex TUI once and trust it. Until then the hook is loaded,
-listed, and skipped. Because the key includes the handler's index, inserting a
-hook *ahead* of an existing one also invalidates that one's trust, so crosstalk
-appends.
+**Codex 0.153.4** runs, but has not delivered, and the reason is confirmed
+against its own `hooks/list`: crosstalk's handlers come back
+`"trustStatus": "untrusted"`, and Codex never executes an untrusted hook. The
+`hook: SessionStart` lines in its output were a different, already-trusted hook.
+This is not specific to this machine: **every user hits it**, which is why
+`crosstalk install codex` says so and `crosstalk doctor` checks for it.
 
 Two things that would have broken it anyway are fixed, both found in
 `codex-rs/hooks/src/schema.rs`. Every output struct is `deny_unknown_fields`,

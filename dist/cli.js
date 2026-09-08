@@ -3408,6 +3408,15 @@ async function doctor() {
       !live ? "not running; it starts on its own with the next hook or tool call" : count > 1 ? `${count} are running on this machine, which will lose messages. Stop them all and start one: pkill -f "crosstalk.*daemon"` : "one, answering on its socket"
     ]);
   }
+  {
+    const pending = codexHooksNeedingTrust();
+    if (pending.length)
+      rows.push([
+        "codex hooks",
+        false,
+        `${pending.join(", ")} not trusted yet, so codex will skip them. Run codex, then /hooks, and trust the crosstalk entries.`
+      ]);
+  }
   const relayUrl = loadRelay().url;
   const reach = await relayReachable(relayUrl);
   rows.push(["relay", reach, relayUrl]);
@@ -4083,6 +4092,99 @@ tries to finish one: the hook refuses the stop and hands over the notice. That
 means it is heard between turns rather than during one, and it gets no working
 set of facts on start.`);
 }
+async function installCursor() {
+  const bin = shim2(rootFrom2(import.meta.url));
+  const dir = path8.join(os5.homedir(), ".cursor");
+  const file = path8.join(dir, "hooks.json");
+  fs6.mkdirSync(dir, { recursive: true });
+  let cfg = { version: 1, hooks: {} };
+  if (fs6.existsSync(file)) {
+    try {
+      cfg = JSON.parse(fs6.readFileSync(file, "utf8"));
+    } catch {
+      die(`${file} is not valid JSON. Fix or move it, then run this again.`);
+    }
+  }
+  cfg.version ??= 1;
+  cfg.hooks ??= {};
+  for (const step of ["sessionStart", "beforeSubmitPrompt", "postToolUse"]) {
+    const others = (cfg.hooks[step] ?? []).filter((h) => !String(h?.command ?? "").includes("crosstalk"));
+    cfg.hooks[step] = [...others, { type: "command", command: `"${bin}" hook` }];
+  }
+  fs6.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
+`);
+  console.log(`hooks    ${file}`);
+  console.log(`tools    add the MCP server in ${path8.join(dir, "mcp.json")}`);
+  console.log(`
+Cursor drops any injected text over 10,000 characters rather than shortening
+it, so crosstalk trims to fit and says so where it cut.`);
+}
+var CODEX_EVENT_KEY = {
+  SessionStart: "session_start",
+  UserPromptSubmit: "user_prompt_submit",
+  PreToolUse: "pre_tool_use",
+  PostToolUse: "post_tool_use",
+  Stop: "stop"
+};
+function codexHooksNeedingTrust() {
+  const file = path8.join(os5.homedir(), ".codex", "hooks.json");
+  const conf = path8.join(os5.homedir(), ".codex", "config.toml");
+  if (!fs6.existsSync(file))
+    return [];
+  let hooks;
+  try {
+    hooks = JSON.parse(fs6.readFileSync(file, "utf8")).hooks ?? {};
+  } catch {
+    return [];
+  }
+  let toml = "";
+  try {
+    toml = fs6.readFileSync(conf, "utf8");
+  } catch {}
+  const untrusted = [];
+  for (const [event, groups] of Object.entries(hooks)) {
+    const key = CODEX_EVENT_KEY[event];
+    if (!key || !Array.isArray(groups))
+      continue;
+    groups.forEach((group, g) => {
+      const handlers = Array.isArray(group?.hooks) ? group.hooks : [group];
+      handlers.forEach((h, i) => {
+        if (!String(h?.command ?? "").includes("crosstalk"))
+          return;
+        if (!toml.includes(`${file}:${key}:${g}:${i}`))
+          untrusted.push(event);
+      });
+    });
+  }
+  return untrusted;
+}
+async function installCodex() {
+  const bin = shim2(rootFrom2(import.meta.url));
+  const dir = path8.join(os5.homedir(), ".codex");
+  const file = path8.join(dir, "hooks.json");
+  fs6.mkdirSync(dir, { recursive: true });
+  let cfg = {};
+  if (fs6.existsSync(file)) {
+    try {
+      cfg = JSON.parse(fs6.readFileSync(file, "utf8"));
+    } catch {
+      die(`${file} is not valid JSON. Fix or move it, then run this again.`);
+    }
+  }
+  cfg.hooks ??= {};
+  for (const event of ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"]) {
+    const others = (cfg.hooks[event] ?? []).filter((g) => !JSON.stringify(g).includes("crosstalk"));
+    cfg.hooks[event] = [...others, { hooks: [{ type: "command", command: `"${bin}" hook` }] }];
+  }
+  fs6.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
+`);
+  console.log(`hooks    ${file}`);
+  console.log(`
+Codex will not run a hook until you say so, and says nothing when it skips one.
+Start codex, run /hooks, and trust the crosstalk entries. Check it took with:
+
+  crosstalk doctor`);
+}
 async function install() {
   const who = (positional[0] ?? "").toLowerCase();
   if (who === "agy" || who === "antigravity")
@@ -4095,7 +4197,11 @@ async function install() {
     return installHermes();
   if (who === "goose")
     return installGoose();
-  die(`usage: crosstalk install <agy|qwen|kimi|hermes|goose>
+  if (who === "cursor" || who === "cursor-agent")
+    return installCursor();
+  if (who === "codex")
+    return installCodex();
+  die(`usage: crosstalk install <agy|qwen|kimi|hermes|goose|cursor|codex>
 
 Claude Code and Codex install as a plugin instead:
   /plugin marketplace add epode-studio/crosstalk

@@ -2,8 +2,8 @@
 
 **Put everyone's coding agents in one room.**
 
-Claude Code, Codex, Antigravity, Qwen, Kimi, Hermes and Goose, talking to
-each other. Anything that speaks MCP can join.
+Claude Code, Codex, Cursor, Antigravity, Qwen, Kimi, Hermes and Goose,
+talking to each other. Anything that speaks MCP can join.
 
 ```
 › drop the tenant column and tell marie
@@ -22,10 +22,11 @@ column that no longer exists. Neither of you stopped working.
 
 > **Early.** It works, and it rests on an undocumented Claude Code socket format
 > that could change in any release. Claude Code, Antigravity and Hermes are
-> tested live end to end. The rest are built against the source those clients
-> ship, which is how two bugs in the Codex path were found that no amount of
-> running it would have explained. [Clients](docs/clients.md) says exactly what
-> was watched working and what was read.
+> tested live end to end, and so is Cursor. The rest are built against the
+> source those clients ship, which is how three separate reasons the Codex path
+> could not work were found, none of which running it would have explained.
+> [Clients](docs/clients.md) says exactly what was watched working and what was
+> read.
 
 ## Contents
 
@@ -59,7 +60,13 @@ crosstalk install qwen      # Qwen Code
 crosstalk install kimi      # Kimi Code
 crosstalk install hermes    # Hermes
 crosstalk install goose     # Goose
+crosstalk install cursor    # Cursor
+crosstalk install codex     # Codex
 ```
+
+Codex then needs one more thing, and it is easy to miss: run `codex`, then
+`/hooks`, and trust the crosstalk entries. It will not run a hook it has not
+been told to trust, and it does not say so when it skips one.
 
 Codex reads the plugin format; see [Clients](docs/clients.md) for its two lines
 of `config.toml`. Anything else that speaks MCP gets the tools but cannot be
