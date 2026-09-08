@@ -25,7 +25,14 @@ import {
 } from "./config.ts"
 import { newIdentity, newPhrase, codeForPhrase, sealOffer, openOffer, asPeer, fingerprint } from "./crypto.ts"
 import { formatInvite, parseInvite } from "./invite.ts"
-import { bestAddress, allAddresses, machineName, userName } from "./net.ts"
+import {
+  bestAddress,
+  allAddresses,
+  machineName,
+  userName,
+  whereToSay,
+  expandAddress,
+} from "./net.ts"
 import { ensureDaemon, daemonRunning, request } from "./client.ts"
 import { summarise } from "./usage.ts"
 import { rootFrom, shim } from "./paths.ts"
@@ -212,13 +219,28 @@ async function pair() {
   // Accepting an invite.
   if (joining) {
     const inv = parseInvite(joining)
-    if (inv.relay) saveRelay(inv.relay)
     const code = codeForPhrase(inv.phrase)
 
+    if (inv.where) {
+      const port = inv.port ?? 8787
+      const tried: string[] = []
+      let found: string | null = null
+      for (const host of expandAddress(inv.where)) {
+        tried.push(host)
+        if (await relayReachable(`ws://${host}:${port}`, 2500)) {
+          found = `ws://${host}:${port}`
+          break
+        }
+      }
+      if (!found)
+        die(
+          `nothing is answering as "${inv.where}".\n\nTried: ${tried.join(", ")}\n\nTheir machine has to be awake, and you have to be able to reach it: the same\nnetwork, or both on the same tailnet. Ask them what /crosstalk:pair --host\nprinted, including the part after "at".`,
+        )
+      saveRelay(found)
+    }
+
     if (!(await relayReachable()))
-      die(
-        `cannot reach the relay at ${httpBase()}.\n\nIf they hosted it themselves, their machine has to be awake and reachable from here, same network, or both on the same tailnet.`,
-      )
+      die(`cannot reach a relay at ${httpBase()}.`)
 
     const r = await fetch(`${httpBase()}/pair/${code}?side=offer`)
     if (!r.ok)
@@ -280,9 +302,16 @@ fetches them. Change that per peer with /crosstalk:policy.`)
   })
   if (!res.ok) die(`the relay at ${httpBase(url)} refused the pairing offer`)
 
-  const sameRelayAsDefault = url === DEFAULT_RELAY
-  const invite = formatInvite(phrase, url, sameRelayAsDefault)
-  const addr = bestAddress()
+  const port = Number(new URL(url.replace(/^ws/, "http")).port || 8787)
+  const where = url === DEFAULT_RELAY ? null : await whereToSay(port)
+  const invite = formatInvite(phrase, where?.token ?? null, port)
+
+  const reachNote =
+    where?.reach === "anywhere"
+      ? "They can be anywhere."
+      : where?.reach === "same network"
+        ? "They have to be on the same network as you. For anywhere, put both machines on\na tailnet with Tailscale and run this again, or host a relay: see deploy/."
+        : "No network address was found, so nothing outside this machine can reach it."
 
   console.log(`
 Tell them these words:
@@ -295,8 +324,10 @@ Say it out loud, or send it somewhere you already trust. Not through the relay.
 Whoever has these words can pair with you until they expire.
 
   you       ${id.label}  ${fingerprint(id.ed.pub)}
-  relay     ${url}${sameRelayAsDefault ? "" : `  (${addr.kind}: ${addr.note})`}
+  reaches   ${where?.reach ?? "anywhere"}${where ? `  (${where.how})` : ""}
   expires   15 minutes
+
+${reachNote}
 
 Waiting…`)
 

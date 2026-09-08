@@ -435,28 +435,39 @@ var normalisePhrase2 = (p) => p.trim().toLowerCase().replace(/\s+/g, "-").replac
 
 // src/invite.ts
 var DEFAULT_PORT = 8787;
-function formatInvite(phrase, relayUrl, omitRelay) {
-  if (omitRelay)
+function formatInvite(phrase, where, port) {
+  if (!where)
     return phrase;
-  const u = new URL(relayUrl.replace(/^ws/, "http"));
-  const port = u.port && Number(u.port) !== DEFAULT_PORT ? `:${u.port}` : "";
-  return `${phrase} @ ${u.hostname}${port}`;
+  const suffix = port === DEFAULT_PORT ? "" : `:${port}`;
+  return `${phrase} at ${where}${suffix}`;
 }
 function parseInvite(input) {
   const raw = input.trim().replace(/^["']|["']$/g, "");
-  const [left, right] = raw.split("@").map((s) => s?.trim());
+  const [left, right] = raw.split(/\s+at\s+|\s*@\s*/i).map((s) => s?.trim());
   const phrase = normalisePhrase2(left ?? "");
   if (!phrase || phrase.split("-").length < 3)
     throw new Error(`"${input}" does not look like a pairing phrase (expected four words)`);
   if (!right)
     return { phrase };
-  const [host, port] = right.split(":");
-  return { phrase, relay: `ws://${host}:${port || DEFAULT_PORT}` };
+  const m = right.match(/^(.*?)(?::(\d{2,5}))?$/);
+  return { phrase, where: m?.[1] || right, port: m?.[2] ? Number(m[2]) : DEFAULT_PORT };
 }
 
 // src/net.ts
 import os2 from "node:os";
 import { execFileSync as execFileSync2 } from "node:child_process";
+function tailscaleName() {
+  for (const bin of ["tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"]) {
+    try {
+      const out = execFileSync2(bin, ["status", "--json"], { encoding: "utf8", timeout: 3000 });
+      const dns = JSON.parse(out)?.Self?.DNSName;
+      const short = dns?.replace(/\.$/, "").split(".")[0];
+      if (short)
+        return short.toLowerCase();
+    } catch {}
+  }
+  return null;
+}
 function tailscale() {
   for (const bin of ["tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"]) {
     try {
@@ -541,6 +552,66 @@ function userName() {
     } catch {}
   }
   return "me";
+}
+function bonjourName() {
+  if (process.platform === "darwin") {
+    try {
+      const n = execFileSync2("scutil", ["--get", "LocalHostName"], {
+        encoding: "utf8",
+        timeout: 2000
+      }).trim();
+      if (n)
+        return n.toLowerCase();
+    } catch {}
+  }
+  const h = os2.hostname().split(".")[0];
+  return h ? h.toLowerCase() : null;
+}
+async function bonjourWorks(port, timeoutMs = 2000) {
+  const name = bonjourName();
+  if (!name)
+    return null;
+  try {
+    const r = await fetch(`http://${name}.local:${port}/health`, {
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+    return r.ok ? name : null;
+  } catch {
+    return null;
+  }
+}
+async function whereToSay(port) {
+  const ts = tailscaleName();
+  if (ts)
+    return { token: ts, reach: "anywhere", how: "over your tailnet" };
+  const bonjour = await bonjourWorks(port);
+  if (bonjour)
+    return { token: bonjour, reach: "same network", how: "this machine's name on the network" };
+  const addr = bestAddress();
+  if (addr.kind === "loopback")
+    return { token: addr.host, reach: "same machine", how: "no network address found" };
+  return { token: addr.host, reach: "same network", how: "this machine's address" };
+}
+function expandAddress(token) {
+  const t = token.trim().replace(/^@/, "").trim();
+  const out = [];
+  const add = (h) => {
+    if (h && !out.includes(h))
+      out.push(h);
+  };
+  if (/^[a-z0-9][a-z0-9-]*$/i.test(t) && !/^\d+$/.test(t)) {
+    add(t);
+    add(`${t}.local`);
+    return out;
+  }
+  const mine = bestAddress().host;
+  const parts = mine.split(".");
+  if (/^\d{1,3}$/.test(t) && parts.length === 4)
+    add(`${parts[0]}.${parts[1]}.${parts[2]}.${t}`);
+  if (/^\d{1,3}\.\d{1,3}$/.test(t) && parts.length === 4)
+    add(`${parts[0]}.${parts[1]}.${t}`);
+  add(t);
+  return out;
 }
 
 // src/client.ts
@@ -840,13 +911,30 @@ async function pair() {
   const joining = positional.join(" ").trim();
   if (joining) {
     const inv = parseInvite(joining);
-    if (inv.relay)
-      saveRelay(inv.relay);
     const code2 = codeForPhrase(inv.phrase);
-    if (!await relayReachable())
-      die(`cannot reach the relay at ${httpBase()}.
+    if (inv.where) {
+      const port2 = inv.port ?? 8787;
+      const tried = [];
+      let found = null;
+      for (const host of expandAddress(inv.where)) {
+        tried.push(host);
+        if (await relayReachable(`ws://${host}:${port2}`, 2500)) {
+          found = `ws://${host}:${port2}`;
+          break;
+        }
+      }
+      if (!found)
+        die(`nothing is answering as "${inv.where}".
 
-If they hosted it themselves, their machine has to be awake and reachable from here, same network, or both on the same tailnet.`);
+Tried: ${tried.join(", ")}
+
+Their machine has to be awake, and you have to be able to reach it: the same
+network, or both on the same tailnet. Ask them what /crosstalk:pair --host
+printed, including the part after "at".`);
+      saveRelay(found);
+    }
+    if (!await relayReachable())
+      die(`cannot reach a relay at ${httpBase()}.`);
     const r = await fetch(`${httpBase()}/pair/${code2}?side=offer`);
     if (!r.ok)
       die(r.status === 429 ? "the relay is rate-limiting pairing attempts; wait a minute" : `no invite matches "${inv.phrase}". Check the words, or ask for a new one, invites last 15 minutes.`);
@@ -901,9 +989,11 @@ Run this instead and crosstalk will host one for you:
   });
   if (!res.ok)
     die(`the relay at ${httpBase(url)} refused the pairing offer`);
-  const sameRelayAsDefault = url === DEFAULT_RELAY;
-  const invite = formatInvite(phrase, url, sameRelayAsDefault);
-  const addr = bestAddress();
+  const port = Number(new URL(url.replace(/^ws/, "http")).port || 8787);
+  const where = url === DEFAULT_RELAY ? null : await whereToSay(port);
+  const invite = formatInvite(phrase, where?.token ?? null, port);
+  const reachNote = where?.reach === "anywhere" ? "They can be anywhere." : where?.reach === "same network" ? `They have to be on the same network as you. For anywhere, put both machines on
+a tailnet with Tailscale and run this again, or host a relay: see deploy/.` : "No network address was found, so nothing outside this machine can reach it.";
   console.log(`
 Tell them these words:
 
@@ -915,8 +1005,10 @@ Say it out loud, or send it somewhere you already trust. Not through the relay.
 Whoever has these words can pair with you until they expire.
 
   you       ${id.label}  ${fingerprint(id.ed.pub)}
-  relay     ${url}${sameRelayAsDefault ? "" : `  (${addr.kind}: ${addr.note})`}
+  reaches   ${where?.reach ?? "anywhere"}${where ? `  (${where.how})` : ""}
   expires   15 minutes
+
+${reachNote}
 
 Waiting\u2026`);
   for (let i = 0;i < 900; i++) {
