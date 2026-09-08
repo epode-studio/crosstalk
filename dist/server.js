@@ -16455,7 +16455,7 @@ mcp.setRequestHandler(ListToolsRequestSchema2, async () => ({
   tools: [
     {
       name: "crosstalk_peers",
-      description: "Who you are paired with, whether they are online, which repos their sessions are in, whether they are busy or idle, and how many of their messages are unread here.",
+      description: "Who you share a room with, whether they are online, which repos their sessions are in, whether they are busy or idle, and how many of their messages are unread here.",
       inputSchema: { type: "object", properties: {} }
     },
     {

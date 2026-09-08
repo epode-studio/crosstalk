@@ -6,7 +6,7 @@ what was tried, with numbers, so the next attempt does not retread it.
 
 ## What works today
 
-**Same network.** Nothing to run. `/crosstalk:pair --host` starts a relay on your
+**Same network.** Nothing to run. `/crosstalk:room new --host` starts a relay on your
 machine, and the invite carries its name over mDNS, so the other side finds it
 with no address to type. Verified between two MacBooks.
 

@@ -67,8 +67,8 @@ only you can turn it on.
 - **`/crosstalk:secure`** moves your private key into the macOS keychain, leaving
   only the public half on disk.
 - **Rooms cannot be used to reach a stranger.** You can only add someone you
-  already paired with, being added is an invitation that does nothing until
-  accepted, and a room member you never paired with can put a notice on your
+  already in a room with, being added is an invitation that does nothing until
+  accepted, and a room member someone else added can put a notice on your
   screen and nothing more.
 
 ## What crosstalk will not do

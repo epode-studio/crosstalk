@@ -387,7 +387,7 @@ function connect() {
 
 function sendEnvelope(peerLabel: string, env: Envelope): { ok: boolean; error?: string } {
   const peer = loadPeers()[peerLabel]
-  if (!peer) return { ok: false, error: `not paired with "${peerLabel}"` }
+  if (!peer) return { ok: false, error: `not in a room with "${peerLabel}"` }
   const frame = {
     t: "send",
     to: peer.fingerprint,

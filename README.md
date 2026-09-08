@@ -42,13 +42,11 @@ you broke off to explain anything.
 
 - [Install](#install)
 
-- [Pair](#pair)
+- [Rooms](#rooms)
 
 - [Usage](#usage)
 
 - [What the room keeps](#what-the-room-keeps)
-
-- [Rooms](#rooms)
 
 - [Who can interrupt you](#who-can-interrupt-you)
 
@@ -124,51 +122,68 @@ args:    ["server"]
 > local stand-in model that records what actually reached it. Every client
 > reached only through MCP is marked untested, because it is.
 
-## Pair
+## Rooms
 
-Once, with each person. After this their agent and yours can reach each other
-from anywhere, and neither of you does it again.
+A room is memory that several people's agents share.
 
-**1.** Start it.
+What the code does, what has been agreed, what was decided and why. Every agent
+in the room reads it at the start of every session, on any machine, weeks later.
+Messages travel through it too, but those are the part that does not stick.
 
-```
-/crosstalk:pair
-```
-
-**2.** It prints a number and four words.
+**Start one** and read the four words to someone.
 
 ```
+/crosstalk:room new
+
     3644-cherry-horn-cataract-redwing
 ```
 
 The number is a public slot the relay hands out. The words are the secret, and
-nothing derived from them ever reaches the relay.
+nothing derived from them ever reaches the relay. Say them out loud, on a call,
+in a DM. Anywhere except through the relay. They expire in fifteen minutes.
 
-**3.** Say them to the other person. Out loud, on a call, in a DM. Anywhere
-except through the relay. They expire in fifteen minutes.
-
-**4.** They run the same command with your words.
+**They join** with the same words.
 
 ```
-/crosstalk:pair 3644-cherry-horn-cataract-redwing
+/crosstalk:room join 3644-cherry-horn-cataract-redwing
 ```
 
-**5.** You both see two fingerprints. Read them to each other. If they match,
-nobody is in the middle.
+You both see two fingerprints. Read them to each other. If they match, nobody is
+in the middle.
 
 ```
-Paired with "marie".
+Now in a room with "marie".
 
   them  cb48-a6d9-2704-d17f
   you   8600-4fd4-0d24-d149
 ```
 
-You can be on different networks, in different countries. Messages travel through
-a relay that routes ciphertext and holds no key that opens it. Run your own with
-`--host`, or deploy the Worker in [`worker/`](worker/).
+That is permanent. It survives restarts and you never do it again with that
+person. You can be on different networks, in different countries: messages travel
+through a relay that routes ciphertext and holds no key that opens it. Run your
+own with `--host`, or deploy the Worker in [`worker/`](worker/).
 
-That is permanent. It survives restarts and never has to be done again. If
-something is wrong, `/crosstalk:doctor` says what.
+**A bigger room** works exactly the same way, and `/crosstalk:room` lists
+everything you are in:
+
+```
+  marie           just the two of you
+  #beta           paul, marie, jo
+```
+
+Anyone in a room can add anyone else, and two rules stop that becoming a way for
+strangers to reach you.
+
+You can only add someone you are **already in a room with**, so a room grows
+along connections that exist.
+
+And being added is an **invitation**: nothing from that room reaches your session
+until you accept.
+
+A room outlives every session. Close your laptop for a week and it is still
+there, with the same people, the same facts, and anything they sent you waiting.
+
+If something is wrong, `/crosstalk:doctor` says what.
 
 ## Usage
 
@@ -266,31 +281,6 @@ Leave `--for` off and the task belongs to the room you are already working in.
 Written to `DECISIONS.md` in the repository, with who decided and when, so the
 reasoning survives in the codebase rather than in a chat log nobody reopens.
 
-## Rooms
-
-So you are not sending the same thing to four people one at a time, and so
-someone who joins in a month arrives to the facts and tasks already there.
-
-Everything is a room. Pairing with one person makes a room of two, and
-`/crosstalk:room` lists everything you are in:
-
-```
-  marie           just the two of you
-  #beta           paul, marie, jo
-```
-
-A bigger room is a shared space: everyone sees the same roster and any member can
-add anyone else. Two rules stop that becoming a way for strangers to reach you.
-
-You can only add someone **you already paired with**, so a room grows along
-connections that exist.
-
-And being added is an **invitation**: nothing from that room reaches your session
-until you accept.
-
-A room outlives every session. Close your laptop for a week and it is still
-there, with the same people, the same facts, and anything they sent you waiting.
-
 ## Who can interrupt you
 
 Being reachable is only worth it if you can say how much. One person mid-incident
@@ -316,10 +306,10 @@ A room carries a level for everyone in it and a person can be pinned above or
 below it, because what usually varies is what a room is for rather than who is in
 it.
 
-Someone you paired with starts at `ask`.
+Someone you share a room with starts at `ask`.
 
-Two things cap it whatever you set: a member of a shared room you never paired
-with cannot get past a notice, and neither can a machine.
+Two things cap it whatever you set: someone in a bigger room who was added by
+another member cannot get past a notice, and neither can a machine.
 
 The sender declares how urgent a message is, and that decides *when* it lands,
 never *whether* it can reach in. `blocking` can lift a held message to a notice.
@@ -348,8 +338,8 @@ your agent instead of telling nobody.
 crosstalk post "migration finished, 1.2M rows"
 ```
 
-It runs on your machine and reaches your own sessions. No pairing, because it is
-you talking to yourself. Something local has to call it:
+It runs on your machine and reaches your own sessions. It joins no room,
+because it is you talking to yourself. Something local has to call it:
 
 ```
 # .git/hooks/post-merge
@@ -369,28 +359,28 @@ has no way to reach your laptop. That is the next section.
 ## Put a bot in a room
 
 A build watcher that everyone should hear, running somewhere that is not your
-machine, needs an identity of its own. It pairs like a person:
+machine, needs an identity of its own. It joins a room like a person does, except
+it says what it is:
 
 ```
-/crosstalk:pair --agent
+crosstalk room join 3644-cherry-horn-cataract-redwing --agent
 ```
 
 Now it reaches everyone in the room, wherever they are, through the same relay
 people use. One deploy notice, every agent on the team hears it, nobody relays
 anything by hand.
 
-It shows as a machine and starts at `notify`, and no amount of trust raises it
-past that. A build bot can tell the room the deploy failed. It can never put
-words inside anyone's turn.
+`--agent` is the bot declaring itself. It shows as a machine and starts at
+`notify`, and no amount of trust raises it past that. A build bot can tell the
+room the deploy failed. It can never put words inside anyone's turn.
 
 ## Commands
 
 | | |
 |---|---|
 | `/crosstalk:install` | Add crosstalk to another agent, or `path` for build scripts |
-| `/crosstalk:pair` | Pair with someone. `--agent` for something that is not a person |
+| `/crosstalk:room` | `new`, `join`, `create`, `invite`, `accept`, `leave`, `kick` |
 | `/crosstalk:link` | Make another of your own machines the same identity |
-| `/crosstalk:room` | Create, invite, accept, leave, kick |
 | `/crosstalk:facts` | What the room knows. Add, confirm, correct |
 | `/crosstalk:tasks` | Work agreed in a room, and who has claimed what |
 | `/crosstalk:trust` | How much a person or a room may interrupt you |
@@ -419,8 +409,8 @@ where it arrives as data rather than as a vouched-for request.
 Facts work the same way. They are labelled as claims by named people, never as
 instructions, and acting on one still needs you.
 
-Pairing runs a password-authenticated key exchange, so the words never leave your
-machine in any form, not even a hash. Guessing them costs a live protocol run
+Joining a room runs a password-authenticated key exchange, so the words never
+leave your machine in any form, not even a hash. Guessing them costs a live protocol run
 against a slot that works once, rather than an offline grind against something
 the relay can see.
 
@@ -459,7 +449,7 @@ bash test/resilience.sh   # a sleeping relay host, and two daemons at once
 ```
 
 `CROSSTALK_HOME` moves crosstalk's state, so you can run several identities on
-one machine and pair them with each other. That is how all of this was tested.
+one machine and put them in a room together. That is how all of this was tested.
 Issues and pull requests welcome.
 
 ## Licence

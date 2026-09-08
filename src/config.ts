@@ -151,7 +151,35 @@ export const loadIdentity = (): Identity | null => {
   return onDisk
 }
 
-export const saveIdentity = (id: Identity) => writeJson(P.identity, id)
+/**
+ * True when there is an identity file that will not parse.
+ *
+ * Worth telling apart from having no identity at all. readJson swallows a parse
+ * failure and hands back the fallback, so a damaged file looks exactly like a
+ * fresh install: every command says "not set up, run room new", and running it
+ * generates a new key straight over the old one. The private key is gone at that
+ * point, and every room and peer that trusted it is orphaned, because they hold
+ * a public key nothing can answer for any more.
+ */
+export const identityUnreadable = (): boolean => {
+  if (!fs.existsSync(P.identity)) return false
+  try {
+    return !JSON.parse(fs.readFileSync(P.identity, "utf8"))
+  } catch {
+    return true
+  }
+}
+
+export const saveIdentity = (id: Identity) => {
+  // Never write over something we could not read. Whatever is in there, the
+  // person who owns it gets to decide, not a command that assumed it was blank.
+  if (identityUnreadable())
+    throw new Error(
+      `${P.identity} exists but will not parse, so crosstalk will not write over it. ` +
+        `Move it somewhere safe first: it holds the only copy of your private key.`,
+    )
+  writeJson(P.identity, id)
+}
 
 /** Move an existing identity into the keychain, leaving public keys on disk. */
 export function secureIdentity(): { moved: boolean; reason?: string } {

@@ -309,6 +309,40 @@ case "$OUT" in
   *) ok "hermes gets context and nothing else" ;;
 esac
 
+# --- room new and room join ----------------------------------------------------
+#
+# A room of two is the smallest room, not a separate concept, so the words come
+# from `room new` and are taken by `room join`. `pair` still answers, because an
+# identity set up before the rename should not stop working.
+echo
+echo "starting and joining a room"
+# A fresh install used to answer `crosstalk room` with connect ENOENT and a page
+# of bundled stack trace, because the daemon it started exited for want of an
+# identity. Every command that needs a daemon now says so in words.
+FRESH=$(mktemp -d)
+for c in room facts tasks attention peers; do
+  OUT=$(CROSSTALK_HOME="$FRESH" bun src/cli.ts "$c" 2>&1 | head -1)
+  case "$OUT" in
+    *"not set up"*) ok "$c tells a fresh install what to run" ;;
+    *) bad "$c on a fresh install said: $(echo "$OUT" | cut -c1-40)" ;;
+  esac
+done
+has "$(CROSSTALK_HOME="$FRESH" bun src/cli.ts room 2>&1)" "room new" "and names room new"
+rm -rf "$FRESH"
+
+# A half-written identity file reads as no identity at all, and the advice for
+# no identity is to make one, which would write over the only copy of a private
+# key that other people's rooms still trust.
+BROKEN=$(mktemp -d)
+printf '{"broken": ' > "$BROKEN/identity.json"
+for c in status doctor room; do
+  has "$(CROSSTALK_HOME="$BROKEN" bun src/cli.ts "$c" 2>&1)" "will not parse" "$c reports a damaged identity as damaged"
+done
+CROSSTALK_HOME="$BROKEN" bun src/cli.ts room new >/dev/null 2>&1
+check "$(cat "$BROKEN/identity.json")" '{"broken": ' "and nothing writes over it"
+rm -rf "$BROKEN"
+has "$(a room join 2>&1)" "usage" "room join with no words says so, rather than hosting"
+
 # --- when a message lands ------------------------------------------------------
 #
 # The README's opening demo turns on this: an urgent message reaches a busy

@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
 // crosstalk CLI. The slash commands in commands/ call into this.
 //
-//   crosstalk pair [--host]              start pairing, print the words
-//   crosstalk pair 3644-cherry-horn-…    accept them
+//   crosstalk room new                   start a room, print the words
+//   crosstalk room join 3644-cherry-…    join one you were read
+//   crosstalk room create beta           a bigger one, for several people
 //   crosstalk link                       another machine, same identity
 //   crosstalk install <client|path>      another agent, or your PATH
 //   crosstalk trust <who> <level>        how much they may interrupt
@@ -29,6 +30,7 @@ import {
   secureIdentity,
   ROOT,
   P,
+  identityUnreadable,
 } from "./config.ts"
 import { newIdentity, newPhrase, asPeer, fingerprint, seal, open } from "./crypto.ts"
 import * as pake from "./pake.ts"
@@ -82,6 +84,37 @@ const DEFAULT_RELAY = process.env.CROSSTALK_DEFAULT_RELAY ?? "wss://crosstalk-re
  */
 const heading = () => console.log(`\n  ◢◢◢ crosstalk\n`)
 
+/**
+ * Everything below here needs a daemon, and a daemon needs an identity.
+ *
+ * Without this, a fresh install running `crosstalk room` gets a connect ENOENT
+ * and a page of bundled stack trace, because the daemon it just tried to start
+ * exited immediately for want of an identity.
+ */
+/**
+ * A damaged identity file reads as no identity at all, and the obvious response
+ * to no identity is to make one, which would write over the only copy of a
+ * private key that other people's rooms still trust. So say what happened.
+ */
+function refuseIfIdentityDamaged() {
+  if (!identityUnreadable()) return
+  die(
+    `your identity file will not parse:\n  ${P.identity}\n\n` +
+      `It holds the only copy of your private key, so nothing here will write\n` +
+      `over it. Restore it from a backup, or move it aside to start again as a\n` +
+      `new person, knowing every room you are in will not recognise you.`,
+  )
+}
+
+async function ready() {
+  refuseIfIdentityDamaged()
+  if (!loadIdentity())
+    die("crosstalk is not set up yet.\n\n  /crosstalk:room new     start a room, and read the words to someone")
+  if (!(await ensureDaemon(ROOT_DIR)))
+    die("the daemon would not start. See ~/.claude/crosstalk/daemon.log")
+}
+
+
 const flag = (f: string, d?: string) => {
   const i = argv.indexOf(f)
   return i === -1 ? d : argv[i + 1]
@@ -119,6 +152,7 @@ const ago = (ts: number) => {
 }
 
 function identityOrCreate() {
+  refuseIfIdentityDamaged()
   const existing = loadIdentity()
   if (existing) return existing
   const label = flag("--label") ?? userName()
@@ -274,10 +308,17 @@ function adoptPeer(peer: ReturnType<typeof asPeer>): string {
   return label
 }
 
-async function pair() {
+/**
+ * Start a room of two, or join one.
+ *
+ * `words` is passed in when this is reached through `room new` / `room join`,
+ * which is what the commands are called now. `pair` still works, because an
+ * identity someone set up last week should not stop answering to it.
+ */
+async function pair(words?: string) {
   if (has("--relay")) saveRelay(flag("--relay")!)
   const id = identityOrCreate()
-  const joining = positional.join(" ").trim()
+  const joining = (words ?? positional.join(" ")).trim()
   const base = () => httpBase(loadRelay().url)
 
   const put = async (slot: string, part: string, blob: string) => {
@@ -351,7 +392,7 @@ yours a question. Their words never enter your session unless you raise them.
   // --- offering one -----------------------------------------------------------
   const url = has("--host") ? await startRelay() : loadRelay().url
   if (!(await relayReachable(url)))
-    die(`no relay at ${httpBase(url)}.\n\nRun this instead and crosstalk will host one for you:\n  /crosstalk:pair --host`)
+    die(`no relay at ${httpBase(url)}.\n\nRun this instead and crosstalk will host one for you:\n  /crosstalk:room new --host`)
 
   const slotRes = await fetch(`${httpBase(url)}/slot`, { method: "POST" }).catch(() => null)
   if (!slotRes?.ok) die("the relay would not give out a slot. Try again in a moment.")
@@ -371,7 +412,7 @@ Tell them this:
 
     ${invite}
 
-They run  /crosstalk:pair ${invite}
+They run  /crosstalk:room join ${invite}
 
 Say it out loud, or send it somewhere you already trust. The number is public;
 the words are the secret. They work once and expire in fifteen minutes.
@@ -400,7 +441,7 @@ Waiting…`)
   await put(slot, "c", seal(key, JSON.stringify({ ...(await myOffer(id)), relayPub })))
 
   peer.label = adoptPeer(peer)
-  await ensureDaemon(ROOT_DIR)
+  await ready()
   console.log(`
 Paired with "${peer.label}"${peer.isMachine ? ", a machine rather than a person" : ""}.
 
@@ -418,13 +459,13 @@ question. Nothing they do puts their words inside your turn.
 // --- everything else -------------------------------------------------------------
 
 async function peers() {
-  if (!(await ensureDaemon(ROOT_DIR))) die("daemon is not running; see ~/.claude/crosstalk/daemon.log")
+  await ready()
   const r = await request({ op: "peers" })
   heading()
   console.log(`  you   ${r.me.label}   relay ${r.relay}`)
   for (const s of r.me.sessions) console.log(`        ${s.name}  ${s.cwd}  ${s.status}`)
   if (!r.peers.length) {
-    console.log(`\n  No peers yet. Run /crosstalk:pair --host to invite someone.\n`)
+    console.log(`\n  Nobody yet. Run /crosstalk:room new and read the words to someone.\n`)
     return
   }
   for (const p of r.peers) {
@@ -441,7 +482,7 @@ async function peers() {
 async function mute() {
   const peer = positional[0] && !/^\d+$/.test(positional[0]) ? positional[0] : undefined
   const minutes = Number(positional.find((a) => /^\d+$/.test(a)) ?? 60)
-  await ensureDaemon(ROOT_DIR)
+  await ready()
   const r = await request({ op: "mute", peer, minutes })
   console.log(
     r.mutedUntil
@@ -475,7 +516,7 @@ async function policy() {
 `)
     return
   }
-  await ensureDaemon(ROOT_DIR)
+  await ready()
   const r = await request({ op: "policy", peer, set })
   console.log(JSON.stringify(r.policy, null, 2))
 }
@@ -497,7 +538,8 @@ Token figures are a rough estimate from message length, for orientation only.\n`
 
 async function status() {
   const id = loadIdentity()
-  if (!id) return console.log("crosstalk: not set up. Run /crosstalk:pair --host.")
+  if (identityUnreadable()) return refuseIfIdentityDamaged()
+  if (!id) return console.log("crosstalk: not set up. Run /crosstalk:room new.")
   heading()
   console.log(`  identity  ${id.label}  ${fingerprint(id.ed.pub)}`)
   console.log(`  relay     ${loadRelay().url}`)
@@ -515,7 +557,15 @@ async function doctor() {
   const socket = process.env.CLAUDE_CODE_MESSAGING_SOCKET
 
   rows.push(["runtime", true, `${path.basename(process.execPath)} ${process.version ?? ""}`.trim()])
-  rows.push(["identity", !!id, id ? `${id.label}  ${fingerprint(id.ed.pub)}` : "none, run /crosstalk:pair --host"])
+  rows.push([
+    "identity",
+    !!id,
+    id
+      ? `${id.label}  ${fingerprint(id.ed.pub)}`
+      : identityUnreadable()
+        ? `${P.identity} will not parse. Restore it from a backup rather than starting again.`
+        : "none, run /crosstalk:room new",
+  ])
   rows.push([
     "peers",
     Object.keys(loadPeers()).length > 0,
@@ -636,15 +686,27 @@ async function daemon() {
 }
 
 async function room() {
-  await ensureDaemon(ROOT_DIR)
   const [verb, ...rest] = positional
+
+  // A room of two is the smallest room, not a different concept, so starting
+  // one lives here rather than under a separate verb.
+  if (verb === "new") return pair("")
+  if (verb === "join") {
+    const words = rest.join(" ").trim()
+    // Without this, joining with nothing falls through to hosting and sits
+    // there for fifteen minutes looking like it worked.
+    if (!words) die("usage: crosstalk room join <the four words you were read>")
+    return pair(words)
+  }
+
+  await ready()
 
   if (!verb || verb === "list") {
     const r = await request({ op: "rooms" })
     const direct = r.direct ?? []
     if (!r.rooms.length && !direct.length) {
       console.log(
-        "\nYou are not in anything yet.\n\n  /crosstalk:pair --host          pair with someone, which makes a room of two\n  /crosstalk:room create beta     a room for several people\n",
+        "\nYou are not in anything yet.\n\n  /crosstalk:room new             start one, and read the words to someone\n  /crosstalk:room join <words>    join one you were read\n  /crosstalk:room create beta     a bigger one, for several people\n",
       )
       return
     }
@@ -674,7 +736,7 @@ async function room() {
     case "create": {
       const name = rest[0] ?? die("name the room: /crosstalk:room create beta")
       const r = await request({ op: "room_create", name })
-      say(r, `created #${r.room}. Invite someone you are paired with:\n\n  /crosstalk:room invite ${r.room} <peer>\n`)
+      say(r, `created #${r.room}. Invite someone you already share a room with:\n\n  /crosstalk:room invite ${r.room} <peer>\n`)
       return
     }
     case "invite": {
@@ -852,7 +914,7 @@ async function trustCmd() {
 async function post() {
   const text = positional.join(" ").trim() || flag("--text", "")!
   if (!text) die('usage: crosstalk post "build failed on main" [--intent blocking] [--source ci]')
-  await ensureDaemon(ROOT_DIR)
+  await ready()
   const r = await request({
     op: "post",
     text,
@@ -864,7 +926,7 @@ async function post() {
 
 /** What has been spending your attention, and how much is left. */
 async function attention() {
-  await ensureDaemon(ROOT_DIR)
+  await ready()
   const r = await request({ op: "attention" })
   heading()
   console.log(`  budget       ${r.budget} an hour, ${r.used} used in the last hour`)
@@ -883,7 +945,7 @@ async function attention() {
 }
 
 async function tasksCmd() {
-  await ensureDaemon(ROOT_DIR)
+  await ready()
   const verb = positional[0]
   if (verb === "add") {
     const r = await request({
@@ -926,7 +988,7 @@ async function tasksCmd() {
 }
 
 async function factsCmd() {
-  await ensureDaemon(ROOT_DIR)
+  await ready()
   const verb = positional[0]
   if (verb === "add" || verb === "remember") {
     const text = positional.slice(1).join(" ")

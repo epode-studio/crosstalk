@@ -101,7 +101,20 @@ var loadIdentity = () => {
   }
   return onDisk;
 };
-var saveIdentity = (id) => writeJson(P.identity, id);
+var identityUnreadable = () => {
+  if (!fs.existsSync(P.identity))
+    return false;
+  try {
+    return !JSON.parse(fs.readFileSync(P.identity, "utf8"));
+  } catch {
+    return true;
+  }
+};
+var saveIdentity = (id) => {
+  if (identityUnreadable())
+    throw new Error(`${P.identity} exists but will not parse, so crosstalk will not write over it. ` + `Move it somewhere safe first: it holds the only copy of your private key.`);
+  writeJson(P.identity, id);
+};
 function secureIdentity() {
   if (!keychain.available())
     return { moved: false, reason: "the keychain is macOS only" };
@@ -2966,6 +2979,25 @@ var DEFAULT_RELAY = process.env.CROSSTALK_DEFAULT_RELAY ?? "wss://crosstalk-rela
 var heading = () => console.log(`
   \u25E2\u25E2\u25E2 crosstalk
 `);
+function refuseIfIdentityDamaged() {
+  if (!identityUnreadable())
+    return;
+  die(`your identity file will not parse:
+  ${P.identity}
+
+` + `It holds the only copy of your private key, so nothing here will write
+` + `over it. Restore it from a backup, or move it aside to start again as a
+` + `new person, knowing every room you are in will not recognise you.`);
+}
+async function ready() {
+  refuseIfIdentityDamaged();
+  if (!loadIdentity())
+    die(`crosstalk is not set up yet.
+
+  /crosstalk:room new     start a room, and read the words to someone`);
+  if (!await ensureDaemon(ROOT_DIR))
+    die("the daemon would not start. See ~/.claude/crosstalk/daemon.log");
+}
 var flag = (f, d) => {
   const i = argv.indexOf(f);
   return i === -1 ? d : argv[i + 1];
@@ -3003,6 +3035,7 @@ var ago = (ts) => {
   return `${Math.round(s / 3600)}h ago`;
 };
 function identityOrCreate() {
+  refuseIfIdentityDamaged();
   const existing = loadIdentity();
   if (existing)
     return existing;
@@ -3143,11 +3176,11 @@ Rename it with /crosstalk:rename ${label} <name>.`);
   savePeers(peers);
   return label;
 }
-async function pair() {
+async function pair(words) {
   if (has("--relay"))
     saveRelay(flag("--relay"));
   const id = identityOrCreate();
-  const joining = positional.join(" ").trim();
+  const joining = (words ?? positional.join(" ")).trim();
   const base = () => httpBase(loadRelay().url);
   const put = async (slot2, part, blob) => {
     const r = await fetch(`${base()}/pair/${slot2}?part=${part}`, {
@@ -3223,7 +3256,7 @@ yours a question. Their words never enter your session unless you raise them.
     die(`no relay at ${httpBase(url)}.
 
 Run this instead and crosstalk will host one for you:
-  /crosstalk:pair --host`);
+  /crosstalk:room new --host`);
   const slotRes = await fetch(`${httpBase(url)}/slot`, { method: "POST" }).catch(() => null);
   if (!slotRes?.ok)
     die("the relay would not give out a slot. Try again in a moment.");
@@ -3239,7 +3272,7 @@ Tell them this:
 
     ${invite}
 
-They run  /crosstalk:pair ${invite}
+They run  /crosstalk:room join ${invite}
 
 Say it out loud, or send it somewhere you already trust. The number is public;
 the words are the secret. They work once and expire in fifteen minutes.
@@ -3268,7 +3301,7 @@ Waiting\u2026`);
     saveRelay(url, relayPub);
   await put(slot, "c", seal(key, JSON.stringify({ ...await myOffer(id), relayPub })));
   peer.label = adoptPeer(peer);
-  await ensureDaemon(ROOT_DIR);
+  await ready();
   console.log(`
 Paired with "${peer.label}"${peer.isMachine ? ", a machine rather than a person" : ""}.
 
@@ -3283,8 +3316,7 @@ question. Nothing they do puts their words inside your turn.
   /crosstalk:trust`);
 }
 async function peers() {
-  if (!await ensureDaemon(ROOT_DIR))
-    die("daemon is not running; see ~/.claude/crosstalk/daemon.log");
+  await ready();
   const r = await request({ op: "peers" });
   heading();
   console.log(`  you   ${r.me.label}   relay ${r.relay}`);
@@ -3292,7 +3324,7 @@ async function peers() {
     console.log(`        ${s.name}  ${s.cwd}  ${s.status}`);
   if (!r.peers.length) {
     console.log(`
-  No peers yet. Run /crosstalk:pair --host to invite someone.
+  Nobody yet. Run /crosstalk:room new and read the words to someone.
 `);
     return;
   }
@@ -3310,7 +3342,7 @@ async function peers() {
 async function mute() {
   const peer = positional[0] && !/^\d+$/.test(positional[0]) ? positional[0] : undefined;
   const minutes = Number(positional.find((a) => /^\d+$/.test(a)) ?? 60);
-  await ensureDaemon(ROOT_DIR);
+  await ready();
   const r = await request({ op: "mute", peer, minutes });
   console.log(r.mutedUntil ? `muted ${peer ?? "all peers"} until ${new Date(r.mutedUntil).toLocaleTimeString()}` : `unmuted ${peer ?? "all peers"}`);
 }
@@ -3342,7 +3374,7 @@ default   ${p.default.delivery}   ask ${p.default.allowAsk ? "allowed" : "off"}`
 `);
     return;
   }
-  await ensureDaemon(ROOT_DIR);
+  await ready();
   const r = await request({ op: "policy", peer, set });
   console.log(JSON.stringify(r.policy, null, 2));
 }
@@ -3362,8 +3394,10 @@ Token figures are a rough estimate from message length, for orientation only.
 }
 async function status() {
   const id = loadIdentity();
+  if (identityUnreadable())
+    return refuseIfIdentityDamaged();
   if (!id)
-    return console.log("crosstalk: not set up. Run /crosstalk:pair --host.");
+    return console.log("crosstalk: not set up. Run /crosstalk:room new.");
   heading();
   console.log(`  identity  ${id.label}  ${fingerprint(id.ed.pub)}`);
   console.log(`  relay     ${loadRelay().url}`);
@@ -3382,7 +3416,11 @@ async function doctor() {
   const id = loadIdentity();
   const socket = process.env.CLAUDE_CODE_MESSAGING_SOCKET;
   rows.push(["runtime", true, `${path8.basename(process.execPath)} ${process.version ?? ""}`.trim()]);
-  rows.push(["identity", !!id, id ? `${id.label}  ${fingerprint(id.ed.pub)}` : "none, run /crosstalk:pair --host"]);
+  rows.push([
+    "identity",
+    !!id,
+    id ? `${id.label}  ${fingerprint(id.ed.pub)}` : identityUnreadable() ? `${P.identity} will not parse. Restore it from a backup rather than starting again.` : "none, run /crosstalk:room new"
+  ]);
   rows.push([
     "peers",
     Object.keys(loadPeers()).length > 0,
@@ -3485,8 +3523,16 @@ async function daemon() {
   console.log(await ensureDaemon(ROOT_DIR) ? "daemon running" : "daemon failed to start");
 }
 async function room() {
-  await ensureDaemon(ROOT_DIR);
   const [verb, ...rest] = positional;
+  if (verb === "new")
+    return pair("");
+  if (verb === "join") {
+    const words = rest.join(" ").trim();
+    if (!words)
+      die("usage: crosstalk room join <the four words you were read>");
+    return pair(words);
+  }
+  await ready();
   if (!verb || verb === "list") {
     const r = await request({ op: "rooms" });
     const direct = r.direct ?? [];
@@ -3494,8 +3540,9 @@ async function room() {
       console.log(`
 You are not in anything yet.
 
-  /crosstalk:pair --host          pair with someone, which makes a room of two
-  /crosstalk:room create beta     a room for several people
+  /crosstalk:room new             start one, and read the words to someone
+  /crosstalk:room join <words>    join one you were read
+  /crosstalk:room create beta     a bigger one, for several people
 `);
       return;
     }
@@ -3522,7 +3569,7 @@ You are not in anything yet.
     case "create": {
       const name = rest[0] ?? die("name the room: /crosstalk:room create beta");
       const r = await request({ op: "room_create", name });
-      say(r, `created #${r.room}. Invite someone you are paired with:
+      say(r, `created #${r.room}. Invite someone you already share a room with:
 
   /crosstalk:room invite ${r.room} <peer>
 `);
@@ -3711,7 +3758,7 @@ async function post() {
   const text = positional.join(" ").trim() || flag("--text", "");
   if (!text)
     die('usage: crosstalk post "build failed on main" [--intent blocking] [--source ci]');
-  await ensureDaemon(ROOT_DIR);
+  await ready();
   const r = await request({
     op: "post",
     text,
@@ -3721,7 +3768,7 @@ async function post() {
   console.log(r.ok ? `posted as ${r.source}` : `not posted: ${r.error}`);
 }
 async function attention() {
-  await ensureDaemon(ROOT_DIR);
+  await ready();
   const r = await request({ op: "attention" });
   heading();
   console.log(`  budget       ${r.budget} an hour, ${r.used} used in the last hour`);
@@ -3739,7 +3786,7 @@ async function attention() {
 `);
 }
 async function tasksCmd() {
-  await ensureDaemon(ROOT_DIR);
+  await ready();
   const verb = positional[0];
   if (verb === "add") {
     const r2 = await request({
@@ -3783,7 +3830,7 @@ async function tasksCmd() {
   console.log();
 }
 async function factsCmd() {
-  await ensureDaemon(ROOT_DIR);
+  await ready();
   const verb = positional[0];
   if (verb === "add" || verb === "remember") {
     const text = positional.slice(1).join(" ");
