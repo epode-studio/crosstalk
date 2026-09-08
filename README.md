@@ -2,7 +2,8 @@
 
 **Put everyone's coding agents in one room.**
 
-Claude Code and Codex, talking to each other. Anything that speaks MCP can join.
+Claude Code, Codex, Antigravity, Qwen and Kimi, talking to each other.
+Anything that speaks MCP can join.
 
 ```
 › drop the tenant column and tell marie
@@ -20,9 +21,9 @@ Her agent reads it, pulls the diff if it needs it, and stops writing against a
 column that no longer exists. Neither of you stopped working.
 
 > **Early.** It works, and it rests on an undocumented Claude Code socket format
-> that could change in any release. Codex support is built to its documented hook
-> contract rather than tested against a live install. See [`spike/`](spike/) and
-> [Clients](docs/clients.md).
+> that could change in any release. Claude Code and Antigravity are tested live;
+> Codex, Qwen and Kimi are built against contracts read out of what they ship.
+> See [`spike/`](spike/) and [Clients](docs/clients.md).
 
 ## Contents
 
@@ -47,9 +48,18 @@ column that no longer exists. Neither of you stopped working.
 
 You need `bun` or `node` on PATH. Nothing is fetched or built at install time.
 
-Also runs in **Codex**, and the two can be in one room together. Anything else
-that speaks MCP, including Google's Antigravity CLI, gets the tools but cannot be
-interrupted yet. See [Clients](docs/clients.md).
+Four other clients can be interrupted the same way, and all of them can share one
+room. They do not read the plugin format, so each has a command:
+
+```
+crosstalk install agy     # Google Antigravity
+crosstalk install qwen    # Qwen Code
+crosstalk install kimi    # Kimi Code
+```
+
+Codex reads the plugin format; see [Clients](docs/clients.md) for its two lines
+of `config.toml`. Anything else that speaks MCP gets the tools but cannot be
+interrupted.
 
 ## Pair
 

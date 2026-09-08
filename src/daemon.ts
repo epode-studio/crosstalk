@@ -63,19 +63,77 @@ type Registered = {
   token?: string
   transcript?: string
   lastStatus: string
+  /** When this session last announced itself, used to break cwd ties. */
+  seenAt?: number
 }
+
+/**
+ * How long a session with no inbox socket stays on the roster after its last
+ * sign of life. Codex and agy publish no registry to check against, and agy
+ * gives every `agy -p` run a new conversation id, so without this the roster
+ * fills up with sessions that ended hours ago. Anything still unread when one
+ * is dropped is carried over to the next session in the same directory.
+ */
+const PULL_SESSION_TTL_MS = 6 * 60 * 60 * 1000
+
+const stillAround = (id: string, reg: Registered) =>
+  reg.socket
+    ? listLocalSessions().some((s) => s.sessionId === id)
+    : Date.now() - (reg.seenAt ?? 0) < PULL_SESSION_TTL_MS
 
 // Restored from disk, then filtered to whatever is actually still alive, so a
 // daemon restart does not orphan a session that is mid-conversation.
-// Keep a restored session if Claude Code still lists it, or if it never had an
-// inbox socket, since a client like Codex publishes no registry to check against.
 const sessions = new Map<string, Registered>(
-  Object.entries(loadRegistered()).filter(
-    ([id, reg]) =>
-      !(reg as Registered).socket || listLocalSessions().some((s) => s.sessionId === id),
+  Object.entries(loadRegistered()).filter(([id, reg]) =>
+    stillAround(id, reg as Registered),
   ) as [string, Registered][],
 )
 const persistSessions = () => saveRegistered(Object.fromEntries(sessions))
+
+// The filter above ran in memory; write the result back so the file on disk
+// does not keep naming sessions this daemon has already forgotten.
+persistSessions()
+
+/** Drop pull-mode sessions that have gone quiet. Returns how many went. */
+function sweepSessions(): number {
+  let gone = 0
+  for (const [id, reg] of [...sessions]) {
+    if (stillAround(id, reg)) continue
+    sessions.delete(id)
+    gone++
+  }
+  if (gone) persistSessions()
+  return gone
+}
+
+/**
+ * Which session a request is about.
+ *
+ * Claude Code and Codex put the session id in the environment of everything
+ * they start, so the tools know who they are. agy tells a hook its conversation
+ * id but tells an MCP server nothing, and an agy started from a Claude Code
+ * shell inherits that shell's session id, so the id can also be absent or
+ * simply wrong. What agy does get right is the working directory: it runs an
+ * MCP server in the workspace, and its hook reports that same directory when it
+ * registers.
+ *
+ * So the directory decides whenever it disagrees with the id. A named session
+ * is used when it matches the caller's directory or when no directory was sent.
+ * Two sessions in one directory resolve to the one that registered most
+ * recently.
+ */
+function newestIn(cwd: string): Registered | undefined {
+  return [...sessions.values()]
+    .filter((s) => s.cwd === cwd)
+    .sort((a, b) => (b.seenAt ?? 0) - (a.seenAt ?? 0))[0]
+}
+
+function resolveSession(req: { sessionId?: string; cwd?: string }): Registered | undefined {
+  const named = req.sessionId ? sessions.get(req.sessionId) : undefined
+  if (!req.cwd) return named
+  if (named && named.cwd === req.cwd) return named
+  return newestIn(req.cwd) ?? named
+}
 
 /**
  * Claude Code publishes a registry of live sessions with their status. Codex
@@ -888,6 +946,13 @@ function publishPresence() {
   }
 }
 setInterval(publishPresence, 20_000)
+
+// Roster hygiene. Cheap, and the only thing that removes a Codex or agy session
+// once its process is gone, since neither publishes a registry to check.
+setInterval(() => {
+  const gone = sweepSessions()
+  if (gone) log(`dropped ${gone} session(s) that stopped reporting`)
+}, 10 * 60 * 1000)
 let lastHeard = Date.now()
 // Overridable so the dead-link path can be tested in seconds.
 const PING_MS = Number(process.env.CROSSTALK_PING_MS ?? 25_000)
@@ -936,6 +1001,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         token: req.token,
         transcript: req.transcript,
         lastStatus: "idle",
+        seenAt: Date.now(),
       })
       // Held messages are filed under the session id that was live when they
       // arrived, and a new session gets a new id. Without this, anything unread
@@ -1401,7 +1467,8 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
     }
 
     case "read": {
-      const q = held[req.sessionId] ?? []
+      const sid = resolveSession(req)?.sessionId ?? req.sessionId
+      const q = held[sid] ?? []
       const unread = q.filter((m) => !m.readAt)
       const now = Date.now()
       for (const m of unread) m.readAt = now

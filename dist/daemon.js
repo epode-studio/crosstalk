@@ -831,8 +831,34 @@ var log = (...a) => {
   process.stdout.write(`${new Date().toISOString()} ${a.map(String).join(" ")}
 `);
 };
-var sessions = new Map(Object.entries(loadRegistered()).filter(([id, reg]) => !reg.socket || listLocalSessions().some((s) => s.sessionId === id)));
+var PULL_SESSION_TTL_MS = 6 * 60 * 60 * 1000;
+var stillAround = (id, reg) => reg.socket ? listLocalSessions().some((s) => s.sessionId === id) : Date.now() - (reg.seenAt ?? 0) < PULL_SESSION_TTL_MS;
+var sessions = new Map(Object.entries(loadRegistered()).filter(([id, reg]) => stillAround(id, reg)));
 var persistSessions = () => saveRegistered(Object.fromEntries(sessions));
+persistSessions();
+function sweepSessions() {
+  let gone = 0;
+  for (const [id, reg] of [...sessions]) {
+    if (stillAround(id, reg))
+      continue;
+    sessions.delete(id);
+    gone++;
+  }
+  if (gone)
+    persistSessions();
+  return gone;
+}
+function newestIn(cwd) {
+  return [...sessions.values()].filter((s) => s.cwd === cwd).sort((a, b) => (b.seenAt ?? 0) - (a.seenAt ?? 0))[0];
+}
+function resolveSession(req) {
+  const named = req.sessionId ? sessions.get(req.sessionId) : undefined;
+  if (!req.cwd)
+    return named;
+  if (named && named.cwd === req.cwd)
+    return named;
+  return newestIn(req.cwd) ?? named;
+}
 var localPresence = () => {
   const live = listLocalSessions();
   const out = [];
@@ -1527,6 +1553,11 @@ function publishPresence() {
   }
 }
 setInterval(publishPresence, 20000);
+setInterval(() => {
+  const gone = sweepSessions();
+  if (gone)
+    log(`dropped ${gone} session(s) that stopped reporting`);
+}, 10 * 60 * 1000);
 var lastHeard = Date.now();
 var PING_MS = Number(process.env.CROSSTALK_PING_MS ?? 25000);
 var SILENCE_LIMIT_MS = Number(process.env.CROSSTALK_SILENCE_MS ?? 70000);
@@ -1564,7 +1595,8 @@ async function handle(req, sock) {
         socket: req.socket,
         token: req.token,
         transcript: req.transcript,
-        lastStatus: "idle"
+        lastStatus: "idle",
+        seenAt: Date.now()
       });
       const liveIds = new Set(listLocalSessions().map((s) => s.sessionId));
       let adopted = 0;
@@ -2002,7 +2034,8 @@ async function handle(req, sock) {
       };
     }
     case "read": {
-      const q = held[req.sessionId] ?? [];
+      const sid = resolveSession(req)?.sessionId ?? req.sessionId;
+      const q = held[sid] ?? [];
       const unread = q.filter((m) => !m.readAt);
       const now = Date.now();
       for (const m of unread)

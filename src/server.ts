@@ -23,6 +23,12 @@ import { ensureDaemon, request } from "./client.ts"
 import { diffSlice, fileSlice, turnsSlice, textSlice, SliceRefused } from "./slices.ts"
 import type { Slice } from "./protocol.ts"
 
+/**
+ * Claude Code and Codex name the session in the environment of everything they
+ * start. agy names it to a hook but not to an MCP server, so this can be empty
+ * or, when agy was launched from a Claude Code shell, inherited and wrong. CWD
+ * is sent alongside so the daemon can tell the difference.
+ */
 const SESSION_ID = process.env.CLAUDE_CODE_SESSION_ID ?? ""
 const CWD = process.env.CLAUDE_PROJECT_DIR ?? process.cwd()
 
@@ -399,7 +405,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
 
       case "crosstalk_read": {
-        const r = await request({ op: "read", sessionId: SESSION_ID, all: !!a.all })
+        const r = await request({ op: "read", sessionId: SESSION_ID, cwd: CWD, all: !!a.all })
         if (!r.messages?.length) return ok({ messages: [], note: "nothing waiting" })
         const asks = r.messages.filter((m: any) => m.kind === "ask" && m.correlation)
         return ok({

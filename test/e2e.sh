@@ -180,6 +180,19 @@ sleep 1
 DELIVER=$(echo '{"session_id":"h1","cwd":"/tmp","hook_event_name":"PostToolUse"}' | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts 2>&1)
 has "$DELIVER" "continue" "a delivery event answers cleanly"
 
+# agy speaks a different dialect on both sides: camelCase protojson in, steps
+# out, and no event name in the payload, so hooks.json passes it as an argument.
+AGY_IN='{"conversationId":"agy1","workspacePaths":["/tmp"],"invocationNum":0,"modelName":"gemini-3.8-flash-high"}'
+AGY=$(echo "$AGY_IN" | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts PreInvocation 2>&1)
+case "$AGY" in
+  *continue*|*hookSpecificOutput*) bad "agy gets steps, not Claude Code's shape" ;;
+  *) ok "agy gets steps, not Claude Code's shape" ;;
+esac
+a facts add "the agy probe ran" >/dev/null 2>&1
+AGY2=$(echo "$AGY_IN" | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts PreInvocation 2>&1)
+has "$AGY2" "injectSteps" "agy start injects the working set"
+has "$AGY2" "ephemeralMessage" "agy injection uses an ephemeral step"
+
 # --- cost ----------------------------------------------------------------------
 echo
 echo "cost"

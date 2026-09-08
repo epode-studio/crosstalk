@@ -188,11 +188,22 @@ try {
   hook = JSON.parse(input || "{}");
 } catch {}
 var eventName = hook.hook_event_name ?? hook.hookEventName ?? hook.event_name ?? hook.hook_event?.type ?? hook.event_type ?? hook.event ?? process.argv[2] ?? "SessionStart";
-var isSessionStart = /^SessionStart$/i.test(eventName);
-var sessionId = hook.session_id ?? hook.sessionId ?? hook.thread_id ?? hook.conversation_id ?? process.env.CLAUDE_CODE_SESSION_ID;
-var cwd = hook.cwd ?? process.cwd();
+var isAgy = typeof hook.conversationId === "string";
+var sessionId = hook.session_id ?? hook.sessionId ?? hook.thread_id ?? hook.conversation_id ?? hook.conversationId ?? process.env.CLAUDE_CODE_SESSION_ID ?? process.env.ANTIGRAVITY_CONVERSATION_ID;
+var isSessionStart = isAgy ? /^PreInvocation$/i.test(eventName) && Number(hook.invocationNum ?? 0) === 0 : /^SessionStart$/i.test(eventName);
+var AGENT_DIRS = new Set([".agents", ".agent", "_agents", "_agent"]);
+function agyCwd() {
+  const ws = hook.workspacePaths;
+  if (Array.isArray(ws) && typeof ws[0] === "string" && ws[0])
+    return ws[0];
+  const here = process.cwd();
+  if (AGENT_DIRS.has(path5.basename(here)))
+    return path5.dirname(here);
+  return here;
+}
+var cwd = hook.cwd ?? (isAgy ? agyCwd() : process.cwd());
 if (!loadIdentity() || !sessionId) {
-  process.stdout.write(JSON.stringify({ continue: true }));
+  process.stdout.write(JSON.stringify(isAgy ? {} : { continue: true }));
   process.exit(0);
 }
 var root = rootFrom2(import.meta.url);
@@ -224,7 +235,7 @@ async function registerSession() {
     name,
     cwd,
     socket: socket ?? "",
-    transcript: hook.transcript_path
+    transcript: hook.transcript_path ?? hook.transcriptPath
   }).catch(() => {});
 }
 async function pendingNotice() {
@@ -236,20 +247,29 @@ async function pendingNotice() {
   }
 }
 var say = (extra) => {
+  if (isAgy) {
+    process.stdout.write(JSON.stringify(extra ? { injectSteps: [{ ephemeralMessage: extra }] } : {}));
+    process.exit(0);
+  }
   const out = { continue: true };
-  if (extra)
+  if (extra) {
     out.hookSpecificOutput = { hookEventName: eventName, additionalContext: extra };
+    out.message = extra;
+  }
   process.stdout.write(JSON.stringify(out));
   process.exit(0);
 };
+if (isAgy && !isSessionStart && /^PreInvocation$/i.test(eventName))
+  await registerSession();
 if (isSessionStart) {
   await registerSession();
   try {
-    const [f, t] = await Promise.all([
+    const [f, t, n] = await Promise.all([
       request({ op: "facts", cwd }, 6000).catch(() => null),
-      request({ op: "tasks" }, 6000).catch(() => null)
+      request({ op: "tasks" }, 6000).catch(() => null),
+      socket ? Promise.resolve(null) : pendingNotice()
     ]);
-    const parts = [f?.digest, t?.digest].filter(Boolean);
+    const parts = [f?.digest, t?.digest, n].filter(Boolean);
     say(parts.length ? parts.join(`
 
 `) : undefined);

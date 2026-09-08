@@ -2945,6 +2945,7 @@ var shim2 = (root) => path7.join(root, "bin", "crosstalk");
 // src/cli.ts
 import fs6 from "fs";
 import path8 from "path";
+import os5 from "os";
 import { spawn as spawn3, execFileSync as execFileSync4 } from "child_process";
 var argv = process.argv.slice(2);
 var cmd = argv[0] ?? "status";
@@ -3926,6 +3927,105 @@ That machine is becoming this identity: same fingerprint, same people, same
 rooms. Those six words carry your whole identity, so keep them between your own
 two machines and nowhere else.`);
 }
+async function installAgy() {
+  const root = rootFrom2(import.meta.url);
+  const bin = shim2(root);
+  const dir = path8.join(os5.homedir(), ".gemini", "config");
+  const file = path8.join(dir, "hooks.json");
+  fs6.mkdirSync(dir, { recursive: true });
+  let all = {};
+  if (fs6.existsSync(file)) {
+    try {
+      all = JSON.parse(fs6.readFileSync(file, "utf8"));
+    } catch {
+      die(`${file} is not valid JSON. Fix or move it, then run this again.`);
+    }
+  }
+  all.crosstalk = {
+    PreInvocation: [
+      { type: "command", command: `"${bin}" hook PreInvocation`, timeout: 20 }
+    ]
+  };
+  fs6.writeFileSync(file, JSON.stringify(all, null, 2) + `
+`);
+  console.log(`hooks    ${file}`);
+  try {
+    execFileSync4("agy", ["mcp", "add", "crosstalk", bin, "server"], { stdio: "pipe" });
+    console.log(`tools    registered with agy as "crosstalk"`);
+  } catch (e) {
+    const why = String(e?.stderr ?? e?.message ?? "").trim().split(`
+`)[0];
+    console.log(`tools    not registered${why ? `: ${why}` : ""}`);
+    console.log(`         run: agy mcp add crosstalk ${bin} server`);
+  }
+  console.log(`
+agy has no session-start event, so a session announces itself on its first
+model call rather than at launch. Start a new agy session, or send one prompt
+in an existing one, and it will show up in \`crosstalk peers\`.
+
+agy also runs a hook in the directory holding hooks.json, so it learns which
+project a session is in from the workspace rather than the working directory.
+If \`crosstalk facts\` looks unscoped, launch agy with --add-dir "$PWD".`);
+}
+async function installQwen() {
+  const bin = shim2(rootFrom2(import.meta.url));
+  const dir = path8.join(os5.homedir(), ".qwen");
+  const file = path8.join(dir, "settings.json");
+  fs6.mkdirSync(dir, { recursive: true });
+  let cfg = {};
+  if (fs6.existsSync(file)) {
+    try {
+      cfg = JSON.parse(fs6.readFileSync(file, "utf8"));
+    } catch {
+      die(`${file} is not valid JSON. Fix or move it, then run this again.`);
+    }
+  }
+  const entry = { hooks: [{ type: "command", command: `"${bin}" hook`, timeout: 20000 }] };
+  cfg.hooks ??= {};
+  for (const event of ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"]) {
+    const others = (cfg.hooks[event] ?? []).filter((g) => !JSON.stringify(g).includes("crosstalk"));
+    cfg.hooks[event] = [...others, entry];
+  }
+  fs6.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
+`);
+  console.log(`hooks    ${file}`);
+  console.log(`tools    add the MCP server: qwen mcp add crosstalk ${bin} server`);
+}
+async function installKimi() {
+  const bin = shim2(rootFrom2(import.meta.url));
+  const dir = path8.join(os5.homedir(), ".kimi-code");
+  const file = path8.join(dir, "config.toml");
+  fs6.mkdirSync(dir, { recursive: true });
+  const existing = fs6.existsSync(file) ? fs6.readFileSync(file, "utf8") : "";
+  const kept = existing.replace(/\n*# crosstalk\n(?:\[\[hooks\]\][^[]*)+/g, `
+`);
+  const blocks = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"].map((event) => `[[hooks]]
+event = "${event}"
+command = "${bin} hook"
+timeout = 20
+`).join(`
+`);
+  fs6.writeFileSync(file, `${kept.trimEnd()}
+
+# crosstalk
+${blocks}`);
+  console.log(`hooks    ${file}`);
+  console.log(`tools    add the MCP server in ${path8.join(dir, "mcp.json")}`);
+}
+async function install() {
+  const who = (positional[0] ?? "").toLowerCase();
+  if (who === "agy" || who === "antigravity")
+    return installAgy();
+  if (who === "qwen")
+    return installQwen();
+  if (who === "kimi")
+    return installKimi();
+  die(`usage: crosstalk install <agy|qwen|kimi>
+
+Claude Code and Codex install as a plugin instead:
+  /plugin marketplace add epode-studio/crosstalk
+  /plugin install crosstalk@epode`);
+}
 var commands = {
   pair,
   link,
@@ -3944,6 +4044,7 @@ var commands = {
   status,
   doctor,
   daemon,
-  relay
+  relay,
+  install
 };
 await (commands[cmd] ?? (async () => die(`unknown command "${cmd}"`)))();

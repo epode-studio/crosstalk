@@ -42,6 +42,7 @@ import * as facts from "./facts.ts"
 import { rootFrom, shim } from "./paths.ts"
 import fs from "node:fs"
 import path from "node:path"
+import os from "node:os"
 import net from "node:net"
 import { spawn, execFileSync } from "node:child_process"
 
@@ -1043,6 +1044,130 @@ rooms. Those six words carry your whole identity, so keep them between your own
 two machines and nowhere else.`)
 }
 
+/**
+ * Wires crosstalk into Google's Antigravity CLI.
+ *
+ * agy does not read the plugin format Claude Code and Codex share. It reads
+ * `hooks.json` in a customization root, where the top level is a map of hook
+ * names and each name holds handlers per lifecycle event. It also names no
+ * event in the payload, so the event is passed as an argument instead.
+ *
+ * Only PreInvocation is registered. It runs before every model call, including
+ * the ones between tool calls, so it is both where a session announces itself
+ * and where a waiting message gets picked up mid-turn.
+ */
+async function installAgy() {
+  const root = rootFrom(import.meta.url)
+  const bin = shim(root)
+  const dir = path.join(os.homedir(), ".gemini", "config")
+  const file = path.join(dir, "hooks.json")
+  fs.mkdirSync(dir, { recursive: true })
+
+  // Anyone else's named hooks in this file are left exactly as they are.
+  let all: Record<string, unknown> = {}
+  if (fs.existsSync(file)) {
+    try {
+      all = JSON.parse(fs.readFileSync(file, "utf8"))
+    } catch {
+      die(`${file} is not valid JSON. Fix or move it, then run this again.`)
+    }
+  }
+  all.crosstalk = {
+    PreInvocation: [
+      { type: "command", command: `"${bin}" hook PreInvocation`, timeout: 20 },
+    ],
+  }
+  fs.writeFileSync(file, JSON.stringify(all, null, 2) + "\n")
+  console.log(`hooks    ${file}`)
+
+  // The tools, so an agy session can send and read rather than only receive.
+  try {
+    execFileSync("agy", ["mcp", "add", "crosstalk", bin, "server"], { stdio: "pipe" })
+    console.log(`tools    registered with agy as "crosstalk"`)
+  } catch (e: any) {
+    const why = String(e?.stderr ?? e?.message ?? "").trim().split("\n")[0]
+    console.log(`tools    not registered${why ? `: ${why}` : ""}`)
+    console.log(`         run: agy mcp add crosstalk ${bin} server`)
+  }
+
+  console.log(`
+agy has no session-start event, so a session announces itself on its first
+model call rather than at launch. Start a new agy session, or send one prompt
+in an existing one, and it will show up in \`crosstalk peers\`.
+
+agy also runs a hook in the directory holding hooks.json, so it learns which
+project a session is in from the workspace rather than the working directory.
+If \`crosstalk facts\` looks unscoped, launch agy with --add-dir "$PWD".`)
+}
+
+
+/**
+ * Qwen Code takes Claude Code's hook contract exactly: the same event names,
+ * the same snake_case payload, the same hookSpecificOutput.additionalContext on
+ * the way back. Only the file it reads is different.
+ */
+async function installQwen() {
+  const bin = shim(rootFrom(import.meta.url))
+  const dir = path.join(os.homedir(), ".qwen")
+  const file = path.join(dir, "settings.json")
+  fs.mkdirSync(dir, { recursive: true })
+
+  let cfg: any = {}
+  if (fs.existsSync(file)) {
+    try {
+      cfg = JSON.parse(fs.readFileSync(file, "utf8"))
+    } catch {
+      die(`${file} is not valid JSON. Fix or move it, then run this again.`)
+    }
+  }
+  const entry = { hooks: [{ type: "command", command: `"${bin}" hook`, timeout: 20000 }] }
+  cfg.hooks ??= {}
+  for (const event of ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"]) {
+    const others = (cfg.hooks[event] ?? []).filter(
+      (g: any) => !JSON.stringify(g).includes("crosstalk"),
+    )
+    cfg.hooks[event] = [...others, entry]
+  }
+  fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + "\n")
+  console.log(`hooks    ${file}`)
+  console.log(`tools    add the MCP server: qwen mcp add crosstalk ${bin} server`)
+}
+
+/**
+ * Kimi Code keeps hooks as a TOML array rather than a JSON tree, one table per
+ * event, and reads back a plain `message` which it wraps in a <hook_result> tag
+ * of its own. The hook writes that field alongside the others.
+ */
+async function installKimi() {
+  const bin = shim(rootFrom(import.meta.url))
+  const dir = path.join(os.homedir(), ".kimi-code")
+  const file = path.join(dir, "config.toml")
+  fs.mkdirSync(dir, { recursive: true })
+
+  const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : ""
+  // Drop any block this command wrote before, so running it twice is safe.
+  const kept = existing.replace(/\n*# crosstalk\n(?:\[\[hooks\]\][^[]*)+/g, "\n")
+  const blocks = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"]
+    .map((event) => `[[hooks]]\nevent = "${event}"\ncommand = "${bin} hook"\ntimeout = 20\n`)
+    .join("\n")
+  fs.writeFileSync(file, `${kept.trimEnd()}\n\n# crosstalk\n${blocks}`)
+  console.log(`hooks    ${file}`)
+  console.log(`tools    add the MCP server in ${path.join(dir, "mcp.json")}`)
+}
+
+/** Everything a client needs, per client. */
+async function install() {
+  const who = (positional[0] ?? "").toLowerCase()
+  if (who === "agy" || who === "antigravity") return installAgy()
+  if (who === "qwen") return installQwen()
+  if (who === "kimi") return installKimi()
+  die(`usage: crosstalk install <agy|qwen|kimi>
+
+Claude Code and Codex install as a plugin instead:
+  /plugin marketplace add epode-studio/crosstalk
+  /plugin install crosstalk@epode`)
+}
+
 const commands: Record<string, () => Promise<void>> = {
   pair,
   link,
@@ -1062,5 +1187,6 @@ const commands: Record<string, () => Promise<void>> = {
   doctor,
   daemon,
   relay,
+  install,
 }
 await (commands[cmd] ?? (async () => die(`unknown command "${cmd}"`)))()

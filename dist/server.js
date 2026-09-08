@@ -16730,7 +16730,7 @@ mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
         return r.ok ? ok(r) : err(r.error);
       }
       case "crosstalk_read": {
-        const r = await request({ op: "read", sessionId: SESSION_ID, all: !!a.all });
+        const r = await request({ op: "read", sessionId: SESSION_ID, cwd: CWD, all: !!a.all });
         if (!r.messages?.length)
           return ok({ messages: [], note: "nothing waiting" });
         const asks = r.messages.filter((m) => m.kind === "ask" && m.correlation);
