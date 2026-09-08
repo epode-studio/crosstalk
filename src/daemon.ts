@@ -1023,6 +1023,19 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         persist()
         log(`carried ${adopted} unread message(s) over from an ended session`)
       }
+      // A client with no inbox socket gets a new session id per run, so a day of
+      // one-shot prompts in one directory leaves a roster full of sessions that
+      // ended minutes after they started. Once another session in the same
+      // directory has taken over and nothing is still waiting for the old one,
+      // it is only noise.
+      const QUIET_MS = 10 * 60 * 1000
+      for (const [id, reg] of [...sessions]) {
+        if (id === req.sessionId || reg.socket || reg.cwd !== req.cwd) continue
+        if (held[id]?.some((m) => !m.readAt)) continue
+        if (Date.now() - (reg.seenAt ?? 0) < QUIET_MS) continue
+        sessions.delete(id)
+        delete held[id]
+      }
       persistSessions()
       log(
         `registered session ${req.name} (${req.cwd})${req.socket ? "" : " [pull mode, no inbox socket]"}`,
@@ -1571,9 +1584,6 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
   }
 }
 
-try {
-  fs.unlinkSync(P.daemonSock)
-} catch {}
 fs.mkdirSync(path.dirname(P.daemonSock), { recursive: true, mode: 0o700 })
 
 const control = net.createServer((sock) => {
@@ -1596,14 +1606,41 @@ const control = net.createServer((sock) => {
   sock.on("error", () => {})
 })
 
-// Stand down if one is already up and answering, rather than double-delivering.
+/**
+ * Stand down if one is already up and answering.
+ *
+ * The test is whether the socket accepts a connection, not whether a pid file
+ * looks plausible. Two daemons sharing one state directory each hold their own
+ * copy of the message queue in memory and each write the whole of it back, so
+ * whichever writes last erases the other's work. That shows up as a message
+ * that was delivered to nobody, which is the hardest kind of bug to see.
+ *
+ * A socket file left behind by a daemon that was killed is unlinked here, since
+ * nothing is listening on it and `listen` would otherwise fail on the path.
+ */
+const alreadyRunning = () =>
+  new Promise<boolean>((resolve) => {
+    if (!fs.existsSync(P.daemonSock)) return resolve(false)
+    const probe = net.createConnection(P.daemonSock)
+    const done = (answer: boolean) => {
+      probe.destroy()
+      resolve(answer)
+    }
+    probe.on("connect", () => done(true))
+    probe.on("error", () => done(false))
+    probe.setTimeout(2000, () => done(false))
+  })
+
+if (await alreadyRunning()) {
+  let who = ""
+  try {
+    who = ` as pid ${Number(fs.readFileSync(P.daemonLock, "utf8"))}`
+  } catch {}
+  console.error(`crosstalk: a daemon is already running${who}`)
+  process.exit(0)
+}
 try {
-  const running = Number(fs.readFileSync(P.daemonLock, "utf8"))
-  if (running && running !== process.pid && fs.existsSync(P.daemonSock)) {
-    process.kill(running, 0)
-    console.error(`crosstalk: a daemon is already running as pid ${running}`)
-    process.exit(0)
-  }
+  fs.unlinkSync(P.daemonSock)
 } catch {}
 
 control.listen(P.daemonSock, () => {
@@ -1613,13 +1650,23 @@ control.listen(P.daemonSock, () => {
   connect()
 })
 
+// Only tidy up what this process owns. A daemon that stood down, or one being
+// killed while another is serving, must not unlink the live socket: the next
+// one to start would find no file, decide nothing was running, and come up
+// alongside it.
 const bye = () => {
+  let mine = false
   try {
-    fs.unlinkSync(P.daemonSock)
+    mine = Number(fs.readFileSync(P.daemonLock, "utf8")) === process.pid
   } catch {}
-  try {
-    fs.unlinkSync(P.daemonLock)
-  } catch {}
+  if (mine) {
+    try {
+      fs.unlinkSync(P.daemonSock)
+    } catch {}
+    try {
+      fs.unlinkSync(P.daemonLock)
+    } catch {}
+  }
   process.exit(0)
 }
 for (const s of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(s, bye)

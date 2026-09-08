@@ -65,11 +65,15 @@ has "$JOIN" "$FA" "the fingerprints match across the two sides"
 # --- daemons -------------------------------------------------------------------
 echo
 echo "daemons and presence"
-CROSSTALK_HOME="$A" nohup bun src/daemon.ts >"$A/daemon.log" 2>&1 &
-CROSSTALK_HOME="$B" nohup bun src/daemon.ts >"$B/daemon.log" 2>&1 &
+# Pairing already starts a daemon, and a second one on the same state directory
+# now stands down rather than taking the socket over, so ask each side what its
+# own daemon is doing instead of reading the log of a process that may have
+# correctly refused to run.
+CROSSTALK_HOME="$A" nohup bun src/daemon.ts >>"$A/daemon.log" 2>&1 &
+CROSSTALK_HOME="$B" nohup bun src/daemon.ts >>"$B/daemon.log" 2>&1 &
 sleep 4
-has "$(cat "$A/daemon.log")" "relay ready" "ana's daemon linked to the relay"
-has "$(cat "$B/daemon.log")" "relay ready" "ben's daemon linked to the relay"
+has "$(a status)" "relay connected" "ana's daemon linked to the relay"
+has "$(b status)" "relay connected" "ben's daemon linked to the relay"
 
 rpc "$A" '{"op":"register","sessionId":"sa","pid":1,"name":"ana-web","cwd":"/tmp/web","socket":""}' >/dev/null
 rpc "$B" '{"op":"register","sessionId":"sb","pid":2,"name":"ben-api","cwd":"/tmp/api","socket":""}' >/dev/null
@@ -192,6 +196,40 @@ a facts add "the agy probe ran" >/dev/null 2>&1
 AGY2=$(echo "$AGY_IN" | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts PreInvocation 2>&1)
 has "$AGY2" "injectSteps" "agy start injects the working set"
 has "$AGY2" "ephemeralMessage" "agy injection uses an ephemeral step"
+
+# Codex parses each event against its own schema with deny_unknown_fields, so a
+# stray key does not get ignored, it throws away the whole object. These are the
+# only top-level fields it allows, and Stop allows no hookSpecificOutput at all.
+strict() {
+  echo "$1" | bun -e '
+    const seen = JSON.parse(await new Response(Bun.stdin).text())
+    const top = new Set(["continue","stopReason","suppressOutput","systemMessage","hookSpecificOutput"])
+    const inner = new Set(["hookEventName","additionalContext"])
+    const bad = [
+      ...Object.keys(seen).filter((k) => !top.has(k)),
+      ...Object.keys(seen.hookSpecificOutput ?? {}).filter((k) => !inner.has(k)),
+    ]
+    console.log(bad.length ? bad.join(",") : "ok")
+  '
+}
+for ev in SessionStart UserPromptSubmit PostToolUse Stop SessionEnd; do
+  OUT=$(echo "{\"session_id\":\"h1\",\"cwd\":\"/tmp\",\"hook_event_name\":\"$ev\"}" \
+    | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts 2>&1)
+  check "$(strict "$OUT")" "ok" "$ev output has only fields codex allows"
+done
+STOP=$(echo '{"session_id":"h1","cwd":"/tmp","hook_event_name":"Stop"}' | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts 2>&1)
+case "$STOP" in
+  *hookSpecificOutput*) bad "Stop carries no hookSpecificOutput" ;;
+  *) ok "Stop carries no hookSpecificOutput" ;;
+esac
+
+# Kimi's payload is indistinguishable from Claude Code's, so its config names it.
+KIMI=$(echo '{"session_id":"h1","cwd":"/tmp","hook_event_name":"SessionStart"}' | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts --client kimi 2>&1)
+has "$KIMI" '"message"' "kimi gets a message field"
+case "$KIMI" in
+  *hookSpecificOutput*|*continue*) bad "kimi gets message and nothing else" ;;
+  *) ok "kimi gets message and nothing else" ;;
+esac
 
 # Hermes names events in snake_case, reads back a `context` string, and reads it
 # on pre_llm_call only. Asking for a notice consumes it, so on_session_start

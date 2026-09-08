@@ -1616,6 +1616,17 @@ async function handle(req, sock) {
         persist();
         log(`carried ${adopted} unread message(s) over from an ended session`);
       }
+      const QUIET_MS = 10 * 60 * 1000;
+      for (const [id, reg] of [...sessions]) {
+        if (id === req.sessionId || reg.socket || reg.cwd !== req.cwd)
+          continue;
+        if (held[id]?.some((m) => !m.readAt))
+          continue;
+        if (Date.now() - (reg.seenAt ?? 0) < QUIET_MS)
+          continue;
+        sessions.delete(id);
+        delete held[id];
+      }
       persistSessions();
       log(`registered session ${req.name} (${req.cwd})${req.socket ? "" : " [pull mode, no inbox socket]"}`);
       publishPresence();
@@ -2130,9 +2141,6 @@ ${req.rationale}` : ""}`
       return { ok: false, error: `unknown op "${req.op}"` };
   }
 }
-try {
-  fs10.unlinkSync(P.daemonSock);
-} catch {}
 fs10.mkdirSync(path12.dirname(P.daemonSock), { recursive: true, mode: 448 });
 var control = net2.createServer((sock) => {
   let rest = "";
@@ -2158,13 +2166,28 @@ var control = net2.createServer((sock) => {
   });
   sock.on("error", () => {});
 });
+var alreadyRunning = () => new Promise((resolve) => {
+  if (!fs10.existsSync(P.daemonSock))
+    return resolve(false);
+  const probe = net2.createConnection(P.daemonSock);
+  const done = (answer) => {
+    probe.destroy();
+    resolve(answer);
+  };
+  probe.on("connect", () => done(true));
+  probe.on("error", () => done(false));
+  probe.setTimeout(2000, () => done(false));
+});
+if (await alreadyRunning()) {
+  let who = "";
+  try {
+    who = ` as pid ${Number(fs10.readFileSync(P.daemonLock, "utf8"))}`;
+  } catch {}
+  console.error(`crosstalk: a daemon is already running${who}`);
+  process.exit(0);
+}
 try {
-  const running = Number(fs10.readFileSync(P.daemonLock, "utf8"));
-  if (running && running !== process.pid && fs10.existsSync(P.daemonSock)) {
-    process.kill(running, 0);
-    console.error(`crosstalk: a daemon is already running as pid ${running}`);
-    process.exit(0);
-  }
+  fs10.unlinkSync(P.daemonSock);
 } catch {}
 control.listen(P.daemonSock, () => {
   fs10.chmodSync(P.daemonSock, 384);
@@ -2173,12 +2196,18 @@ control.listen(P.daemonSock, () => {
   connect();
 });
 var bye = () => {
+  let mine = false;
   try {
-    fs10.unlinkSync(P.daemonSock);
+    mine = Number(fs10.readFileSync(P.daemonLock, "utf8")) === process.pid;
   } catch {}
-  try {
-    fs10.unlinkSync(P.daemonLock);
-  } catch {}
+  if (mine) {
+    try {
+      fs10.unlinkSync(P.daemonSock);
+    } catch {}
+    try {
+      fs10.unlinkSync(P.daemonLock);
+    } catch {}
+  }
   process.exit(0);
 };
 for (const s of ["SIGINT", "SIGTERM", "SIGHUP"])

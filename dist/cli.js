@@ -3394,6 +3394,20 @@ async function doctor() {
     visible = fs6.readdirSync(sessionsDir).filter((f) => f.endsWith(".json")).length;
   } catch {}
   rows.push(["session registry", visible > 0, `${visible} entries in ${sessionsDir}`]);
+  {
+    const live = daemonRunning();
+    let count = 0;
+    try {
+      count = execFileSync4("/bin/sh", ["-c", `pgrep -f 'crosstalk.*daemon' | wc -l`], {
+        encoding: "utf8"
+      }).trim().split(/\s+/).map(Number)[0];
+    } catch {}
+    rows.push([
+      "daemon",
+      live && count <= 1,
+      !live ? "not running; it starts on its own with the next hook or tool call" : count > 1 ? `${count} are running on this machine, which will lose messages. Stop them all and start one: pkill -f "crosstalk.*daemon"` : "one, answering on its socket"
+    ]);
+  }
   const relayUrl = loadRelay().url;
   const reach = await relayReachable(relayUrl);
   rows.push(["relay", reach, relayUrl]);
@@ -3420,7 +3434,6 @@ async function doctor() {
       ]);
     }
   }
-  rows.push(["daemon", daemonRunning(), daemonRunning() ? "running" : "not running (starts on next session)"]);
   if (daemonRunning()) {
     try {
       const s = await request({ op: "status" });
@@ -4001,7 +4014,7 @@ async function installKimi() {
 `);
   const blocks = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"].map((event) => `[[hooks]]
 event = "${event}"
-command = "${bin} hook"
+command = "${bin} hook --client kimi"
 timeout = 20
 `).join(`
 `);

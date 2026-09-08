@@ -127,6 +127,40 @@ sleep 8
 COUNT=$(grep -c 'relay ready' "$TMP/dfrozen.log")
 [ "$COUNT" -ge 2 ] && pass "reconnected after the relay came back" || fail "did not reconnect (ready seen $COUNT times)"
 
+# --- 4. two daemons on one state directory -------------------------------------
+#
+# Two daemons sharing a state directory each hold the message queue in memory
+# and each write the whole of it back, so whichever writes last erases the
+# other's work. A message then goes to nobody. The check is whether the socket
+# answers, so a second daemon has to stand down and a socket left behind by a
+# daemon that was killed outright has to be cleared.
+echo
+echo "4. a second daemon on the same state directory"
+D="$TMP/solo"
+mkdir -p "$D"
+cp "$TMP/a/identity.json" "$D/" 2>/dev/null || cp "$TMP"/a/*.json "$D/" 2>/dev/null
+CROSSTALK_HOME="$D" nohup bun src/daemon.ts >"$D/first.log" 2>&1 &
+disown 2>/dev/null || true   # this one gets kill -9'd below; keep the shell quiet about it
+for _ in $(seq 1 20); do [ -S "$D/daemon.sock" ] && break; sleep 0.5; done
+[ -S "$D/daemon.sock" ] && pass "first daemon is listening" || fail "first daemon never came up"
+
+CROSSTALK_HOME="$D" bun src/daemon.ts >"$D/second.log" 2>&1
+grep -q 'already running' "$D/second.log" \
+  && pass "second daemon stood down" \
+  || fail "second daemon came up alongside the first"
+[ -S "$D/daemon.sock" ] && pass "the live socket survived it" || fail "the live socket was removed"
+
+# kill -9 skips the cleanup, so the socket file outlives the process.
+FIRST=$(cat "$D/daemon.lock" 2>/dev/null)
+[ -n "$FIRST" ] && kill -9 "$FIRST" 2>/dev/null
+sleep 1
+CROSSTALK_HOME="$D" nohup bun src/daemon.ts >"$D/third.log" 2>&1 &
+for _ in $(seq 1 20); do grep -q 'daemon up' "$D/third.log" && break; sleep 0.5; done
+grep -q 'daemon up' "$D/third.log" \
+  && pass "a stale socket does not block the next one" \
+  || fail "stale socket blocked startup"
+[ -f "$D/daemon.lock" ] && kill "$(cat "$D/daemon.lock")" 2>/dev/null
+
 echo
 [ "$FAILED" = "0" ] && echo "all good" || echo "something above failed"
 exit $FAILED

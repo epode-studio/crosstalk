@@ -35,6 +35,18 @@ try {
   hook = JSON.parse(input || "{}")
 } catch {}
 
+const args = process.argv.slice(2)
+/**
+ * Kimi Code's payload is indistinguishable from Claude Code's, so the config
+ * written by `crosstalk install kimi` names the client instead. Nothing else
+ * needs one: every other client is recognisable from what it sends.
+ */
+const client = (() => {
+  const i = args.indexOf("--client")
+  return i === -1 ? "" : (args[i + 1] ?? "").toLowerCase()
+})()
+const positional = args.filter((a, i) => !a.startsWith("--") && args[i - 1] !== "--client")
+
 /**
  * Every client names the event, each in its own field. agy names it in none of
  * them, so hooks.json passes it as an argument instead.
@@ -46,7 +58,7 @@ const eventName: string =
   hook.hook_event?.type ??
   hook.event_type ??
   hook.event ??
-  process.argv[2] ??
+  positional[0] ??
   "SessionStart"
 
 /**
@@ -55,6 +67,7 @@ const eventName: string =
  * difference is enough to pick the right output format below.
  */
 const isAgy = typeof hook.conversationId === "string"
+const isKimi = client === "kimi"
 
 /**
  * Hermes names its events in snake_case and nobody else does, which is the
@@ -107,7 +120,7 @@ const cwd: string = hook.cwd ?? (isAgy ? agyCwd() : process.cwd())
 
 /** Nothing to do until someone has paired. */
 if (!loadIdentity() || !sessionId) {
-  process.stdout.write(JSON.stringify(isAgy || isHermes ? {} : { continue: true }))
+  process.stdout.write(JSON.stringify(isAgy || isHermes || isKimi ? {} : { continue: true }))
   process.exit(0)
 }
 
@@ -163,10 +176,12 @@ async function pendingNotice(): Promise<string | null> {
  * The same text, in whichever field the client actually reads.
  *
  * Claude Code, Codex and Qwen Code take hookSpecificOutput.additionalContext.
- * Kimi Code takes a plain `message` and wraps it in a <hook_result> tag itself,
- * so both go out together: a client that does not know a field ignores it.
- * agy takes steps and Hermes takes a `context` string, and both read nothing
- * else, so each gets an object of its own. An empty one says nothing.
+ * agy takes steps, Hermes takes a `context` string, Kimi Code takes a plain
+ * `message` and wraps it in a <hook_result> tag itself.
+ *
+ * Each gets that field and nothing else. Writing several at once looks free but
+ * is not: Codex parses its output with deny_unknown_fields, so one stray key
+ * throws away the whole object and the message silently never arrives.
  */
 const say = (extra?: string) => {
   if (isAgy) {
@@ -177,11 +192,12 @@ const say = (extra?: string) => {
     process.stdout.write(JSON.stringify(extra ? { context: extra } : {}))
     process.exit(0)
   }
-  const out: any = { continue: true }
-  if (extra) {
-    out.hookSpecificOutput = { hookEventName: eventName, additionalContext: extra }
-    out.message = extra
+  if (isKimi) {
+    process.stdout.write(JSON.stringify(extra ? { message: extra } : {}))
+    process.exit(0)
   }
+  const out: any = { continue: true }
+  if (extra) out.hookSpecificOutput = { hookEventName: eventName, additionalContext: extra }
   process.stdout.write(JSON.stringify(out))
   process.exit(0)
 }
@@ -211,12 +227,21 @@ if (isSessionStart) {
   }
 }
 
-// Asking for a notice consumes it, so only an event that can actually deliver
-// one may ask. Hermes reads a hook's answer on pre_llm_call and nowhere else,
-// so on_session_start registers and stays quiet; without that it would swallow
-// the notice into an answer nobody reads.
-if (isHermes && !/^pre_llm_call$/.test(eventName)) say()
+/**
+ * Every event that can carry text to the model, and no others.
+ *
+ * Asking the daemon for a notice consumes it, so an event that cannot deliver
+ * must not ask: it would take the notice and drop it. Two clients make this
+ * concrete. Hermes reads a hook's answer on pre_llm_call and nowhere else. And
+ * Codex parses each event against its own schema with deny_unknown_fields,
+ * where Stop has no hookSpecificOutput field at all, so a notice returned there
+ * does not get ignored, it throws away the whole object it arrived in.
+ */
+const DELIVERS =
+  /^(SessionStart|UserPromptSubmit|PreToolUse|PostToolUse|PreInvocation|pre_llm_call)$/i
 
-// Every other event is a chance to hand over anything waiting. The daemon
+if (!DELIVERS.test(eventName)) say()
+
+// Every remaining event is a chance to hand over anything waiting. The daemon
 // returns nothing for a session it can push to directly.
 say((await pendingNotice()) ?? undefined)

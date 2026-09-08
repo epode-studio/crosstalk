@@ -519,6 +519,31 @@ async function doctor() {
   } catch {}
   rows.push(["session registry", visible > 0, `${visible} entries in ${sessionsDir}`])
 
+  // Two daemons on one state directory each keep the message queue in memory and
+  // each write all of it back, so whichever writes last erases the other's work.
+  // Nothing reports an error when that happens; the message simply never lands.
+  {
+    const live = daemonRunning()
+    let count = 0
+    try {
+      count = execFileSync("/bin/sh", ["-c", `pgrep -f 'crosstalk.*daemon' | wc -l`], {
+        encoding: "utf8",
+      })
+        .trim()
+        .split(/\s+/)
+        .map(Number)[0]
+    } catch {}
+    rows.push([
+      "daemon",
+      live && count <= 1,
+      !live
+        ? "not running; it starts on its own with the next hook or tool call"
+        : count > 1
+          ? `${count} are running on this machine, which will lose messages. Stop them all and start one: pkill -f "crosstalk.*daemon"`
+          : "one, answering on its socket",
+    ])
+  }
+
   const relayUrl = loadRelay().url
   const reach = await relayReachable(relayUrl)
   rows.push(["relay", reach, relayUrl])
@@ -547,7 +572,6 @@ async function doctor() {
       ])
     }
   }
-  rows.push(["daemon", daemonRunning(), daemonRunning() ? "running" : "not running (starts on next session)"])
 
   if (daemonRunning()) {
     try {
@@ -1147,8 +1171,13 @@ async function installKimi() {
   const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : ""
   // Drop any block this command wrote before, so running it twice is safe.
   const kept = existing.replace(/\n*# crosstalk\n(?:\[\[hooks\]\][^[]*)+/g, "\n")
+  // --client kimi is what tells the hook to answer in Kimi's shape. Its payload
+  // looks exactly like Claude Code's, so nothing else could.
   const blocks = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"]
-    .map((event) => `[[hooks]]\nevent = "${event}"\ncommand = "${bin} hook"\ntimeout = 20\n`)
+    .map(
+      (event) =>
+        `[[hooks]]\nevent = "${event}"\ncommand = "${bin} hook --client kimi"\ntimeout = 20\n`,
+    )
     .join("\n")
   fs.writeFileSync(file, `${kept.trimEnd()}\n\n# crosstalk\n${blocks}`)
   console.log(`hooks    ${file}`)

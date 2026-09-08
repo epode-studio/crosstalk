@@ -24,15 +24,25 @@ having to think to go and look.
 One binary serves all six. `bin/crosstalk hook` reads the payload on stdin,
 works out which client sent it, and answers in that client's own format.
 
-Where two clients read the same field it writes both at once, since a client
-ignores a field it does not know. Where a client reads one field and nothing
-else, it gets an object of its own.
+Each gets its own field and nothing else. Writing several at once to cover every
+client looks free and is not: Codex parses each event against its own schema
+with `deny_unknown_fields`, so a single key it does not expect throws away the
+whole object and the message silently never arrives.
 
-One rule matters more than it looks. Asking the daemon for a notice consumes it,
-so only an event that can actually deliver may ask. Hermes reads a hook's answer
-on `pre_llm_call` and nowhere else, so its `on_session_start` registers the
-session and stays silent; without that it would swallow the notice into an answer
-nobody reads.
+Kimi Code is the one client that cannot be recognised from what it sends, since
+its payload is identical to Claude Code's. Its config names it instead, with
+`--client kimi`.
+
+Then one rule that matters more than it looks. Asking the daemon for a notice
+consumes it, so an event that cannot deliver must not ask: it would take the
+notice and drop it. Two clients make that concrete. Hermes reads a hook's answer
+on `pre_llm_call` and nowhere else. And in Codex the `Stop` event has no
+`hookSpecificOutput` field at all, so a notice returned there is not ignored, it
+invalidates the object it arrived in. So only these events ever ask:
+
+```
+SessionStart  UserPromptSubmit  PreToolUse  PostToolUse  PreInvocation  pre_llm_call
+```
 
 ### Claude Code and Codex
 
@@ -147,15 +157,22 @@ has no Qwen auth configured, so no model call ever happened.
 
 **Codex 0.153.4** is half tested. Its own output shows `hook: SessionStart` and
 `hook: Stop` running, and the daemon registered the session, so hooks fire and
-the payload parses. Injection is unproven and there is a specific reason to
-doubt `SessionStart` is the right event for it: the binary carries the message
-`this event cannot emit additionalContext`, so some events cannot, and it also
-has a hook trust gate (`trusted_hash`, `trustStatus`). Which events can emit is
-still unknown. Testing stopped when Codex started returning 401 from its own
-API. What is verified in the binary is the vocabulary: `hooks.json`,
-`hook_event_name`, `session_start`, `user_prompt_submit`, `post_tool_use`,
-`stop`, `hookSpecificOutput`, `additionalContext`, and a prompt slot named
-`hooks.additional_context`.
+the payload parses. Injection has not been seen working, and testing stopped
+when Codex started returning 401 from its own API.
+
+Two reasons it would not have worked are now fixed, both found by reading
+`codex-rs/hooks/src/schema.rs` rather than by guessing. Every output struct
+there carries `#[serde(deny_unknown_fields)]`, and the only top-level fields it
+allows are `continue`, `stopReason`, `suppressOutput`, `systemMessage` and
+`hookSpecificOutput`. Crosstalk was sending a sixth, `message`, added for Kimi,
+which invalidated every hook answer it ever gave Codex. And `Stop` has no
+`hookSpecificOutput` at all, so returning a notice there both lost the notice
+and voided the object. `test/e2e.sh` now checks every event's output against
+that field list.
+
+Codex also has a hook trust gate: a hook runs only when its hash matches a
+`trusted_hash` in state, or the source is managed. That is not ruled out as a
+further obstacle.
 
 **Kimi Code 0.36.0** is untested. This machine is not logged in and Kimi exits
 before running a hook. What is verified is the hook engine in the shipped
@@ -169,3 +186,16 @@ app, which ships no CLI on PATH.
 
 If any of them misbehaves, `bin/crosstalk hook` reads a payload on stdin and
 prints its answer, so it is a one-line thing to check.
+
+## One daemon per machine
+
+Two daemons sharing a state directory each hold the message queue in memory and
+each write the whole of it back, so whichever writes last erases the other's
+work. A message then reaches nobody, and nothing anywhere reports an error.
+
+Starting a daemon now asks the socket whether anything answers, rather than
+trusting a pid file, and a daemon that is shutting down removes the socket only
+if the lock still names it. Before that, startup unlinked the socket before
+checking it, which meant the check could never see a live one.
+
+`crosstalk doctor` and `test/resilience.sh` both cover it.
