@@ -187,21 +187,15 @@ Its own reference is on disk at
 
 ## How honest this page is
 
-Seven of the eight were watched working end to end. Where a client had no
-credentials on this machine, it was pointed at a local stand-in model that
-records the request body, so what reached the model was read off the wire rather
-than inferred from a client's own output.
+All eight were watched working end to end. Where a client had no credentials on
+this machine it was pointed at a local stand-in model that records the request
+body, so what reached the model was read off the wire rather than inferred from
+a client's own output.
 
-| Client | Verified |
-|---|---|
-| **Claude Code** | live, across two physical machines |
-| **Antigravity (`agy`)** | live |
-| **Hermes 0.16.0** | live |
-| **Cursor 2026.08.11** | live |
-| **Qwen Code 0.23.0** | live, against a stand-in model |
-| **Goose 1.49.0** | live, against a stand-in model |
-| **Kimi Code 0.36.0** | live, against a stand-in model |
-| **Codex 0.153.4** | **untested**, hook installed and waiting on `/hooks` |
+Claude Code was tested across two physical machines. Codex 0.153.4, Cursor
+2026.08.11, Antigravity, Qwen Code 0.23.0, Kimi Code 0.36.0, Hermes 0.16.0 and
+Goose 1.49.0 were each tested on this one. Qwen, Kimi and Goose had no
+credentials here, so those three ran against the stand-in model.
 
 What each one looked like on the wire:
 
@@ -211,16 +205,17 @@ What each one looked like on the wire:
   ending this turn:` followed by the notice, tags intact.
 - **Kimi** sends it as `<hook_result hook_event="UserPromptSubmit">`.
 - **Cursor** and **Hermes** append it to the user message directly.
+- **Codex** treats it as hidden context: the model uses it but will not quote it
+  back, so it answered by summarising what it had rather than reciting it.
 
-**Codex** is the one still open, and not for want of trying. It reports
-crosstalk's handlers through its own `hooks/list` as
-`"trustStatus": "untrusted"`, and it does not run an untrusted hook, or say that
-it skipped one. Every user meets this, so `crosstalk install codex` says what to
-do and `crosstalk doctor` checks it. Three separate reasons it could not have
-worked were found and fixed first, all by reading
-`codex-rs/hooks/src/schema.rs` rather than by running it: `deny_unknown_fields`
-on every output struct, `Stop` having no `hookSpecificOutput`, and the trust
-gate itself.
+**Codex** took the longest and none of it showed up as an error. Three separate
+reasons it could not work had to be found by reading
+`codex-rs/hooks/src/schema.rs` and its own `hooks/list`, not by running it:
+`deny_unknown_fields` on every output struct, `Stop` having no
+`hookSpecificOutput` field at all, and the trust gate. Until the hook was
+trusted through `/hooks` it was loaded, listed and skipped in silence. Every
+user meets that last one, which is why `crosstalk install codex` says so and
+`crosstalk doctor` checks for it.
 
 Nothing on this page comes from a client's documentation alone. On two of them
 the documentation was wrong: Goose's says hooks cannot inject context, and

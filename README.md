@@ -22,11 +22,10 @@ column that no longer exists. Neither of you stopped working.
 
 > **Early.** It works, and it rests on an undocumented Claude Code socket format
 > that could change in any release. Claude Code, Antigravity and Hermes are
-> Seven of the eight clients were watched working end to end, three of them
-> against a local stand-in model that records what actually reached it.
-> [Clients](docs/clients.md) says which, and what each one looked like on the
-> wire. Codex is the exception: its hook is installed and waiting on a one-time
-> approval you give it with `/hooks`.
+> All eight clients were watched working end to end, three of them against a
+> local stand-in model that records what actually reached it.
+> [Clients](docs/clients.md) says what each one looked like on the wire. Every
+> client reached only through MCP is marked untested, because it is.
 
 ## Contents
 
@@ -68,24 +67,19 @@ Codex then needs one more thing, and it is easy to miss: run `codex`, then
 `/hooks`, and trust the crosstalk entries. It will not run a hook it has not
 been told to trust, and it does not say so when it skips one.
 
-### What has actually been run
+### Supported
 
-| Client | Interrupted mid-turn | Tested |
-|---|---|---|
-| Claude Code | yes | yes, across two machines |
-| Cursor | yes | yes |
-| Antigravity | yes | yes |
-| Hermes | yes | yes |
-| Qwen Code | yes | yes, against a stand-in model |
-| Kimi Code | yes | yes, against a stand-in model |
-| Goose | between turns | yes, against a stand-in model |
-| Codex | yes | **untested**, waiting on its `/hooks` approval |
+Claude Code, Codex, Cursor, Antigravity, Qwen Code, Kimi Code, Hermes, Goose.
+
+Each was watched working end to end, and each one's quirks are written down in
+[Clients](docs/clients.md). Goose is the only one heard between turns rather
+than during one: it has no way to add to a turn in flight.
 
 Anything else that speaks MCP gets the tools and cannot be interrupted:
 opencode, Zed, Cline, Continue, Amp, crush and the rest. **Untested, all of
 them.** The MCP server they would use is tested against the protocol rather than
-against any one of them, so the risk is in how a given client launches a server,
-not in the server. Point it at:
+against any one of them, so what is unknown is how a given client launches a
+stdio server, not the server. Point it at:
 
 ```
 command: /path/to/crosstalk/bin/crosstalk
