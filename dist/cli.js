@@ -4011,7 +4011,7 @@ async function installQwen() {
   fs6.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
 `);
   console.log(`hooks    ${file}`);
-  console.log(`tools    add the MCP server: qwen mcp add crosstalk ${bin} server`);
+  registerMcp("qwen", ["mcp", "add", "crosstalk", bin, "server"], bin);
 }
 async function installKimi() {
   const bin = shim2(rootFrom2(import.meta.url));
@@ -4085,7 +4085,43 @@ async function installGoose() {
   fs6.writeFileSync(path8.join(dir, "hooks", "hooks.json"), JSON.stringify({ hooks: { SessionStart: [group(`"${bin}" hook`)], Stop: [group(`"${bin}" hook`)] } }, null, 2) + `
 `);
   console.log(`hooks    ${path8.join(dir, "hooks", "hooks.json")}`);
-  console.log(`tools    add the MCP server: goose mcp add crosstalk -- ${bin} server`);
+  const gooseConf = path8.join(os5.homedir(), ".config", "goose", "config.yaml");
+  const entry = [
+    `  crosstalk:`,
+    `    enabled: true`,
+    `    type: stdio`,
+    `    name: crosstalk`,
+    `    description: Messages from other people's coding agents`,
+    `    cmd: ${bin}`,
+    `    args: [server]`,
+    `    timeout: 300`
+  ].join(`
+`);
+  let conf = "";
+  try {
+    conf = fs6.readFileSync(gooseConf, "utf8");
+  } catch {}
+  if (conf.includes(`cmd: ${bin}`)) {
+    console.log(`tools    already in ${gooseConf}`);
+  } else if (/^extensions:\n/m.test(conf)) {
+    fs6.writeFileSync(gooseConf, conf.replace(/^extensions:\n/m, `extensions:
+${entry}
+`));
+    console.log(`tools    ${gooseConf}`);
+  } else if (/^extensions:/m.test(conf)) {
+    console.log(`tools    add this under extensions: in ${gooseConf}
+
+${entry}
+`);
+  } else {
+    fs6.mkdirSync(path8.dirname(gooseConf), { recursive: true });
+    fs6.writeFileSync(gooseConf, `${conf.trimEnd()}
+
+extensions:
+${entry}
+`);
+    console.log(`tools    ${gooseConf}`);
+  }
   console.log(`
 Goose has no way to add text to a turn, so a message arrives when the agent
 tries to finish one: the hook refuses the stop and hands over the notice. That
@@ -4184,6 +4220,17 @@ Codex will not run a hook until you say so, and says nothing when it skips one.
 Start codex, run /hooks, and trust the crosstalk entries. Check it took with:
 
   crosstalk doctor`);
+}
+function registerMcp(cli, args, bin) {
+  try {
+    execFileSync4(cli, args, { stdio: "pipe" });
+    console.log(`tools    registered with ${cli} as "crosstalk"`);
+  } catch (e) {
+    const why = String(e?.stderr ?? e?.message ?? "").trim().split(`
+`)[0];
+    console.log(`tools    not registered${why ? `: ${why}` : ""}`);
+    console.log(`         run: ${cli} ${args.join(" ")}`);
+  }
 }
 async function install() {
   const who = (positional[0] ?? "").toLowerCase();

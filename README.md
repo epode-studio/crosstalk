@@ -22,11 +22,11 @@ column that no longer exists. Neither of you stopped working.
 
 > **Early.** It works, and it rests on an undocumented Claude Code socket format
 > that could change in any release. Claude Code, Antigravity and Hermes are
-> tested live end to end, and so is Cursor. The rest are built against the
-> source those clients ship, which is how three separate reasons the Codex path
-> could not work were found, none of which running it would have explained.
-> [Clients](docs/clients.md) says exactly what was watched working and what was
-> read.
+> Seven of the eight clients were watched working end to end, three of them
+> against a local stand-in model that records what actually reached it.
+> [Clients](docs/clients.md) says which, and what each one looked like on the
+> wire. Codex is the exception: its hook is installed and waiting on a one-time
+> approval you give it with `/hooks`.
 
 ## Contents
 

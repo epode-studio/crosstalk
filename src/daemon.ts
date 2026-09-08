@@ -65,6 +65,8 @@ type Registered = {
   lastStatus: string
   /** When this session last announced itself, used to break cwd ties. */
   seenAt?: number
+  /** When this session was handed the working set, so it is handed over once. */
+  openedAt?: number
 }
 
 /**
@@ -992,6 +994,10 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       // an MCP server started by another client inherits this one's environment.
       if (req.refreshOnly && !sessions.has(req.sessionId))
         return { ok: false, error: "not a session this daemon knows" }
+      // Announcing again is how a pull-mode client says it is still alive, so
+      // this runs every turn. Anything already learned about the session has to
+      // survive that, or the working set would be handed over on every turn.
+      const before = sessions.get(req.sessionId)
       sessions.set(req.sessionId, {
         sessionId: req.sessionId,
         pid: req.pid,
@@ -1000,7 +1006,8 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         socket: req.socket,
         token: req.token,
         transcript: req.transcript,
-        lastStatus: "idle",
+        lastStatus: before?.lastStatus ?? "idle",
+        openedAt: before?.openedAt,
         seenAt: Date.now(),
       })
       // Held messages are filed under the session id that was live when they
@@ -1457,6 +1464,18 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
     // A session with no inbox socket cannot be pushed to, so its hook asks
     // here instead. Returns nothing for a session the daemon can reach itself,
     // which is what stops a message arriving twice.
+    // The working set belongs to a session, not to an event. Clients disagree
+    // about which event can carry text, and on three of them the one named
+    // "session start" is not it, so asking for this on the first event that can
+    // actually deliver is the only thing that works everywhere.
+    case "opening": {
+      const reg = sessions.get(req.sessionId)
+      if (!reg || reg.openedAt) return { ok: true, opened: false }
+      reg.openedAt = Date.now()
+      persistSessions()
+      return { ok: true, opened: true }
+    }
+
     case "notices": {
       const reg = sessions.get(req.sessionId)
       if (!reg || reg.socket) return { ok: true, notice: null }

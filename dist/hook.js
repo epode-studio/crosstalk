@@ -213,7 +213,7 @@ function agyCwd() {
   return here;
 }
 var cwd = hook.cwd ?? hook.working_dir ?? hook.workspace_roots?.[0] ?? (isAgy ? agyCwd() : process.cwd());
-var DELIVERS = isGoose ? /^Stop$/i : isCursor ? /^(sessionStart|beforeSubmitPrompt|preToolUse|postToolUse|postToolUseFailure)$/ : /^(SessionStart|UserPromptSubmit|PreToolUse|PostToolUse|PreInvocation|pre_llm_call)$/i;
+var DELIVERS = isGoose ? /^Stop$/i : isKimi ? /^UserPromptSubmit$/ : isCursor ? /^(sessionStart|beforeSubmitPrompt|preToolUse|postToolUse|postToolUseFailure)$/ : /^(SessionStart|UserPromptSubmit|PreToolUse|PostToolUse|PreInvocation|pre_llm_call)$/i;
 if (!loadIdentity() || !sessionId) {
   process.stdout.write(JSON.stringify(isGoose ? { decision: "allow" } : isAgy || isHermes || isKimi || isCursor ? {} : { continue: true }));
   process.exit(0);
@@ -290,24 +290,23 @@ var say = (extra) => {
 };
 if (!isSessionStart && (/^PreInvocation$/i.test(eventName) || /^(pre_llm_call|on_session_start)$/.test(eventName)))
   await registerSession();
-if (isSessionStart) {
+if (isSessionStart)
   await registerSession();
-  if (!DELIVERS.test(eventName))
-    say();
-  try {
-    const [f, t, n] = await Promise.all([
-      request({ op: "facts", cwd }, 6000).catch(() => null),
-      request({ op: "tasks" }, 6000).catch(() => null),
-      socket ? Promise.resolve(null) : pendingNotice()
-    ]);
-    const parts = [f?.digest, t?.digest, n].filter(Boolean);
-    say(parts.length ? parts.join(`
-
-`) : undefined);
-  } catch {
-    say();
-  }
-}
 if (!DELIVERS.test(eventName))
   say();
-say(await pendingNotice() ?? undefined);
+if (!isSessionStart)
+  await registerSession();
+try {
+  const opening = await request({ op: "opening", sessionId }, 6000).catch(() => null);
+  const [f, t, n] = await Promise.all([
+    opening?.opened ? request({ op: "facts", cwd }, 6000).catch(() => null) : null,
+    opening?.opened ? request({ op: "tasks" }, 6000).catch(() => null) : null,
+    pendingNotice()
+  ]);
+  const parts = [f?.digest, t?.digest, n].filter(Boolean);
+  say(parts.length ? parts.join(`
+
+`) : undefined);
+} catch {
+  say();
+}

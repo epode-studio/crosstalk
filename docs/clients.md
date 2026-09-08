@@ -35,20 +35,30 @@ Kimi Code is the one client that cannot be recognised from what it sends, since
 its payload is identical to Claude Code's. Its config names it instead, with
 `--client kimi`.
 
-Then one rule that matters more than it looks. Asking the daemon for a notice
-consumes it, so an event that cannot deliver must not ask: it would take the
-notice and drop it. Three clients make that concrete. Hermes reads a hook's
-answer on `pre_llm_call` and nowhere else. In Codex the `Stop` event has no
-`hookSpecificOutput` field at all, so a notice returned there is not ignored, it
-invalidates the object it arrived in. And Goose is the exact reverse: `Stop` is
-the only event that can put anything in front of its model. So the events that
-ask are:
+### The rule that matters most
 
-```
-Goose            Stop
-everything else  SessionStart  UserPromptSubmit  PreToolUse  PostToolUse
-                 PreInvocation  pre_llm_call
-```
+Asking the daemon for a notice consumes it, so an event that cannot deliver must
+not ask: it would take the notice and drop it. Which events those are differs
+per client, and not in the way the names suggest.
+
+| Client | Events that can carry text |
+|---|---|
+| Claude Code, Codex, Qwen | `SessionStart` `UserPromptSubmit` `PreToolUse` `PostToolUse` |
+| Cursor | `sessionStart` `beforeSubmitPrompt` `preToolUse` `postToolUse` `postToolUseFailure` |
+| Antigravity | `PreInvocation` |
+| Hermes | `pre_llm_call` |
+| Kimi Code | `UserPromptSubmit` |
+| Goose | `Stop` |
+
+Three of them cannot deliver on their own session-start event. Kimi renders a
+hook result for `UserPromptSubmit` and no other event. Hermes reads an answer
+only on `pre_llm_call`. Goose reads one only as a refusal to stop. In Codex the
+reverse holds: `Stop` has no `hookSpecificOutput` field at all, so a notice
+returned there does not get ignored, it invalidates the whole object.
+
+So the working set of facts and tasks is asked for **by session, not by event**.
+The daemon hands it over once, to whichever event gets there first, and every
+session-start hook does nothing but say the session exists.
 
 ### Claude Code
 
@@ -156,66 +166,44 @@ Its own reference is on disk at
 
 ## How honest this page is
 
-Everything below was either watched working on this machine, or read out of the
-source the client actually ships. Nothing here is from a client's documentation
-alone, because on two of them the documentation was wrong.
+Seven of the eight were watched working end to end. Where a client had no
+credentials on this machine, it was pointed at a local stand-in model that
+records the request body, so what reached the model was read off the wire rather
+than inferred from a client's own output.
 
-**Claude Code** is tested end to end across two physical machines: pairing,
-presence, messages, rooms, questions and answers.
+| Client | Verified |
+|---|---|
+| **Claude Code** | live, across two physical machines |
+| **Antigravity (`agy`)** | live |
+| **Hermes 0.16.0** | live |
+| **Cursor 2026.08.11** | live |
+| **Qwen Code 0.23.0** | live, against a stand-in model |
+| **Goose 1.49.0** | live, against a stand-in model |
+| **Kimi Code 0.36.0** | live, against a stand-in model |
+| **Codex 0.153.4** | hook installed, waiting on `/hooks` |
 
-**Antigravity (`agy`)** is tested live. A session registers, a posted message
-reaches it mid-turn as an injected step, and `crosstalk_read` returns the content
-through the MCP server.
+What each one looked like on the wire:
 
-**Hermes 0.16.0** is tested live. A session registers on `on_session_start`, and
-the first `pre_llm_call` delivers the facts, the tasks and the pending-message
-notice, all three quoted back by the model.
+- **Qwen** wraps it as `<qwen:session-start-context hidden="true">`, and
+  HTML-escapes the contents, so the tags arrive as `&lt;crosstalk-facts&gt;`.
+- **Goose** sends it as a `user` message reading `Stop hook \`crosstalk\` blocked
+  ending this turn:` followed by the notice, tags intact.
+- **Kimi** sends it as `<hook_result hook_event="UserPromptSubmit">`.
+- **Cursor** and **Hermes** append it to the user message directly.
 
-**Cursor 2026.08.11 (`cursor-agent`)** is tested live. A session registers, and
-the facts, the tasks and the pending-message notice all arrive and were quoted
-back by the model. Note it needs `--trust` for a directory in headless mode.
+**Codex** is the one still open, and not for want of trying. It reports
+crosstalk's handlers through its own `hooks/list` as
+`"trustStatus": "untrusted"`, and it does not run an untrusted hook, or say that
+it skipped one. Every user meets this, so `crosstalk install codex` says what to
+do and `crosstalk doctor` checks it. Three separate reasons it could not have
+worked were found and fixed first, all by reading
+`codex-rs/hooks/src/schema.rs` rather than by running it: `deny_unknown_fields`
+on every output struct, `Stop` having no `hookSpecificOutput`, and the trust
+gate itself.
 
-**Codex 0.153.4** runs, but has not delivered, and the reason is confirmed
-against its own `hooks/list`: crosstalk's handlers come back
-`"trustStatus": "untrusted"`, and Codex never executes an untrusted hook. The
-`hook: SessionStart` lines in its output were a different, already-trusted hook.
-This is not specific to this machine: **every user hits it**, which is why
-`crosstalk install codex` says so and `crosstalk doctor` checks for it.
-
-Two things that would have broken it anyway are fixed, both found in
-`codex-rs/hooks/src/schema.rs`. Every output struct is `deny_unknown_fields`,
-and the allowed top-level fields are only `continue`, `stopReason`,
-`suppressOutput`, `systemMessage` and `hookSpecificOutput`. And `Stop` has no
-`hookSpecificOutput` at all. `test/e2e.sh` checks every event against that list.
-
-**Qwen Code 0.23.0** is half tested and fully read. Live: the hook fires and
-registers a session with the right working directory. In source,
-`Client.fireSessionStartHook` returns `output.getAdditionalContext()` and
-applies it to the session, so `SessionStart` really is a delivery point there
-and the shape crosstalk sends is the shape it wants. Not seen end to end because
-this machine has no Qwen auth configured.
-
-**Goose 1.49.0** is read, not run: it exits at `No provider configured` before
-any hook fires. Its own docs say hooks cannot inject context and that is true as
-stated, but it undersells what is possible. In
-`crates/goose/src/agents/state_machine/ops_stop_hook.rs`, a `Stop` hook that
-answers `{"decision":"block","reason":"…"}` makes Goose build
-`Message::user().with_text(reason).with_visibility(false, true)` and push it into
-the conversation: hidden from the person, read by the model. So Goose can be
-reached, just at the end of a turn rather than during one, and it gets no working
-set of facts on start. Note that in `classify_output` an exit-0 object with no
-`decision` key counts as the hook having *failed*, which is why crosstalk says
-`{"decision":"allow"}` rather than staying quiet.
-
-**Kimi Code 0.36.0** is read, not run: this machine is not logged in and Kimi
-exits before running a hook. Its config is a TOML `[[hooks]]` array with `event`,
-`command`, `matcher` and `timeout`; the payload is snake_case with
-`hook_event_name`, `session_id` and `cwd`; and `renderHookResult` wraps a
-returned `message` in a `<hook_result hook_event="…">` tag that goes to the
-model.
-
-If any of them misbehaves, `bin/crosstalk hook` reads a payload on stdin and
-prints its answer, so it is a one-line thing to check.
+Nothing on this page comes from a client's documentation alone. On two of them
+the documentation was wrong: Goose's says hooks cannot inject context, and
+Qwen's implies `additionalContext` behaves the same everywhere.
 
 ## One daemon per machine
 

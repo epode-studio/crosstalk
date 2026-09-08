@@ -1587,6 +1587,7 @@ async function handle(req, sock) {
     case "register": {
       if (req.refreshOnly && !sessions.has(req.sessionId))
         return { ok: false, error: "not a session this daemon knows" };
+      const before = sessions.get(req.sessionId);
       sessions.set(req.sessionId, {
         sessionId: req.sessionId,
         pid: req.pid,
@@ -1595,7 +1596,8 @@ async function handle(req, sock) {
         socket: req.socket,
         token: req.token,
         transcript: req.transcript,
-        lastStatus: "idle",
+        lastStatus: before?.lastStatus ?? "idle",
+        openedAt: before?.openedAt,
         seenAt: Date.now()
       });
       const liveIds = new Set(listLocalSessions().map((s) => s.sessionId));
@@ -2018,6 +2020,14 @@ async function handle(req, sock) {
         replyTo: req.replyTo
       };
       return sendEnvelope(label, env);
+    }
+    case "opening": {
+      const reg = sessions.get(req.sessionId);
+      if (!reg || reg.openedAt)
+        return { ok: true, opened: false };
+      reg.openedAt = Date.now();
+      persistSessions();
+      return { ok: true, opened: true };
     }
     case "notices": {
       const reg = sessions.get(req.sessionId);

@@ -142,18 +142,24 @@ const cwd: string =
  *
  * Asking the daemon for a notice consumes it, so an event that cannot deliver
  * must not ask: it would take the notice and drop it. Three clients make this
- * concrete. Hermes reads a hook's answer on pre_llm_call and nowhere else.
- * Codex parses each event against its own schema with deny_unknown_fields,
- * where Stop has no hookSpecificOutput field at all, so a notice returned there
- * does not get ignored, it throws away the whole object it arrived in. And
- * Goose is the mirror image: Stop is the only event that puts anything in front
- * of its model, by refusing to let the turn end.
+ * concrete. Hermes reads a hook's answer on pre_llm_call and nowhere else, and
+ * Kimi Code only on UserPromptSubmit: it has one renderer and that is the event
+ * it names. Codex parses each event against its own schema with
+ * deny_unknown_fields, where Stop has no hookSpecificOutput field at all, so a
+ * notice returned there does not get ignored, it throws away the whole object
+ * it arrived in. And Goose is the mirror image: Stop is the only event that
+ * puts anything in front of its model, by refusing to let the turn end.
+ *
+ * Three of them therefore cannot deliver on their own session-start event,
+ * which is why the working set is asked for by session rather than by event.
  */
 const DELIVERS = isGoose
   ? /^Stop$/i
-  : isCursor
-    ? /^(sessionStart|beforeSubmitPrompt|preToolUse|postToolUse|postToolUseFailure)$/
-    : /^(SessionStart|UserPromptSubmit|PreToolUse|PostToolUse|PreInvocation|pre_llm_call)$/i
+  : isKimi
+    ? /^UserPromptSubmit$/
+    : isCursor
+      ? /^(sessionStart|beforeSubmitPrompt|preToolUse|postToolUse|postToolUseFailure)$/
+      : /^(SessionStart|UserPromptSubmit|PreToolUse|PostToolUse|PreInvocation|pre_llm_call)$/i
 
 /** Nothing to do until someone has paired. */
 if (!loadIdentity() || !sessionId) {
@@ -276,31 +282,27 @@ const say = (extra?: string) => {
 if (!isSessionStart && (/^PreInvocation$/i.test(eventName) || /^(pre_llm_call|on_session_start)$/.test(eventName)))
   await registerSession()
 
-if (isSessionStart) {
-  await registerSession()
-  // Goose is the one client whose session start cannot carry text: only
-  // PreToolUse and Stop are asked for a decision, and only a Stop refusal puts
-  // anything in front of the model. So it registers here and waits, and its
-  // messages arrive when a turn tries to end. It gets no working set.
-  if (!DELIVERS.test(eventName)) say()
-  // What the room already knows, so nobody explains it again. A session with no
-  // inbox socket is only ever reached from here, so anything already waiting has
-  // to come along too, or it would sit until the next event.
-  try {
-    const [f, t, n] = await Promise.all([
-      request({ op: "facts", cwd }, 6000).catch(() => null),
-      request({ op: "tasks" }, 6000).catch(() => null),
-      socket ? Promise.resolve(null) : pendingNotice(),
-    ])
-    const parts = [f?.digest, t?.digest, n].filter(Boolean)
-    say(parts.length ? parts.join("\n\n") : undefined)
-  } catch {
-    say()
-  }
-}
+if (isSessionStart) await registerSession()
 
+// An event that cannot deliver is done here, having only made itself known.
 if (!DELIVERS.test(eventName)) say()
 
-// Every remaining event is a chance to hand over anything waiting. The daemon
-// returns nothing for a session it can push to directly.
-say((await pendingNotice()) ?? undefined)
+// Which leaves the events that can. The working set goes out on the first of
+// them rather than on session start, because on Kimi, Goose and Hermes the
+// event named "session start" is not one that can carry text, and asking there
+// would spend the message on an answer nobody reads. The daemon hands it over
+// once per session, so it does not matter which event gets there first.
+if (!isSessionStart) await registerSession()
+
+try {
+  const opening = await request({ op: "opening", sessionId }, 6000).catch(() => null)
+  const [f, t, n] = await Promise.all([
+    opening?.opened ? request({ op: "facts", cwd }, 6000).catch(() => null) : null,
+    opening?.opened ? request({ op: "tasks" }, 6000).catch(() => null) : null,
+    pendingNotice(),
+  ])
+  const parts = [f?.digest, t?.digest, n].filter(Boolean)
+  say(parts.length ? parts.join("\n\n") : undefined)
+} catch {
+  say()
+}

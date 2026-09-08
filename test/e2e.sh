@@ -186,16 +186,19 @@ has "$DELIVER" "continue" "a delivery event answers cleanly"
 
 # agy speaks a different dialect on both sides: camelCase protojson in, steps
 # out, and no event name in the payload, so hooks.json passes it as an argument.
+# The working set is handed over once per session, on the first event that can
+# carry it, so the fact has to exist before that event rather than after.
+a facts add "the agy probe ran" >/dev/null 2>&1
 AGY_IN='{"conversationId":"agy1","workspacePaths":["/tmp"],"invocationNum":0,"modelName":"gemini-3.8-flash-high"}'
 AGY=$(echo "$AGY_IN" | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts PreInvocation 2>&1)
 case "$AGY" in
   *continue*|*hookSpecificOutput*) bad "agy gets steps, not Claude Code's shape" ;;
   *) ok "agy gets steps, not Claude Code's shape" ;;
 esac
-a facts add "the agy probe ran" >/dev/null 2>&1
-AGY2=$(echo "$AGY_IN" | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts PreInvocation 2>&1)
-has "$AGY2" "injectSteps" "agy start injects the working set"
-has "$AGY2" "ephemeralMessage" "agy injection uses an ephemeral step"
+has "$AGY" "injectSteps" "agy start injects the working set"
+has "$AGY" "ephemeralMessage" "agy injection uses an ephemeral step"
+AGY3=$(echo "$AGY_IN" | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts PreInvocation 2>&1)
+check "$AGY3" "{}" "the working set is handed over once, not every turn"
 
 # Codex parses each event against its own schema with deny_unknown_fields, so a
 # stray key does not get ignored, it throws away the whole object. These are the
@@ -223,9 +226,13 @@ case "$STOP" in
   *) ok "Stop carries no hookSpecificOutput" ;;
 esac
 
-# Kimi's payload is indistinguishable from Claude Code's, so its config names it.
-KIMI=$(echo '{"session_id":"h1","cwd":"/tmp","hook_event_name":"SessionStart"}' | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts --client kimi 2>&1)
-has "$KIMI" '"message"' "kimi gets a message field"
+# Kimi's payload is indistinguishable from Claude Code's, so its config names
+# it. UserPromptSubmit is the only event it renders a hook result for, so its
+# SessionStart registers and stays quiet.
+K=$(echo '{"session_id":"km1","cwd":"/tmp","hook_event_name":"SessionStart"}' | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts --client kimi 2>&1)
+check "$K" "{}" "kimi session start registers and says nothing"
+KIMI=$(echo '{"session_id":"km1","cwd":"/tmp","hook_event_name":"UserPromptSubmit"}' | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts --client kimi 2>&1)
+has "$KIMI" '"message"' "kimi delivers on UserPromptSubmit"
 case "$KIMI" in
   *hookSpecificOutput*|*continue*) bad "kimi gets message and nothing else" ;;
   *) ok "kimi gets message and nothing else" ;;

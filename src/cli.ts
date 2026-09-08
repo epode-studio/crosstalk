@@ -1167,7 +1167,7 @@ async function installQwen() {
   }
   fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + "\n")
   console.log(`hooks    ${file}`)
-  console.log(`tools    add the MCP server: qwen mcp add crosstalk ${bin} server`)
+  registerMcp("qwen", ["mcp", "add", "crosstalk", bin, "server"], bin)
 }
 
 /**
@@ -1282,7 +1282,42 @@ async function installGoose() {
     ) + "\n",
   )
   console.log(`hooks    ${path.join(dir, "hooks", "hooks.json")}`)
-  console.log(`tools    add the MCP server: goose mcp add crosstalk -- ${bin} server`)
+
+  // Goose has no command that registers an MCP server: `goose mcp` runs one of
+  // its own bundled ones. Extensions live in its config.yaml instead, and the
+  // shape is the Stdio variant of its ExtensionConfig enum.
+  const gooseConf = path.join(os.homedir(), ".config", "goose", "config.yaml")
+  const entry = [
+    `  crosstalk:`,
+    `    enabled: true`,
+    `    type: stdio`,
+    `    name: crosstalk`,
+    `    description: Messages from other people's coding agents`,
+    `    cmd: ${bin}`,
+    `    args: [server]`,
+    `    timeout: 300`,
+  ].join("\n")
+  let conf = ""
+  try {
+    conf = fs.readFileSync(gooseConf, "utf8")
+  } catch {}
+  // Match on the command, not the name: Goose discovers the hooks plugin by
+  // path and writes `crosstalk:` under `plugins:` on its own, which is not the
+  // same thing as having the tools.
+  if (conf.includes(`cmd: ${bin}`)) {
+    console.log(`tools    already in ${gooseConf}`)
+  } else if (/^extensions:\n/m.test(conf)) {
+    // Insert directly under the existing key, at the indentation its siblings
+    // already use, rather than asking someone to paste YAML by hand.
+    fs.writeFileSync(gooseConf, conf.replace(/^extensions:\n/m, `extensions:\n${entry}\n`))
+    console.log(`tools    ${gooseConf}`)
+  } else if (/^extensions:/m.test(conf)) {
+    console.log(`tools    add this under extensions: in ${gooseConf}\n\n${entry}\n`)
+  } else {
+    fs.mkdirSync(path.dirname(gooseConf), { recursive: true })
+    fs.writeFileSync(gooseConf, `${conf.trimEnd()}\n\nextensions:\n${entry}\n`)
+    console.log(`tools    ${gooseConf}`)
+  }
   console.log(`
 Goose has no way to add text to a turn, so a message arrives when the agent
 tries to finish one: the hook refuses the stop and hands over the notice. That
@@ -1412,6 +1447,26 @@ Codex will not run a hook until you say so, and says nothing when it skips one.
 Start codex, run /hooks, and trust the crosstalk entries. Check it took with:
 
   crosstalk doctor`)
+}
+
+/**
+ * Ask a client to register the MCP server, and say what to run if it will not.
+ *
+ * Worth doing rather than printing an instruction: the repo carries an
+ * .mcp.json written for Claude Code, whose ${CLAUDE_PLUGIN_ROOT} nothing else
+ * expands. A client that reads that file and no other ends up with a server
+ * pointing at a path that does not exist, and reports only that it failed to
+ * start.
+ */
+function registerMcp(cli: string, args: string[], bin: string) {
+  try {
+    execFileSync(cli, args, { stdio: "pipe" })
+    console.log(`tools    registered with ${cli} as "crosstalk"`)
+  } catch (e: any) {
+    const why = String(e?.stderr ?? e?.message ?? "").trim().split("\n")[0]
+    console.log(`tools    not registered${why ? `: ${why}` : ""}`)
+    console.log(`         run: ${cli} ${args.join(" ")}`)
+  }
 }
 
 /** Everything a client needs, per client. */
