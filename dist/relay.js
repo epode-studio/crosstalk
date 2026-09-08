@@ -322,7 +322,13 @@ var MAX_BUFFERED_PER_SENDER = 200;
 var MAX_BODY = 1 << 20;
 var state = (ws) => ws.data;
 var live = new Map;
-var buffered = new Map;
+var buffered = new Map((() => {
+  try {
+    return JSON.parse(fs.readFileSync((process.env.CROSSTALK_RELAY_STATE ?? "./crosstalk-rooms.json").replace(/\.json$/, "-buffer.json"), "utf8"));
+  } catch {
+    return [];
+  }
+})());
 var seen = new Map;
 var rate = new Map;
 var log = (...a) => console.log(new Date().toISOString(), ...a);
@@ -334,6 +340,22 @@ function send(ws, frame2) {
     ws.send(d.ch.seal(frame2));
   } catch {}
 }
+var BUFFER_FILE = (process.env.CROSSTALK_RELAY_STATE ?? "./crosstalk-rooms.json").replace(/\.json$/, "-buffer.json");
+var bufferDirty = false;
+var saveBuffer = () => {
+  if (!bufferDirty)
+    return;
+  bufferDirty = false;
+  try {
+    fs.writeFileSync(BUFFER_FILE, JSON.stringify([...buffered]), { mode: 384 });
+  } catch {}
+};
+setInterval(saveBuffer, 5000);
+for (const sig of ["SIGINT", "SIGTERM"])
+  process.on(sig, () => {
+    saveBuffer();
+    process.exit(0);
+  });
 function sweep() {
   const now = Date.now();
   for (const [key, q] of buffered) {
@@ -361,6 +383,7 @@ function drain(fp, ws) {
     if (!key.startsWith(`${fp}|`))
       continue;
     buffered.delete(key);
+    bufferDirty = true;
     for (const m of q) {
       send(ws, m.roomId ? { t: "room_deliver", roomId: m.roomId, from: m.from, body: m.body, id: m.id } : { t: "deliver", from: m.from, body: m.body, id: m.id });
       sent++;
@@ -533,6 +556,7 @@ function handleRoom(ws, d, f) {
           const q = buffered.get(key) ?? [];
           q.push({ from: me, body: f.body, id: f.id, ts: Date.now(), roomId: room.id });
           buffered.set(key, q.slice(-MAX_BUFFERED_PER_SENDER));
+          bufferDirty = true;
         }
       }
       send(ws, { t: "ack", id: f.id });
@@ -599,6 +623,7 @@ function onMessage(ws, raw) {
       const q = buffered.get(key) ?? [];
       q.push({ from: d.fp, body: f.body, id: f.id, ts: Date.now() });
       buffered.set(key, q.slice(-MAX_BUFFERED_PER_SENDER));
+      bufferDirty = true;
     }
     send(ws, { t: "ack", id: f.id });
   }

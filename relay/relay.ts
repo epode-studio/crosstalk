@@ -38,10 +38,24 @@ type State = {
 const state = (ws: Socket) => ws.data as State
 
 const live = new Map<string, Set<any>>() // fingerprint -> sockets
-const buffered = new Map<
-  string,
-  { from: string; body: string; id: string; ts: number; roomId?: string }[]
->()
+type Buffered = { from: string; body: string; id: string; ts: number; roomId?: string }
+const buffered = new Map<string, Buffered[]>(
+  (() => {
+    try {
+      return JSON.parse(
+        fs.readFileSync(
+          (process.env.CROSSTALK_RELAY_STATE ?? "./crosstalk-rooms.json").replace(
+            /\.json$/,
+            "-buffer.json",
+          ),
+          "utf8",
+        ),
+      )
+    } catch {
+      return []
+    }
+  })(),
+)
 const seen = new Map<string, number>() // msg id -> ts, for duplicate suppression
 const rate = new Map<string, number[]>() // fingerprint -> recent send timestamps
 
@@ -55,6 +69,27 @@ function send(ws: any, frame: unknown) {
     ws.send(d.ch.seal(frame))
   } catch {}
 }
+
+// The offline buffer used to live only in memory, so restarting the relay
+// threw away everything queued for a peer that was asleep.
+const BUFFER_FILE = (process.env.CROSSTALK_RELAY_STATE ?? "./crosstalk-rooms.json").replace(
+  /\.json$/,
+  "-buffer.json",
+)
+let bufferDirty = false
+const saveBuffer = () => {
+  if (!bufferDirty) return
+  bufferDirty = false
+  try {
+    fs.writeFileSync(BUFFER_FILE, JSON.stringify([...buffered]), { mode: 0o600 })
+  } catch {}
+}
+setInterval(saveBuffer, 5_000)
+for (const sig of ["SIGINT", "SIGTERM"] as const)
+  process.on(sig, () => {
+    saveBuffer()
+    process.exit(0)
+  })
 
 function sweep() {
   const now = Date.now()
@@ -80,6 +115,7 @@ function drain(fp: string, ws: Socket) {
   for (const [key, q] of [...buffered]) {
     if (!key.startsWith(`${fp}|`)) continue
     buffered.delete(key)
+    bufferDirty = true
     for (const m of q) {
       send(
         ws,
@@ -268,6 +304,7 @@ function handleRoom(ws: Socket, d: State, f: any): boolean {
           const q = buffered.get(key) ?? []
           q.push({ from: me, body: f.body, id: f.id, ts: Date.now(), roomId: room.id })
           buffered.set(key, q.slice(-MAX_BUFFERED_PER_SENDER))
+          bufferDirty = true
         }
       }
       send(ws, { t: "ack", id: f.id })
@@ -339,6 +376,7 @@ if (targets?.size) {
   const q = buffered.get(key) ?? []
   q.push({ from: d.fp!, body: f.body, id: f.id, ts: Date.now() })
   buffered.set(key, q.slice(-MAX_BUFFERED_PER_SENDER))
+  bufferDirty = true
 }
 send(ws, { t: "ack", id: f.id })
   }

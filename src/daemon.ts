@@ -22,6 +22,8 @@ import {
   saveParked,
   loadRegistered,
   saveRegistered,
+  loadOutbox,
+  saveOutbox,
   type Held,
 } from "./config.ts"
 import { pairKey, seal, open as unseal, fingerprint as fingerprintOf } from "./crypto.ts"
@@ -197,6 +199,7 @@ function connect() {
     let f: Frame
     try {
       f = channel.open(String(ev.data)) as Frame
+      lastHeard = Date.now()
     } catch {
       log("relay sent a frame this link could not open; reconnecting")
       channel = null
@@ -221,7 +224,9 @@ function connect() {
         log("no pinned relay identity; continuing unpinned")
       }
       backoff = 1000
+      lastHeard = Date.now()
       log(`relay ready as ${f.fingerprint}`)
+      flushOutbox()
       publishPresence()
       return
     }
@@ -264,14 +269,18 @@ function connect() {
 function sendEnvelope(peerLabel: string, env: Envelope): { ok: boolean; error?: string } {
   const peer = loadPeers()[peerLabel]
   if (!peer) return { ok: false, error: `not paired with "${peerLabel}"` }
-  if (!relaySend({
+  const frame = {
     t: "send",
     to: peer.fingerprint,
     id: env.id,
     body: seal(pairKey(identity!, peer), JSON.stringify(env)),
-  }))
-    return { ok: false, error: "relay not connected" }
-  return { ok: true }
+  }
+  // Presence describes a moment, so a stale one is worse than none.
+  if (env.kind === "presence") return relaySend(frame) ? { ok: true } : { ok: false, error: "relay not connected" }
+  const now = relayQueue(frame, peerLabel)
+  return now
+    ? { ok: true }
+    : { ok: true, queued: true, note: `${peerLabel} or the relay is unreachable; held and will go when the link is back` }
 }
 
 
@@ -545,10 +554,49 @@ function sendRoomKey(peerLabel: string, room: rooms.Room) {
   })
 }
 
+const OUTBOX_TTL_MS = 24 * 60 * 60_000
+const outbox = loadOutbox()
+
 const relaySend = (o: unknown) => {
   if (!ws || ws.readyState !== 1 || !channel) return false
-  ws.send(channel.seal(o))
-  return true
+  try {
+    ws.send(channel.seal(o))
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Send now, or keep it until the link is back. Presence and pings are dropped
+ * rather than queued: they describe a moment, and a stale one is worse than
+ * none.
+ */
+function relayQueue(frame: any, describe: string): boolean {
+  if (relaySend(frame)) return true
+  outbox.push({ to: describe, frame, ts: Date.now() })
+  const cutoff = Date.now() - OUTBOX_TTL_MS
+  while (outbox.length && outbox[0].ts < cutoff) outbox.shift()
+  while (outbox.length > 500) outbox.shift()
+  saveOutbox(outbox)
+  log(`relay down, held a message for ${describe} (${outbox.length} waiting)`)
+  return false
+}
+
+function flushOutbox() {
+  if (!outbox.length) return
+  const cutoff = Date.now() - OUTBOX_TTL_MS
+  const fresh = outbox.filter((m) => m.ts >= cutoff)
+  const dropped = outbox.length - fresh.length
+  outbox.length = 0
+  let sent = 0
+  for (const m of fresh) {
+    if (relaySend(m.frame)) sent++
+    else outbox.push(m)
+  }
+  saveOutbox(outbox)
+  if (sent || dropped)
+    log(`flushed ${sent} held message(s)${dropped ? `, dropped ${dropped} older than a day` : ""}`)
 }
 
 // --- idle watcher and presence -------------------------------------------------
@@ -601,7 +649,24 @@ function publishPresence() {
   }
 }
 setInterval(publishPresence, 20_000)
-setInterval(() => relaySend({ t: "ping" }), 25_000)
+let lastHeard = Date.now()
+// Overridable so the dead-link path can be tested in seconds.
+const PING_MS = Number(process.env.CROSSTALK_PING_MS ?? 25_000)
+const SILENCE_LIMIT_MS = Number(process.env.CROSSTALK_SILENCE_MS ?? 70_000)
+
+setInterval(() => {
+  relaySend({ t: "ping" })
+  // A laptop that slept leaves a socket that still says it is open while
+  // nothing crosses it. Anything sent into that is lost silently.
+  if (ws && ws.readyState === 1 && Date.now() - lastHeard > SILENCE_LIMIT_MS) {
+    log(`no answer from the relay for ${Math.round((Date.now() - lastHeard) / 1000)}s; reconnecting`)
+    channel = null
+    try {
+      ws.close()
+    } catch {}
+    ws = null
+  }
+}, PING_MS)
 
 // --- control socket ------------------------------------------------------------
 
@@ -780,13 +845,23 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
           thread: req.thread,
           room: `#${room.name}`,
         }
-        const ok = relaySend({ t: "room_send", roomId: room.id, id: env.id, body: seal(key, JSON.stringify(env)) })
-        if (!ok) return { ok: false, error: "relay not connected" }
+        const queuedNow = relayQueue(
+          { t: "room_send", roomId: room.id, id: env.id, body: seal(key, JSON.stringify(env)) },
+          `#${room.name}`,
+        )
         const recipients = Object.values(room.members).filter(
           (m) => m.state === "joined" && m.fingerprint !== myFingerprint(),
         )
         for (const m of recipients) usage.record(m.label, "sent", env.text.length)
-        return { ok: true, id: env.id, room: room.name, sentTo: recipients.map((m) => m.label) }
+        return {
+          ok: true,
+          id: env.id,
+          room: room.name,
+          sentTo: recipients.map((m) => m.label),
+          ...(queuedNow
+            ? {}
+            : { queued: true, note: "the relay is unreachable; held and will go when the link is back" }),
+        }
       }
       const [label, session] = String(req.to).split("/")
       const env: Envelope = {

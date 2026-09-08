@@ -22,6 +22,7 @@ var P = {
   queue: path.join(ROOT, "queue.json"),
   parked: path.join(ROOT, "parked.json"),
   sessions: path.join(ROOT, "sessions.json"),
+  outbox: path.join(ROOT, "outbox.json"),
   usage: path.join(ROOT, "usage.json"),
   daemonSock: path.join(ROOT, "daemon.sock"),
   daemonLock: path.join(ROOT, "daemon.lock"),
@@ -100,6 +101,8 @@ function policyFor(label, policy = loadPolicy()) {
 var loadRelay = () => readJson(P.relay, { url: process.env.CROSSTALK_RELAY ?? "ws://127.0.0.1:8787" });
 var loadQueue = () => readJson(P.queue, {});
 var saveQueue = (q) => writeJson(P.queue, q);
+var loadOutbox = () => readJson(P.outbox, []);
+var saveOutbox = (o) => writeJson(P.outbox, o);
 var loadRegistered = () => readJson(P.sessions, {});
 var saveRegistered = (s) => writeJson(P.sessions, s);
 var loadParked = () => readJson(P.parked, []);
@@ -374,6 +377,7 @@ var P2 = {
   queue: path4.join(ROOT2, "queue.json"),
   parked: path4.join(ROOT2, "parked.json"),
   sessions: path4.join(ROOT2, "sessions.json"),
+  outbox: path4.join(ROOT2, "outbox.json"),
   usage: path4.join(ROOT2, "usage.json"),
   daemonSock: path4.join(ROOT2, "daemon.sock"),
   daemonLock: path4.join(ROOT2, "daemon.lock"),
@@ -592,6 +596,7 @@ function connect() {
     let f;
     try {
       f = channel.open(String(ev.data));
+      lastHeard = Date.now();
     } catch {
       log("relay sent a frame this link could not open; reconnecting");
       channel = null;
@@ -610,7 +615,9 @@ function connect() {
         log("no pinned relay identity; continuing unpinned");
       }
       backoff = 1000;
+      lastHeard = Date.now();
       log(`relay ready as ${f.fingerprint}`);
+      flushOutbox();
       publishPresence();
       return;
     }
@@ -658,14 +665,16 @@ function sendEnvelope(peerLabel, env) {
   const peer = loadPeers()[peerLabel];
   if (!peer)
     return { ok: false, error: `not paired with "${peerLabel}"` };
-  if (!relaySend({
+  const frame2 = {
     t: "send",
     to: peer.fingerprint,
     id: env.id,
     body: seal(pairKey(identity, peer), JSON.stringify(env))
-  }))
-    return { ok: false, error: "relay not connected" };
-  return { ok: true };
+  };
+  if (env.kind === "presence")
+    return relaySend(frame2) ? { ok: true } : { ok: false, error: "relay not connected" };
+  const now = relayQueue(frame2, peerLabel);
+  return now ? { ok: true } : { ok: true, queued: true, note: `${peerLabel} or the relay is unreachable; held and will go when the link is back` };
 }
 var myFingerprint = () => fingerprint(identity.ed.pub);
 function onRoster(r) {
@@ -895,12 +904,49 @@ function sendRoomKey(peerLabel, room) {
     }
   });
 }
+var OUTBOX_TTL_MS = 24 * 60 * 60000;
+var outbox = loadOutbox();
 var relaySend = (o) => {
   if (!ws || ws.readyState !== 1 || !channel)
     return false;
-  ws.send(channel.seal(o));
-  return true;
+  try {
+    ws.send(channel.seal(o));
+    return true;
+  } catch {
+    return false;
+  }
 };
+function relayQueue(frame2, describe) {
+  if (relaySend(frame2))
+    return true;
+  outbox.push({ to: describe, frame: frame2, ts: Date.now() });
+  const cutoff = Date.now() - OUTBOX_TTL_MS;
+  while (outbox.length && outbox[0].ts < cutoff)
+    outbox.shift();
+  while (outbox.length > 500)
+    outbox.shift();
+  saveOutbox(outbox);
+  log(`relay down, held a message for ${describe} (${outbox.length} waiting)`);
+  return false;
+}
+function flushOutbox() {
+  if (!outbox.length)
+    return;
+  const cutoff = Date.now() - OUTBOX_TTL_MS;
+  const fresh = outbox.filter((m) => m.ts >= cutoff);
+  const dropped = outbox.length - fresh.length;
+  outbox.length = 0;
+  let sent = 0;
+  for (const m of fresh) {
+    if (relaySend(m.frame))
+      sent++;
+    else
+      outbox.push(m);
+  }
+  saveOutbox(outbox);
+  if (sent || dropped)
+    log(`flushed ${sent} held message(s)${dropped ? `, dropped ${dropped} older than a day` : ""}`);
+}
 var lastStatus = new Map;
 setInterval(() => {
   for (const s of listLocalSessions()) {
@@ -947,7 +993,20 @@ function publishPresence() {
   }
 }
 setInterval(publishPresence, 20000);
-setInterval(() => relaySend({ t: "ping" }), 25000);
+var lastHeard = Date.now();
+var PING_MS = Number(process.env.CROSSTALK_PING_MS ?? 25000);
+var SILENCE_LIMIT_MS = Number(process.env.CROSSTALK_SILENCE_MS ?? 70000);
+setInterval(() => {
+  relaySend({ t: "ping" });
+  if (ws && ws.readyState === 1 && Date.now() - lastHeard > SILENCE_LIMIT_MS) {
+    log(`no answer from the relay for ${Math.round((Date.now() - lastHeard) / 1000)}s; reconnecting`);
+    channel = null;
+    try {
+      ws.close();
+    } catch {}
+    ws = null;
+  }
+}, PING_MS);
 async function handle(req, sock) {
   switch (req.op) {
     case "subscribe": {
@@ -1119,13 +1178,17 @@ async function handle(req, sock) {
           thread: req.thread,
           room: `#${room.name}`
         };
-        const ok = relaySend({ t: "room_send", roomId: room.id, id: env2.id, body: seal(key, JSON.stringify(env2)) });
-        if (!ok)
-          return { ok: false, error: "relay not connected" };
+        const queuedNow = relayQueue({ t: "room_send", roomId: room.id, id: env2.id, body: seal(key, JSON.stringify(env2)) }, `#${room.name}`);
         const recipients = Object.values(room.members).filter((m) => m.state === "joined" && m.fingerprint !== myFingerprint());
         for (const m of recipients)
           record(m.label, "sent", env2.text.length);
-        return { ok: true, id: env2.id, room: room.name, sentTo: recipients.map((m) => m.label) };
+        return {
+          ok: true,
+          id: env2.id,
+          room: room.name,
+          sentTo: recipients.map((m) => m.label),
+          ...queuedNow ? {} : { queued: true, note: "the relay is unreachable; held and will go when the link is back" }
+        };
       }
       const [label, session] = String(req.to).split("/");
       const env = {

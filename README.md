@@ -401,6 +401,30 @@ already share with whoever invited them.
 [`deploy/`](deploy/) runs a relay permanently if you want invites to be four
 words with no address on the end.
 
+## When things go wrong
+
+**The machine hosting the relay goes to sleep.** Everyone else keeps their
+messages. A send while the relay is unreachable is held on your own machine and
+goes out when the link returns, for up to a day. Messages already at the relay
+for someone offline survive a relay restart too. What does not survive is the
+machine hosting the relay being switched off for more than a day.
+
+A sleeping laptop leaves the other side holding a socket that still reports as
+open while nothing crosses it, which would swallow everything sent into it. The
+daemon watches for that: no answer for seventy seconds and it drops the link and
+reconnects.
+
+**You are not on the same network.** A LAN address only works within one
+network, and guest wifi usually isolates clients from each other even on the
+same SSID. There is no NAT traversal. Two options: install Tailscale on both
+machines, after which `--host` hands out a tailnet address that works from
+anywhere, or run a relay somewhere permanent, which [`deploy/`](deploy/) covers.
+
+**Something else.** `/crosstalk:doctor` checks each part in order and names the
+one that is broken, including whether the macOS firewall is dropping incoming
+connections to the relay. [`test/two-machines.md`](test/two-machines.md) works
+through the rest.
+
 ## Limits
 
 - The session inbox socket format is undocumented and could change on any Claude
@@ -410,6 +434,7 @@ words with no address on the end.
   get the new key passed on by someone who is, so there is a short gap.
 - Whoever runs the relay sees who talks to whom and who is in which room. Never
   any content.
+- Held messages expire after a day, on your machine and at the relay.
 
 ## Development
 

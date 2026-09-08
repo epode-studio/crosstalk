@@ -20,6 +20,7 @@ export const P = {
   queue: path.join(ROOT, "queue.json"),
   parked: path.join(ROOT, "parked.json"),
   sessions: path.join(ROOT, "sessions.json"),
+  outbox: path.join(ROOT, "outbox.json"),
   usage: path.join(ROOT, "usage.json"),
   daemonSock: path.join(ROOT, "daemon.sock"),
   daemonLock: path.join(ROOT, "daemon.lock"),
@@ -228,6 +229,14 @@ export const saveQueue = (q: Record<string, Held[]>) => writeJson(P.queue, q)
  * fires once, so an in-memory list left a running session unreachable after
  * every daemon restart.
  */
+/**
+ * Messages written while the relay was unreachable. Without this a send during
+ * the other machine's sleep simply failed and the text was gone.
+ */
+export type Outbound = { to: string; frame: unknown; ts: number }
+export const loadOutbox = (): Outbound[] => readJson(P.outbox, [])
+export const saveOutbox = (o: Outbound[]) => writeJson(P.outbox, o)
+
 export const loadRegistered = (): Record<string, any> => readJson(P.sessions, {})
 export const saveRegistered = (s: Record<string, any>) => writeJson(P.sessions, s)
 

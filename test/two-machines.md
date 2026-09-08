@@ -67,11 +67,19 @@ firewall, or the wrong address.
 machines that disagree wildly about the time will drop messages, and the
 receiving daemon logs exactly that in `~/.claude/crosstalk/daemon.log`.
 
-**Sleep.** The relay lives on one machine. When that machine sleeps, nothing
-routes and the other side's daemon retries with a backoff until it returns.
-Messages sent in the meantime fail at the sender rather than queueing, because
-the relay is what does the queueing. If both of you sleep unpredictably, host a
-relay somewhere that does not: see [`../deploy/`](../deploy/).
+**Sleep.** The relay lives on one machine. When that machine sleeps nothing
+routes, and the other side retries with a backoff until it returns. Nothing is
+lost: a send while the link is down is held on the sending machine and goes when
+it comes back, and anything already sitting at the relay for an offline peer
+survives a relay restart. Both expire after a day.
+
+A sleeping laptop is worse than a disconnected one, because it leaves the far
+end holding a socket that still reports as open while nothing crosses it. The
+daemon treats seventy seconds of silence as a dead link and reconnects, so this
+resolves itself within about a minute and a half of the machine waking.
+
+If both of you sleep unpredictably, host a relay somewhere that does not:
+[`../deploy/`](../deploy/).
 
 ## 2. With one computer and Docker
 
