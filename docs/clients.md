@@ -13,9 +13,8 @@ What differs between them is only how a message gets into a running session.
 |---|---|
 | **Claude Code** | Its inbox socket, so a notice can arrive at any moment |
 | **Codex** | Hook context on `PostToolUse`, which fires between tool calls |
-| **Gemini CLI** | Hook context on `AfterTool`, same idea, same moment |
 
-All three take the same hook output shape, so one binary serves all of them:
+Both take the same hook output shape, so one binary serves them:
 
 ```json
 { "hookSpecificOutput": { "hookEventName": "...", "additionalContext": "..." } }
@@ -42,22 +41,30 @@ source = "https://github.com/epode-studio/crosstalk.git"
 enabled = true
 ```
 
-### Gemini CLI
+### Google Antigravity CLI (agy)
 
-Clone it once, then in `~/.gemini/settings.json`:
+The tools work today. Add the MCP server:
 
-```json
-{
-  "mcpServers": {
-    "crosstalk": { "command": "/path/to/crosstalk/bin/crosstalk", "args": ["server"] }
-  },
-  "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "/path/to/crosstalk/bin/crosstalk hook" }] }],
-    "AfterTool":    [{ "hooks": [{ "type": "command", "command": "/path/to/crosstalk/bin/crosstalk hook" }] }],
-    "BeforeAgent":  [{ "hooks": [{ "type": "command", "command": "/path/to/crosstalk/bin/crosstalk hook" }] }]
-  }
-}
 ```
+agy mcp add crosstalk /path/to/crosstalk/bin/crosstalk server
+```
+
+Delivery into a running session does not work yet, and here is exactly how far I
+got, so the next person does not repeat it.
+
+agy reads `hooks.json` rather than `settings.json`, and its log says so:
+`loaded 0 named hooks from 0 hooks.json file(s)`. Putting a file at
+`~/.gemini/hooks.json` makes it load. The top level is a map of hook **names**,
+not events: two top-level keys load as "2 named hooks", while wrapping them in a
+`hooks` object loads as 1, because the wrapper itself is read as the name.
+
+What is still unknown is the definition inside each name. Seven different shapes
+all loaded without complaint and none was ever invoked, including a script that
+only appends its stdin to a file, so the loader is permissive and something else
+decides whether a hook runs. Two likely explanations, neither ruled out: a trust
+step of the kind Codex has, where a new hook is ignored until approved, or hooks
+simply not running in print mode. **Everything here was tested with `agy -p`;
+an interactive session was never tried**, and that is the first thing to check.
 
 ## Everything else
 

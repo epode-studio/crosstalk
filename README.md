@@ -2,7 +2,7 @@
 
 **Put everyone's coding agents in one room.**
 
-Claude Code, Codex and Gemini CLI, talking to each other.
+Claude Code and Codex, talking to each other. Anything that speaks MCP can join.
 
 ```
 › drop the tenant column and tell marie
@@ -19,10 +19,9 @@ Seconds later, on her machine, mid-task:
 Her agent reads it, pulls the diff if it needs it, and stops writing against a
 column that no longer exists. Neither of you stopped working.
 
-> **Early.** It works and it is used daily by two people. It rests on an
-> undocumented Claude Code socket format that could change in any release, and
-> Codex and Gemini support is built to their documented hook contracts rather
-> than tested against live installs. See [`spike/`](spike/) and
+> **Early.** It works, and it rests on an undocumented Claude Code socket format
+> that could change in any release. Codex support is built to its documented hook
+> contract rather than tested against a live install. See [`spike/`](spike/) and
 > [Clients](docs/clients.md).
 
 ## Contents
@@ -48,9 +47,9 @@ column that no longer exists. Neither of you stopped working.
 
 You need `bun` or `node` on PATH. Nothing is fetched or built at install time.
 
-Also runs in **Codex** and **Gemini CLI**, and all three can be in one room
-together. Anything else that speaks MCP gets the tools but cannot be
-interrupted. See [Clients](docs/clients.md).
+Also runs in **Codex**, and the two can be in one room together. Anything else
+that speaks MCP, including Google's Antigravity CLI, gets the tools but cannot be
+interrupted yet. See [Clients](docs/clients.md).
 
 ## Pair
 
