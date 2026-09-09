@@ -13,23 +13,34 @@ be selected, and so a search for it finds something.
 
 ## Making them
 
-Open the link, screenshot, save as `assets/<name>-light.png` and
-`assets/<name>-dark.png`. The `.txt` files here are the source, so a snippet can
-be regenerated without retyping it.
+Open the link, **Export Image → Save SVG**, then run it through the slimmer:
 
-Settings baked into the links: no background, `Terminal` title, 32px padding.
-The only difference between the pair is `darkMode`.
+```
+bun scripts/slim-svg.ts assets/1-you-dark.svg
+```
+
+ray.so embeds every font it offers rather than the ones it used: eleven
+families, of which the image references one. That is 85% of a 1.3 MB export.
+Stripping the unused faces takes it to about 190 KB with no visible change.
+
+The `.txt` files here are the source, so a snippet can be regenerated without
+retyping it, and `titles.json` holds the window title for each.
+
+Settings are baked into the links: no background, 16px padding, plaintext (so
+nothing is syntax-coloured as if it were C#), the sunset theme, and a window
+title in the shape Claude Code writes, `<task> — node ‹ claude`. The only
+difference within a pair is `darkMode`.
 
 ## Why a pair
 
-ray.so bakes the text colour into the image, and a transparent PNG of dark grey
+ray.so bakes the text colour into the image, and a transparent SVG of dark grey
 text vanishes on a dark README. The same `<picture>` swap the logo uses puts the
 right one in front of the right reader:
 
 ```html
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/3-peers-dark.png">
-  <img src="assets/3-peers-light.png" alt="crosstalk peers, showing marie online with two sessions">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/3-peers-dark.svg">
+  <img src="assets/3-peers-light.svg" alt="crosstalk peers, showing marie online with two sessions">
 </picture>
 ```
 
@@ -43,10 +54,3 @@ Nothing tests an image. The prose in this README is checked against the code by
 `test/e2e.sh`, and these four are not, so they will go stale silently. If the
 CLI's output changes, regenerate from the `.txt` here rather than editing a
 screenshot.
-
-## SVG probe
-
-Temporary. Below is a ray.so SVG embedded the way the README would embed one.
-If it is blank, GitHub stripped the `foreignObject` and SVG is not an option.
-
-<img src="../svg-probe.svg" width="704" alt="ray.so svg probe">
