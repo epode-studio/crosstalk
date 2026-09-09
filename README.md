@@ -129,9 +129,18 @@ put it on your PATH once:
 
 Claude Code, Codex, Cursor, Antigravity, Qwen Code, Kimi Code, Hermes, Goose.
 
-Each was watched working end to end, and each one's quirks are written down in
-[Clients](docs/clients.md). Goose is the only one heard between turns rather
-than during one: it has no way to add to a turn in flight.
+Each speaks its own hook dialect, and each dialect is covered by `test/e2e.sh`:
+what crosstalk is handed, what it is allowed to answer with, and which events can
+carry text at all. Those assertions run on every change. Each client's quirks are
+written down in [Clients](docs/clients.md). Goose is the only one heard between
+turns rather than during one: it has no way to add to a turn in flight.
+
+**What that does and does not prove.** The contract is tested continuously. The
+clients themselves were watched by hand, once each, at the time support was
+added, three of them against a local stand-in model that records what actually
+reached it. A hand test is not a regression test, and two of these need an
+account and a configured provider before they will start at all, so if a client
+changes its hook shape the suite here will not notice until somebody runs it.
 
 Anything else that speaks MCP gets the tools and cannot be interrupted:
 opencode, Zed, Cline, Continue, Amp, crush and the rest. **Untested, all of
@@ -147,11 +156,8 @@ args:    ["server"]
 ```
 
 > **Early.** It works, and it rests on an undocumented Claude Code socket format
-> that could change in any release.
->
-> All eight clients were watched working end to end, three of them against a
-> local stand-in model that records what actually reached it. Every client
-> reached only through MCP is marked untested, because it is.
+> that could change in any release. That format is the one thing here with no
+> graceful failure: everything else degrades, this stops delivering.
 
 <br>
 
@@ -626,8 +632,25 @@ bun run typecheck
 bash test/e2e.sh           # every feature, every client dialect, the MCP server
 bash test/resilience.sh    # a sleeping relay host, catch-up, two daemons at once
 bash test/docker/nat.sh    # two peers behind separate NATs  (needs Docker)
-bash test/tunnel.sh        # room new --public  (needs cloudflared)
+bash test/tunnel.sh        # --host, and room new --public  (needs cloudflared)
 ```
+
+What each one actually covers:
+
+| | Assertions | Against |
+|---|---|---|
+| `e2e.sh` | 100 | two identities over the shared relay, and the hook dialect of all eight clients |
+| `resilience.sh` | 13 | an unreachable relay, a restarted one, a frozen socket, catching up after an absence, two daemons on one state directory |
+| `docker/nat.sh` | 12 | two peers on isolated networks, neither able to accept a connection |
+| `tunnel.sh` | 2, or 11 | a LAN relay always; the nine behind a public tunnel only when Cloudflare issues one |
+
+`e2e.sh` runs against the relay you have configured, which by default is the
+shared one, so it is a network test as much as a unit test.
+
+Not covered, and worth knowing: two physical machines, firewalls, a sleeping
+laptop, and any MCP client. `test/two-machines.md` is the checklist for the
+first four. Quick tunnels are rate limited, so `tunnel.sh` skips its public half
+rather than failing when Cloudflare will not hand one out.
 
 `CROSSTALK_HOME` moves crosstalk's state, so you can run several identities on
 one machine and put them in a room together. That is how all of this was tested.
