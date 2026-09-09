@@ -42,6 +42,10 @@ you broke off to explain anything.
 
 <br>
 
+---
+
+<br>
+
 ## Contents
 
 - [Install](#install)
@@ -67,6 +71,10 @@ you broke off to explain anything.
 - [Contributing](#contributing)
 
 - [Licence](#licence)
+
+<br>
+
+---
 
 <br>
 
@@ -134,6 +142,10 @@ args:    ["server"]
 > All eight clients were watched working end to end, three of them against a
 > local stand-in model that records what actually reached it. Every client
 > reached only through MCP is marked untested, because it is.
+
+<br>
+
+---
 
 <br>
 
@@ -246,6 +258,10 @@ If something is wrong, `/crosstalk:doctor` says what.
 
 <br>
 
+---
+
+<br>
+
 ## Usage
 
 You write the intent. Your agent writes the message.
@@ -283,6 +299,10 @@ You can also just ask who is doing what, and your agent will tell you:
 <br>
 
 `/crosstalk:peers` prints the same thing as a plain list.
+
+<br>
+
+---
 
 <br>
 
@@ -362,6 +382,10 @@ reasoning survives in the codebase rather than in a chat log nobody reopens.
 
 <br>
 
+---
+
+<br>
+
 ## Who can interrupt you
 
 Being reachable is only worth it if you can say how much. One person mid-incident
@@ -420,6 +444,10 @@ for, and it applies to them rather than to everyone at once.
 
 <br>
 
+---
+
+<br>
+
 ## Let your own machine interrupt you
 
 Long jobs finish while you are looking at something else. This is how they tell
@@ -449,6 +477,10 @@ has no way to reach your laptop. That is the next section.
 
 <br>
 
+---
+
+<br>
+
 ## Put a bot in a room
 
 A build watcher that everyone should hear, running somewhere that is not your
@@ -466,6 +498,10 @@ anything by hand.
 `--agent` is the bot declaring itself. It shows as a machine and starts at
 `notify`, and no amount of trust raises it past that. A build bot can tell the
 room the deploy failed. It can never put words inside anyone's turn.
+
+<br>
+
+---
 
 <br>
 
@@ -487,6 +523,10 @@ room the deploy failed. It can never put words inside anyone's turn.
 | `/crosstalk:secure` | Move your private key into the macOS keychain |
 | `/crosstalk:doctor` | Check the setup and say what is broken |
 | `/crosstalk:status` | Identity, relay, sessions |
+
+<br>
+
+---
 
 <br>
 
@@ -519,6 +559,10 @@ Permission relay across people is not implemented and never will be.
 
 <br>
 
+---
+
+<br>
+
 ## Docs
 
 - [Clients](docs/clients.md), which agents can be in a room and how each is reached
@@ -539,6 +583,10 @@ Permission relay across people is not implemented and never will be.
 
 <br>
 
+---
+
+<br>
+
 ## Contributing
 
 ```
@@ -552,6 +600,10 @@ bash test/resilience.sh   # a sleeping relay host, and two daemons at once
 `CROSSTALK_HOME` moves crosstalk's state, so you can run several identities on
 one machine and put them in a room together. That is how all of this was tested.
 Issues and pull requests welcome.
+
+<br>
+
+---
 
 <br>
 
