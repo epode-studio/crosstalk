@@ -88,9 +88,52 @@ you broke off to explain anything.
 
 ## Install
 
+Whichever agent you already use. Every one of these reads the same repository.
+
+**Claude Code**
+
 ```
 /plugin marketplace add epode-studio/crosstalk
 /plugin install crosstalk@epode
+```
+
+**Codex**
+
+```
+codex plugin marketplace add https://github.com/epode-studio/crosstalk
+codex plugin add crosstalk@epode
+```
+
+Then run `codex`, `/hooks`, and trust the crosstalk entries. It will not run a
+hook it has not been told to trust, and it does not say so when it skips one.
+
+**Cursor**
+
+```
+cursor-agent plugin marketplace add https://github.com/epode-studio/crosstalk
+```
+
+Then `/plugins` inside `cursor-agent` to install it.
+
+**Qwen Code**
+
+```
+qwen extensions install https://github.com/epode-studio/crosstalk
+```
+
+**Goose**
+
+```
+goose plugin install https://github.com/epode-studio/crosstalk
+```
+
+**Antigravity, Kimi Code, Hermes** have no marketplace that will take this, so
+crosstalk writes their config itself. Clone the repo and run:
+
+```
+bin/crosstalk install agy
+bin/crosstalk install kimi
+bin/crosstalk install hermes
 ```
 
 You need `bun` or `node` on PATH. Nothing is fetched or built at install time.
@@ -102,43 +145,15 @@ deliver, still sealed, until the recipient comes back or a day passes. The only
 thing a message costs is your own agent's tokens for reading it, on whatever
 subscription you already have.
 
-Seven other agents can be in the same room, and four of them install crosstalk
-from the same repository without Claude Code anywhere near it:
-
-```
-codex plugin marketplace add https://github.com/epode-studio/crosstalk
-codex plugin add crosstalk@epode
-
-cursor-agent plugin marketplace add https://github.com/epode-studio/crosstalk
-# then /plugins inside cursor-agent
-
-qwen extensions install https://github.com/epode-studio/crosstalk
-
-goose plugin install https://github.com/epode-studio/crosstalk
-```
-
-The other three have no marketplace that will take this, so crosstalk writes
-their config itself. Run it from a shell if you have crosstalk on your PATH, or
-as a slash command if you are in Claude Code:
-
-```
-crosstalk install agy      crosstalk install kimi
-crosstalk install hermes
-```
-
 Hermes has a plugin store and it will not take crosstalk. Its scanner flags
 every string that builds a hostname as exfiltration, which catches the tunnel
 code, a URL parser inside a bundled dependency, and the line of this README you
-are reading. `--force` does not override it. `crosstalk install hermes` writes
-the hooks directly and works.
+are reading. `--force` does not override it. The `install hermes` command above
+writes the hooks directly and works.
 
 `room new --public` needs `cloudflared` already on your PATH. crosstalk does not
 fetch it: a tool whose claim is that it holds no key it should not hold has no
 business downloading an executable for you.
-
-Codex then needs one more thing, and it is easy to miss: run `codex`, then
-`/hooks`, and trust the crosstalk entries. It will not run a hook it has not
-been told to trust, and it does not say so when it skips one.
 
 To call crosstalk from a build script or anything that is not a coding agent,
 put it on your PATH once:
