@@ -136,7 +136,16 @@ export async function openTunnel(
   }
   if (!found) {
     stop()
-    throw new Error(`cloudflared printed no URL. See ${logPath}`)
+    const asked = fs.readFileSync(logPath, "utf8").includes("Requesting new quick Tunnel")
+    throw new Error(
+      asked
+        ? `Cloudflare would not issue a tunnel. See ${logPath}\n\n` +
+          `It logged the request and never answered with a hostname, which is what\n` +
+          `their rate limit looks like: several quick tunnels from one machine in a\n` +
+          `short window stop being handed out. Wait, or run the relay yourself with\n` +
+          `--host and give the other person the address it prints.`
+        : `cloudflared printed no URL. See ${logPath}`,
+    )
   }
 
   // Finding the URL and proving it carries traffic get separate budgets. They

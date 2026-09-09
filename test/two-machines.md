@@ -122,6 +122,12 @@ works from anywhere. This runs that path end to end: the tunnel comes up, the
 relay answers through it, a second identity joins over the public URL, a message
 crosses, and `crosstalk relay stop` closes the tunnel again.
 
-Quick tunnels are rate limited. Several in a few minutes stop resolving, and the
-script skips with a note rather than failing when Cloudflare will not route one.
-That is their throttle, not a fault here.
+It also covers `--host`, the LAN relay that `--public` falls back to and that
+the tunnel's own failure message points at. That half always runs.
+
+Quick tunnels are rate limited, and the throttle is not subtle: after a few in a
+short window Cloudflare either issues no hostname at all or issues one it never
+publishes DNS for. Measured on a bare `cloudflared --url` against a plain HTTP
+server, with no crosstalk involved: three minutes, never routable. So the script
+skips that half with a note rather than failing, and says which of the two it
+saw. Come back in an hour.

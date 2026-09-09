@@ -2840,7 +2840,13 @@ async function openTunnel(bin, port, logPath, timeoutMs = 60000) {
   }
   if (!found) {
     stop();
-    throw new Error(`cloudflared printed no URL. See ${logPath}`);
+    const asked = fs3.readFileSync(logPath, "utf8").includes("Requesting new quick Tunnel");
+    throw new Error(asked ? `Cloudflare would not issue a tunnel. See ${logPath}
+
+` + `It logged the request and never answered with a hostname, which is what
+` + `their rate limit looks like: several quick tunnels from one machine in a
+` + `short window stop being handed out. Wait, or run the relay yourself with
+` + `--host and give the other person the address it prints.` : `cloudflared printed no URL. See ${logPath}`);
   }
   const host = `${found[1]}.trycloudflare.com`;
   const carrying = Date.now() + timeoutMs;

@@ -43,6 +43,37 @@ rpc() { CROSSTALK_HOME="$1" bun -e '
   console.log(JSON.stringify(await request(JSON.parse(process.argv[1]))))
 ' "$2" 2>&1; }
 
+# --- --host, which is what --public falls back to -----------------------------
+#
+# This is the advice the tunnel's own failure message gives, so it has to work
+# whether or not Cloudflare is handing out quick tunnels today. It runs first
+# for that reason: the rest of this file skips when they are throttled.
+echo "the --host relay"
+
+C=$(mktemp -d)/c
+D=$(mktemp -d)/d
+mkdir -p "$C" "$D"
+CROSSTALK_HOME="$C" bun src/cli.ts room new --host --label cara >"$C/room.log" 2>&1 &
+until [ -n "$(sed -n 's/^    \([0-9]\{3,6\}-[a-z].*\)$/\1/p' "$C/room.log" 2>/dev/null | head -1)" ]; do sleep 1; done
+HINV=$(sed -n 's/^    \([0-9]\{3,6\}-[a-z].*\)$/\1/p' "$C/room.log" | head -1)
+case "$HINV" in
+  *" at "*) ok "the invite carries the LAN address ($HINV)" ;;
+  *) bad "the invite carries the LAN address ($HINV)" ;;
+esac
+HJOIN=$(CROSSTALK_HOME="$D" bun src/cli.ts room join $HINV --label dev 2>&1)
+case "$HJOIN" in
+  *'Now in a room with "cara"'*) ok "and somebody joins over it" ;;
+  *) bad "and somebody joins over it"; echo "$HJOIN" | head -3 ;;
+esac
+for h in "$C" "$D"; do
+  [ -f "$h/relay.pid" ] && kill "$(cat "$h/relay.pid")" 2>/dev/null
+  [ -f "$h/daemon.lock" ] && kill "$(cat "$h/daemon.lock")" 2>/dev/null
+done
+pkill -f "cli.ts room new --host" 2>/dev/null
+rm -rf "$C" "$D"
+sleep 1
+
+echo
 echo "the --public tunnel"
 
 # `room new --public` starts the relay, opens the tunnel, and waits for a joiner,
@@ -61,7 +92,11 @@ URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "$A/tunnel.log" 2>/dev/nu
 # the only thing missing.
 if ! grep -q 'relay reachable at' "$A/room.log" 2>/dev/null; then
   if curl -sf -m 3 "http://127.0.0.1:8787/health" >/dev/null 2>&1; then
-    echo "  SKIP  the relay is up locally but Cloudflare never routed ${URL:-the tunnel}"
+    if [ -n "$URL" ]; then
+      echo "  SKIP  the relay is up locally but Cloudflare never routed $URL"
+    else
+      echo "  SKIP  the relay is up locally but Cloudflare issued no tunnel at all"
+    fi
     echo "        Quick tunnels are rate limited. Try again in a few minutes."
     exit 0
   fi
