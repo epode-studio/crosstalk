@@ -11,4 +11,4 @@ keychain and leaves only the public half on disk, so a process that reads your
 files cannot walk away with your identity.
 
 macOS only. The key cannot be recovered afterwards except from the keychain, so
-if it is deleted there you have to pair again.
+if it is deleted there you have to start every room again.

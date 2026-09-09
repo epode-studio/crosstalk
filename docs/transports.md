@@ -74,10 +74,11 @@ high friction between colleagues.
 
 ## What would remove the problem rather than move it
 
-Exchange address hints during pairing and punch through the NAT with a free
-public STUN server, the way iroh and WebRTC do. Most pairs then talk directly and
+Exchange address hints while the room is being started and punch through the NAT
+with a free public STUN server, the way iroh and WebRTC do. Most people then talk
+directly and
 touch no server at all, and whatever relay exists carries only the minority of
-pairs behind a NAT that will not cooperate. It is the only design where going
+people behind a NAT that will not cooperate. It is the only design where going
 viral does not mean paying more.
 
 ## The shape a second transport needs

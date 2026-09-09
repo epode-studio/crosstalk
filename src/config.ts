@@ -42,7 +42,7 @@ export type Peer = {
   xPub: string
   fingerprint: string
   pairedAt: number
-  /** The machine they paired from, shown when two peers share a name. */
+  /** The machine they joined from, shown when two peers share a name. */
   machine?: string
   /** True when this member is not a person. Capped at a notice, always. */
   isMachine?: boolean
@@ -53,7 +53,7 @@ export type Delivery = "notify" | "deliver" | "quiet"
 export type PeerPolicy = {
   delivery: Delivery
   mutedUntil?: number
-  /** Whether this peer's Claude may use crosstalk_ask here. On for paired peers. */
+  /** Whether this peer's Claude may use crosstalk_ask here. On for a room of two. */
   allowAsk: boolean
 }
 
@@ -66,7 +66,7 @@ export const DEFAULT_POLICY: Policy = {
   // notify is the safe default: a new peer's text never lands in the session
   // under the harness's "teammate" framing until you opt them into deliver.
   //
-  // Questions are on, because you paired with this person on purpose and a
+  // Questions are on, because you started a room with this person on purpose and a
   // question is less intrusive than a delivered message. It costs a turn, and
   // the dial for that is trust, per person. Someone added to a shared room by
   // somebody else is a different case and still cannot ask.

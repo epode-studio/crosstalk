@@ -3,8 +3,8 @@
 #
 #   bash test/e2e.sh
 #
-# Runs two separate crosstalk installations on this machine, pairs them through
-# whichever relay is configured, and exercises the whole surface: pairing,
+# Runs two separate crosstalk installations on this machine, puts them in a room
+# through whichever relay is configured, and exercises the whole surface: rooms,
 # messages, slices, presence, questions, the trust ladder, rooms, facts, tasks,
 # unprompted sending, local posts, the attention budget, device linking and the
 # hook contracts for all three clients.
@@ -36,28 +36,28 @@ rpc() { CROSSTALK_HOME="$1" bun -e '
 ' "$2" 2>&1; }
 stop() { [ -f "$1/daemon.lock" ] && kill "$(cat "$1/daemon.lock")" 2>/dev/null; rm -f "$1/daemon.sock" "$1/daemon.lock"; }
 
-cleanup() { stop "$A"; stop "$B"; pkill -f "src/cli.ts pair" 2>/dev/null; rm -rf "$A" "$B"; }
+cleanup() { stop "$A"; stop "$B"; pkill -f "src/cli.ts room new" 2>/dev/null; rm -rf "$A" "$B"; }
 trap cleanup EXIT
 
 echo "state in $A and $B"
 echo
 
-# --- pairing -------------------------------------------------------------------
-echo "pairing"
-CROSSTALK_HOME="$A" bun src/cli.ts pair --label ana >"$A/pair.log" 2>&1 &
+# --- starting a room -----------------------------------------------------------
+echo "starting a room"
+CROSSTALK_HOME="$A" bun src/cli.ts room new --label ana >"$A/room.log" 2>&1 &
 for _ in $(seq 1 60); do
-  INVITE=$(sed -n 's/^    \([0-9]\{3,6\}-[a-z][a-z-]*\)$/\1/p' "$A/pair.log" | head -1)
+  INVITE=$(sed -n 's/^    \([0-9]\{3,6\}-[a-z][a-z-]*\)$/\1/p' "$A/room.log" | head -1)
   [ -n "$INVITE" ] && break
   sleep 0.5
 done
-if [ -z "$INVITE" ]; then bad "an invite was printed"; cat "$A/pair.log"; exit 1; fi
+if [ -z "$INVITE" ]; then bad "an invite was printed"; cat "$A/room.log"; exit 1; fi
 has "$INVITE" '^[0-9]' "invite leads with a public slot"
 check "$(echo "$INVITE" | tr -cd - | wc -c | tr -d ' ')" "4" "four secret words after it"
 
-JOIN=$(b pair "$INVITE" --label ben)
+JOIN=$(b room join "$INVITE" --label ben)
 has "$JOIN" 'Now in a room with "ana"' "the joining side is in the room"
-for _ in $(seq 1 40); do grep -q "Now in a room with" "$A/pair.log" && break; sleep 0.5; done
-has "$(cat "$A/pair.log")" 'Now in a room with "ben"' "the starting side is in the room"
+for _ in $(seq 1 40); do grep -q "Now in a room with" "$A/room.log" && break; sleep 0.5; done
+has "$(cat "$A/room.log")" 'Now in a room with "ben"' "the starting side is in the room"
 
 FA=$(bun -e 'const {fingerprint}=await import("./src/crypto.ts");const fs=require("fs");console.log(fingerprint(JSON.parse(fs.readFileSync(process.argv[1]+"/identity.json","utf8")).ed.pub))' "$A")
 has "$JOIN" "$FA" "the fingerprints match across the two sides"
@@ -65,7 +65,7 @@ has "$JOIN" "$FA" "the fingerprints match across the two sides"
 # --- daemons -------------------------------------------------------------------
 echo
 echo "daemons and presence"
-# Pairing already starts a daemon, and a second one on the same state directory
+# Starting a room already starts a daemon, and a second one on the same state directory
 # now stands down rather than taking the socket over, so ask each side what its
 # own daemon is doing instead of reading the log of a process that may have
 # correctly refused to run.
@@ -153,7 +153,7 @@ has "$(b tasks done "$TID" "landed with backoff")" "done" "ben finished it"
 # --- rooms ---------------------------------------------------------------------
 echo
 echo "rooms"
-has "$(a room)" "ben" "pairing shows as a room of two"
+has "$(a room)" "ben" "the two of you show as a room of two"
 a room create beta >/dev/null
 has "$(a room invite beta ben)" "invited" "ana invited ben to a bigger room"
 sleep 3
@@ -174,7 +174,7 @@ if echo "$(b room)" | grep -q "#beta"; then bad "and it is gone for everyone"; e
 # --- local sources and the attention budget ------------------------------------
 echo
 echo "things that are not people"
-has "$(a post 'build failed on main' --intent blocking --source ci)" "posted as ci" "a script posted without pairing"
+has "$(a post 'build failed on main' --intent blocking --source ci)" "posted as ci" "a script posted without a room"
 sleep 1
 has "$(a attention)" "ci" "the attention view shows what spent it"
 
@@ -321,8 +321,7 @@ esac
 # --- room new and room join ----------------------------------------------------
 #
 # A room of two is the smallest room, not a separate concept, so the words come
-# from `room new` and are taken by `room join`. `pair` still answers, because an
-# identity set up before the rename should not stop working.
+# from `room new` and are taken by `room join`. There is no other way in.
 echo
 echo "starting and joining a room"
 # A fresh install used to answer `crosstalk room` with connect ENOENT and a page
@@ -351,6 +350,8 @@ CROSSTALK_HOME="$BROKEN" bun src/cli.ts room new >/dev/null 2>&1
 check "$(cat "$BROKEN/identity.json")" '{"broken": ' "and nothing writes over it"
 rm -rf "$BROKEN"
 has "$(a room join 2>&1)" "usage" "room join with no words says so, rather than hosting"
+# `pair` was the old name for this and is gone, not hidden behind an alias.
+has "$(a pair 2>&1)" 'unknown command "pair"' "the retired pair command is gone"
 
 # --- the relay name collision --------------------------------------------------
 #

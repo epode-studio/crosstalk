@@ -6,7 +6,7 @@ allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/crosstalk:*)
 
 !`"${CLAUDE_PLUGIN_ROOT}/bin/crosstalk" cli link $ARGUMENTS`
 
-Pairing exchanges keys between two people. Linking copies one identity onto
+Starting a room exchanges keys between two people. Linking copies one identity onto
 another of your machines, so both answer to the same fingerprint, you appear once
 in every room rather than twice, and a message reaches whichever machine you are
 sitting at.

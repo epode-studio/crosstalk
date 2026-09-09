@@ -161,7 +161,7 @@ const DELIVERS = isGoose
       ? /^(sessionStart|beforeSubmitPrompt|preToolUse|postToolUse|postToolUseFailure)$/
       : /^(SessionStart|UserPromptSubmit|PreToolUse|PostToolUse|PreInvocation|pre_llm_call)$/i
 
-/** Nothing to do until someone has paired. */
+/** Nothing to do until there is a room. */
 if (!loadIdentity() || !sessionId) {
   process.stdout.write(
     JSON.stringify(

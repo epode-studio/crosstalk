@@ -37,7 +37,7 @@ const xPriv = (id: Identity) =>
 const xPub = (spki: string) =>
   crypto.createPublicKey({ key: un64(spki), type: "spki", format: "der" })
 
-/** Short, human-readable key fingerprint. Read this aloud when pairing. */
+/** Short, human-readable key fingerprint. Read this aloud when starting a room. */
 export function fingerprint(edPubB64: string): string {
   const h = crypto.createHash("sha256").update(un64(edPubB64)).digest("hex")
   return h.slice(0, 16).match(/.{4}/g)!.join("-")
@@ -154,7 +154,7 @@ export type Offer = {
   xPub: string
   machine?: string
   relayPub?: string
-  /** True when the thing pairing is not a person. Capped at a notice, always. */
+  /** True when the thing joining is not a person. Capped at a notice, always. */
   isMachine?: boolean
 }
 

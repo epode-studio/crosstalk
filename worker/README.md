@@ -26,7 +26,7 @@ npx wrangler deploy
 Then point crosstalk at it, on both machines:
 
 ```
-/crosstalk:pair --relay wss://crosstalk-relay.<your-subdomain>.workers.dev
+/crosstalk:room new --relay wss://crosstalk-relay.<your-subdomain>.workers.dev
 ```
 
 Set `CROSSTALK_DEFAULT_RELAY` to that URL and invites become four words with
@@ -37,7 +37,7 @@ nothing after them, because there is no longer an address to say.
 One **Mailbox** object per identity, holding that identity's live connections and
 anything waiting for it while it was offline, for a day. One **Room** object per
 room, holding the roster and fanning messages out to member mailboxes. One
-**Pairing** object per code, holding the two sealed halves of an exchange for
+**Exchange** object per code, holding the two sealed halves of an exchange for
 fifteen minutes and then deleting itself.
 
 ## What it can see

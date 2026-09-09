@@ -8,7 +8,7 @@ allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/crosstalk:*)
 Show the output as-is, then help with whatever is marked ✗. The common ones:
 
 - **relay unreachable**, if the peer hosts it, their machine must be awake and
-  reachable from here. If we host it, `/crosstalk:pair --host` starts one.
-- **no identity**, nothing is set up yet; run `/crosstalk:pair --host`.
+  reachable from here.
+- **no identity**, nothing is set up yet; run `/crosstalk:room new`.
 - **inbox socket missing**, this session cannot receive anything. A session
   started in bare mode never binds one.

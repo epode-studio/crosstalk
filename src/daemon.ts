@@ -42,7 +42,7 @@ import type { Envelope, Frame, Intent, Kind, SessionPresence, Slice } from "./pr
 
 const identity = loadIdentity()
 if (!identity) {
-  console.error("crosstalk: no identity. Run /crosstalk:pair first.")
+  console.error("crosstalk: no identity. Run /crosstalk:room new first.")
   process.exit(1)
 }
 
@@ -334,7 +334,7 @@ function connect() {
       } else if (sig) {
         // No pin yet, which happens on the machine that started the relay
         // itself. Trust on first use; the other side gets the key inside the
-        // sealed pairing offer instead.
+        // sealed join offer instead.
         log("no pinned relay identity; continuing unpinned")
       }
       backoff = 1000
@@ -556,7 +556,7 @@ function onEnvelope(
         intent: "fyi",
         correlation: env.correlation,
         text: ctx?.strangerInRoom
-          ? "Refused: we share a room but have never paired, and a question from someone unpaired is capped at a notice. Send a message instead."
+          ? "Refused: we share a room but no direct channel, and a question from someone without one is capped at a notice. Send a message instead."
           : `Refused: you are at "${level}" here, and a question needs "ask". They can raise it with /crosstalk:trust. Send a message instead.`,
       })
     return
@@ -659,7 +659,7 @@ function acceptRoomKey(peerLabel: string, env: Envelope) {
   rooms.upsert(room, st)
   log(`received the key for #${room.name} epoch ${k.epoch} from ${peerLabel}`)
 
-  // Whoever rekeys can only hand the key to people they are paired with, so
+  // Whoever rekeys can only hand the key to people they have a channel to, so
   // pass it along to the ones they could not reach. A member that already has
   // this epoch stops, which is what keeps this from going round forever.
   if (!isNew) return
@@ -1076,7 +1076,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
     }
 
     // Anything running on this machine can put a line on the screen. It is you
-    // talking to yourself, so it needs no identity and no pairing.
+    // talking to yourself, so it needs no identity and no room.
     case "post": {
       const target = pickSession()
       if (!target) return { ok: false, error: "no session to post to" }
@@ -1129,7 +1129,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       ]
       if (req.write) {
         const room = rooms.normalise(String(req.room ?? roomNames[0] ?? ""))
-        if (!room) return { ok: false, error: "no room to put work in; pair with someone first" }
+        if (!room) return { ok: false, error: "no room to put work in; run /crosstalk:room new first" }
         const now = Date.now()
         let op: tasks.TaskOp
         if (req.write === "add") {
@@ -1185,7 +1185,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       ]
       if (req.write) {
         const room = rooms.normalise(String(req.room ?? roomNames[0] ?? ""))
-        if (!room) return { ok: false, error: "no room to write to; pair with someone first" }
+        if (!room) return { ok: false, error: "no room to write to; run /crosstalk:room new first" }
         const now = Date.now()
         let op: facts.Op
         if (req.write === "add") {
@@ -1242,7 +1242,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
     case "rooms": {
       const st = rooms.load()
       const me = myFingerprint()
-      // Every person you paired with is a room of two, derived on the spot.
+      // Every direct channel is a room of two, derived on the spot.
       const direct = Object.values(loadPeers()).map((p) => ({
         id: rooms.oneToOneId(me, p.fingerprint),
         name: p.label,
@@ -1295,7 +1295,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       if (!peer)
         return {
           ok: false,
-          error: `you are not paired with "${req.peer}". A room only grows along pairings that already exist, so pair with them first.`,
+          error: `you share no direct channel with "${req.peer}". A room only grows along channels that already exist, so start a room of two with them first.`,
         }
       relaySend({ t: "room_invite", roomId: room.id, fingerprint: peer.fingerprint, label: peer.label })
       const sent = sendRoomKey(peer.label, room)

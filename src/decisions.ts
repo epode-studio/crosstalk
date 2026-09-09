@@ -1,5 +1,5 @@
 // The decisions log. When either side's Claude marks something settled, it is
-// appended here with attribution. Two people pairing with agents settle things
+// appended here with attribution. Two people working with agents settle things
 // constantly and record almost none of it.
 
 import fs from "node:fs"

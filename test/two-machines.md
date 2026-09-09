@@ -15,13 +15,13 @@ machine and takes five minutes.
 On the machine that will host the relay:
 
 ```
-/crosstalk:pair --host
+/crosstalk:room new --host
 ```
 
 Read the four words and the address to the other person. On the second machine:
 
 ```
-/crosstalk:pair <the four words> @ <the address>
+/crosstalk:room join <the four words> @ <the address>
 ```
 
 Then, on both:
@@ -43,14 +43,14 @@ from anywhere.
 machine. It blocks incoming connections per application, and the application here
 is `bun` or `node`, so an allow rule for Claude Code does not cover it. Either
 allow incoming connections for that binary in System Settings, Network, Firewall,
-Options, or turn the firewall off while you pair.
+Options, or turn the firewall off while the two of you connect.
 
 **Did it pick the wrong address?** A machine with a VPN, a virtual interface or
 several network cards can advertise one the other side cannot route to.
 `--host` prints every address it found. Redo it with the right one:
 
 ```
-/crosstalk:pair --host --address 192.168.50.69
+/crosstalk:room new --host --address 192.168.50.69
 ```
 
 **Check the port directly.** From the second machine:
@@ -95,7 +95,7 @@ cd test/docker
 ```
 
 The script starts a relay on your Mac bound to all interfaces, builds a small
-image with crosstalk in it, brings up a container as a second person, pairs the
+image with crosstalk in it, brings up a container as a second person, puts the
 two over your LAN address, sends a message each way, and prints what arrived. It
 tears everything down afterwards and touches nothing in `~/.claude`.
 

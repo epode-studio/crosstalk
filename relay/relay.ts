@@ -135,7 +135,7 @@ function announce(fp: string) {
     for (const ws of set) send(ws, { t: "presence", peers: online })
 }
 
-// Pairing offers, held briefly and encrypted under a passphrase the relay
+// Join offers, held briefly and encrypted under a passphrase the relay
 // never sees. Two slots per code: the initiator's offer and the joiner's reply.
 const offers = new Map<string, { a?: string; b?: string; c?: string; ts: number }>()
 const pairRate = new Map<string, number[]>()

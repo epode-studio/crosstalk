@@ -50,8 +50,8 @@ echo "state in $TMP"
 start_relay
 
 echo
-echo "pairing two identities"
-CROSSTALK_HOME="$TMP/a" bun src/cli.ts pair --label aa --relay "ws://127.0.0.1:$PORT" >"$TMP/pa.log" 2>&1 &
+echo "putting two identities in a room"
+CROSSTALK_HOME="$TMP/a" bun src/cli.ts room new --label aa --relay "ws://127.0.0.1:$PORT" >"$TMP/pa.log" 2>&1 &
 for _ in $(seq 1 40); do
   # The invite is a public slot, then the secret words, then an optional address.
   INVITE=$(sed -n 's/^    \([0-9]\{3,6\}-[a-z][a-z-]*.*\)$/\1/p' "$TMP/pa.log" | head -1)
@@ -59,8 +59,8 @@ for _ in $(seq 1 40); do
   sleep 0.5
 done
 [ -z "$INVITE" ] && { echo "no invite"; cat "$TMP/pa.log"; exit 1; }
-CROSSTALK_HOME="$TMP/b" bun src/cli.ts pair $INVITE --label bb --relay "ws://127.0.0.1:$PORT" >"$TMP/pb.log" 2>&1
-for _ in $(seq 1 30); do grep -q Paired "$TMP/pa.log" && break; sleep 0.5; done
+CROSSTALK_HOME="$TMP/b" bun src/cli.ts room join $INVITE --label bb --relay "ws://127.0.0.1:$PORT" >"$TMP/pb.log" 2>&1
+for _ in $(seq 1 30); do grep -q "Now in a room with" "$TMP/pa.log" && break; sleep 0.5; done
 if grep -q "in a room with" "$TMP/pa.log" && grep -q "in a room with" "$TMP/pb.log"; then pass "in a room"; else fail "joining did not complete"; exit 1; fi
 
 # --- 1. a send while the relay is down is held, not lost ---------------------

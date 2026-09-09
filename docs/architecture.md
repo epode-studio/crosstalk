@@ -80,7 +80,7 @@ src/link.ts      encrypted channel to the relay
 src/rooms.ts     rooms, invitations, room keys
 src/inject.ts    writes into a session's inbox socket
 src/policy.ts    intent plus your state decides what interrupts you
-src/crypto.ts    identities, phrase pairing, sealing
+src/crypto.ts    identities, phrase exchange, sealing
 relay/relay.ts   the relay
 spike/           how the inbox socket format was captured
 ```
@@ -97,4 +97,4 @@ bun scripts/release.ts "what changed"
 ```
 
 `CROSSTALK_HOME` moves crosstalk's state, so you can run several identities on
-one machine and pair them with each other. That is how all of this was tested.
+one machine and put them in a room with each other. That is how all of this was tested.

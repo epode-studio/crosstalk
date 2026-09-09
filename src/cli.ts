@@ -224,7 +224,7 @@ async function startRelay(port = Number(flag("--port", "8787"))): Promise<string
     const bin = await ensureCloudflared((n) => console.log(n))
     if (!bin)
       die(
-        "could not get cloudflared, which --public needs.\nInstall it yourself (brew install cloudflared) and try again, or drop --public\nand pair on the same network.",
+        "could not get cloudflared, which --public needs.\nInstall it yourself (brew install cloudflared) and try again, or drop --public\nand start the room on the same network.",
       )
     console.log("opening a public tunnel, this takes a few seconds")
     try {
@@ -271,7 +271,7 @@ async function relay() {
   console.log(`local pid   ${relayPid() ?? "none started by crosstalk"}`)
 }
 
-// --- pairing -------------------------------------------------------------------
+// --- starting and joining a room -----------------------------------------------
 
 const myOffer = async (id: ReturnType<typeof identityOrCreate>) => ({
   label: id.label,
@@ -313,13 +313,13 @@ function adoptPeer(peer: ReturnType<typeof asPeer>): string {
 }
 
 /**
- * Start a room of two, or join one.
+ * Start a room of two, or join one, over a phrase both sides hold.
  *
- * `words` is passed in when this is reached through `room new` / `room join`,
- * which is what the commands are called now. `pair` still works, because an
- * identity someone set up last week should not stop answering to it.
+ * `words` is empty when starting and the four words when joining. A room of two
+ * is the smallest room rather than a separate thing, so both halves live here
+ * and `room new` / `room join` are the only ways in.
  */
-async function pair(words?: string) {
+async function startRoom(words?: string) {
   if (has("--relay")) saveRelay(flag("--relay")!)
   const id = identityOrCreate()
   const joining = (words ?? positional.join(" ")).trim()
@@ -431,7 +431,7 @@ Waiting…`)
   if (!theirs) die("that invite expired without anyone using it")
   const dot = theirs.indexOf(".")
   const key = pake.finish(mine, theirs.slice(0, dot), slot, "crosstalk/pair/v4")
-  if (!key) die("somebody tried to pair with the wrong words. Start again with a new invite.")
+  if (!key) die("somebody tried to join with the wrong words. Start again with a new invite.")
 
   let peer
   try {
@@ -517,8 +517,8 @@ async function policy() {
   deliver   their text lands in your session mid-turn
   quiet     held silently, surfaced when the session next goes idle
 
-  Questions are allowed from people you paired with. Turn them off for someone
-  with /crosstalk:policy <name> --no-allow-ask.
+  Questions are allowed from anyone in a room of two with you. Turn them off
+  for someone with /crosstalk:policy <name> --no-allow-ask.
 `)
     return
   }
@@ -575,7 +575,7 @@ async function doctor() {
   rows.push([
     "peers",
     Object.keys(loadPeers()).length > 0,
-    Object.keys(loadPeers()).join(", ") || "none paired yet",
+    Object.keys(loadPeers()).join(", ") || "no rooms yet",
   ])
   rows.push(["inbox socket", !!socket && fs.existsSync(socket), socket ?? "CLAUDE_CODE_MESSAGING_SOCKET not set"])
   rows.push([
@@ -652,7 +652,7 @@ async function doctor() {
         "macOS firewall",
         !on,
         on
-          ? "on, which can silently drop the other machine's connection. Allow incoming for bun or node, or turn it off while pairing."
+          ? "on, which can silently drop the other machine's connection. Allow incoming for bun or node, or turn it off while the two of you connect."
           : "off, incoming connections are not blocked",
       ])
     }
@@ -696,13 +696,13 @@ async function room() {
 
   // A room of two is the smallest room, not a different concept, so starting
   // one lives here rather than under a separate verb.
-  if (verb === "new") return pair("")
+  if (verb === "new") return startRoom("")
   if (verb === "join") {
     const words = rest.join(" ").trim()
     // Without this, joining with nothing falls through to hosting and sits
     // there for fifteen minutes looking like it worked.
     if (!words) die("usage: crosstalk room join <the four words you were read>")
-    return pair(words)
+    return startRoom(words)
   }
 
   await ready()
@@ -722,7 +722,7 @@ async function room() {
     }
     for (const room of r.rooms) {
       const who = room.members
-        .map((m: any) => m.label + (m.you ? " (you)" : "") + (m.state === "invited" ? " (invited)" : "") + (!m.paired && !m.you ? " ·not paired" : ""))
+        .map((m: any) => m.label + (m.you ? " (you)" : "") + (m.state === "invited" ? " (invited)" : "") + (!m.paired && !m.you ? " ·no direct channel" : ""))
         .join(", ")
       if (room.pending) {
         console.log(`  #${room.name}   INVITATION from ${room.pending.invitedBy}`)
@@ -772,7 +772,7 @@ async function room() {
       console.log(`removed ${r.removed} from #${name} and rekeyed to epoch ${r.rekeyedTo}`)
       if (r.unreachable?.length)
         console.log(
-          `\nCould not hand the new key to: ${r.unreachable.join(", ")}.\nYou are not paired with them, so someone who is has to pass it on.`,
+          `\nCould not hand the new key to: ${r.unreachable.join(", ")}.\nYou have no direct channel to them, so someone who has must pass it on.`,
         )
       return
     }
@@ -790,7 +790,7 @@ public half, so a process that reads your files no longer walks away with your
 identity.
 
 Undo with:  security delete-generic-password -a crosstalk -s crosstalk-identity
-(after which you would have to pair again)`)
+(after which you would have to start every room again)`)
     return
   }
   console.log(`not moved: ${r.reason}`)
@@ -810,7 +810,7 @@ async function rename() {
     id.label = to
     saveIdentity(id)
     console.log(`you are "${to}" now, was "${was}".`)
-    console.log("People you have already paired with keep the name they gave you.")
+    console.log("People already in a room with you keep the name they gave you.")
     if (daemonRunning()) console.log("Restart the daemon to advertise it: /crosstalk:status then crosstalk daemon restart")
     return
   }
@@ -894,11 +894,11 @@ async function trustCmd() {
   if (!who) {
     t.default = level
     trust.save(t)
-    return console.log(`anyone you have paired with, by default: ${level}`)
+    return console.log(`anyone in a room with you, by default: ${level}`)
   }
 
   // A name that matches a room you are in sets the room, unless --in says
-  // otherwise or the name is someone you paired with.
+  // otherwise or the name is a person you share one with.
   const isPerson = !!loadPeers()[who]
   if (room) {
     t.people[who] = level
@@ -1612,7 +1612,6 @@ Claude Code and Codex install as a plugin instead:
 }
 
 const commands: Record<string, () => Promise<void>> = {
-  pair,
   link,
   post,
   attention,

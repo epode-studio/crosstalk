@@ -35,9 +35,9 @@ There is a single level per source, and each level contains the ones below it:
 | `handoff` | also hand you a work item with state and files |
 | `deliver` | also put their words inside your turn |
 
-Defaults: someone you paired with starts at `ask`. Someone in a shared room you
-have never paired with starts at `notify` and cannot be raised past it until you
-pair. A member that is not a person starts at `notify` and can never be raised to
+Defaults: someone in a room of two with you starts at `ask`. Someone in a shared
+room you have no direct channel to starts at `notify` and cannot be raised past
+it until you do. A member that is not a person starts at `notify` and can never be raised to
 `deliver` at all.
 
 Set globally per person, with an optional override per room, because the same
@@ -99,7 +99,7 @@ Make it configurable, make it visible, and make it per-source as well as total:
 ```
 
 **Local sources need no identity.** A script on your own machine posting to your
-own daemon is you talking to yourself, so it needs no pairing and no key
+own daemon is you talking to yourself, so it needs no room and no key
 exchange. That is how CI, a cron, or a long migration plug in:
 
 ```
@@ -107,7 +107,7 @@ crosstalk post "migration finished, 1.2M rows" --intent fyi
 crosstalk post "build failed on main" --intent blocking --source ci
 ```
 
-Remote sources still pair, because they are someone else.
+Remote sources still join a room, because they are someone else.
 
 **Why this is the real product.** Every agentic tool has this problem and none of
 them have an answer. Notifications arrive with no notion of whether now is a good
@@ -167,10 +167,10 @@ An identity does not have to belong to a human. Two shapes, and they differ in
 whether they cross a machine boundary.
 
 **A local source** is a script on your machine posting to your own daemon. No
-identity, no pairing, no room. `crosstalk post` covers it, and CI, crons and long
+identity, no key exchange, no room. `crosstalk post` covers it, and CI, crons and long
 jobs are all this shape.
 
-**A room member** is a real identity that pairs and lives in a room: a build
+**A room member** is a real identity that joins and lives in a room: a build
 watcher everyone sees, or a headless worker that knows the codebase and answers
 questions in the room. It runs the daemon and nothing else, no client at all.
 
@@ -203,7 +203,7 @@ the working set and non-human members, which are independent of each other.
 
 ## Settled
 
-**A room outlives every session.** Pairing is permanent, a room is durable, a
+**A room outlives every session.** An identity is permanent, a room is durable, a
 session lasts an afternoon. The room holds the roster and the key on each
 member's machine and on the relay, so closing a laptop for a week leaves the room
 and its roster untouched. What is sent meanwhile waits on the relay for 24 hours

@@ -37,7 +37,7 @@ labelled as something a different person wrote, not as a request the harness has
 vouched for.
 
 Set a peer to `deliver` and their text lands inline instead, quoted inside a
-marker they cannot predict. That is the right mode when you are pairing on the
+marker they cannot predict. That is the right mode when the two of you are on the
 same problem for an hour and the wrong one the rest of the time, which is why
 only you can turn it on.
 
@@ -45,11 +45,11 @@ only you can turn it on.
 
 - **Messages are end to end encrypted.** The relay routes ciphertext and holds no
   key that opens it. Direct messages use a key derived by X25519 from the two
-  paired identities. Room messages use a room key the relay never sees.
+  identities in the room of two. Room messages use a room key the relay never sees.
 - **The link to the relay is encrypted too.** Both ends do an ephemeral X25519
   exchange signed by their long-term Ed25519 identities, and every frame after
   that is authenticated encryption with a counter. The relay's identity reaches
-  the other side inside the pairing offer, sealed under the four words, so it can
+  the other side inside the join offer, sealed under the four words, so it can
   be pinned without trusting the network. A mismatched pin refuses the link.
 - **Everything a sender controls is escaped**, so a message cannot close
   crosstalk's framing and write friendlier framing of its own. Verified at the
@@ -60,7 +60,7 @@ only you can turn it on.
   otherwise applies.
 - **Replays are dropped** and envelopes older than a day refused, so a hostile
   relay cannot re-deliver an old message.
-- **A new pairing cannot take over an existing person's name** and inherit the
+- **Somebody joining cannot take over an existing person's name** and inherit the
   settings you gave them. A clash gets a distinguishing suffix instead.
 - **Attaching a file refuses credentials** and anything outside the project, in
   case someone talks your Claude into sending one.
@@ -84,7 +84,7 @@ Fingerprints, message sizes, timing, and who is in which room. Never any content
 and never which repositories you work in, since presence is encrypted the same
 way messages are.
 
-## Pairing
+## Starting a room
 
 The four words are the whole secret. The relay files the offer under a hash of
 them and never sees the phrase itself. Four words from a 256 word list is 32
@@ -92,5 +92,5 @@ bits, which is only safe because guessing has to go through a rate limited relay
 against an offer that expires in fifteen minutes. Send the words over something
 you trust, and never through the relay.
 
-Both sides print a fingerprint after pairing. Read them to each other. If they
+Both sides print a fingerprint once the room exists. Read them to each other. If they
 match, nobody is in the middle.

@@ -277,6 +277,9 @@ export class Room {
 
 // --- pairing offers, fifteen minutes ------------------------------------------
 
+// Named "Pairing" because it is a Durable Object class bound by that name in
+// wrangler.toml and listed in a migration. Renaming it needs a DO migration on
+// a deployed worker, which is not worth doing for a word.
 export class Pairing {
   constructor(private state: DurableObjectState) {}
 

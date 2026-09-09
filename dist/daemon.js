@@ -829,7 +829,7 @@ function digest2(who, rooms, s = load5()) {
 // src/daemon.ts
 var identity = loadIdentity();
 if (!identity) {
-  console.error("crosstalk: no identity. Run /crosstalk:pair first.");
+  console.error("crosstalk: no identity. Run /crosstalk:room new first.");
   process.exit(1);
 }
 var log = (...a) => {
@@ -1201,7 +1201,7 @@ function onEnvelope(peerLabel, env, ctx) {
         kind: "answer",
         intent: "fyi",
         correlation: env.correlation,
-        text: ctx?.strangerInRoom ? "Refused: we share a room but have never paired, and a question from someone unpaired is capped at a notice. Send a message instead." : `Refused: you are at "${level}" here, and a question needs "ask". They can raise it with /crosstalk:trust. Send a message instead.`
+        text: ctx?.strangerInRoom ? "Refused: we share a room but no direct channel, and a question from someone without one is capped at a notice. Send a message instead." : `Refused: you are at "${level}" here, and a question needs "ask". They can raise it with /crosstalk:trust. Send a message instead.`
       });
     return;
   }
@@ -1697,7 +1697,7 @@ async function handle(req, sock) {
       if (req.write) {
         const room = normalise(String(req.room ?? roomNames[0] ?? ""));
         if (!room)
-          return { ok: false, error: "no room to put work in; pair with someone first" };
+          return { ok: false, error: "no room to put work in; run /crosstalk:room new first" };
         const now = Date.now();
         let op;
         if (req.write === "add") {
@@ -1751,7 +1751,7 @@ async function handle(req, sock) {
       if (req.write) {
         const room = normalise(String(req.room ?? roomNames[0] ?? ""));
         if (!room)
-          return { ok: false, error: "no room to write to; pair with someone first" };
+          return { ok: false, error: "no room to write to; run /crosstalk:room new first" };
         const now = Date.now();
         let op;
         if (req.write === "add") {
@@ -1856,7 +1856,7 @@ async function handle(req, sock) {
       if (!peer)
         return {
           ok: false,
-          error: `you are not paired with "${req.peer}". A room only grows along pairings that already exist, so pair with them first.`
+          error: `you share no direct channel with "${req.peer}". A room only grows along channels that already exist, so start a room of two with them first.`
         };
       relaySend({ t: "room_invite", roomId: room.id, fingerprint: peer.fingerprint, label: peer.label });
       const sent = sendRoomKey(peer.label, room);

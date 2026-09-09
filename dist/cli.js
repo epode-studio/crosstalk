@@ -3103,7 +3103,7 @@ async function startRelay(port = Number(flag("--port", "8787"))) {
     if (!bin)
       die(`could not get cloudflared, which --public needs.
 Install it yourself (brew install cloudflared) and try again, or drop --public
-and pair on the same network.`);
+and start the room on the same network.`);
     console.log("opening a public tunnel, this takes a few seconds");
     try {
       const t = await openTunnel(bin, port, path8.join(ROOT, "tunnel.log"));
@@ -3176,7 +3176,7 @@ Rename it with /crosstalk:rename ${label} <name>.`);
   savePeers(peers);
   return label;
 }
-async function pair(words) {
+async function startRoom(words) {
   if (has("--relay"))
     saveRelay(flag("--relay"));
   const id = identityOrCreate();
@@ -3288,7 +3288,7 @@ Waiting\u2026`);
   const dot = theirs.indexOf(".");
   const key = finish(mine, theirs.slice(0, dot), slot, "crosstalk/pair/v4");
   if (!key)
-    die("somebody tried to pair with the wrong words. Start again with a new invite.");
+    die("somebody tried to join with the wrong words. Start again with a new invite.");
   let peer;
   try {
     peer = asPeer(JSON.parse(open(key, theirs.slice(dot + 1))));
@@ -3371,8 +3371,8 @@ default   ${p.default.delivery}   ask ${p.default.allowAsk ? "allowed" : "off"}`
   deliver   their text lands in your session mid-turn
   quiet     held silently, surfaced when the session next goes idle
 
-  Questions are allowed from people you paired with. Turn them off for someone
-  with /crosstalk:policy <name> --no-allow-ask.
+  Questions are allowed from anyone in a room of two with you. Turn them off
+  for someone with /crosstalk:policy <name> --no-allow-ask.
 `);
     return;
   }
@@ -3426,7 +3426,7 @@ async function doctor() {
   rows.push([
     "peers",
     Object.keys(loadPeers()).length > 0,
-    Object.keys(loadPeers()).join(", ") || "none paired yet"
+    Object.keys(loadPeers()).join(", ") || "no rooms yet"
   ]);
   rows.push(["inbox socket", !!socket && fs6.existsSync(socket), socket ?? "CLAUDE_CODE_MESSAGING_SOCKET not set"]);
   rows.push([
@@ -3485,7 +3485,7 @@ async function doctor() {
       rows.push([
         "macOS firewall",
         !on,
-        on ? "on, which can silently drop the other machine's connection. Allow incoming for bun or node, or turn it off while pairing." : "off, incoming connections are not blocked"
+        on ? "on, which can silently drop the other machine's connection. Allow incoming for bun or node, or turn it off while the two of you connect." : "off, incoming connections are not blocked"
       ]);
     }
   }
@@ -3527,12 +3527,12 @@ async function daemon() {
 async function room() {
   const [verb, ...rest] = positional;
   if (verb === "new")
-    return pair("");
+    return startRoom("");
   if (verb === "join") {
     const words = rest.join(" ").trim();
     if (!words)
       die("usage: crosstalk room join <the four words you were read>");
-    return pair(words);
+    return startRoom(words);
   }
   await ready();
   if (!verb || verb === "list") {
@@ -3554,7 +3554,7 @@ You are not in anything yet.
         console.log(`  ${room2.name.padEnd(16)}just the two of you`);
     }
     for (const room2 of r.rooms) {
-      const who = room2.members.map((m) => m.label + (m.you ? " (you)" : "") + (m.state === "invited" ? " (invited)" : "") + (!m.paired && !m.you ? " \xB7not paired" : "")).join(", ");
+      const who = room2.members.map((m) => m.label + (m.you ? " (you)" : "") + (m.state === "invited" ? " (invited)" : "") + (!m.paired && !m.you ? " \xB7no direct channel" : "")).join(", ");
       if (room2.pending) {
         console.log(`  #${room2.name}   INVITATION from ${room2.pending.invitedBy}`);
         console.log(`      ${who}`);
@@ -3609,7 +3609,7 @@ They each have to accept before anything from the room reaches them.`);
       if (r.unreachable?.length)
         console.log(`
 Could not hand the new key to: ${r.unreachable.join(", ")}.
-You are not paired with them, so someone who is has to pass it on.`);
+You have no direct channel to them, so someone who has must pass it on.`);
       return;
     }
     default:
@@ -3627,7 +3627,7 @@ public half, so a process that reads your files no longer walks away with your
 identity.
 
 Undo with:  security delete-generic-password -a crosstalk -s crosstalk-identity
-(after which you would have to pair again)`);
+(after which you would have to start every room again)`);
     return;
   }
   console.log(`not moved: ${r.reason}`);
@@ -3645,7 +3645,7 @@ async function rename() {
     id.label = to;
     saveIdentity(id);
     console.log(`you are "${to}" now, was "${was}".`);
-    console.log("People you have already paired with keep the name they gave you.");
+    console.log("People already in a room with you keep the name they gave you.");
     if (daemonRunning())
       console.log("Restart the daemon to advertise it: /crosstalk:status then crosstalk daemon restart");
     return;
@@ -3738,7 +3738,7 @@ async function trustCmd() {
   if (!who) {
     t.default = level;
     save(t);
-    return console.log(`anyone you have paired with, by default: ${level}`);
+    return console.log(`anyone in a room with you, by default: ${level}`);
   }
   const isPerson = !!loadPeers()[who];
   if (room2) {
@@ -4342,7 +4342,6 @@ Claude Code and Codex install as a plugin instead:
   /plugin install crosstalk@epode`);
 }
 var commands = {
-  pair,
   link,
   post,
   attention,

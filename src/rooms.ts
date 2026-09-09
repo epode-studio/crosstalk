@@ -3,12 +3,12 @@
 //
 // Three rules keep this from becoming an ungated inbound path:
 //
-//   1. You can only be added by someone you are already paired with. A room
+//   1. You can only be added by someone you already share a channel with. A room
 //      grows along links that already exist, so nobody reaches you out of
 //      nowhere.
 //   2. Being added creates an invitation, not membership. Nothing from the room
 //      touches your session until you accept.
-//   3. Room members you have not paired with are still strangers. Their
+//   3. Room members you share no channel with are still strangers. Their
 //      messages can notify you; they can never be delivered mid-turn and can
 //      never use ask.
 //
@@ -84,7 +84,7 @@ export const normalise = (name: string) => String(name ?? "").trim().replace(/^#
 export const isRoom = (to: string) => to.startsWith("#")
 
 /**
- * Pairing with one person is a room of two. It is derived rather than stored:
+ * A direct channel with one person is a room of two. It is derived rather than stored:
  * both sides compute the same id from the two fingerprints, and the key is the
  * pairwise key they already share, so there is nothing to agree on and nothing
  * to go stale. Everything a person can be in is a room; some rooms happen to

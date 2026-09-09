@@ -21,5 +21,5 @@ below their room, because what usually varies is what a room is for rather than
 who is in it.
 
 Two things cap it no matter what you set: someone in a shared room you have never
-paired with cannot get past a notice, and neither can a member that is not a
+no direct channel to cannot get past a notice, and neither can a member that is not a
 person.
