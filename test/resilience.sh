@@ -112,11 +112,13 @@ echo
 echo "2b. a fact written while a peer was away"
 stop_daemon "$TMP/b"; sleep 2
 CROSSTALK_HOME="$TMP/a" bun src/cli.ts facts add "the pg driver needs the 3.x branch" >/dev/null 2>&1
-sleep 2
-# Empty b's buffer at the relay, so nothing can arrive by replay and the only
-# route left is the resync.
-rm -f "$TMP/relay/crosstalk-rooms-buffer.json"
-RP=$(relay_pid); kill "$RP" 2>/dev/null; sleep 1.5
+sleep 3
+# Everything that could redeliver has to be gone, or this measures a replay
+# instead of a resync. a's outbox drained when the relay accepted the op above.
+# The relay's own copy has to go after it is stopped, because a running relay
+# re-persists its buffer on the way out.
+RP=$(relay_pid); kill "$RP" 2>/dev/null; sleep 2
+rm -f "$TMP/relay/"*buffer.json
 start_relay
 CROSSTALK_HOME="$TMP/b" nohup bun src/daemon.ts >"$TMP/db2.log" 2>&1 &
 for _ in $(seq 1 20); do

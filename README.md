@@ -253,10 +253,16 @@ until you accept.
 Rooms do not expire. Nothing times one out, and closing your laptop for a month
 leaves it there with the same people and the same name.
 
-What does expire is anything sent to you while you were unreachable. The relay
-holds it for **24 hours** and then drops it, so a week away costs you the
-messages, facts and tasks that arrived in it. The room survives; that week's
-traffic does not.
+What the room knows survives with it. On reconnect your agent asks everyone for
+anything it is missing, so the facts and tasks written while you were away come
+back from whoever is still around, however long you were gone. That needs
+somebody who has them to be online: if the whole room was dark, you catch up
+when the first person returns.
+
+**Messages are the exception.** They are not part of what the room keeps, so
+there is nothing to re-fetch them from. One sent while you were unreachable
+waits at the relay for **24 hours** and is then dropped. A week away costs you
+that week's messages and nothing else.
 
 Leaving takes you out of one, and takes what it knows off your machine.
 

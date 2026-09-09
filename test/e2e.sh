@@ -34,7 +34,18 @@ rpc() { CROSSTALK_HOME="$1" bun -e '
   const { request } = await import("./src/client.ts")
   console.log(JSON.stringify(await request(JSON.parse(process.argv[1]))))
 ' "$2" 2>&1; }
-stop() { [ -f "$1/daemon.lock" ] && kill "$(cat "$1/daemon.lock")" 2>/dev/null; rm -f "$1/daemon.sock" "$1/daemon.lock"; }
+# Wait for the process to actually go. Removing the lock and moving on left the
+# daemon running, and a test that then restarted it got "already running" and
+# quietly went on measuring the old one.
+stop() {
+  if [ -f "$1/daemon.lock" ]; then
+    P=$(cat "$1/daemon.lock")
+    kill "$P" 2>/dev/null
+    for _ in $(seq 1 30); do kill -0 "$P" 2>/dev/null || break; sleep 0.2; done
+    kill -0 "$P" 2>/dev/null && kill -9 "$P" 2>/dev/null
+  fi
+  rm -f "$1/daemon.sock" "$1/daemon.lock"
+}
 
 cleanup() { stop "$A"; stop "$B"; pkill -f "src/cli.ts room new" 2>/dev/null; rm -rf "$A" "$B"; }
 trap cleanup EXIT
@@ -417,15 +428,18 @@ check "$MUTED" "true false" "a timed mute reaches the map triage reads"
 
 # Two relay paths reach "ready": the hosted worker through sock.onopen, and a
 # self-hosted relay through its ready frame. Only the second asked peers for a
-# resync, so on the relay everybody actually uses, a machine that was off longer
-# than the relay's day of buffering never caught up. resilience.sh covers the
-# catch-up itself, but against a self-hosted relay, so it cannot see this.
+# resync, so past the relay's day of buffering a machine that was off never
+# caught up on the relay everybody actually uses.
+#
+# This is a structural check, and deliberately so. The catch-up itself is tested
+# functionally in resilience.sh, against a relay whose buffer that script can
+# empty. Against a hosted relay there is no way to tell a resync from a buffered
+# redelivery: both arrive as the same fact ops moments after reconnecting.
 ONOPEN=$(awk '/sock.onopen = \(\) =>/,/^  }$/' src/daemon.ts)
 case "$ONOPEN" in
   *requestFactSync*) ok "the hosted relay path asks for a resync too" ;;
   *) bad "the hosted relay path asks for a resync too" ;;
 esac
-
 
 # --- reaching the CLI ----------------------------------------------------------
 #
