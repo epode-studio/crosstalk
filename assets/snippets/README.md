@@ -54,3 +54,29 @@ Nothing tests an image. The prose in this README is checked against the code by
 `test/e2e.sh`, and these four are not, so they will go stale silently. If the
 CLI's output changes, regenerate from the `.txt` here rather than editing a
 screenshot.
+
+## Glyphs that are safe to use
+
+JetBrains Mono, which is what ray.so renders these in, has no box-drawing
+characters. A `─` therefore falls back to whatever font the *reader* has, at
+about 1.6 times the width of a normal character. A rule of 72 of them overflows
+the card, wraps, and would look different for different people, which is the
+problem embedding the font was meant to solve.
+
+So the snippets draw no rules and no input box. Measured against `x` in the same
+image, these are all correctly monospaced and safe:
+
+```
+›  prompt      ●  bullet     ○  hollow bullet
+◢  the mark    ⏵  mode line  ·  separator
+```
+
+And these are not, because JetBrains Mono does not have them:
+
+```
+─ │ ╭ ╮ ╰ ╯ ├ └    box drawing
+⎿                  the tool-result elbow
+```
+
+To check a new one, put ten of it next to ten `x` with a `|` after each run and
+see whether the pipes line up.

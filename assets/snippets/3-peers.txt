@@ -12,7 +12,5 @@
   ○ ci (a machine)  5af6-8ee4-cfb6-05b6  notify
         no sessions reported  (presence 2h ago)
 
-──────────────────────────────────────────────────────────────── infra ─
-› 
-────────────────────────────────────────────────────────────────────────
-  ⏵⏵ auto mode on (shift+tab to cycle)
+›
+⏵⏵ auto mode on (shift+tab to cycle)
