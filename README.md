@@ -678,7 +678,7 @@ What each one actually covers:
 
 | | Assertions | Against |
 |---|---|---|
-| `e2e.sh` | 100 | two identities over the shared relay, and the hook dialect of all eight clients |
+| `e2e.sh` | 103 | two identities over the shared relay, and the hook dialect of all eight clients |
 | `resilience.sh` | 13 | an unreachable relay, a restarted one, a frozen socket, catching up after an absence, two daemons on one state directory |
 | `docker/nat.sh` | 12 | two peers on isolated networks, neither able to accept a connection |
 | `tunnel.sh` | 2, or 11 | a LAN relay always; the nine behind a public tunnel only when Cloudflare issues one |

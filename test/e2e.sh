@@ -47,7 +47,12 @@ stop() {
   rm -f "$1/daemon.sock" "$1/daemon.lock"
 }
 
-cleanup() { stop "$A"; stop "$B"; pkill -f "src/cli.ts room new" 2>/dev/null; rm -rf "$A" "$B"; }
+ROOM_PID=""
+cleanup() {
+  [ -n "$ROOM_PID" ] && kill "$ROOM_PID" 2>/dev/null
+  stop "$A"; stop "$B"
+  rm -rf "$A" "$B"
+}
 trap cleanup EXIT
 
 echo "state in $A and $B"
@@ -72,6 +77,7 @@ esac
 # --- starting a room -----------------------------------------------------------
 echo "starting a room"
 CROSSTALK_HOME="$A" bun src/cli.ts room new --label ana >"$A/room.log" 2>&1 &
+ROOM_PID=$!
 for _ in $(seq 1 60); do
   INVITE=$(sed -n 's/^    \([0-9]\{3,6\}-[a-z][a-z-]*\)$/\1/p' "$A/room.log" | head -1)
   [ -n "$INVITE" ] && break
@@ -294,6 +300,14 @@ case "$OUT" in
 esac
 rm -rf "$CX"
 
+OUT=$(env -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN CROSSTALK_HOME="$A" bun src/cli.ts doctor 2>&1)
+has "$OUT" "sessions without a Claude Code socket receive notices through hooks" "doctor explains hook delivery when there is no inbox socket"
+if echo "$OUT" | grep -qE '✗  (inbox socket|messaging token)|processes hold'; then
+  bad "doctor accepts hook delivery and separate test identities"
+else
+  ok "doctor accepts hook delivery and separate test identities"
+fi
+
 # Cursor sends hook_event_name like Claude Code but names steps in camelCase and
 # reads a flat snake_case answer. It also throws away any context over 10k
 # rather than shortening it, so crosstalk shortens it first.
@@ -307,11 +321,17 @@ esac
 OUT=$(echo '{"hook_event_name":"afterAgentThought","session_id":"cu1","cursor_version":"x","workspace_roots":["/tmp"]}' \
   | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts 2>&1)
 check "$OUT" "{}" "a cursor step that cannot deliver stays quiet"
-BIG=$(bun -e 'console.log("x".repeat(60000))')
-for i in 1 2 3; do a facts add "$BIG" >/dev/null 2>&1; done
-OUT=$(echo "$CUR" | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts 2>&1)
+# Facts have their own smaller digest cap. A long task actually reaches the
+# hook's output limit, which is the boundary this check needs to exercise.
+BIG=$(bun -e 'console.log("x".repeat(12000))')
+a tasks add "$BIG" >/dev/null 2>&1
+# Use a fresh session: cu1 already consumed its working set, so reusing it
+# silently tested the length of an empty answer instead of the trimming path.
+CUR_BIG='{"hook_event_name":"sessionStart","session_id":"cu-big","conversation_id":"cu-big","cursor_version":"2026.08.11","workspace_roots":["/tmp"]}'
+OUT=$(echo "$CUR_BIG" | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts 2>&1)
 LEN=$(echo "$OUT" | bun -e 'const o=JSON.parse(await new Response(Bun.stdin).text());console.log((o.additional_context??"").length)')
-[ "$LEN" -le 10000 ] && ok "cursor context is trimmed to fit ($LEN chars)" || bad "cursor context is $LEN chars, over the 10000 limit"
+has "$OUT" "crosstalk trimmed this to fit Cursor" "cursor received enough context to require trimming"
+[ "$LEN" -gt 0 ] && [ "$LEN" -le 10000 ] && ok "cursor context is trimmed to fit ($LEN chars)" || bad "cursor context is $LEN chars, expected 1 to 10000"
 
 # Goose is the mirror image of the others: it never adds context, but a Stop
 # hook that refuses to let the turn end has its reason put in front of the

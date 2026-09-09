@@ -547,11 +547,17 @@ async function doctor() {
     Object.keys(loadPeers()).length > 0,
     Object.keys(loadPeers()).join(", ") || "no rooms yet",
   ])
-  rows.push(["inbox socket", !!socket && fs.existsSync(socket), socket ?? "CLAUDE_CODE_MESSAGING_SOCKET not set"])
+  rows.push([
+    "inbox socket",
+    socket ? fs.existsSync(socket) : null,
+    socket ?? "not provided; sessions without a Claude Code socket receive notices through hooks",
+  ])
   rows.push([
     "messaging token",
-    !!process.env.CLAUDE_CODE_MESSAGING_TOKEN,
-    process.env.CLAUDE_CODE_MESSAGING_TOKEN ? "present" : "missing, messages arrive as anonymous peers",
+    socket ? !!process.env.CLAUDE_CODE_MESSAGING_TOKEN : null,
+    process.env.CLAUDE_CODE_MESSAGING_TOKEN ? "present" : socket
+      ? "missing, messages arrive as anonymous peers"
+      : "only used with a Claude Code inbox socket",
   ])
 
   const sessionsDir = path.join(process.env.HOME ?? "", ".claude", "sessions")
@@ -559,30 +565,36 @@ async function doctor() {
   try {
     visible = fs.readdirSync(sessionsDir).filter((f) => f.endsWith(".json")).length
   } catch {}
-  rows.push(["session registry", visible > 0, `${visible} entries in ${sessionsDir}`])
+  rows.push(["session registry", visible > 0 ? true : null, `${visible} Claude Code entries in ${sessionsDir}`])
 
   // Two daemons on one state directory each keep the message queue in memory and
   // each write all of it back, so whichever writes last erases the other's work.
   // Nothing reports an error when that happens; the message simply never lands.
   {
     const live = daemonRunning()
-    let count = 0
+    let count: number | undefined
     try {
-      count = execFileSync("/bin/sh", ["-c", `pgrep -f 'crosstalk.*daemon' | wc -l`], {
-        encoding: "utf8",
+      // Separate CROSSTALK_HOME identities are valid. Count owners of this
+      // socket, including an older listener whose socket was unlinked.
+      const output = execFileSync("lsof", ["-nP", "-U", "-Fpn"], {
+        encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000,
       })
-        .trim()
-        .split(/\s+/)
-        .map(Number)[0]
+      const owners = new Set<string>()
+      let pid = ""
+      for (const line of output.split("\n")) {
+        if (line.startsWith("p")) pid = line.slice(1)
+        if (line === `n${P.daemonSock}` && pid) owners.add(pid)
+      }
+      count = owners.size
     } catch {}
     rows.push([
       "daemon",
-      live && count <= 1,
+      live && (count === undefined || count <= 1),
       !live
         ? "not running; it starts on its own with the next hook or tool call"
-        : count > 1
-          ? `${count} are running on this machine, which will lose messages. Stop them all and start one: pkill -f "crosstalk.*daemon"`
-          : "one, answering on its socket",
+        : count !== undefined && count > 1
+          ? `${count} processes hold ${P.daemonSock}; duplicate daemons can lose messages`
+          : `running for ${ROOT}${count === undefined ? "; duplicate check unavailable" : ""}`,
     ])
   }
 
