@@ -139,7 +139,10 @@ const RELAY_PID = path.join(ROOT, "relay.pid")
 const TUNNEL_PID = path.join(ROOT, "tunnel.pid")
 const httpBase = (ws = loadRelay().url) => ws.replace(/^ws/, "http").replace(/\/ws$/, "")
 
-const die = (m: string): never => {
+// Annotated on the variable, not just the arrow: TypeScript only narrows after a
+// never-returning call when the callee has an explicit type annotation, so
+// `if (!x) die(...)` below depends on this shape.
+const die: (m: string) => never = (m) => {
   console.error(m)
   process.exit(1)
 }

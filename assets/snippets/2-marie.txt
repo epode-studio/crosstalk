@@ -2,7 +2,8 @@
 
   Ran 1 shell command
 
-  Message from crosstalk ◢ paul/infra
+› Message from @crosstalk-paul-infra: 1 message waiting from paul/infra.
+  Read it with crosstalk_read. (ctrl+o to expand)
 
 ● Paul has renamed DATABASE_URL to PG_URL. This branch reads it in two
   places, so I've updated those before carrying on with the endpoint.

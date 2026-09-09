@@ -433,6 +433,14 @@ LBL=$(bun -e '
   console.log(JSON.parse(raw.trim().split("\n").pop()).message.content)
 ' 2>&1)
 has "$LBL" 'from-name="crosstalk ◢ marie/api"' "the label carries the mark and the name"
+# Claude Code collapses an arriving message to its first line, so that line has
+# to be a sentence. Leading with the tag showed readers the framing instead.
+FIRST=$(echo "$LBL" | grep -A1 '^<cross-session-message' | tail -1)
+case "$FIRST" in
+  "<"*) bad "the collapsed preview reads as a sentence, not a tag" ;;
+  *"waiting from marie/api"*) ok "the collapsed preview reads as a sentence, not a tag" ;;
+  *) bad "the collapsed preview reads as a sentence, not a tag (got '$FIRST')" ;;
+esac
 has "$LBL" 'cross-session-message' "it is still the framing Claude Code expects"
 case "$LBL" in
   *"marie</"*|*"<marie"*) bad "a peer name cannot break out of the attribute" ;;

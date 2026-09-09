@@ -582,6 +582,8 @@ Permission relay across people is not implemented and never will be.
 
 ## Docs
 
+- [Tools](docs/tools.md), the 17 an agent gets, and what each one is for
+
 - [Clients](docs/clients.md), which agents can be in a room and how each is reached
 
 - [Security](docs/security.md), the threat model and what the relay can see
