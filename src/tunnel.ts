@@ -91,11 +91,38 @@ export async function openTunnel(
 ): Promise<Tunnel> {
   fs.writeFileSync(logPath, "")
   const out = fs.openSync(logPath, "a")
-  const child = spawn(bin, ["tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${port}`], {
-    detached: true,
-    stdio: ["ignore", out, out],
-  })
+  // --config /dev/null is what makes this a quick tunnel. Without it cloudflared
+  // reads ~/.cloudflared/config.yml, and on a machine that already has a named
+  // tunnel it runs *that* one: it prints no trycloudflare URL, serves whatever
+  // the user's own ingress rules point at, and crosstalk is not on the other end
+  // of anything. Somebody who runs their own tunnels is exactly the person who
+  // would reach for --public.
+  const child = spawn(
+    bin,
+    ["tunnel", "--no-autoupdate", "--config", "/dev/null", "--url", `http://127.0.0.1:${port}`],
+    {
+      detached: true,
+      stdio: ["ignore", out, out],
+    },
+  )
   child.unref()
+
+  // A detached child outlives us, so an interrupt while the tunnel is still
+  // coming up leaves cloudflared running with nothing on the other end of it.
+  const stop = () => {
+    try {
+      process.kill(child.pid!)
+    } catch {}
+  }
+  process.once("exit", stop)
+  process.once("SIGINT", () => {
+    stop()
+    process.exit(130)
+  })
+  process.once("SIGTERM", () => {
+    stop()
+    process.exit(143)
+  })
 
   const deadline = Date.now() + timeoutMs
   let found: RegExpMatchArray | null = null
@@ -108,23 +135,32 @@ export async function openTunnel(
     await new Promise((r) => setTimeout(r, 500))
   }
   if (!found) {
-    try {
-      process.kill(child.pid!)
-    } catch {}
+    stop()
     throw new Error(`cloudflared printed no URL. See ${logPath}`)
   }
 
+  // Finding the URL and proving it carries traffic get separate budgets. They
+  // shared one, so a slow start ate the whole allowance and the tunnel was
+  // killed while it was still coming up. Ten seconds a request, because the
+  // first one to a fresh quick tunnel pays for a cold DNS lookup and a full TLS
+  // handshake against an edge that has not routed this hostname before, and
+  // four seconds is not reliably enough for that.
   const host = `${found[1]}.trycloudflare.com`
-  while (Date.now() < deadline) {
+  const carrying = Date.now() + timeoutMs
+  while (Date.now() < carrying) {
     try {
-      const r = await fetch(`https://${host}/health`, { signal: AbortSignal.timeout(4000) })
+      const r = await fetch(`https://${host}/health`, { signal: AbortSignal.timeout(10_000) })
       if (r.ok) return { url: found[0], host, subdomain: found[1], pid: child.pid! }
     } catch {}
     await new Promise((r) => setTimeout(r, 1500))
   }
 
-  try {
-    process.kill(child.pid!)
-  } catch {}
-  throw new Error(`the tunnel at ${host} never carried traffic. See ${logPath}`)
+  stop()
+  throw new Error(
+    `the tunnel at ${host} never carried traffic. See ${logPath}\n\n` +
+      `If that hostname does not resolve at all, Cloudflare never published DNS\n` +
+      `for it. Quick tunnels are rate limited, so several in a few minutes stop\n` +
+      `being handed out. Wait a few minutes, or run the relay yourself with\n` +
+      `--host and give the other person the address it prints.`,
+  )
 }

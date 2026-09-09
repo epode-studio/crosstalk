@@ -2,6 +2,9 @@
 // crosstalk CLI. The slash commands in commands/ call into this.
 //
 //   crosstalk room new                   start a room, print the words
+//     --host                             run the relay here, for one network
+//     --public                           and put a tunnel in front of it, for
+//                                        two people on different networks
 //   crosstalk room join 3644-cherry-…    join one you were read
 //   crosstalk room create platform           a bigger one, for several people
 //   crosstalk link                       another machine, same identity
@@ -15,9 +18,6 @@
 //   crosstalk relay start|stop|status
 //   crosstalk daemon start|stop|restart
 //
-// `policy` is the three-setting model `trust` replaced. It still reads and
-// writes, so an old setup keeps working, and it is deliberately undocumented.
-
 import {
   loadIdentity,
   saveIdentity,
@@ -392,7 +392,11 @@ yours a question. Their words never enter your session unless you raise them.
   }
 
   // --- offering one -----------------------------------------------------------
-  const url = has("--host") ? await startRelay() : loadRelay().url
+  // --public only means anything in front of a relay we are running, so it
+  // implies --host. It used to be read inside startRelay and startRelay was only
+  // reached through --host, so `room new --public` on its own opened no tunnel,
+  // said nothing, and quietly handed out the hosted relay instead.
+  const url = has("--host") || has("--public") ? await startRelay() : loadRelay().url
   if (!(await relayReachable(url)))
     die(`no relay at ${httpBase(url)}.\n\nRun this instead and crosstalk will host one for you:\n  /crosstalk:room new --host`)
 
@@ -890,7 +894,13 @@ async function trustCmd() {
 async function post() {
   const text = positional.join(" ").trim() || flag("--text", "")!
   if (!text) die('usage: crosstalk post "build failed on main" [--intent blocking] [--source ci]')
-  await ready()
+  // This is you talking to yourself, so it needs a keypair and nothing else.
+  // `ready()` would refuse until a room existed, which sent somebody who only
+  // wanted their own build script to reach them off to find another person.
+  refuseIfIdentityDamaged()
+  identityOrCreate()
+  if (!(await ensureDaemon(ROOT_DIR)))
+    die("the daemon would not start. See ~/.claude/crosstalk/daemon.log")
   const r = await request({
     op: "post",
     text,

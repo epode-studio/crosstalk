@@ -2809,11 +2809,25 @@ async function ensureCloudflared(onProgress) {
 async function openTunnel(bin, port, logPath, timeoutMs = 60000) {
   fs3.writeFileSync(logPath, "");
   const out = fs3.openSync(logPath, "a");
-  const child = spawn2(bin, ["tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${port}`], {
+  const child = spawn2(bin, ["tunnel", "--no-autoupdate", "--config", "/dev/null", "--url", `http://127.0.0.1:${port}`], {
     detached: true,
     stdio: ["ignore", out, out]
   });
   child.unref();
+  const stop = () => {
+    try {
+      process.kill(child.pid);
+    } catch {}
+  };
+  process.once("exit", stop);
+  process.once("SIGINT", () => {
+    stop();
+    process.exit(130);
+  });
+  process.once("SIGTERM", () => {
+    stop();
+    process.exit(143);
+  });
   const deadline = Date.now() + timeoutMs;
   let found = null;
   while (Date.now() < deadline) {
@@ -2825,24 +2839,26 @@ async function openTunnel(bin, port, logPath, timeoutMs = 60000) {
     await new Promise((r) => setTimeout(r, 500));
   }
   if (!found) {
-    try {
-      process.kill(child.pid);
-    } catch {}
+    stop();
     throw new Error(`cloudflared printed no URL. See ${logPath}`);
   }
   const host = `${found[1]}.trycloudflare.com`;
-  while (Date.now() < deadline) {
+  const carrying = Date.now() + timeoutMs;
+  while (Date.now() < carrying) {
     try {
-      const r = await fetch(`https://${host}/health`, { signal: AbortSignal.timeout(4000) });
+      const r = await fetch(`https://${host}/health`, { signal: AbortSignal.timeout(1e4) });
       if (r.ok)
         return { url: found[0], host, subdomain: found[1], pid: child.pid };
     } catch {}
     await new Promise((r) => setTimeout(r, 1500));
   }
-  try {
-    process.kill(child.pid);
-  } catch {}
-  throw new Error(`the tunnel at ${host} never carried traffic. See ${logPath}`);
+  stop();
+  throw new Error(`the tunnel at ${host} never carried traffic. See ${logPath}
+
+` + `If that hostname does not resolve at all, Cloudflare never published DNS
+` + `for it. Quick tunnels are rate limited, so several in a few minutes stop
+` + `being handed out. Wait a few minutes, or run the relay yourself with
+` + `--host and give the other person the address it prints.`);
 }
 
 // src/usage.ts
@@ -3222,7 +3238,7 @@ yours a question. Their words never enter your session unless you raise them.
   /crosstalk:trust`);
     return;
   }
-  const url = has("--host") ? await startRelay() : loadRelay().url;
+  const url = has("--host") || has("--public") ? await startRelay() : loadRelay().url;
   if (!await relayReachable(url))
     die(`no relay at ${httpBase(url)}.
 
@@ -3701,7 +3717,10 @@ async function post() {
   const text = positional.join(" ").trim() || flag("--text", "");
   if (!text)
     die('usage: crosstalk post "build failed on main" [--intent blocking] [--source ci]');
-  await ready();
+  refuseIfIdentityDamaged();
+  identityOrCreate();
+  if (!await ensureDaemon(ROOT_DIR))
+    die("the daemon would not start. See ~/.claude/crosstalk/daemon.log");
   const r = await request({
     op: "post",
     text,

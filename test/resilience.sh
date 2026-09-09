@@ -102,6 +102,34 @@ CROSSTALK_HOME="$TMP/b" nohup bun src/daemon.ts >"$TMP/db.log" 2>&1 &
 sleep 4
 if grep -q drained "$TMP/relay.log"; then pass "drained to the peer after the restart"; else fail "nothing drained"; fi
 
+# --- 2b. a fact written while a peer was away --------------------------------
+#
+# The relay buffers for a day and then drops. Past that the only thing that
+# reconciles is the sync request on reconnect, and it lived on one relay path
+# and not the other, so on the hosted worker a machine that was off never
+# caught up. Take b right down, write a fact on a, bring b back.
+echo
+echo "2b. a fact written while a peer was away"
+stop_daemon "$TMP/b"; sleep 2
+CROSSTALK_HOME="$TMP/a" bun src/cli.ts facts add "the pg driver needs the 3.x branch" >/dev/null 2>&1
+sleep 2
+# Empty b's buffer at the relay, so nothing can arrive by replay and the only
+# route left is the resync.
+rm -f "$TMP/relay/crosstalk-rooms-buffer.json"
+RP=$(relay_pid); kill "$RP" 2>/dev/null; sleep 1.5
+start_relay
+CROSSTALK_HOME="$TMP/b" nohup bun src/daemon.ts >"$TMP/db2.log" 2>&1 &
+for _ in $(seq 1 20); do
+  CROSSTALK_HOME="$TMP/b" bun src/cli.ts facts 2>/dev/null | grep -q '3.x branch' && break
+  sleep 1
+done
+if CROSSTALK_HOME="$TMP/b" bun src/cli.ts facts 2>/dev/null | grep -q '3.x branch'; then
+  pass "b caught up on reconnect"
+else
+  fail "b never caught up"
+  CROSSTALK_HOME="$TMP/b" bun src/cli.ts facts 2>&1 | head -5
+fi
+
 # --- 3. a link that still looks open but is dead -----------------------------
 echo
 echo "3. relay frozen, socket still open"

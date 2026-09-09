@@ -83,22 +83,45 @@ If both of you sleep unpredictably, host a relay somewhere that does not:
 
 ## 2. With one computer and Docker
 
-This runs the other person inside a container, which has its own network stack
-and its own filesystem, so it exercises real cross-host TCP, the encrypted link,
-and address detection. It does not exercise firewalls, sleep, or NAT.
-
 Start Docker, then:
 
 ```
-cd test/docker
-./run.sh
+bash test/docker/nat.sh
 ```
 
-The script starts a relay on your Mac bound to all interfaces, builds a small
-image with crosstalk in it, brings up a container as a second person, puts the
-two over your LAN address, sends a message each way, and prints what arrived. It
-tears everything down afterwards and touches nothing in `~/.claude`.
+Two containers, each on its own bridge network, and a relay on a third that both
+can reach. A Docker bridge is a NAT with no port forwarding, and the two peer
+networks cannot route to each other, so this is the case the whole transport
+design turns on: two people who can dial out and cannot be dialled.
 
-A pass here means the protocol and the encrypted link work between two network
-stacks. It does not mean crosstalk works between two laptops on hotel wifi. Only
-the first test tells you that.
+```
+   peer-a ──▶ ┐                          ┌ ◀── peer-b
+   (net-a)    ├──▶ relay (net-relay) ◀───┤    (net-b)
+              ┘                          ┘
+   no inbound                              no inbound
+```
+
+Twelve assertions: that each peer reaches the relay, that neither reaches the
+other, that a room forms across them, that a message crosses, and that neither
+side ever opened a listening port on a routable address. It tears everything
+down afterwards and touches nothing in `~/.claude`.
+
+A pass means NAT, two network stacks, the encrypted link, room setup and
+delivery all work. It says nothing about firewalls, sleep, or a network that
+blocks outbound. Only the first test tells you that.
+
+## 3. The public tunnel
+
+```
+bash test/tunnel.sh
+```
+
+`room new --public` puts a Cloudflare quick tunnel in front of a relay on your
+machine, so the invite carries a `wss://<random>.trycloudflare.com` address that
+works from anywhere. This runs that path end to end: the tunnel comes up, the
+relay answers through it, a second identity joins over the public URL, a message
+crosses, and `crosstalk relay stop` closes the tunnel again.
+
+Quick tunnels are rate limited. Several in a few minutes stop resolving, and the
+script skips with a note rather than failing when Cloudflare will not route one.
+That is their throttle, not a fault here.

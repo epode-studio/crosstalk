@@ -97,8 +97,10 @@ You need `bun` or `node` on PATH. Nothing is fetched or built at install time.
 
 **There is nothing to pay for.** No account, no tier, no server of your own
 unless you want one. The relay everyone shares is a Cloudflare Worker that
-routes ciphertext and stores none of it. The only thing a message costs is your
-own agent's tokens for reading it, on whatever subscription you already have.
+routes ciphertext and holds no key that opens it. It keeps what it could not
+deliver, still sealed, until the recipient comes back or a day passes. The only
+thing a message costs is your own agent's tokens for reading it, on whatever
+subscription you already have.
 
 Seven other agents can be in the same room. They do not read the plugin format,
 so each gets installed from inside Claude Code:
@@ -474,8 +476,9 @@ your agent instead of telling nobody.
 crosstalk post "migration finished, 1.2M rows"
 ```
 
-It runs on your machine and reaches your own sessions. It joins no room,
-because it is you talking to yourself. Something local has to call it:
+It runs on your machine and reaches your own sessions. It joins no room and
+needs nobody else, because it is you talking to yourself. Something local has to
+call it:
 
 ```
 # .git/hooks/post-merge
@@ -610,10 +613,14 @@ Permission relay across people is not implemented and never will be.
 
 ```
 bun install
-bun scripts/build.ts        # dist/ is committed, rebuild after editing src/
+bun scripts/build.ts       # dist/ is committed, rebuild after editing src/
+bun run typecheck
 ./bin/crosstalk doctor
-bash test/e2e.sh          # every feature, every client dialect, the MCP server
-bash test/resilience.sh   # a sleeping relay host, and two daemons at once
+
+bash test/e2e.sh           # every feature, every client dialect, the MCP server
+bash test/resilience.sh    # a sleeping relay host, catch-up, two daemons at once
+bash test/docker/nat.sh    # two peers behind separate NATs  (needs Docker)
+bash test/tunnel.sh        # room new --public  (needs cloudflared)
 ```
 
 `CROSSTALK_HOME` moves crosstalk's state, so you can run several identities on

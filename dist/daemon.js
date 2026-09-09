@@ -1033,6 +1033,7 @@ function connect() {
     log(`relay ready as ${myFingerprint()} (hosted)`);
     flushOutbox();
     publishPresence();
+    requestFactSync();
   };
   sock.onclose = () => {
     ws = null;
@@ -1626,7 +1627,10 @@ async function handle(req, sock) {
     case "post": {
       const target = pickSession();
       if (!target)
-        return { ok: false, error: "no session to post to" };
+        return {
+          ok: false,
+          error: "no agent session is registered here yet, so there is nothing to interrupt. " + "Start one in this project and it will announce itself; the message is not kept."
+        };
       const source = String(req.source ?? "local").slice(0, 24);
       const intent = req.intent ?? "fyi";
       const decision = triage("notify", intent, "message", statusOf(target.sessionId));

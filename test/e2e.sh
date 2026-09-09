@@ -415,6 +415,18 @@ MUTED=$(CROSSTALK_HOME="$A" bun -e '
 ' 2>&1)
 check "$MUTED" "true false" "a timed mute reaches the map triage reads"
 
+# Two relay paths reach "ready": the hosted worker through sock.onopen, and a
+# self-hosted relay through its ready frame. Only the second asked peers for a
+# resync, so on the relay everybody actually uses, a machine that was off longer
+# than the relay's day of buffering never caught up. resilience.sh covers the
+# catch-up itself, but against a self-hosted relay, so it cannot see this.
+ONOPEN=$(awk '/sock.onopen = \(\) =>/,/^  }$/' src/daemon.ts)
+case "$ONOPEN" in
+  *requestFactSync*) ok "the hosted relay path asks for a resync too" ;;
+  *) bad "the hosted relay path asks for a resync too" ;;
+esac
+
+
 # --- reaching the CLI ----------------------------------------------------------
 #
 # `crosstalk` on PATH is a symlink into the plugin, so the shim has to resolve

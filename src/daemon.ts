@@ -376,6 +376,10 @@ function connect() {
     log(`relay ready as ${myFingerprint()} (hosted)`)
     flushOutbox()
     publishPresence()
+    // The self-hosted path did this on its ready frame and this one did not, so
+    // on the relay everybody actually uses, a machine that was off while a fact
+    // or a task was written never caught up.
+    requestFactSync()
   }
 
   sock.onclose = () => {
@@ -859,7 +863,12 @@ function shareFacts(peerLabel: string, room: string) {
   })
 }
 
-/** Ask everyone for anything we are missing, on every reconnect. */
+/**
+ * Ask everyone for anything we are missing, on every reconnect.
+ *
+ * This is the only thing that reconciles an absence longer than the relay's
+ * day of buffering, so both relay paths have to call it, not just one.
+ */
 function requestFactSync() {
   const roomNames = [
     ...Object.keys(loadPeers()),
@@ -1076,7 +1085,13 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
     // talking to yourself, so it needs no identity and no room.
     case "post": {
       const target = pickSession()
-      if (!target) return { ok: false, error: "no session to post to" }
+      if (!target)
+        return {
+          ok: false,
+          error:
+            "no agent session is registered here yet, so there is nothing to interrupt. " +
+            "Start one in this project and it will announce itself; the message is not kept.",
+        }
       const source = String(req.source ?? "local").slice(0, 24)
       const intent = (req.intent as Intent) ?? "fyi"
       const decision = triage("notify", intent, "message", statusOf(target.sessionId))
