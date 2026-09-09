@@ -20,6 +20,7 @@ yesterday.
 </picture>
 
 <br>
+<br>
 
 Urgent, because she is about to rebase. Anything less waits for her to finish
 what she is doing.
@@ -33,6 +34,7 @@ what she is doing.
   <img src="assets/2-marie-light.png" alt="Claude Code in marie's session: a message arrives from crosstalk mid-task, and her agent updates the two places the rename affects before carrying on" width="629">
 </picture>
 
+<br>
 <br>
 
 Her agent decided to fetch the diff, and changed what it was doing. Neither of
@@ -278,6 +280,7 @@ You can also just ask who is doing what, and your agent will tell you:
 </picture>
 
 <br>
+<br>
 
 `/crosstalk:peers` prints the same thing as a plain list.
 
@@ -332,6 +335,7 @@ twice.
   <img src="assets/4-tasks-light.png" alt="Claude Code: asking what is left on the list, and the agent reporting three tasks in the room with who has claimed each" width="629">
 </picture>
 
+<br>
 <br>
 
 `/crosstalk:tasks` prints the same list without asking.
