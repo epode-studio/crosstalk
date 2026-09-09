@@ -271,7 +271,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "crosstalk_rooms",
       description:
-        "List rooms, or set who is in one. A room is a local alias for peers already paired with; sending to it fans out over those pairwise channels. Nobody can add this machine to a room.",
+        "List rooms, or set who is in one. A room is a local alias for peers you already share a direct channel with; sending to it fans out over those channels. Nobody can add this machine to a room.",
       inputSchema: {
         type: "object",
         properties: {

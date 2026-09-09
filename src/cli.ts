@@ -23,9 +23,6 @@ import {
   saveIdentity,
   loadPeers,
   savePeers,
-  loadPolicy,
-  savePolicy,
-  policyFor,
   loadRelay,
   saveRelay,
   secureIdentity,
@@ -326,7 +323,7 @@ async function startRoom(words?: string) {
   const base = () => httpBase(loadRelay().url)
 
   const put = async (slot: string, part: string, blob: string) => {
-    const r = await fetch(`${base()}/pair/${slot}?part=${part}`, {
+    const r = await fetch(`${base()}/invite/${slot}?part=${part}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ blob }),
@@ -336,7 +333,7 @@ async function startRoom(words?: string) {
   const get = async (slot: string, part: string, waitMs = 0): Promise<string | null> => {
     const deadline = Date.now() + waitMs
     for (;;) {
-      const r = await fetch(`${base()}/pair/${slot}?part=${part}`).catch(() => null)
+      const r = await fetch(`${base()}/invite/${slot}?part=${part}`).catch(() => null)
       if (r?.ok) return ((await r.json()) as { blob: string }).blob
       if (Date.now() >= deadline) return null
       await new Promise((res) => setTimeout(res, 1000))
@@ -360,7 +357,7 @@ async function startRoom(words?: string) {
     if (!theirs) die(`nothing is waiting on ${inv.slot}. Invites last fifteen minutes.`)
 
     const mine = pake.begin(inv.phrase, inv.slot)
-    const key = pake.finish(mine, theirs, inv.slot, "crosstalk/pair/v4")
+    const key = pake.finish(mine, theirs, inv.slot, "crosstalk/room/v1")
     if (!key) die("that invite could not be used. Check the words.")
 
     // Our identity, sealed to a key only someone with the same words can hold.
@@ -430,7 +427,7 @@ Waiting…`)
   const theirs = await get(slot, "b", 900_000)
   if (!theirs) die("that invite expired without anyone using it")
   const dot = theirs.indexOf(".")
-  const key = pake.finish(mine, theirs.slice(0, dot), slot, "crosstalk/pair/v4")
+  const key = pake.finish(mine, theirs.slice(0, dot), slot, "crosstalk/room/v1")
   if (!key) die("somebody tried to join with the wrong words. Start again with a new invite.")
 
   let peer
@@ -475,9 +472,8 @@ async function peers() {
     return
   }
   for (const p of r.peers) {
-    const muted = p.policy.mutedUntil && p.policy.mutedUntil > Date.now()
     console.log(
-      `\n  ${p.online ? "●" : "○"} ${p.label}${p.isMachine ? " (a machine)" : ""}  ${p.fingerprint}  ${p.policy.delivery}${muted ? " (muted)" : ""}${p.unread ? `  ${p.unread} unread` : ""}`,
+      `\n  ${p.online ? "●" : "○"} ${p.label}${p.isMachine ? " (a machine)" : ""}  ${p.fingerprint}  ${p.level}${p.muted ? " (muted)" : ""}${p.unread ? `  ${p.unread} unread` : ""}`,
     )
     if (!p.sessions.length) console.log(`        no sessions reported  (presence ${ago(p.presenceAt)})`)
     for (const s of p.sessions) console.log(`        ${s.name}  ${s.cwd}  ${s.status}  ${ago(s.lastSeen)}`)
@@ -492,39 +488,9 @@ async function mute() {
   const r = await request({ op: "mute", peer, minutes })
   console.log(
     r.mutedUntil
-      ? `muted ${peer ?? "all peers"} until ${new Date(r.mutedUntil).toLocaleTimeString()}`
-      : `unmuted ${peer ?? "all peers"}`,
+      ? `muted ${peer ?? `all ${r.muted.length} peer(s)`} until ${new Date(r.mutedUntil).toLocaleTimeString()}`
+      : `unmuted ${peer ?? "everyone"}`,
   )
-}
-
-async function policy() {
-  const mode = positional.find((a) => ["notify", "deliver", "quiet"].includes(a))
-  const peer = positional.find((a) => a !== mode)
-  const set: Record<string, unknown> = {}
-  if (mode) set.delivery = mode
-  if (has("--allow-ask")) set.allowAsk = true
-  if (has("--no-allow-ask")) set.allowAsk = false
-
-  if (!Object.keys(set).length) {
-    const p = loadPolicy()
-    console.log(`\ndefault   ${p.default.delivery}   ask ${p.default.allowAsk ? "allowed" : "off"}`)
-    for (const label of Object.keys(loadPeers())) {
-      const pp = policyFor(label, p)
-      console.log(`${label.padEnd(10)}${pp.delivery}   ask ${pp.allowAsk ? "allowed" : "off"}`)
-    }
-    console.log(`
-  notify    a notice appears; their words stay behind crosstalk_read  (default)
-  deliver   their text lands in your session mid-turn
-  quiet     held silently, surfaced when the session next goes idle
-
-  Questions are allowed from anyone in a room of two with you. Turn them off
-  for someone with /crosstalk:policy <name> --no-allow-ask.
-`)
-    return
-  }
-  await ready()
-  const r = await request({ op: "policy", peer, set })
-  console.log(JSON.stringify(r.policy, null, 2))
 }
 
 async function cost() {
@@ -722,7 +688,7 @@ async function room() {
     }
     for (const room of r.rooms) {
       const who = room.members
-        .map((m: any) => m.label + (m.you ? " (you)" : "") + (m.state === "invited" ? " (invited)" : "") + (!m.paired && !m.you ? " ·no direct channel" : ""))
+        .map((m: any) => m.label + (m.you ? " (you)" : "") + (m.state === "invited" ? " (invited)" : "") + (!m.direct && !m.you ? " ·no direct channel" : ""))
         .join(", ")
       if (room.pending) {
         console.log(`  #${room.name}   INVITATION from ${room.pending.invitedBy}`)
@@ -832,12 +798,16 @@ async function rename() {
   savePeers(peers)
 
   // Carry across everything else filed under the old name.
-  const pol = loadPolicy()
-  if (pol.peers[a]) {
-    pol.peers[b] = pol.peers[a]
-    delete pol.peers[a]
-    savePolicy(pol)
+  const t = trust.load()
+  if (t.people[a]) {
+    t.people[b] = t.people[a]
+    delete t.people[a]
   }
+  if (t.muted[a]) {
+    t.muted[b] = t.muted[a]
+    delete t.muted[a]
+  }
+  trust.save(t)
   try {
     const uPath = path.join(ROOT, "usage.json")
     const u = JSON.parse(fs.readFileSync(uPath, "utf8"))
@@ -916,7 +886,7 @@ async function trustCmd() {
   console.log(`#${who.replace(/^#/, "")}: ${level} for everyone in it`)
 }
 
-/** Anything on this machine can put a line on your screen without pairing. */
+/** Anything on this machine can put a line on your screen without a room. */
 async function post() {
   const text = positional.join(" ").trim() || flag("--text", "")!
   if (!text) die('usage: crosstalk post "build failed on main" [--intent blocking] [--source ci]')
@@ -1040,7 +1010,7 @@ async function factsCmd() {
 /**
  * Your second machine should be you, not a second person.
  *
- * Pairing exchanges keys between two people. Linking copies one identity onto
+ * Starting a room exchanges keys between two people. Linking copies one identity onto
  * another machine, so both answer to the same fingerprint and appear once in
  * every room. Messages arrive on whichever machine you are sitting at, because
  * the relay holds a mailbox per identity and delivers to every connection on it.
@@ -1056,7 +1026,7 @@ async function link() {
   if (joining) {
     if (id)
       die(
-        `this machine already has an identity ("${id.label}"). Linking would replace it,\nalong with everyone it is paired with. Move ~/.claude/crosstalk aside first if\nyou are sure.`,
+        `this machine already has an identity ("${id.label}"). Linking would replace it,\nalong with every room it is in. Move ~/.claude/crosstalk aside first if\nyou are sure.`,
       )
     const inv = parseInvite(joining)
     if (inv.where)
@@ -1066,14 +1036,14 @@ async function link() {
           break
         }
     if (!inv.slot) die("that link is missing its number. It looks like 4821-six-words-like-this.")
-    const first = await fetch(`${httpBase()}/pair/${inv.slot}?part=a`)
+    const first = await fetch(`${httpBase()}/invite/${inv.slot}?part=a`)
     if (!first.ok) die("no link waiting on that number. They last fifteen minutes.")
     const theirPoint = ((await first.json()) as { blob: string }).blob
 
     const half = pake.begin(inv.phrase, inv.slot)
     const key = pake.finish(half, theirPoint, inv.slot, "crosstalk/link/v1")
     if (!key) die("could not use that link. Check the words.")
-    await fetch(`${httpBase()}/pair/${inv.slot}?part=b`, {
+    await fetch(`${httpBase()}/invite/${inv.slot}?part=b`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ blob: half.message }),
@@ -1081,7 +1051,7 @@ async function link() {
 
     let bundle: any
     for (let i = 0; i < 120; i++) {
-      const r = await fetch(`${httpBase()}/pair/${inv.slot}?part=c`).catch(() => null)
+      const r = await fetch(`${httpBase()}/invite/${inv.slot}?part=c`).catch(() => null)
       if (r?.ok) {
         try {
           const raw = JSON.parse(open(key, ((await r.json()) as { blob: string }).blob))
@@ -1108,12 +1078,12 @@ This machine is now "${bundle.identity.label}", the same one as your other machi
 
   ${fingerprint(bundle.identity.ed.pub)}
 
-Everyone you had paired with came across. In a room you appear once, not twice,
+Every room came across. In one you appear once, not twice,
 and a message reaches whichever machine you are sitting at.`)
     return
   }
 
-  if (!id) die("nothing to link yet. Pair with someone first, or run this on the machine that already has your identity.")
+  if (!id) die("nothing to link yet. Run /crosstalk:room new first, or run this on the machine that already has your identity.")
   const url0 = loadRelay().url
   const slotRes = await fetch(`${httpBase(url0)}/slot`, { method: "POST" }).catch(() => null)
   if (!slotRes?.ok) die("the relay would not give out a slot. Try again in a moment.")
@@ -1129,7 +1099,7 @@ and a message reaches whichever machine you are sitting at.`)
   }
   const z = zlib.gzipSync(Buffer.from(JSON.stringify(bundle), "utf8")).toString("base64")
   const url = url0
-  await fetch(`${httpBase(url)}/pair/${slot}?part=a`, {
+  await fetch(`${httpBase(url)}/invite/${slot}?part=a`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ blob: half.message }),
@@ -1143,7 +1113,7 @@ Waiting…`)
 
   let key: Buffer | null = null
   for (let i = 0; i < 900; i++) {
-    const r = await fetch(`${httpBase(url)}/pair/${slot}?part=b`).catch(() => null)
+    const r = await fetch(`${httpBase(url)}/invite/${slot}?part=b`).catch(() => null)
     if (r?.ok) {
       key = pake.finish(half, ((await r.json()) as { blob: string }).blob, slot, "crosstalk/link/v1")
       break
@@ -1154,7 +1124,7 @@ Waiting…`)
   const sealed = seal(key, JSON.stringify({ z }))
   if (sealed.length > 8000)
     die("too much to send in one go. This happens with a lot of peers; copy ~/.claude/crosstalk across by hand instead.")
-  const res = await fetch(`${httpBase(url)}/pair/${slot}?part=c`, {
+  const res = await fetch(`${httpBase(url)}/invite/${slot}?part=c`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ blob: sealed }),
@@ -1623,7 +1593,6 @@ const commands: Record<string, () => Promise<void>> = {
   secure,
   peers,
   mute,
-  policy,
   cost,
   status,
   doctor,

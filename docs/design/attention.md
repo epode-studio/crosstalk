@@ -51,12 +51,17 @@ colleague can be worth interrupting for in `#incident` and not in `#ideas`.
 
 **Why a ladder rather than flags.** A room of eight is unusable if trust is
 binary: either everyone can interrupt you or the room is a mailbox. A ladder is
-also honest about the fact that these permissions are ordered, which the current
-two-field version hides.
+also honest about the fact that these permissions are ordered, which the
+two-field version it replaced hid.
 
-**What this replaced.** `policy.delivery`, `policy.allowAsk`, and the
-`strangerInRoom` branch in the daemon. One value, one place. The old settings are
-still read once, so an existing setup migrates rather than resetting.
+**What this replaced.** `policy.delivery`, `policy.allowAsk`, the `policy`
+command and `policy.json` itself, plus the `strangerInRoom` branch in the daemon. One value, one place.
+
+Both existed side by side for a while, and that had a cost worth recording:
+`/crosstalk:mute` went on writing `mutedUntil` into `policy.json` while triage
+read `trust.muted`, so muting somebody did nothing at all once `trust.json`
+existed. Two dials where one decides is not a smaller change, it is a silent
+one.
 
 ---
 

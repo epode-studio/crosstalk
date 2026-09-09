@@ -17,7 +17,6 @@ var P = {
   root: ROOT,
   identity: path.join(ROOT, "identity.json"),
   peers: path.join(ROOT, "peers.json"),
-  policy: path.join(ROOT, "policy.json"),
   relay: path.join(ROOT, "relay.json"),
   queue: path.join(ROOT, "queue.json"),
   parked: path.join(ROOT, "parked.json"),
@@ -27,10 +26,6 @@ var P = {
   daemonSock: path.join(ROOT, "daemon.sock"),
   daemonLock: path.join(ROOT, "daemon.lock"),
   log: path.join(ROOT, "daemon.log")
-};
-var DEFAULT_POLICY = {
-  default: { delivery: "notify", allowAsk: true },
-  peers: {}
 };
 function ensureRoot() {
   fs.mkdirSync(ROOT, { recursive: true, mode: 448 });
@@ -90,14 +85,6 @@ var loadIdentity = () => {
   return onDisk;
 };
 var loadPeers = () => readJson(P.peers, {});
-var loadPolicy = () => {
-  const p = readJson(P.policy, DEFAULT_POLICY);
-  return { default: { ...DEFAULT_POLICY.default, ...p.default }, peers: p.peers ?? {} };
-};
-var savePolicy = (p) => writeJson(P.policy, p);
-function policyFor(label, policy = loadPolicy()) {
-  return { ...policy.default, ...policy.peers[label] ?? {} };
-}
 var loadRelay = () => readJson(P.relay, {
   url: process.env.CROSSTALK_RELAY ?? "wss://crosstalk-relay.billowing-poetry-4cd6.workers.dev"
 });
@@ -132,10 +119,10 @@ function open(key, sealed) {
   d.setAuthTag(raw.subarray(12, 28));
   return Buffer.concat([d.update(raw.subarray(28)), d.final()]).toString("utf8");
 }
-function pairKey(id, peer) {
+function channelKey(id, peer) {
   const shared = crypto.diffieHellman({ privateKey: xPriv(id), publicKey: xPub(peer.xPub) });
   const ends = [fingerprint(id.ed.pub), peer.fingerprint].sort().join("|");
-  return Buffer.from(crypto.hkdfSync("sha256", shared, Buffer.from(ends), "crosstalk/pair/v1", 32));
+  return Buffer.from(crypto.hkdfSync("sha256", shared, Buffer.from(ends), "crosstalk/channel/v1", 32));
 }
 var SCRYPT = { N: 32768, r: 8, p: 1, maxmem: 256 * 1024 * 1024 };
 
@@ -334,7 +321,6 @@ var P2 = {
   root: ROOT2,
   identity: path3.join(ROOT2, "identity.json"),
   peers: path3.join(ROOT2, "peers.json"),
-  policy: path3.join(ROOT2, "policy.json"),
   relay: path3.join(ROOT2, "relay.json"),
   queue: path3.join(ROOT2, "queue.json"),
   parked: path3.join(ROOT2, "parked.json"),
@@ -405,7 +391,7 @@ function load() {
       muted: raw.muted ?? {}
     };
   } catch {
-    return migrate();
+    return { ...DEFAULT_TRUST, rooms: {}, people: {}, muted: {} };
   }
 }
 function save(t) {
@@ -414,31 +400,23 @@ function save(t) {
   fs3.writeFileSync(tmp, JSON.stringify(t, null, 2), { mode: 384 });
   fs3.renameSync(tmp, FILE2);
 }
-function migrate() {
-  const t = { ...DEFAULT_TRUST, rooms: {}, people: {}, muted: {} };
-  try {
-    const old = JSON.parse(fs3.readFileSync(path5.join(ROOT2, "policy.json"), "utf8"));
-    const asLevel = (p) => p?.delivery === "deliver" ? "deliver" : p?.delivery === "quiet" ? "notify" : p?.allowAsk ? "ask" : "notify";
-    if (old?.default)
-      t.default = asLevel(old.default);
-    for (const [name, p] of Object.entries(old?.peers ?? {})) {
-      t.people[name] = asLevel(p);
-      if (p.mutedUntil)
-        t.muted[name] = p.mutedUntil;
-    }
-    save(t);
-  } catch {}
-  return t;
-}
 function levelFor(person, ctx, t = load()) {
   const pinned = t.people[person];
   const roomLevel = ctx.room ? t.rooms[ctx.room] : undefined;
   let level = pinned ?? roomLevel ?? (ctx.room ? ROOM_DEFAULT : t.default);
-  if (!ctx.paired)
+  if (!ctx.direct)
     level = lower(level, "notify");
   if (ctx.machine)
     level = lower(level, "notify");
   return level;
+}
+function mute(who, until, t = load()) {
+  if (until && until > Date.now())
+    t.muted[who] = until;
+  else
+    delete t.muted[who];
+  save(t);
+  return t;
 }
 function isMuted(person, ctx, t = load(), now = Date.now()) {
   if ((t.muted[person] ?? 0) > now)
@@ -1026,7 +1004,7 @@ function connect() {
       if (!peer)
         return log(`dropped message from unpaired fingerprint ${f.from}`);
       try {
-        const env = JSON.parse(open(pairKey(identity, peer), f.body));
+        const env = JSON.parse(open(channelKey(identity, peer), f.body));
         onEnvelope(peer.label, env);
       } catch (e) {
         log(`failed to open body from ${peer.label}: ${e.message}`);
@@ -1072,7 +1050,7 @@ function sendEnvelope(peerLabel, env) {
     t: "send",
     to: peer.fingerprint,
     id: env.id,
-    body: seal(pairKey(identity, peer), JSON.stringify(env))
+    body: seal(channelKey(identity, peer), JSON.stringify(env))
   };
   if (env.kind === "presence")
     return relaySend(frame2) ? { ok: true } : { ok: false, error: "relay not connected" };
@@ -1138,10 +1116,10 @@ function onRoomBody(f) {
   if (!env)
     return log(`could not open a message in #${room.name}; we may have missed a rekey`);
   const sender = room.members[f.from];
-  const paired = peersByFingerprint().get(f.from);
-  onEnvelope(paired?.label ?? sender?.label ?? "someone", env, {
+  const direct = peersByFingerprint().get(f.from);
+  onEnvelope(direct?.label ?? sender?.label ?? "someone", env, {
     room,
-    strangerInRoom: !paired
+    strangerInRoom: !direct
   });
 }
 var seenIds = new Map;
@@ -1183,7 +1161,7 @@ function onEnvelope(peerLabel, env, ctx) {
     return acceptTasks(peerLabel, env);
   const tctx = {
     room: ctx?.room?.name ?? (env.room ? env.room.replace(/^#/, "") : undefined),
-    paired: !ctx?.strangerInRoom,
+    direct: !ctx?.strangerInRoom,
     machine: !!loadPeers()[peerLabel]?.isMachine
   };
   const level = levelFor(peerLabel, tctx);
@@ -1366,7 +1344,7 @@ function flushOutbox() {
 function acceptFacts(peerLabel, env) {
   const named = (env.room ?? "").replace(/^#/, "");
   const room = named || peerLabel;
-  const level = levelFor(peerLabel, { room: named || undefined, paired: !!loadPeers()[peerLabel] });
+  const level = levelFor(peerLabel, { room: named || undefined, direct: !!loadPeers()[peerLabel] });
   if (!atLeast2(level, "ask"))
     return log(`ignored a fact from ${peerLabel}: they are at ${level}, writing needs ask`);
   const ops = env.kind === "fact_sync" ? env.fact : [env.fact];
@@ -1382,7 +1360,7 @@ function acceptFacts(peerLabel, env) {
 function acceptTasks(peerLabel, env) {
   const named = (env.room ?? "").replace(/^#/, "");
   const room = named || peerLabel;
-  const level = levelFor(peerLabel, { room: named || undefined, paired: !!loadPeers()[peerLabel] });
+  const level = levelFor(peerLabel, { room: named || undefined, direct: !!loadPeers()[peerLabel] });
   if (!atLeast2(level, "ask"))
     return log(`ignored a task change from ${peerLabel}: they are at ${level}`);
   const ops = env.kind === "task_sync" ? env.task : [env.task];
@@ -1811,8 +1789,8 @@ async function handle(req, sock) {
         kind: "direct",
         pending: null,
         members: [
-          { label: identity.label, state: "joined", paired: true, you: true },
-          { label: p.label, state: "joined", paired: true, you: false }
+          { label: identity.label, state: "joined", direct: true, you: true },
+          { label: p.label, state: "joined", direct: true, you: false }
         ]
       }));
       return {
@@ -1827,7 +1805,7 @@ async function handle(req, sock) {
           members: Object.values(r.members).map((m) => ({
             label: m.label,
             state: m.state,
-            paired: !!peersByFingerprint().get(m.fingerprint),
+            direct: !!peersByFingerprint().get(m.fingerprint),
             you: m.fingerprint === myFingerprint()
           }))
         }))
@@ -2078,7 +2056,7 @@ async function handle(req, sock) {
     }
     case "peers": {
       const peers = loadPeers();
-      const policy = loadPolicy();
+      const t = load();
       return {
         ok: true,
         me: { label: identity.label, sessions: localPresence() },
@@ -2089,34 +2067,21 @@ async function handle(req, sock) {
           fingerprint: p.fingerprint,
           isMachine: !!p.isMachine,
           online: online.has(p.fingerprint),
-          policy: policyFor(p.label, policy),
+          level: levelFor(p.label, { direct: true }, t),
+          muted: isMuted(p.label, { direct: true }, t),
           sessions: peerPresence.get(p.label)?.sessions ?? [],
           presenceAt: peerPresence.get(p.label)?.at ?? 0,
           unread: Object.values(held).flat().filter((m) => m.from === p.label && !m.readAt).length
         }))
       };
     }
-    case "policy": {
-      const policy = loadPolicy();
-      if (req.peer) {
-        policy.peers[req.peer] = { ...policyFor(req.peer, policy), ...req.set ?? {} };
-      } else if (req.set) {
-        policy.default = { ...policy.default, ...req.set };
-      }
-      if (req.peer || req.set)
-        savePolicy(policy);
-      return { ok: true, policy };
-    }
     case "mute": {
-      const policy = loadPolicy();
       const minutes = Number(req.minutes ?? 60);
       const until = minutes <= 0 ? undefined : Date.now() + minutes * 60000;
-      if (req.peer)
-        policy.peers[req.peer] = { ...policyFor(req.peer, policy), mutedUntil: until };
-      else
-        policy.default = { ...policy.default, mutedUntil: until };
-      savePolicy(policy);
-      return { ok: true, mutedUntil: until };
+      const who = req.peer ? [req.peer] : Object.keys(loadPeers());
+      for (const w of who)
+        mute(w, until);
+      return { ok: true, mutedUntil: until, muted: who };
     }
     case "decide": {
       const cwd = req.repo ?? sessionById(req.sessionId)?.cwd ?? process.cwd();

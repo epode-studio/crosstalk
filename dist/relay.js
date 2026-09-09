@@ -400,15 +400,15 @@ function announce(fp) {
       send(ws, { t: "presence", peers: online });
 }
 var offers = new Map;
-var pairRate = new Map;
+var inviteRate = new Map;
 setInterval(() => {
   const now = Date.now();
-  for (const [k, v] of pairRate) {
+  for (const [k, v] of inviteRate) {
     const win = v.filter((t) => now - t < 60000);
     if (win.length)
-      pairRate.set(k, win);
+      inviteRate.set(k, win);
     else
-      pairRate.delete(k);
+      inviteRate.delete(k);
   }
 }, 60000);
 setInterval(() => {
@@ -669,7 +669,7 @@ serve({
       }
       return json({ error: "no free slot, try again" }, 503);
     }
-    const m = url.pathname.match(/^\/pair\/([A-Za-z0-9]{1,32})$/);
+    const m = url.pathname.match(/^\/invite\/([A-Za-z0-9]{1,32})$/);
     if (m) {
       const code = m[1];
       const part = url.searchParams.get("part") ?? "a";
@@ -678,11 +678,11 @@ serve({
       if (method === "GET") {
         const who = remoteAddress ?? "unknown";
         const now = Date.now();
-        const win = (pairRate.get(who) ?? []).filter((t) => now - t < 60000);
+        const win = (inviteRate.get(who) ?? []).filter((t) => now - t < 60000);
         win.push(now);
-        pairRate.set(who, win);
+        inviteRate.set(who, win);
         if (win.length > 30)
-          return json({ error: "too many pairing attempts" }, 429);
+          return json({ error: "too many invite attempts" }, 429);
       }
       if (method === "POST") {
         let blob;

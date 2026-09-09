@@ -18,7 +18,7 @@
 export interface Env {
   MAILBOX: DurableObjectNamespace
   ROOM: DurableObjectNamespace
-  PAIRING: DurableObjectNamespace
+  INVITES: DurableObjectNamespace
   RELAY_PUBKEY?: string
 }
 
@@ -39,7 +39,7 @@ export default {
     if (url.pathname === "/slot" && req.method === "POST") {
       for (let attempt = 0; attempt < 8; attempt++) {
         const slot = String(Math.floor(Math.random() * 9000) + 1000)
-        const taken = await env.PAIRING.get(env.PAIRING.idFromName(slot)).fetch(
+        const taken = await env.INVITES.get(env.INVITES.idFromName(slot)).fetch(
           new Request("https://do/claim", { method: "POST" }),
         )
         if (taken.ok) return json({ slot })
@@ -47,10 +47,10 @@ export default {
       return json({ error: "no free slot, try again" }, 503)
     }
 
-    const pair = url.pathname.match(/^\/pair\/([A-Za-z0-9]{1,32})$/)
-    if (pair) {
-      const id = env.PAIRING.idFromName(pair[1])
-      return env.PAIRING.get(id).fetch(req)
+    const invite = url.pathname.match(/^\/invite\/([A-Za-z0-9]{1,32})$/)
+    if (invite) {
+      const id = env.INVITES.idFromName(invite[1])
+      return env.INVITES.get(id).fetch(req)
     }
 
     if (url.pathname === "/ws") {
@@ -275,12 +275,9 @@ export class Room {
   }
 }
 
-// --- pairing offers, fifteen minutes ------------------------------------------
+// --- invites, fifteen minutes -------------------------------------------------
 
-// Named "Pairing" because it is a Durable Object class bound by that name in
-// wrangler.toml and listed in a migration. Renaming it needs a DO migration on
-// a deployed worker, which is not worth doing for a word.
-export class Pairing {
+export class Invites {
   constructor(private state: DurableObjectState) {}
 
   async fetch(req: Request): Promise<Response> {

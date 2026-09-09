@@ -1,7 +1,7 @@
-// Identity, pairing and message sealing. node:crypto only, no dependencies.
+// Identity, key exchange and message sealing. node:crypto only, no dependencies.
 //
 // Each identity holds two keypairs: Ed25519 for authentication and signing,
-// X25519 for encryption. Pairing exchanges both public keys over the relay,
+// X25519 for encryption. Starting a room exchanges both public keys over the relay,
 // but the exchange itself is encrypted under a passphrase you read to each
 // other out of band, so the relay never sees a key it could substitute.
 
@@ -70,19 +70,19 @@ export function open(key: Buffer, sealed: string): string {
   return Buffer.concat([d.update(raw.subarray(28)), d.final()]).toString("utf8")
 }
 
-// --- pair-level key ----------------------------------------------------------
+// --- the key for one direct channel -------------------------------------------
 
 /**
- * Shared key for a pair. X25519 ECDH, then HKDF with both fingerprints sorted
+ * Shared key for one direct channel. X25519 ECDH, then HKDF with both fingerprints sorted
  * so each side derives the same key regardless of who initiated.
  */
-export function pairKey(id: Identity, peer: Peer): Buffer {
+export function channelKey(id: Identity, peer: Peer): Buffer {
   const shared = crypto.diffieHellman({ privateKey: xPriv(id), publicKey: xPub(peer.xPub) })
   const ends = [fingerprint(id.ed.pub), peer.fingerprint].sort().join("|")
-  return Buffer.from(crypto.hkdfSync("sha256", shared, Buffer.from(ends), "crosstalk/pair/v1", 32))
+  return Buffer.from(crypto.hkdfSync("sha256", shared, Buffer.from(ends), "crosstalk/channel/v1", 32))
 }
 
-// --- pairing -----------------------------------------------------------------
+// --- invites ------------------------------------------------------------------
 
 // 512 words, four themes that sound good next to each other and cannot be
 // misheard as one another. No word is a prefix of another, none are homophones,
@@ -143,10 +143,10 @@ const stretch = (phrase: string, salt: string, bytes = 32) =>
 
 /** What the relay files the offer under. Derived, and expensive to reverse. */
 export const codeForPhrase = (phrase: string) =>
-  stretch(phrase, "crosstalk/code/v3", 6).toString("hex").toUpperCase()
+  stretch(phrase, "crosstalk/code/v1", 6).toString("hex").toUpperCase()
 
-/** Key protecting a pairing offer. Same stretching, different salt. */
-export const pairingKey = (phrase: string): Buffer => stretch(phrase, "crosstalk/pair/v3")
+/** Key protecting a join offer. Same stretching, different salt. */
+export const inviteKey = (phrase: string): Buffer => stretch(phrase, "crosstalk/invite/v1")
 
 export type Offer = {
   label: string
@@ -159,10 +159,10 @@ export type Offer = {
 }
 
 export const sealOffer = (phrase: string, offer: Offer) =>
-  seal(pairingKey(phrase), JSON.stringify(offer))
+  seal(inviteKey(phrase), JSON.stringify(offer))
 
 export const openOffer = (phrase: string, blob: string): Offer =>
-  JSON.parse(open(pairingKey(phrase), blob))
+  JSON.parse(open(inviteKey(phrase), blob))
 
 export const asPeer = (o: Offer): Peer => ({
   label: o.label,
@@ -171,5 +171,5 @@ export const asPeer = (o: Offer): Peer => ({
   edPub: o.edPub,
   xPub: o.xPub,
   fingerprint: fingerprint(o.edPub),
-  pairedAt: Date.now(),
+  joinedAt: Date.now(),
 })

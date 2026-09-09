@@ -1,7 +1,7 @@
 // CPace, so a short spoken phrase never leaves this machine in a form anyone
 // can attack offline.
 //
-// The problem it solves: the relay has to file a pairing offer under something
+// The problem it solves: the relay has to file a join offer under something
 // the other side can find. Deriving that from the phrase, which is what
 // crosstalk did, hands a relay operator a hash of five words that a GPU reverses
 // in seconds. Putting a public slot number in the invite fixes the addressing,

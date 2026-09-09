@@ -1,5 +1,5 @@
 // Wire types. Two layers: a Frame the relay can route, and an Envelope only
-// the paired peers can read. The relay sees fingerprints and byte counts.
+// the two ends can read. The relay sees fingerprints and byte counts.
 
 export type Intent = "fyi" | "question" | "blocking"
 export type Kind =

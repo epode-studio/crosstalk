@@ -138,13 +138,13 @@ function announce(fp: string) {
 // Join offers, held briefly and encrypted under a passphrase the relay
 // never sees. Two slots per code: the initiator's offer and the joiner's reply.
 const offers = new Map<string, { a?: string; b?: string; c?: string; ts: number }>()
-const pairRate = new Map<string, number[]>()
+const inviteRate = new Map<string, number[]>()
 setInterval(() => {
   const now = Date.now()
-  for (const [k, v] of pairRate) {
+  for (const [k, v] of inviteRate) {
     const win = v.filter((t) => now - t < 60_000)
-    if (win.length) pairRate.set(k, win)
-    else pairRate.delete(k)
+    if (win.length) inviteRate.set(k, win)
+    else inviteRate.delete(k)
   }
 }, 60_000)
 setInterval(() => {
@@ -418,7 +418,7 @@ serve({
 
     if (url.pathname === "/health") return json({ ok: true, online: live.size })
 
-    // Clients pin this. It also travels inside the pairing offer, sealed under
+    // Clients pin this. It also travels inside the join offer, sealed under
     // the phrase, so an attacker who can rewrite traffic cannot substitute it.
     if (url.pathname === "/pubkey") return json({ pub: relayIdentity.pub })
 
@@ -433,21 +433,21 @@ serve({
       return json({ error: "no free slot, try again" }, 503)
     }
 
-    const m = url.pathname.match(/^\/pair\/([A-Za-z0-9]{1,32})$/)
+    const m = url.pathname.match(/^\/invite\/([A-Za-z0-9]{1,32})$/)
     if (m) {
       const code = m[1]
       const part = (url.searchParams.get("part") ?? "a") as "a" | "b" | "c"
       if (!/^[abc]$/.test(part)) return json({ error: "bad part" }, 400)
 
       // A slot is public, so this no longer guards a secret. It still stops
-      // someone walking every slot looking for pairings in progress.
+      // someone walking every slot looking for invites in progress.
       if (method === "GET") {
         const who = remoteAddress ?? "unknown"
         const now = Date.now()
-        const win = (pairRate.get(who) ?? []).filter((t) => now - t < 60_000)
+        const win = (inviteRate.get(who) ?? []).filter((t) => now - t < 60_000)
         win.push(now)
-        pairRate.set(who, win)
-        if (win.length > 30) return json({ error: "too many pairing attempts" }, 429)
+        inviteRate.set(who, win)
+        if (win.length > 30) return json({ error: "too many invite attempts" }, 429)
       }
 
       if (method === "POST") {
@@ -460,7 +460,7 @@ serve({
         if (typeof blob !== "string" || blob.length > 8192) return json({ error: "bad blob" }, 400)
         const e = offers.get(code) ?? { ts: Date.now() }
         // Write once. Otherwise anyone holding the code can keep replacing the
-        // offer and stop the pairing from ever completing.
+        // offer and stop the room from ever being started.
         if (e[part]) return json({ error: "slot already filled" }, 409)
         e[part] = blob
         e.ts = Date.now()

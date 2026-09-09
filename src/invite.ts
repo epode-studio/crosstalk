@@ -37,7 +37,7 @@ export function parseInvite(input: string): Invite {
     phrase = lead[2]
   }
   if (!phrase || phrase.split("-").length < 3)
-    throw new Error(`"${input}" does not look like a pairing phrase (expected four words)`)
+    throw new Error(`"${input}" does not look like an invite phrase (expected four words)`)
   if (!right) return { slot, phrase }
   const m = right.match(/^(.*?)(?::(\d{2,5}))?$/)
   return { slot, phrase, where: m?.[1] || right, port: m?.[2] ? Number(m[2]) : DEFAULT_PORT }

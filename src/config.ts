@@ -1,4 +1,4 @@
-// Paths, identity, peers and policy. Everything crosstalk persists lives in
+// Paths, identity and peers. Everything crosstalk persists lives in
 // ~/.claude/crosstalk/ and is owned by the user, mode 0600.
 
 import fs from "node:fs"
@@ -15,7 +15,6 @@ export const P = {
   root: ROOT,
   identity: path.join(ROOT, "identity.json"),
   peers: path.join(ROOT, "peers.json"),
-  policy: path.join(ROOT, "policy.json"),
   relay: path.join(ROOT, "relay.json"),
   queue: path.join(ROOT, "queue.json"),
   parked: path.join(ROOT, "parked.json"),
@@ -41,38 +40,13 @@ export type Peer = {
   edPub: string
   xPub: string
   fingerprint: string
-  pairedAt: number
+  joinedAt: number
   /** The machine they joined from, shown when two peers share a name. */
   machine?: string
   /** True when this member is not a person. Capped at a notice, always. */
   isMachine?: boolean
 }
 
-export type Delivery = "notify" | "deliver" | "quiet"
-
-export type PeerPolicy = {
-  delivery: Delivery
-  mutedUntil?: number
-  /** Whether this peer's Claude may use crosstalk_ask here. On for a room of two. */
-  allowAsk: boolean
-}
-
-export type Policy = {
-  default: PeerPolicy
-  peers: Record<string, PeerPolicy>
-}
-
-export const DEFAULT_POLICY: Policy = {
-  // notify is the safe default: a new peer's text never lands in the session
-  // under the harness's "teammate" framing until you opt them into deliver.
-  //
-  // Questions are on, because you started a room with this person on purpose and a
-  // question is less intrusive than a delivered message. It costs a turn, and
-  // the dial for that is trust, per person. Someone added to a shared room by
-  // somebody else is a different case and still cannot ask.
-  default: { delivery: "notify", allowAsk: true },
-  peers: {},
-}
 
 function ensureRoot() {
   fs.mkdirSync(ROOT, { recursive: true, mode: 0o700 })
@@ -203,16 +177,6 @@ export function secureIdentity(): { moved: boolean; reason?: string } {
 
 export const loadPeers = (): Record<string, Peer> => readJson(P.peers, {})
 export const savePeers = (peers: Record<string, Peer>) => writeJson(P.peers, peers)
-
-export const loadPolicy = (): Policy => {
-  const p = readJson(P.policy, DEFAULT_POLICY)
-  return { default: { ...DEFAULT_POLICY.default, ...p.default }, peers: p.peers ?? {} }
-}
-export const savePolicy = (p: Policy) => writeJson(P.policy, p)
-
-export function policyFor(label: string, policy = loadPolicy()): PeerPolicy {
-  return { ...policy.default, ...(policy.peers[label] ?? {}) }
-}
 
 /** `pub` is the relay's Ed25519 identity, pinned so it cannot be swapped out. */
 export const loadRelay = (): { url: string; pub?: string } =>

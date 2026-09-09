@@ -11,13 +11,13 @@ name = "ROOM"
 class_name = "Room"
 
 [[durable_objects.bindings]]
-name = "PAIRING"
-class_name = "Pairing"
+name = "INVITES"
+class_name = "Invites"
 
 # SQLite-backed objects are the ones available on the free plan.
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["Mailbox", "Room", "Pairing"]
+new_sqlite_classes = ["Mailbox", "Room", "Invites"]
 
 [observability]
 enabled = true

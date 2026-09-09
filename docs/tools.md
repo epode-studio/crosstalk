@@ -28,7 +28,7 @@ Who is around and what they are touching.
 | Tool | Arguments | What it does |
 |---|---|---|
 | `crosstalk_peers` | none | Who you share a room with, whether they are online, which repos their sessions are in, whether they are busy or idle, and how many of their messages are unread here. |
-| `crosstalk_rooms` | `room`?, `members`? | List rooms, or set who is in one. A room is a local alias for peers already paired with; sending to it fans out over those pairwise channels. Nobody can add this machine to a room. |
+| `crosstalk_rooms` | `room`?, `members`? | List rooms, or set who is in one. A room is a local alias for peers you already share a direct channel with; sending to it fans out over those channels. Nobody can add this machine to a room. |
 
 ## Tasks
 

@@ -29,7 +29,6 @@ var P = {
   root: ROOT,
   identity: path.join(ROOT, "identity.json"),
   peers: path.join(ROOT, "peers.json"),
-  policy: path.join(ROOT, "policy.json"),
   relay: path.join(ROOT, "relay.json"),
   queue: path.join(ROOT, "queue.json"),
   parked: path.join(ROOT, "parked.json"),
@@ -39,10 +38,6 @@ var P = {
   daemonSock: path.join(ROOT, "daemon.sock"),
   daemonLock: path.join(ROOT, "daemon.lock"),
   log: path.join(ROOT, "daemon.log")
-};
-var DEFAULT_POLICY = {
-  default: { delivery: "notify", allowAsk: true },
-  peers: {}
 };
 function ensureRoot() {
   fs.mkdirSync(ROOT, { recursive: true, mode: 448 });
@@ -138,14 +133,6 @@ function secureIdentity() {
 }
 var loadPeers = () => readJson(P.peers, {});
 var savePeers = (peers) => writeJson(P.peers, peers);
-var loadPolicy = () => {
-  const p = readJson(P.policy, DEFAULT_POLICY);
-  return { default: { ...DEFAULT_POLICY.default, ...p.default }, peers: p.peers ?? {} };
-};
-var savePolicy = (p) => writeJson(P.policy, p);
-function policyFor(label, policy = loadPolicy()) {
-  return { ...policy.default, ...policy.peers[label] ?? {} };
-}
 var loadRelay = () => readJson(P.relay, {
   url: process.env.CROSSTALK_RELAY ?? "wss://crosstalk-relay.billowing-poetry-4cd6.workers.dev"
 });
@@ -457,7 +444,7 @@ var asPeer = (o) => ({
   edPub: o.edPub,
   xPub: o.xPub,
   fingerprint: fingerprint(o.edPub),
-  pairedAt: Date.now()
+  joinedAt: Date.now()
 });
 
 // node_modules/@noble/hashes/_u64.js
@@ -2551,7 +2538,7 @@ function parseInvite(input) {
     phrase = lead[2];
   }
   if (!phrase || phrase.split("-").length < 3)
-    throw new Error(`"${input}" does not look like a pairing phrase (expected four words)`);
+    throw new Error(`"${input}" does not look like an invite phrase (expected four words)`);
   if (!right)
     return { slot, phrase };
   const m = right.match(/^(.*?)(?::(\d{2,5}))?$/);
@@ -2690,7 +2677,6 @@ var P2 = {
   root: ROOT2,
   identity: path2.join(ROOT2, "identity.json"),
   peers: path2.join(ROOT2, "peers.json"),
-  policy: path2.join(ROOT2, "policy.json"),
   relay: path2.join(ROOT2, "relay.json"),
   queue: path2.join(ROOT2, "queue.json"),
   parked: path2.join(ROOT2, "parked.json"),
@@ -2922,7 +2908,7 @@ function load2() {
       muted: raw.muted ?? {}
     };
   } catch {
-    return migrate();
+    return { ...DEFAULT_TRUST, rooms: {}, people: {}, muted: {} };
   }
 }
 function save(t) {
@@ -2930,22 +2916,6 @@ function save(t) {
   const tmp = `${FILE2}.tmp`;
   fs5.writeFileSync(tmp, JSON.stringify(t, null, 2), { mode: 384 });
   fs5.renameSync(tmp, FILE2);
-}
-function migrate() {
-  const t = { ...DEFAULT_TRUST, rooms: {}, people: {}, muted: {} };
-  try {
-    const old = JSON.parse(fs5.readFileSync(path6.join(ROOT2, "policy.json"), "utf8"));
-    const asLevel = (p) => p?.delivery === "deliver" ? "deliver" : p?.delivery === "quiet" ? "notify" : p?.allowAsk ? "ask" : "notify";
-    if (old?.default)
-      t.default = asLevel(old.default);
-    for (const [name, p] of Object.entries(old?.peers ?? {})) {
-      t.people[name] = asLevel(p);
-      if (p.mutedUntil)
-        t.muted[name] = p.mutedUntil;
-    }
-    save(t);
-  } catch {}
-  return t;
 }
 
 // src/paths.ts
@@ -3183,7 +3153,7 @@ async function startRoom(words) {
   const joining = (words ?? positional.join(" ")).trim();
   const base = () => httpBase(loadRelay().url);
   const put = async (slot2, part, blob) => {
-    const r = await fetch(`${base()}/pair/${slot2}?part=${part}`, {
+    const r = await fetch(`${base()}/invite/${slot2}?part=${part}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ blob })
@@ -3194,7 +3164,7 @@ async function startRoom(words) {
   const get = async (slot2, part, waitMs = 0) => {
     const deadline = Date.now() + waitMs;
     for (;; ) {
-      const r = await fetch(`${base()}/pair/${slot2}?part=${part}`).catch(() => null);
+      const r = await fetch(`${base()}/invite/${slot2}?part=${part}`).catch(() => null);
       if (r?.ok)
         return (await r.json()).blob;
       if (Date.now() >= deadline)
@@ -3219,7 +3189,7 @@ async function startRoom(words) {
     if (!theirs2)
       die(`nothing is waiting on ${inv.slot}. Invites last fifteen minutes.`);
     const mine2 = begin(inv.phrase, inv.slot);
-    const key2 = finish(mine2, theirs2, inv.slot, "crosstalk/pair/v4");
+    const key2 = finish(mine2, theirs2, inv.slot, "crosstalk/room/v1");
     if (!key2)
       die("that invite could not be used. Check the words.");
     await put(inv.slot, "b", mine2.message + "." + seal(key2, JSON.stringify(await myOffer(id))));
@@ -3286,7 +3256,7 @@ Waiting\u2026`);
   if (!theirs)
     die("that invite expired without anyone using it");
   const dot = theirs.indexOf(".");
-  const key = finish(mine, theirs.slice(0, dot), slot, "crosstalk/pair/v4");
+  const key = finish(mine, theirs.slice(0, dot), slot, "crosstalk/room/v1");
   if (!key)
     die("somebody tried to join with the wrong words. Start again with a new invite.");
   let peer;
@@ -3331,9 +3301,8 @@ async function peers() {
     return;
   }
   for (const p of r.peers) {
-    const muted = p.policy.mutedUntil && p.policy.mutedUntil > Date.now();
     console.log(`
-  ${p.online ? "\u25CF" : "\u25CB"} ${p.label}${p.isMachine ? " (a machine)" : ""}  ${p.fingerprint}  ${p.policy.delivery}${muted ? " (muted)" : ""}${p.unread ? `  ${p.unread} unread` : ""}`);
+  ${p.online ? "\u25CF" : "\u25CB"} ${p.label}${p.isMachine ? " (a machine)" : ""}  ${p.fingerprint}  ${p.level}${p.muted ? " (muted)" : ""}${p.unread ? `  ${p.unread} unread` : ""}`);
     if (!p.sessions.length)
       console.log(`        no sessions reported  (presence ${ago(p.presenceAt)})`);
     for (const s of p.sessions)
@@ -3346,39 +3315,7 @@ async function mute() {
   const minutes = Number(positional.find((a) => /^\d+$/.test(a)) ?? 60);
   await ready();
   const r = await request({ op: "mute", peer, minutes });
-  console.log(r.mutedUntil ? `muted ${peer ?? "all peers"} until ${new Date(r.mutedUntil).toLocaleTimeString()}` : `unmuted ${peer ?? "all peers"}`);
-}
-async function policy() {
-  const mode = positional.find((a) => ["notify", "deliver", "quiet"].includes(a));
-  const peer = positional.find((a) => a !== mode);
-  const set = {};
-  if (mode)
-    set.delivery = mode;
-  if (has("--allow-ask"))
-    set.allowAsk = true;
-  if (has("--no-allow-ask"))
-    set.allowAsk = false;
-  if (!Object.keys(set).length) {
-    const p = loadPolicy();
-    console.log(`
-default   ${p.default.delivery}   ask ${p.default.allowAsk ? "allowed" : "off"}`);
-    for (const label of Object.keys(loadPeers())) {
-      const pp = policyFor(label, p);
-      console.log(`${label.padEnd(10)}${pp.delivery}   ask ${pp.allowAsk ? "allowed" : "off"}`);
-    }
-    console.log(`
-  notify    a notice appears; their words stay behind crosstalk_read  (default)
-  deliver   their text lands in your session mid-turn
-  quiet     held silently, surfaced when the session next goes idle
-
-  Questions are allowed from anyone in a room of two with you. Turn them off
-  for someone with /crosstalk:policy <name> --no-allow-ask.
-`);
-    return;
-  }
-  await ready();
-  const r = await request({ op: "policy", peer, set });
-  console.log(JSON.stringify(r.policy, null, 2));
+  console.log(r.mutedUntil ? `muted ${peer ?? `all ${r.muted.length} peer(s)`} until ${new Date(r.mutedUntil).toLocaleTimeString()}` : `unmuted ${peer ?? "everyone"}`);
 }
 async function cost() {
   const s = daemonRunning() ? await request({ op: "usage" }) : { ...summarise() };
@@ -3554,7 +3491,7 @@ You are not in anything yet.
         console.log(`  ${room2.name.padEnd(16)}just the two of you`);
     }
     for (const room2 of r.rooms) {
-      const who = room2.members.map((m) => m.label + (m.you ? " (you)" : "") + (m.state === "invited" ? " (invited)" : "") + (!m.paired && !m.you ? " \xB7no direct channel" : "")).join(", ");
+      const who = room2.members.map((m) => m.label + (m.you ? " (you)" : "") + (m.state === "invited" ? " (invited)" : "") + (!m.direct && !m.you ? " \xB7no direct channel" : "")).join(", ");
       if (room2.pending) {
         console.log(`  #${room2.name}   INVITATION from ${room2.pending.invitedBy}`);
         console.log(`      ${who}`);
@@ -3669,12 +3606,16 @@ usage: /crosstalk:rename <current> <new>
   delete peers2[a];
   peers2[b] = { ...peer, label: b };
   savePeers(peers2);
-  const pol = loadPolicy();
-  if (pol.peers[a]) {
-    pol.peers[b] = pol.peers[a];
-    delete pol.peers[a];
-    savePolicy(pol);
+  const t = load2();
+  if (t.people[a]) {
+    t.people[b] = t.people[a];
+    delete t.people[a];
   }
+  if (t.muted[a]) {
+    t.muted[b] = t.muted[a];
+    delete t.muted[a];
+  }
+  save(t);
   try {
     const uPath = path8.join(ROOT, "usage.json");
     const u = JSON.parse(fs6.readFileSync(uPath, "utf8"));
@@ -3883,7 +3824,7 @@ async function link() {
   if (joining) {
     if (id)
       die(`this machine already has an identity ("${id.label}"). Linking would replace it,
-along with everyone it is paired with. Move ~/.claude/crosstalk aside first if
+along with every room it is in. Move ~/.claude/crosstalk aside first if
 you are sure.`);
     const inv = parseInvite(joining);
     if (inv.where) {
@@ -3895,7 +3836,7 @@ you are sure.`);
     }
     if (!inv.slot)
       die("that link is missing its number. It looks like 4821-six-words-like-this.");
-    const first = await fetch(`${httpBase()}/pair/${inv.slot}?part=a`);
+    const first = await fetch(`${httpBase()}/invite/${inv.slot}?part=a`);
     if (!first.ok)
       die("no link waiting on that number. They last fifteen minutes.");
     const theirPoint = (await first.json()).blob;
@@ -3903,14 +3844,14 @@ you are sure.`);
     const key2 = finish(half2, theirPoint, inv.slot, "crosstalk/link/v1");
     if (!key2)
       die("could not use that link. Check the words.");
-    await fetch(`${httpBase()}/pair/${inv.slot}?part=b`, {
+    await fetch(`${httpBase()}/invite/${inv.slot}?part=b`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ blob: half2.message })
     });
     let bundle2;
     for (let i = 0;i < 120; i++) {
-      const r = await fetch(`${httpBase()}/pair/${inv.slot}?part=c`).catch(() => null);
+      const r = await fetch(`${httpBase()}/invite/${inv.slot}?part=c`).catch(() => null);
       if (r?.ok) {
         try {
           const raw = JSON.parse(open(key2, (await r.json()).blob));
@@ -3940,12 +3881,12 @@ This machine is now "${bundle2.identity.label}", the same one as your other mach
 
   ${fingerprint(bundle2.identity.ed.pub)}
 
-Everyone you had paired with came across. In a room you appear once, not twice,
+Every room came across. In one you appear once, not twice,
 and a message reaches whichever machine you are sitting at.`);
     return;
   }
   if (!id)
-    die("nothing to link yet. Pair with someone first, or run this on the machine that already has your identity.");
+    die("nothing to link yet. Run /crosstalk:room new first, or run this on the machine that already has your identity.");
   const url0 = loadRelay().url;
   const slotRes = await fetch(`${httpBase(url0)}/slot`, { method: "POST" }).catch(() => null);
   if (!slotRes?.ok)
@@ -3968,7 +3909,7 @@ and a message reaches whichever machine you are sitting at.`);
   };
   const z = zlib.gzipSync(Buffer.from(JSON.stringify(bundle), "utf8")).toString("base64");
   const url = url0;
-  await fetch(`${httpBase(url)}/pair/${slot}?part=a`, {
+  await fetch(`${httpBase(url)}/invite/${slot}?part=a`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ blob: half.message })
@@ -3981,7 +3922,7 @@ On your other machine, run:
 Waiting\u2026`);
   let key = null;
   for (let i = 0;i < 900; i++) {
-    const r = await fetch(`${httpBase(url)}/pair/${slot}?part=b`).catch(() => null);
+    const r = await fetch(`${httpBase(url)}/invite/${slot}?part=b`).catch(() => null);
     if (r?.ok) {
       key = finish(half, (await r.json()).blob, slot, "crosstalk/link/v1");
       break;
@@ -3993,7 +3934,7 @@ Waiting\u2026`);
   const sealed = seal(key, JSON.stringify({ z }));
   if (sealed.length > 8000)
     die("too much to send in one go. This happens with a lot of peers; copy ~/.claude/crosstalk across by hand instead.");
-  const res = await fetch(`${httpBase(url)}/pair/${slot}?part=c`, {
+  const res = await fetch(`${httpBase(url)}/invite/${slot}?part=c`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ blob: sealed })
@@ -4353,7 +4294,6 @@ var commands = {
   secure,
   peers,
   mute,
-  policy,
   cost,
   status,
   doctor,

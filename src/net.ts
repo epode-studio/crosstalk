@@ -1,4 +1,4 @@
-// Working out an address the other machine can actually reach, so pairing does
+// Working out an address the other machine can actually reach, so starting a room does
 // not turn into a networking exercise.
 
 import os from "node:os"
@@ -181,13 +181,13 @@ export async function whereToSay(port: number): Promise<Where> {
 /**
  * Everything a given token could mean, in the order worth trying. A bare number
  * is completed from this machine's own subnet, on the assumption that two people
- * pairing are usually on the same network.
+ * starting a room are usually on the same network.
  */
 /**
  * Every relay URL a given token could mean, in the order worth trying. A bare
  * name might be a tailnet name, a machine on this network, or a throwaway
  * tunnel, and probing all three costs a second. A bare number is completed from
- * this machine's own subnet, since two people pairing are usually on one
+ * this machine's own subnet, since two people starting a room are usually on one
  * network.
  */
 export function expandAddress(token: string, port: number): string[] {

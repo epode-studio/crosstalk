@@ -103,7 +103,7 @@ export type AnyRoom = {
   name: string
   kind: "direct" | "shared"
   pending?: { invitedBy: string; at: number } | null
-  members: { label: string; state: "invited" | "joined"; paired: boolean; you: boolean }[]
+  members: { label: string; state: "invited" | "joined"; direct: boolean; you: boolean }[]
 }
 
 /** Find a joined room by its human name, which is unique on this machine. */

@@ -23,6 +23,12 @@ cd worker
 npx wrangler deploy
 ```
 
+The client reaches invites at `/invite/<slot>` and the Durable Object holding
+them is `Invites`. Both were called `pair`/`Pairing` until pairing stopped being
+a concept, so a relay deployed before that answers the old path and the client
+gets a banner instead of an offer. **Redeploy after pulling this**, or joining a
+room hangs and then times out with nothing useful in it.
+
 Then point crosstalk at it, on both machines:
 
 ```

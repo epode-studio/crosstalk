@@ -10,7 +10,7 @@
 // authenticated encryption with a strictly increasing counter. A listener sees
 // only sizes and timing. An injected frame fails to authenticate.
 //
-// The relay's identity key reaches the joiner inside the pairing offer, which is
+// The relay's identity key reaches the joiner inside the join offer, which is
 // sealed under the four-word phrase, so an attacker who can rewrite traffic
 // still cannot pass itself off as the relay.
 

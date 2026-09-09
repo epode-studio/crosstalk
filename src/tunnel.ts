@@ -1,5 +1,5 @@
 // A throwaway public address for the relay, so two people on different networks
-// can pair without either of them running a server.
+// can start a room without either of them running a server.
 //
 // cloudflared's quick tunnels need no account and no domain, and the URL they
 // hand back is itself four hyphenated words, which is how an invite already

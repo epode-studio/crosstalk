@@ -42,6 +42,22 @@ trap cleanup EXIT
 echo "state in $A and $B"
 echo
 
+# The relay serves invites at /invite/<slot>. One deployed before that route was
+# renamed answers its banner instead, every join times out, and forty assertions
+# downstream fail without saying why. Check it once, up front. An empty slot is
+# the healthy answer; a banner means the route did not match at all.
+RELAY_HTTP=$(CROSSTALK_HOME="$A" bun -e '
+  const { loadRelay } = await import("./src/config.ts")
+  console.log(loadRelay().url.replace(/^ws/, "http"))
+' 2>/dev/null)
+case $(curl -s "$RELAY_HTTP/invite/probe0?part=a" 2>/dev/null) in
+  *"not ready"*) ;;
+  *) echo "  FAIL  the relay at $RELAY_HTTP does not serve /invite/"
+     echo "        It answered its banner, so it predates the route rename."
+     echo "        Redeploy it:  cd worker && npx wrangler deploy"
+     exit 1 ;;
+esac
+
 # --- starting a room -----------------------------------------------------------
 echo "starting a room"
 CROSSTALK_HOME="$A" bun src/cli.ts room new --label ana >"$A/room.log" 2>&1 &
@@ -386,6 +402,18 @@ check "$(verdict ask question busy)"  "notify" "so does a question"
 check "$(verdict ask fyi busy)"       "quiet"  "an fyi waits until the session is idle"
 check "$(verdict ask fyi idle)"       "notify" "and arrives once it is"
 check "$(verdict mute blocking busy)" "drop"   "mute outranks any urgency the sender claims"
+
+# The timed mute is a different switch from the mute level, and it used to write
+# a file nothing read, so it silently did nothing. Check the map triage consults.
+MUTED=$(CROSSTALK_HOME="$A" bun -e '
+  const trust = await import("./src/trust.ts")
+  trust.mute("marie", Date.now() + 3_600_000)
+  const on = trust.isMuted("marie", { direct: true })
+  trust.mute("marie", undefined)
+  const off = trust.isMuted("marie", { direct: true })
+  console.log(`${on} ${off}`)
+' 2>&1)
+check "$MUTED" "true false" "a timed mute reaches the map triage reads"
 
 # --- reaching the CLI ----------------------------------------------------------
 #

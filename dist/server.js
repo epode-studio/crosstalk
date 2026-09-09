@@ -16153,7 +16153,6 @@ var P = {
   root: ROOT,
   identity: path.join(ROOT, "identity.json"),
   peers: path.join(ROOT, "peers.json"),
-  policy: path.join(ROOT, "policy.json"),
   relay: path.join(ROOT, "relay.json"),
   queue: path.join(ROOT, "queue.json"),
   parked: path.join(ROOT, "parked.json"),
@@ -16226,7 +16225,6 @@ var P2 = {
   root: ROOT2,
   identity: path2.join(ROOT2, "identity.json"),
   peers: path2.join(ROOT2, "peers.json"),
-  policy: path2.join(ROOT2, "policy.json"),
   relay: path2.join(ROOT2, "relay.json"),
   queue: path2.join(ROOT2, "queue.json"),
   parked: path2.join(ROOT2, "parked.json"),
@@ -16613,7 +16611,7 @@ mcp.setRequestHandler(ListToolsRequestSchema2, async () => ({
     },
     {
       name: "crosstalk_rooms",
-      description: "List rooms, or set who is in one. A room is a local alias for peers already paired with; sending to it fans out over those pairwise channels. Nobody can add this machine to a room.",
+      description: "List rooms, or set who is in one. A room is a local alias for peers you already share a direct channel with; sending to it fans out over those channels. Nobody can add this machine to a room.",
       inputSchema: {
         type: "object",
         properties: {

@@ -12,9 +12,6 @@ import {
   P,
   loadIdentity,
   loadPeers,
-  loadPolicy,
-  savePolicy,
-  policyFor,
   loadRelay,
   loadQueue,
   saveQueue,
@@ -26,7 +23,7 @@ import {
   saveOutbox,
   type Held,
 } from "./config.ts"
-import { pairKey, seal, open as unseal, fingerprint as fingerprintOf } from "./crypto.ts"
+import { channelKey, seal, open as unseal, fingerprint as fingerprintOf } from "./crypto.ts"
 import { Channel, derive, newEphemeral, signWith, transcript, verifyWith } from "./link.ts"
 import { listLocalSessions, findSession, type LocalSession } from "./registry.ts"
 import { injectNotice, injectMessage } from "./inject.ts"
@@ -354,7 +351,7 @@ function connect() {
       const peer = peersByFingerprint().get(f.from)
       if (!peer) return log(`dropped message from unpaired fingerprint ${f.from}`)
       try {
-        const env: Envelope = JSON.parse(unseal(pairKey(identity!, peer), f.body))
+        const env: Envelope = JSON.parse(unseal(channelKey(identity!, peer), f.body))
         onEnvelope(peer.label, env)
       } catch (e) {
         log(`failed to open body from ${peer.label}: ${(e as Error).message}`)
@@ -400,7 +397,7 @@ function sendEnvelope(
     t: "send",
     to: peer.fingerprint,
     id: env.id,
-    body: seal(pairKey(identity!, peer), JSON.stringify(env)),
+    body: seal(channelKey(identity!, peer), JSON.stringify(env)),
   }
   // Presence describes a moment, so a stale one is worse than none.
   if (env.kind === "presence") return relaySend(frame) ? { ok: true } : { ok: false, error: "relay not connected" }
@@ -479,16 +476,16 @@ function onRoomBody(f: { roomId: string; from: string; body: string; id: string 
   }
   if (!env) return log(`could not open a message in #${room.name}; we may have missed a rekey`)
   const sender = room.members[f.from]
-  const paired = peersByFingerprint().get(f.from)
-  onEnvelope(paired?.label ?? sender?.label ?? "someone", env, {
+  const direct = peersByFingerprint().get(f.from)
+  onEnvelope(direct?.label ?? sender?.label ?? "someone", env, {
     room,
-    strangerInRoom: !paired,
+    strangerInRoom: !direct,
   })
 }
 
 // --- inbound ------------------------------------------------------------------
 
-// Replay defence. The pair key authenticates who wrote an envelope but says
+// Replay defence. The channel key authenticates who wrote an envelope but says
 // nothing about when, so a relay that keeps a copy could re-deliver it forever.
 const seenIds = new Map<string, number>()
 const MAX_SKEW_MS = 10 * 60_000
@@ -537,7 +534,7 @@ function onEnvelope(
 
   const tctx: trust.Context = {
     room: ctx?.room?.name ?? (env.room ? env.room.replace(/^#/, "") : undefined),
-    paired: !ctx?.strangerInRoom,
+    direct: !ctx?.strangerInRoom,
     machine: !!loadPeers()[peerLabel]?.isMachine,
   }
   const level = trust.levelFor(peerLabel, tctx)
@@ -745,7 +742,7 @@ function acceptFacts(peerLabel: string, env: Envelope) {
   const named = (env.room ?? "").replace(/^#/, "")
   // No room means it is the room of two we share, which I call by their name.
   const room = named || peerLabel
-  const level = trust.levelFor(peerLabel, { room: named || undefined, paired: !!loadPeers()[peerLabel] })
+  const level = trust.levelFor(peerLabel, { room: named || undefined, direct: !!loadPeers()[peerLabel] })
   if (!trust.atLeast(level, "ask"))
     return log(`ignored a fact from ${peerLabel}: they are at ${level}, writing needs ask`)
 
@@ -763,7 +760,7 @@ function acceptTasks(peerLabel: string, env: Envelope) {
   const named = (env.room ?? "").replace(/^#/, "")
   // No room means it is the room of two we share, which I call by their name.
   const room = named || peerLabel
-  const level = trust.levelFor(peerLabel, { room: named || undefined, paired: !!loadPeers()[peerLabel] })
+  const level = trust.levelFor(peerLabel, { room: named || undefined, direct: !!loadPeers()[peerLabel] })
   if (!trust.atLeast(level, "ask"))
     return log(`ignored a task change from ${peerLabel}: they are at ${level}`)
 
@@ -1249,8 +1246,8 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         kind: "direct" as const,
         pending: null,
         members: [
-          { label: identity!.label, state: "joined" as const, paired: true, you: true },
-          { label: p.label, state: "joined" as const, paired: true, you: false },
+          { label: identity!.label, state: "joined" as const, direct: true, you: true },
+          { label: p.label, state: "joined" as const, direct: true, you: false },
         ],
       }))
       return {
@@ -1265,7 +1262,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
           members: Object.values(r.members).map((m) => ({
             label: m.label,
             state: m.state,
-            paired: !!peersByFingerprint().get(m.fingerprint),
+            direct: !!peersByFingerprint().get(m.fingerprint),
             you: m.fingerprint === myFingerprint(),
           })),
         })),
@@ -1347,7 +1344,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
     case "handoff":
     case "ask": {
       // A room fans out over the pairwise channels. Every member is someone
-      // this machine paired with directly, so nothing here widens who can
+      // this machine has a direct channel to, so nothing here widens who can
       // reach us.
       if (rooms.isRoom(String(req.to))) {
         const named = rooms.normalise(String(req.to))
@@ -1536,7 +1533,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
 
     case "peers": {
       const peers = loadPeers()
-      const policy = loadPolicy()
+      const t = trust.load()
       return {
         ok: true,
         me: { label: identity!.label, sessions: localPresence() },
@@ -1547,7 +1544,8 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
           fingerprint: p.fingerprint,
           isMachine: !!p.isMachine,
           online: online.has(p.fingerprint),
-          policy: policyFor(p.label, policy),
+          level: trust.levelFor(p.label, { direct: true }, t),
+          muted: trust.isMuted(p.label, { direct: true }, t),
           sessions: peerPresence.get(p.label)?.sessions ?? [],
           presenceAt: peerPresence.get(p.label)?.at ?? 0,
           unread: Object.values(held)
@@ -1557,26 +1555,15 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       }
     }
 
-    case "policy": {
-
-      const policy = loadPolicy()
-      if (req.peer) {
-        policy.peers[req.peer] = { ...policyFor(req.peer, policy), ...(req.set ?? {}) }
-      } else if (req.set) {
-        policy.default = { ...policy.default, ...req.set }
-      }
-      if (req.peer || req.set) savePolicy(policy)
-      return { ok: true, policy }
-    }
-
+    // Muting one person writes their name; muting everything writes the level,
+    // because "quiet for an hour" and "quiet from marie for an hour" are the
+    // same switch and there is only one map that triage reads.
     case "mute": {
-      const policy = loadPolicy()
       const minutes = Number(req.minutes ?? 60)
       const until = minutes <= 0 ? undefined : Date.now() + minutes * 60_000
-      if (req.peer) policy.peers[req.peer] = { ...policyFor(req.peer, policy), mutedUntil: until }
-      else policy.default = { ...policy.default, mutedUntil: until }
-      savePolicy(policy)
-      return { ok: true, mutedUntil: until }
+      const who = req.peer ? [req.peer] : Object.keys(loadPeers())
+      for (const w of who) trust.mute(w, until)
+      return { ok: true, mutedUntil: until, muted: who }
     }
 
     case "decide": {
