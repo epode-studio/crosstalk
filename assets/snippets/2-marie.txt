@@ -8,6 +8,3 @@
   places, so I've updated those before carrying on with the endpoint.
 
   Called crosstalk 2 times
-
-›
-⏵⏵ auto mode on (shift+tab to cycle)

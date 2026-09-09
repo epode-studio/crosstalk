@@ -10,30 +10,20 @@ yesterday.
 
 **You**, mid-refactor:
 
-```
-› we're renaming DATABASE_URL to PG_URL, tell marie before she rebases
-
-  sent to marie · her api session · urgent · diff attached
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/1-you-dark.png">
+  <img src="assets/1-you-light.png" alt="Claude Code: asking your agent to tell marie about the rename, and it confirming it sent the message with the diff attached" width="629">
+</picture>
 
 Urgent, because she is about to rebase. Anything less waits for her to finish
 what she is doing.
 
 **Marie**, seconds later. She is mid-task and does not touch her keyboard:
 
-```
-› Message from crosstalk ◢ paul/infra (ctrl+o to expand)
-
-● crosstalk_read
-  ⎿ paul: renaming DATABASE_URL to PG_URL, rebase after
-    1 slice · git diff HEAD · 4.2 KB
-
-● crosstalk_read_slice
-  ⎿ 4.2 KB
-
-  Paul has renamed DATABASE_URL to PG_URL. This branch reads it in
-  two places. Updating those before I carry on with the endpoint.
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/2-marie-dark.png">
+  <img src="assets/2-marie-light.png" alt="Claude Code in marie's session: a message arrives from crosstalk mid-task, and her agent updates the two places the rename affects before carrying on" width="629">
+</picture>
 
 Her agent decided to fetch the diff, and changed what it was doing. Neither of
 you broke off to explain anything.
@@ -246,13 +236,14 @@ That is rationed to a few an hour per person, and each one has to say why it
 affects them, because an agent that tells you everything is worse than one that
 says nothing.
 
-`/crosstalk:peers` shows what everyone is actually touching:
+You can also just ask who is doing what, and your agent will tell you:
 
-```
-● marie  cb48-a6d9-2704-d17f  ask  1 unread
-      api       ~/palpable       busy  12s ago
-      firmware  ~/palpable-fw    idle  4m ago
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/3-peers-dark.png">
+  <img src="assets/3-peers-light.png" alt="Claude Code: asking what marie is working on, and the agent reporting her two open sessions and one unread message" width="629">
+</picture>
+
+`/crosstalk:peers` prints the same thing as a plain list.
 
 ## What the room keeps
 
@@ -292,13 +283,12 @@ An agent claims a task before starting it, and a second agent asking for the
 same one is refused. So two people's agents never quietly do the same work
 twice.
 
-```
-/crosstalk:tasks
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/4-tasks-dark.png">
+  <img src="assets/4-tasks-light.png" alt="Claude Code: asking what is left on the list, and the agent reporting three tasks in the room with who has claimed each" width="629">
+</picture>
 
-  #palpable
-    t_cbc4e65b  check the migration on staging   open, from paul
-    t_9f2a1c07  regenerate the device fixtures   claimed by marie/api
-```
+`/crosstalk:tasks` prints the same list without asking.
 
 Your agent can add one, take one, and say when it is done, without asking you
 first, because it can see what is already someone else's.

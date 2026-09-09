@@ -1,16 +1,8 @@
-› /crosstalk:peers
+❯ what's marie working on?
 
-  ◢◢◢ crosstalk
+● Two sessions open. api is busy, last seen twelve seconds ago, in
+  ~/palpable. web has been idle four minutes in ~/palpable-ui.
 
-  you   paul   relay connected
-        infra  ~/palpable  busy
+  She also has one message waiting that you have not read yet.
 
-  ● marie  cb48-a6d9-2704-d17f  ask  1 unread
-        api  ~/palpable     busy  12s ago
-        web  ~/palpable-ui  idle  4m ago
-
-  ○ ci (a machine)  5af6-8ee4-cfb6-05b6  notify
-        no sessions reported  (presence 2h ago)
-
-›
-⏵⏵ auto mode on (shift+tab to cycle)
+  Called crosstalk 1 time

@@ -1,12 +1,9 @@
-› /crosstalk:tasks
+❯ anything left on the list?
 
-  #platform
-    t_cbc4e65b  check the migration on staging
-            open, from paul
-    t_9f2a1c07  regenerate the device fixtures
-            claimed by marie/api, from marie
-    t_3d81ba44  bump the pg driver to 8.13
-            for jo, from paul
+● Three in #platform. The pg driver bump is waiting for jo, marie has
+  claimed the device fixtures, and the staging migration check is
+  still open from you.
 
-›
-⏵⏵ auto mode on (shift+tab to cycle)
+  Nothing is claimed twice, so nobody is about to redo someone's work.
+
+  Called crosstalk 1 time

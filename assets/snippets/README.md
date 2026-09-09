@@ -4,79 +4,77 @@ Four blocks in the README are images rather than text, because they are output
 nobody copies. **Every command a reader would paste stays as text**, so it can
 be selected, and so a search for it finds something.
 
-| Snippet | Replaces | In |
+| Snippet | Shows | In |
 |---|---|---|
 | `1-you` | Paul sending | the opening demo |
 | `2-marie` | Marie's session reacting | the opening demo |
-| `3-peers` | `crosstalk peers` | Usage |
-| `4-tasks` | `crosstalk tasks` | What the room keeps |
+| `3-peers` | asking who is working on what | Usage |
+| `4-tasks` | asking what is left on the list | What the room keeps |
 
 ## Making them
 
-Open the link, **Export Image → Save SVG**, then run it through the slimmer:
-
 ```
-bun scripts/slim-svg.ts assets/1-you-dark.svg
+bun scripts/render-snippets.ts
 ```
 
-ray.so embeds every font it offers rather than the ones it used: eleven
-families, of which the image references one. That is 85% of a 1.3 MB export.
-Stripping the unused faces takes it to about 190 KB with no visible change.
+That reads every `.txt` here, wraps it in a Claude Code window, and writes eight
+2x PNGs to `assets/`. The `.txt` files are the source, so a snippet can be
+regenerated without retyping it, and `titles.json` holds the window title for
+each.
 
-The `.txt` files here are the source, so a snippet can be regenerated without
-retyping it, and `titles.json` holds the window title for each.
+The window chrome is not in the `.txt`. The renderer appends it, so all four
+stay identical, and so a change to it is one edit rather than four.
 
-Settings are baked into the links: no background, 16px padding, plaintext (so
-nothing is syntax-coloured as if it were C#), the sunset theme, and a window
-title in the shape Claude Code writes, `<task> — node ‹ claude`. The only
-difference within a pair is `darkMode`.
+## Why not SVG
+
+ray.so exports SVG, and it looks sharper. But a ray.so SVG is a `foreignObject`
+wrapping real HTML, and the browser lays that HTML out at the *reader's* zoom
+level while the SVG frame stays the size it was exported at. Zoom in on GitHub
+and the text overflows the frame and is clipped mid-word. A raster cannot
+reflow, so PNG at 2x is the format that survives contact with a reader.
 
 ## Why a pair
 
-ray.so bakes the text colour into the image, and a transparent SVG of dark grey
-text vanishes on a dark README. The same `<picture>` swap the logo uses puts the
-right one in front of the right reader:
+The text colour is baked into the image, so a light snippet is unreadable on a
+dark README. The same `<picture>` swap the logo uses puts the right one in front
+of the right reader:
 
 ```html
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/3-peers-dark.svg">
-  <img src="assets/3-peers-light.svg" alt="crosstalk peers, showing marie online with two sessions">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/3-peers-dark.png">
+  <img src="assets/3-peers-light.png" alt="asking what marie is working on, and the agent reporting her two sessions" width="629">
 </picture>
 ```
 
-The `alt` matters more than usual here: it is the only thing a screen reader,
-or anyone with images off, will get. Describe what the output says, not that it
-is a screenshot.
+The `alt` matters more than usual here: it is the only thing a screen reader, or
+anyone with images off, will get. Describe what the output says, not that it is
+a screenshot.
 
 ## Keeping them true
 
 Nothing tests an image. The prose in this README is checked against the code by
 `test/e2e.sh`, and these four are not, so they will go stale silently. If the
-CLI's output changes, regenerate from the `.txt` here rather than editing a
-screenshot.
+CLI's output changes, edit the `.txt` here and re-render.
 
-## Glyphs that are safe to use
+## The font, and why it is Menlo
 
-JetBrains Mono, which is what ray.so renders these in, has no box-drawing
-characters. A `─` therefore falls back to whatever font the *reader* has, at
-about 1.6 times the width of a normal character. A rule of 72 of them overflows
-the card, wraps, and would look different for different people, which is the
-problem embedding the font was meant to solve.
-
-So the snippets draw no rules and no input box. Measured against `x` in the same
-image, these are all correctly monospaced and safe:
+Claude Code's input field is a pair of `─` rules, read off a live session:
 
 ```
-›  prompt      ●  bullet     ○  hollow bullet
-◢  the mark    ⏵  mode line  ·  separator
+────────────────────────────────────────────
+❯ Try "fix lint errors"
+────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle)
 ```
 
-And these are not, because JetBrains Mono does not have them:
+For those rules to be unbroken, `─` has to be exactly one cell wide. Measured in
+a canvas against `x` at the same size:
 
-```
-─ │ ╭ ╮ ╰ ╯ ├ └    box drawing
-⎿                  the tool-result elbow
-```
+| Font | `─` width |
+|---|---|
+| Menlo, Monaco, Courier New, Andale Mono | 1.000 |
+| SF Mono, JetBrains Mono, Consolas | 1.417 |
 
-To check a new one, put ten of it next to ten `x` with a `|` after each run and
-see whether the pipes line up.
+So the renderer asks for Menlo, which is also what a Mac terminal running Claude
+Code looks like. To check a new glyph, measure ten of it against ten `x` the same
+way.
