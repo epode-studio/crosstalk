@@ -15,9 +15,16 @@ name = "INVITES"
 class_name = "Invites"
 
 # SQLite-backed objects are the ones available on the free plan.
+#
+# An applied tag is a record of what already happened, so v1 keeps the name the
+# class had when it was created. Renaming it is a new tag.
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["Mailbox", "Room", "Invites"]
+new_sqlite_classes = ["Mailbox", "Room", "Pairing"]
+
+[[migrations]]
+tag = "v2"
+renamed_classes = [{ from = "Pairing", to = "Invites" }]
 
 [observability]
 enabled = true

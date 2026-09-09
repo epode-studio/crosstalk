@@ -27,7 +27,12 @@ The client reaches invites at `/invite/<slot>` and the Durable Object holding
 them is `Invites`. Both were called `pair`/`Pairing` until pairing stopped being
 a concept, so a relay deployed before that answers the old path and the client
 gets a banner instead of an offer. **Redeploy after pulling this**, or joining a
-room hangs and then times out with nothing useful in it.
+room hangs and then times out with nothing useful in it. `test/e2e.sh` probes
+the route before it does anything else and says so in one line.
+
+An applied migration tag is a record of what already happened, so `v1` still
+names the class `Pairing` and the rename is `v2`. Editing `v1` in place would
+have Cloudflare comparing a tag it has already run against different contents.
 
 Then point crosstalk at it, on both machines:
 
