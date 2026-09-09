@@ -162,6 +162,15 @@ b room accept beta >/dev/null
 sleep 2
 has "$(b room)" "#beta" "ben is in it after accepting"
 
+# A room ends when the last member leaves it. There is no close command and
+# nobody owns one, which is what the README says, so check it stays true.
+b room leave beta >/dev/null
+sleep 2
+a room leave beta >/dev/null
+sleep 2
+if echo "$(a room)" | grep -q "#beta"; then bad "the last member leaving ends the room"; else ok "the last member leaving ends the room"; fi
+if echo "$(b room)" | grep -q "#beta"; then bad "and it is gone for everyone"; else ok "and it is gone for everyone"; fi
+
 # --- local sources and the attention budget ------------------------------------
 echo
 echo "things that are not people"

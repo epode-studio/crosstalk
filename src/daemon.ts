@@ -197,11 +197,10 @@ const subscribers = new Map<string, Set<net.Socket>>()
  * had used the allowance up.
  */
 const noticeTimes: number[] = []
-function withinNoticeBudget(): boolean {
+function recordNotice(): void {
   const now = Date.now()
   while (noticeTimes.length && now - noticeTimes[0] > 3_600_000) noticeTimes.shift()
   noticeTimes.push(now)
-  return true
 }
 
 function push(sessionId: string, msg: unknown): boolean {
@@ -361,15 +360,15 @@ function connect() {
         log(`failed to open body from ${peer.label}: ${(e as Error).message}`)
       }
     }
-    if (f.t === "room") return onRoster((f as any).room)
-    if (f.t === "rooms") return (f as any).rooms.forEach(onRoster)
+    if (f.t === "room") return onRoster(f.room)
+    if (f.t === "rooms") return f.rooms.forEach(onRoster)
     if (f.t === "room_gone") {
       const st = rooms.load()
-      delete st[(f as any).roomId]
+      delete st[f.roomId]
       rooms.save(st)
       return
     }
-    if (f.t === "room_deliver") return onRoomBody(f as any)
+    if (f.t === "room_deliver") return onRoomBody(f)
     if (f.t === "error") log(`relay error: ${f.message}`)
   }
 
@@ -391,7 +390,10 @@ function connect() {
   sock.onerror = () => {}
 }
 
-function sendEnvelope(peerLabel: string, env: Envelope): { ok: boolean; error?: string } {
+function sendEnvelope(
+  peerLabel: string,
+  env: Envelope,
+): { ok: boolean; error?: string; queued?: boolean; note?: string } {
   const peer = loadPeers()[peerLabel]
   if (!peer) return { ok: false, error: `not in a room with "${peerLabel}"` }
   const frame = {
@@ -609,11 +611,7 @@ function onEnvelope(
     // stay subject to that hold.
   }
 
-  // Over budget, everything degrades to quiet and waits for an idle moment.
-  if (decision.interrupts && !withinNoticeBudget()) {
-    log(`notice budget spent (${NOTICE_BUDGET_PER_HOUR}/h); holding ${env.id} until idle`)
-    decision.action = "quiet"
-  }
+  if (decision.interrupts) recordNotice()
   if (decision.action !== "quiet") h.surfaced = true
   persist()
 
@@ -982,7 +980,12 @@ setInterval(() => {
 
 // --- control socket ------------------------------------------------------------
 
-type Req = Record<string, any> & { op: string }
+/**
+ * A request off the control socket. The op decides the rest, so the body stays
+ * open, but the two fields every caller may carry are named: they are what
+ * `resolveSession` needs to find which session is asking.
+ */
+type Req = Record<string, any> & { op: string; sessionId?: string; cwd?: string }
 
 async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
   switch (req.op) {
@@ -1082,7 +1085,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         slices: [],
         ts: Date.now(),
       }
-      if (decision.interrupts && !withinNoticeBudget()) decision.action = "quiet"
+      if (decision.interrupts) recordNotice()
       if (decision.action !== "quiet") h.surfaced = true
       hold(target.sessionId, h)
       usage.record(source, "recv", h.text.length, decision.action !== "quiet")
@@ -1488,7 +1491,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       const waiting = (held[req.sessionId] ?? []).filter((m) => !m.readAt && !m.surfaced)
       if (!waiting.length) return { ok: true, notice: null }
       // Handing something over is an interruption, so it counts like one.
-      if (!withinNoticeBudget()) return { ok: true, notice: null }
+      recordNotice()
       for (const m of waiting) m.surfaced = true
       persist()
       const from = [...new Set(waiting.map((m) => `${m.from}/${m.fromSession}`))].join(", ")

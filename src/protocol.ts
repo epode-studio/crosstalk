@@ -70,8 +70,19 @@ export type Frame =
   | { t: "deliver"; from: string; body: string; id: string }
   | { t: "ack"; id: string }
   | { t: "presence"; peers: string[] }
+  | { t: "room"; room: RoomRoster }
+  | { t: "rooms"; rooms: RoomRoster[] }
+  | { t: "room_gone"; roomId: string }
+  | { t: "room_deliver"; roomId: string; from: string; body: string; id: string }
   | { t: "ping" }
   | { t: "pong" }
+
+/** A room's membership as the relay reports it. It never sees the room key. */
+export type RoomRoster = {
+  id: string
+  name: string
+  members: { fingerprint: string; label: string; addedBy: string; state: string }[]
+}
 
 export const line = (o: unknown) => JSON.stringify(o) + "\n"
 

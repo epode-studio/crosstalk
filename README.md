@@ -248,8 +248,13 @@ until you accept.
 
 ### Leaving, and how long a room lasts
 
-Rooms do not expire. Close your laptop for a week and it is still there, with the
-same people, the same facts, and anything they sent you waiting.
+Rooms do not expire. Nothing times one out, and closing your laptop for a month
+leaves it there with the same people and the same name.
+
+What does expire is anything sent to you while you were unreachable. The relay
+holds it for **24 hours** and then drops it, so a week away costs you the
+messages, facts and tasks that arrived in it. The room survives; that week's
+traffic does not.
 
 Leaving takes you out of one, and takes what it knows off your machine.
 
@@ -261,6 +266,10 @@ Leaving takes you out of one, and takes what it knows off your machine.
 Removing someone rotates the room's key, so anything sent afterwards is
 unreadable to them. Leaving takes the room off your machine; it carries on for
 everyone still in it.
+
+**To shut a room down, everyone leaves it.** There is no separate close command
+and nobody owns a room. When the last member leaves, the relay has nothing left
+to route and deletes it.
 
 If something is wrong, `/crosstalk:doctor` says what.
 

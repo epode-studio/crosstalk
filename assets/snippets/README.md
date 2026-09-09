@@ -52,9 +52,9 @@ a screenshot.
 
 ## Keeping them true
 
-Nothing tests an image. The prose in this README is checked against the code by
-`test/e2e.sh`, and these four are not, so they will go stale silently. If the
-CLI's output changes, edit the `.txt` here and re-render.
+Nothing tests an image, and nothing tests the README's prose either. If the CLI's
+output changes, these four go stale silently. Edit the `.txt` here and re-render
+rather than touching a screenshot.
 
 ## The font, and why it is Menlo
 

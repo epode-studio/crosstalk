@@ -205,8 +205,10 @@ the working set and non-human members, which are independent of each other.
 
 **A room outlives every session.** Pairing is permanent, a room is durable, a
 session lasts an afternoon. The room holds the roster and the key on each
-member's machine and on the relay, so closing a laptop for a week changes
-nothing and messages sent meanwhile are waiting. Presence is the only part that
+member's machine and on the relay, so closing a laptop for a week leaves the room
+and its roster untouched. What is sent meanwhile waits on the relay for 24 hours
+and is then dropped, so a long absence costs that traffic rather than the room
+it belonged to. Presence is the only part that
 is per-session, which is why `/crosstalk:peers` shows sessions coming and going
 while the room stays. Everything below depends on that: a working set only means
 anything because the place holding it outlasts the conversations.

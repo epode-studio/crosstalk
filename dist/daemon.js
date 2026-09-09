@@ -892,12 +892,11 @@ var statusOf = (sessionId) => listLocalSessions().find((s) => s.sessionId === se
 var held = loadQueue();
 var subscribers = new Map;
 var noticeTimes = [];
-function withinNoticeBudget() {
+function recordNotice() {
   const now = Date.now();
   while (noticeTimes.length && now - noticeTimes[0] > 3600000)
     noticeTimes.shift();
   noticeTimes.push(now);
-  return true;
 }
 function push(sessionId, msg) {
   const set = subscribers.get(sessionId);
@@ -1238,10 +1237,8 @@ function onEnvelope(peerLabel, env, ctx) {
     replyTo: target.socket,
     fromName: `crosstalk \u25E2 ${peerLabel}/${env.fromSession}`
   };
-  if (decision.interrupts && !withinNoticeBudget()) {
-    log(`notice budget spent (${NOTICE_BUDGET_PER_HOUR}/h); holding ${env.id} until idle`);
-    decision.action = "quiet";
-  }
+  if (decision.interrupts)
+    recordNotice();
   if (decision.action !== "quiet")
     h.surfaced = true;
   persist();
@@ -1655,8 +1652,8 @@ async function handle(req, sock) {
         slices: [],
         ts: Date.now()
       };
-      if (decision.interrupts && !withinNoticeBudget())
-        decision.action = "quiet";
+      if (decision.interrupts)
+        recordNotice();
       if (decision.action !== "quiet")
         h.surfaced = true;
       hold(target.sessionId, h);
@@ -2033,8 +2030,7 @@ async function handle(req, sock) {
       const waiting = (held[req.sessionId] ?? []).filter((m) => !m.readAt && !m.surfaced);
       if (!waiting.length)
         return { ok: true, notice: null };
-      if (!withinNoticeBudget())
-        return { ok: true, notice: null };
+      recordNotice();
       for (const m of waiting)
         m.surfaced = true;
       persist();

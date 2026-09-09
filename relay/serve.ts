@@ -12,6 +12,7 @@
 // installed package, which is what lets a plugin install host its own relay.
 
 import http from "node:http"
+import type net from "node:net"
 import { upgrade } from "./wsserver.ts"
 
 export type Conn = {
@@ -121,7 +122,9 @@ function serveNode(o: ServeOptions) {
     res.end(reply.body)
   })
 
-  server.on("upgrade", (req, socket, head) => {
+  // Node types the upgrade socket as a Duplex; on a TCP server it is always a
+  // net.Socket, and the handshake needs setNoDelay and remoteAddress.
+  server.on("upgrade", (req, socket: net.Socket, head) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`)
     if (url.pathname !== o.path) {
       socket.end("HTTP/1.1 404 Not Found\r\n\r\n")

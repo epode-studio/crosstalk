@@ -10,7 +10,7 @@
 
 import crypto from "node:crypto"
 import type { IncomingMessage } from "node:http"
-import type { Duplex } from "node:stream"
+import type { Socket as TcpSocket } from "node:net"
 
 const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
@@ -48,7 +48,7 @@ function frame(opcode: number, payload: Buffer): Buffer {
 
 export function upgrade(
   req: IncomingMessage,
-  socket: Duplex,
+  socket: TcpSocket,
   head: Buffer,
   maxPayload = 4 << 20,
 ): Socket | null {
@@ -77,7 +77,7 @@ export function upgrade(
     },
   }
 
-  let buf = head?.length ? Buffer.from(head) : Buffer.alloc(0)
+  let buf: Buffer = head?.length ? Buffer.from(head) : Buffer.alloc(0)
   // A message split across frames arrives as one continuation chain.
   let fragments: Buffer[] = []
   let fragmentOpcode = 0
