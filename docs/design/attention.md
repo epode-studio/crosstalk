@@ -14,7 +14,7 @@ Four pieces, because three of them depend on the fourth.
         trust ladder            what a source is allowed to do to you
              │
              ▼
-      attention budget          when it is allowed to do it
+      what a source may do      when it is allowed to do it
         │          │
         ▼          ▼
   working set   members who
@@ -60,9 +60,15 @@ still read once, so an existing setup migrates rather than resetting.
 
 ---
 
-## 2. Attention budget
+## 2. What a source is, and what it may do
 
 The interruption model already works and is pointed at one source. Generalise it.
+
+There was a flat ceiling of forty interruptions an hour here. It is gone: a
+number nobody chose is a worse answer than the trust ladder, which names the
+person doing the interrupting. A cap also failed in the wrong direction, holding
+the message that mattered because unrelated ones had used the allowance. What
+remains is the counting, as a record you can act on.
 
 A **source** is anything with an identity: a person, a bot, a webhook adapter, a
 script on your own machine. Everything inbound carries a source, an intent
@@ -85,7 +91,7 @@ Make it configurable, make it visible, and make it per-source as well as total:
 /crosstalk:attention
 
   today          31 notices, 4 questions, 1 handoff
-  budget         40 / hour, 12 used in the last hour
+  reached you    12 in the last hour
   marie          18   ●●●●●●●●●
   ci             11   ●●●●●
   jo              2   ●
@@ -228,11 +234,12 @@ others are asked once whether to review the claims nobody else confirmed. Anyone
 can supersede anything, and superseding records who and why.
 
 Writing to the set needs at least `ask` level, so someone in a shared room you
-never paired with can read facts but not leave any behind.
+added to a shared room by somebody else can read facts but not leave any behind.
 
-**The ceiling counts interruptions, not arrivals.** A message held quietly costs
-nothing and should not spend budget. Fixing what is counted makes a flat forty an
-hour correct, and a circuit breaker should stay dumb enough to explain at 2am.
+**Count interruptions, not arrivals.** A message held quietly costs nothing, and
+counting it would make the record say something untrue. This argued for a flat
+ceiling once the counting was right; the ceiling went anyway, because naming the
+person who is interrupting you is a better answer than a number.
 
 **Agents reach other people's agents when a human asks.** Unprompted contact is
 one sentence in the skill and worth trying later, bounded on the sending side by

@@ -67,9 +67,9 @@ export const DEFAULT_POLICY: Policy = {
   // under the harness's "teammate" framing until you opt them into deliver.
   //
   // Questions are on, because you paired with this person on purpose and a
-  // question is less intrusive than a delivered message. It costs a turn here,
-  // which the notice budget already bounds. Someone in a shared room you have
-  // never paired with is a different case and still cannot ask.
+  // question is less intrusive than a delivered message. It costs a turn, and
+  // the dial for that is trust, per person. Someone added to a shared room by
+  // somebody else is a different case and still cannot ask.
   default: { delivery: "notify", allowAsk: true },
   peers: {},
 }

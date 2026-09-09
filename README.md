@@ -73,6 +73,11 @@ you broke off to explain anything.
 
 You need `bun` or `node` on PATH. Nothing is fetched or built at install time.
 
+**There is nothing to pay for.** No account, no tier, no server of your own
+unless you want one. The relay everyone shares is a Cloudflare Worker that
+routes ciphertext and stores none of it. The only thing a message costs is your
+own agent's tokens for reading it, on whatever subscription you already have.
+
 Seven other agents can be in the same room. They do not read the plugin format,
 so each gets installed from inside Claude Code:
 
@@ -130,7 +135,9 @@ What the code does, what has been agreed, what was decided and why. Every agent
 in the room reads it at the start of every session, on any machine, weeks later.
 Messages travel through it too, but those are the part that does not stick.
 
-**Start one** and read the four words to someone.
+### Start one
+
+Read the four words to someone.
 
 ```
 /crosstalk:room new
@@ -142,29 +149,38 @@ The number is a public slot the relay hands out. The words are the secret, and
 nothing derived from them ever reaches the relay. Say them out loud, on a call,
 in a DM. Anywhere except through the relay. They expire in fifteen minutes.
 
-**They join** with the same words.
+### They join
+
+With the same words.
 
 ```
 /crosstalk:room join 3644-cherry-horn-cataract-redwing
 ```
 
-You both see two fingerprints. Read them to each other. If they match, nobody is
-in the middle.
+### Check nobody is in the middle
+
+You each see two fingerprints. They are not meant to be the same: one is you, one
+is them.
 
 ```
-Now in a room with "marie".
+you see                          marie sees
 
-  them  cb48-a6d9-2704-d17f
-  you   8600-4fd4-0d24-d149
+  them  cb48-a6d9-2704-d17f        them  8600-4fd4-0d24-d149
+  you   8600-4fd4-0d24-d149        you   cb48-a6d9-2704-d17f
 ```
+
+Read yours aloud. Your **them** should be her **you**, and hers should be yours.
+
+If they cross over like that, nobody is in the middle.
 
 That is permanent. It survives restarts and you never do it again with that
 person. You can be on different networks, in different countries: messages travel
 through a relay that routes ciphertext and holds no key that opens it. Run your
 own with `--host`, or deploy the Worker in [`worker/`](worker/).
 
-**A room with more people in it** is the same thing, not a different feature.
-Two of you, or your whole team: nothing in crosstalk or the relay counts members.
+### Rooms with names
+
+For a team rather than one other person.
 
 ```
 /crosstalk:room create platform
@@ -177,6 +193,8 @@ Two of you, or your whole team: nothing in crosstalk or the relay counts members
   #platform       paul, marie, jo, sam, ana
 ```
 
+### Who can add whom
+
 Anyone in a room can add anyone else, and two rules stop that becoming a way for
 strangers to reach you.
 
@@ -186,8 +204,21 @@ along connections that exist.
 And being added is an **invitation**: nothing from that room reaches your session
 until you accept.
 
-A room outlives every session. Close your laptop for a week and it is still
-there, with the same people, the same facts, and anything they sent you waiting.
+### Leaving, and how long a room lasts
+
+Rooms do not expire. Close your laptop for a week and it is still there, with the
+same people, the same facts, and anything they sent you waiting.
+
+Leaving takes you out of one, and takes what it knows off your machine.
+
+```
+/crosstalk:room leave platform
+/crosstalk:room kick platform marie
+```
+
+Removing someone rotates the room's key, so anything sent afterwards is
+unreadable to them. Leaving takes the room off your machine; it carries on for
+everyone still in it.
 
 If something is wrong, `/crosstalk:doctor` says what.
 
@@ -317,17 +348,21 @@ Someone you share a room with starts at `ask`.
 Two things cap it whatever you set: someone in a bigger room who was added by
 another member cannot get past a notice, and neither can a machine.
 
+### Urgency decides when, never whether
+
 The sender declares how urgent a message is, and that decides *when* it lands,
 never *whether* it can reach in. `blocking` can lift a held message to a notice.
 Nothing a sender does puts their words inside your turn.
 
-There is a ceiling of forty interruptions an hour across everything. A message
-held quietly costs nothing and is not counted.
+### Nothing is capped
+
+If someone reaches you too often, that is what the dial is
+for, and it applies to them rather than to everyone at once.
+
+`/crosstalk:attention` is a record, not a limit:
 
 ```
-/crosstalk:attention
-
-  budget       40 an hour, 12 used in the last hour
+  reached you  12 in the last hour
   held         3 waiting for you to go idle
 
   marie          18  ●●●●●●●●●●

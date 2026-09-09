@@ -381,7 +381,8 @@ Now in a room with "${peer.label}"${peer.isMachine ? ", a machine rather than a 
   them  ${peer.fingerprint}
   you   ${fingerprint(id.ed.pub)}
 
-Read both to each other. If they match, nobody is in the middle.
+Read them aloud. Your "them" should be their "you", and theirs should be
+yours. If both cross over, nobody is in the middle.
 
 They start at "ask": they can put a line on your screen, and their agent can ask
 yours a question. Their words never enter your session unless you raise them.
@@ -449,7 +450,8 @@ Now in a room with "${peer.label}"${peer.isMachine ? ", a machine rather than a 
   them  ${peer.fingerprint}
   you   ${fingerprint(id.ed.pub)}
 
-Read both to each other. If they match, nobody is in the middle.
+Read them aloud. Your "them" should be their "you", and theirs should be
+yours. If both cross over, nobody is in the middle.
 
 They start at "ask": a line on your screen, and their agent may ask yours a
 question. Nothing they do puts their words inside your turn.
@@ -925,12 +927,12 @@ async function post() {
   console.log(r.ok ? `posted as ${r.source}` : `not posted: ${r.error}`)
 }
 
-/** What has been spending your attention, and how much is left. */
+/** What has been spending your attention. Nothing here is a limit. */
 async function attention() {
   await ready()
   const r = await request({ op: "attention" })
   heading()
-  console.log(`  budget       ${r.budget} an hour, ${r.used} used in the last hour`)
+  console.log(`  reached you  ${r.used} in the last hour`)
   console.log(`  held         ${r.held} waiting for you to go idle`)
   const rows = Object.entries(r.bySource ?? {}) as [string, number][]
   if (rows.length) {
@@ -940,8 +942,9 @@ async function attention() {
       console.log(`  ${who.padEnd(14)}${String(n).padStart(3)}  ${"●".repeat(Math.ceil((n / most) * 10))}`)
   }
   console.log(`
-  A message held quietly costs nothing and is not counted. Only what actually
-  reached you is. Change who may reach you with /crosstalk:trust.
+  Nothing here is capped. This is a record of who has been reaching you, so
+  that if someone is reaching you too often you can say so, per person, with
+  /crosstalk:trust.
 `)
 }
 

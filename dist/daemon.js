@@ -892,13 +892,10 @@ var statusOf = (sessionId) => listLocalSessions().find((s) => s.sessionId === se
 var held = loadQueue();
 var subscribers = new Map;
 var noticeTimes = [];
-var NOTICE_BUDGET_PER_HOUR = 40;
 function withinNoticeBudget() {
   const now = Date.now();
   while (noticeTimes.length && now - noticeTimes[0] > 3600000)
     noticeTimes.shift();
-  if (noticeTimes.length >= NOTICE_BUDGET_PER_HOUR)
-    return false;
   noticeTimes.push(now);
   return true;
 }
@@ -1678,7 +1675,7 @@ async function handle(req, sock) {
             bySource[m.from] = (bySource[m.from] ?? 0) + 1;
       return {
         ok: true,
-        budget: NOTICE_BUDGET_PER_HOUR,
+        budget: null,
         used,
         held: Object.values(held).flat().filter((m) => !m.readAt && !m.surfaced).length,
         bySource

@@ -186,14 +186,20 @@ const held: Record<string, Held[]> = loadQueue()
 // transcript. Either way it is only a notice, never the peer's own words.
 const subscribers = new Map<string, Set<net.Socket>>()
 
-// Per-sender limits do not bound the total. With several peers, each polite on
-// its own, a session can still be interrupted constantly.
+/**
+ * What has been reaching you, counted but not capped.
+ *
+ * There used to be a ceiling of forty an hour here, and a number nobody chose
+ * is a worse answer than the one already in the trust ladder: if someone
+ * interrupts too much, that is what `crosstalk trust` is for, and it applies to
+ * the person rather than to everyone at once. A cap also failed in the wrong
+ * direction, quietly holding the message that mattered because unrelated ones
+ * had used the allowance up.
+ */
 const noticeTimes: number[] = []
-const NOTICE_BUDGET_PER_HOUR = 40
 function withinNoticeBudget(): boolean {
   const now = Date.now()
   while (noticeTimes.length && now - noticeTimes[0] > 3_600_000) noticeTimes.shift()
-  if (noticeTimes.length >= NOTICE_BUDGET_PER_HOUR) return false
   noticeTimes.push(now)
   return true
 }
@@ -1097,7 +1103,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
           if (m.surfaced && now - m.ts < 3_600_000) bySource[m.from] = (bySource[m.from] ?? 0) + 1
       return {
         ok: true,
-        budget: NOTICE_BUDGET_PER_HOUR,
+        budget: null,
         used,
         held: Object.values(held).flat().filter((m) => !m.readAt && !m.surfaced).length,
         bySource,
