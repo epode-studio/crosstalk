@@ -218,10 +218,10 @@ async function startRelay(port = Number(flag("--port", "8787"))): Promise<string
     await new Promise((r) => setTimeout(r, 100))
   }
   if (has("--public")) {
-    const bin = await ensureCloudflared((n) => console.log(n))
+    const bin = await ensureCloudflared()
     if (!bin)
       die(
-        "could not get cloudflared, which --public needs.\nInstall it yourself (brew install cloudflared) and try again, or drop --public\nand start the room on the same network.",
+        "--public needs cloudflared, and it is not on your PATH.\n\n  brew install cloudflared\n\nOr drop --public and use --host, which runs the relay on this machine for\nanyone on the same network.",
       )
     console.log("opening a public tunnel, this takes a few seconds")
     try {

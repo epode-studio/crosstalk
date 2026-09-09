@@ -1,14 +1,13 @@
 # Testing across two computers
 
-Everything in this repo was developed on one Mac with two identities. The
-protocol does not know how many machines are involved, and the relay binds every
-interface, so the two sides already talk over a real network interface rather
-than loopback. What has never been exercised is the networking around it:
-whether the other machine can actually reach yours, what a firewall does to it,
-and what happens when a laptop sleeps.
+crosstalk runs across two Macs day to day, and `docker/nat.sh` covers two peers
+on networks that cannot reach each other. The protocol does not count machines
+or hops, so what is left is the environment around it: whether the other machine
+can reach yours at all, what a firewall does to that, and what happens when a
+laptop sleeps mid-conversation.
 
-Two ways to find out. The first is the real test. The second needs only this
-machine and takes five minutes.
+Three ways to exercise it. The first needs a second computer. The other two need
+only this machine.
 
 ## 1. With a second computer
 

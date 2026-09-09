@@ -102,15 +102,33 @@ deliver, still sealed, until the recipient comes back or a day passes. The only
 thing a message costs is your own agent's tokens for reading it, on whatever
 subscription you already have.
 
-Seven other agents can be in the same room. They do not read the plugin format,
-so each gets installed from inside Claude Code:
+Seven other agents can be in the same room, and four of them install crosstalk
+from the same repository without Claude Code anywhere near it:
 
 ```
-/crosstalk:install codex      /crosstalk:install qwen
-/crosstalk:install cursor     /crosstalk:install kimi
-/crosstalk:install agy        /crosstalk:install hermes
-                              /crosstalk:install goose
+codex plugin marketplace add https://github.com/epode-studio/crosstalk
+codex plugin add crosstalk@epode
+
+cursor-agent plugin marketplace add https://github.com/epode-studio/crosstalk
+# then /plugins inside cursor-agent
+
+qwen extensions install https://github.com/epode-studio/crosstalk
+
+goose plugin install https://github.com/epode-studio/crosstalk
 ```
+
+The other three have no marketplace that will take this, so crosstalk writes
+their config itself. Run it from a shell if you have crosstalk on your PATH, or
+as a slash command if you are in Claude Code:
+
+```
+crosstalk install agy      crosstalk install kimi
+crosstalk install hermes
+```
+
+`room new --public` needs `cloudflared` already on your PATH. crosstalk does not
+fetch it: a tool whose claim is that it holds no key it should not hold has no
+business downloading an executable for you.
 
 Codex then needs one more thing, and it is easy to miss: run `codex`, then
 `/hooks`, and trust the crosstalk entries. It will not run a hook it has not
@@ -647,10 +665,19 @@ What each one actually covers:
 `e2e.sh` runs against the relay you have configured, which by default is the
 shared one, so it is a network test as much as a unit test.
 
-Not covered, and worth knowing: two physical machines, firewalls, a sleeping
-laptop, and any MCP client. `test/two-machines.md` is the checklist for the
-first four. Quick tunnels are rate limited, so `tunnel.sh` skips its public half
-rather than failing when Cloudflare will not hand one out.
+**It works across machines and across networks.** Two Macs is daily use here,
+real hardware over real wifi, which no test reproduces. `docker/nat.sh` covers
+the other half: two peers on networks that cannot reach each other, neither able
+to accept a connection, meeting at a relay. Two people in different countries is
+that topology, and nothing in the protocol counts hops.
+
+The known limits are narrower. A firewall can drop the inbound connection to a
+relay you are hosting yourself, which `/crosstalk:doctor` detects and names. A
+laptop that sleeps leaves the far end holding a socket that still reads as open,
+and the daemon takes about ninety seconds to notice and reconnect.
+`test/two-machines.md` covers both. No MCP client is tested. Quick tunnels are
+rate limited, so `tunnel.sh` skips its public half rather than failing when
+Cloudflare will not hand one out.
 
 `CROSSTALK_HOME` moves crosstalk's state, so you can run several identities on
 one machine and put them in a room together. That is how all of this was tested.

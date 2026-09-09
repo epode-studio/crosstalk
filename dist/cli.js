@@ -2756,7 +2756,6 @@ async function ensureDaemon(root = rootFrom(import.meta.url)) {
 // src/tunnel.ts
 import { spawn as spawn2, execFileSync as execFileSync3 } from "node:child_process";
 import fs3 from "node:fs";
-import os4 from "node:os";
 import path4 from "node:path";
 var BIN_DIR = path4.join(ROOT2, "bin");
 var LOCAL_BIN = path4.join(BIN_DIR, "cloudflared");
@@ -2769,41 +2768,7 @@ function onPath() {
   }
   return null;
 }
-function assetName() {
-  const arch = os4.arch() === "arm64" ? "arm64" : os4.arch() === "x64" ? "amd64" : null;
-  if (!arch)
-    return null;
-  if (process.platform === "darwin")
-    return `cloudflared-darwin-${arch}.tgz`;
-  if (process.platform === "linux")
-    return `cloudflared-linux-${arch}`;
-  return null;
-}
-async function ensureCloudflared(onProgress) {
-  const existing = onPath();
-  if (existing)
-    return existing;
-  const asset = assetName();
-  if (!asset)
-    return null;
-  const url = `https://github.com/cloudflare/cloudflared/releases/latest/download/${asset}`;
-  onProgress?.(`fetching cloudflared for ${process.platform} ${os4.arch()}`);
-  fs3.mkdirSync(BIN_DIR, { recursive: true, mode: 448 });
-  const res = await fetch(url, { redirect: "follow" });
-  if (!res.ok)
-    return null;
-  const bytes = Buffer.from(await res.arrayBuffer());
-  if (asset.endsWith(".tgz")) {
-    const tmp = path4.join(BIN_DIR, "cloudflared.tgz");
-    fs3.writeFileSync(tmp, bytes);
-    execFileSync3("tar", ["-xzf", tmp, "-C", BIN_DIR], { timeout: 60000 });
-    fs3.rmSync(tmp, { force: true });
-  } else {
-    fs3.writeFileSync(LOCAL_BIN, bytes);
-  }
-  try {
-    fs3.chmodSync(LOCAL_BIN, 493);
-  } catch {}
+async function ensureCloudflared() {
   return onPath();
 }
 async function openTunnel(bin, port, logPath, timeoutMs = 60000) {
@@ -2950,7 +2915,7 @@ var shim2 = (root) => path7.join(root, "bin", "crosstalk");
 // src/cli.ts
 import fs6 from "fs";
 import path8 from "path";
-import os5 from "os";
+import os4 from "os";
 import { spawn as spawn3, execFileSync as execFileSync4 } from "child_process";
 var argv = process.argv.slice(2);
 var cmd = argv[0] ?? "status";
@@ -3091,11 +3056,14 @@ async function startRelay(port = Number(flag("--port", "8787"))) {
     await new Promise((r) => setTimeout(r, 100));
   }
   if (has("--public")) {
-    const bin = await ensureCloudflared((n) => console.log(n));
+    const bin = await ensureCloudflared();
     if (!bin)
-      die(`could not get cloudflared, which --public needs.
-Install it yourself (brew install cloudflared) and try again, or drop --public
-and start the room on the same network.`);
+      die(`--public needs cloudflared, and it is not on your PATH.
+
+  brew install cloudflared
+
+Or drop --public and use --host, which runs the relay on this machine for
+anyone on the same network.`);
     console.log("opening a public tunnel, this takes a few seconds");
     try {
       const t = await openTunnel(bin, port, path8.join(ROOT, "tunnel.log"));
@@ -3974,7 +3942,7 @@ two machines and nowhere else.`);
 async function installAgy() {
   const root = rootFrom2(import.meta.url);
   const bin = shim2(root);
-  const dir = path8.join(os5.homedir(), ".gemini", "config");
+  const dir = path8.join(os4.homedir(), ".gemini", "config");
   const file = path8.join(dir, "hooks.json");
   fs6.mkdirSync(dir, { recursive: true });
   let all = {};
@@ -4013,7 +3981,7 @@ If \`crosstalk facts\` looks unscoped, launch agy with --add-dir "$PWD".`);
 }
 async function installQwen() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path8.join(os5.homedir(), ".qwen");
+  const dir = path8.join(os4.homedir(), ".qwen");
   const file = path8.join(dir, "settings.json");
   fs6.mkdirSync(dir, { recursive: true });
   let cfg = {};
@@ -4037,7 +4005,7 @@ async function installQwen() {
 }
 async function installKimi() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path8.join(os5.homedir(), ".kimi-code");
+  const dir = path8.join(os4.homedir(), ".kimi-code");
   const file = path8.join(dir, "config.toml");
   fs6.mkdirSync(dir, { recursive: true });
   const existing = fs6.existsSync(file) ? fs6.readFileSync(file, "utf8") : "";
@@ -4058,7 +4026,7 @@ ${blocks}`);
 }
 async function installHermes() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path8.join(os5.homedir(), ".hermes");
+  const dir = path8.join(os4.homedir(), ".hermes");
   const file = path8.join(dir, "config.yaml");
   if (!fs6.existsSync(file))
     die(`no ${file}. Run hermes once first, then run this again.`);
@@ -4095,7 +4063,7 @@ terminal and answer yes twice, or run it with --accept-hooks. Check with:
 }
 async function installGoose() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path8.join(os5.homedir(), ".agents", "plugins", "crosstalk");
+  const dir = path8.join(os4.homedir(), ".agents", "plugins", "crosstalk");
   fs6.mkdirSync(path8.join(dir, "hooks"), { recursive: true });
   fs6.writeFileSync(path8.join(dir, "plugin.json"), JSON.stringify({
     name: "crosstalk",
@@ -4107,7 +4075,7 @@ async function installGoose() {
   fs6.writeFileSync(path8.join(dir, "hooks", "hooks.json"), JSON.stringify({ hooks: { SessionStart: [group(`"${bin}" hook`)], Stop: [group(`"${bin}" hook`)] } }, null, 2) + `
 `);
   console.log(`hooks    ${path8.join(dir, "hooks", "hooks.json")}`);
-  const gooseConf = path8.join(os5.homedir(), ".config", "goose", "config.yaml");
+  const gooseConf = path8.join(os4.homedir(), ".config", "goose", "config.yaml");
   const entry = [
     `  crosstalk:`,
     `    enabled: true`,
@@ -4152,7 +4120,7 @@ set of facts on start.`);
 }
 async function installCursor() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path8.join(os5.homedir(), ".cursor");
+  const dir = path8.join(os4.homedir(), ".cursor");
   const file = path8.join(dir, "hooks.json");
   fs6.mkdirSync(dir, { recursive: true });
   let cfg = { version: 1, hooks: {} };
@@ -4185,8 +4153,8 @@ var CODEX_EVENT_KEY = {
   Stop: "stop"
 };
 function codexHooksNeedingTrust() {
-  const file = path8.join(os5.homedir(), ".codex", "hooks.json");
-  const conf = path8.join(os5.homedir(), ".codex", "config.toml");
+  const file = path8.join(os4.homedir(), ".codex", "hooks.json");
+  const conf = path8.join(os4.homedir(), ".codex", "config.toml");
   if (!fs6.existsSync(file))
     return [];
   let hooks;
@@ -4218,7 +4186,7 @@ function codexHooksNeedingTrust() {
 }
 async function installCodex() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path8.join(os5.homedir(), ".codex");
+  const dir = path8.join(os4.homedir(), ".codex");
   const file = path8.join(dir, "hooks.json");
   fs6.mkdirSync(dir, { recursive: true });
   let cfg = {};
@@ -4256,7 +4224,7 @@ function registerMcp(cli, args, bin) {
 }
 async function installPath() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path8.join(os5.homedir(), ".local", "bin");
+  const dir = path8.join(os4.homedir(), ".local", "bin");
   const link2 = path8.join(dir, "crosstalk");
   fs6.mkdirSync(dir, { recursive: true });
   let existing = "";
