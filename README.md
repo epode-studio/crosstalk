@@ -126,6 +126,12 @@ crosstalk install agy      crosstalk install kimi
 crosstalk install hermes
 ```
 
+Hermes has a plugin store and it will not take crosstalk. Its scanner flags
+every string that builds a hostname as exfiltration, which catches the tunnel
+code, a URL parser inside a bundled dependency, and the line of this README you
+are reading. `--force` does not override it. `crosstalk install hermes` writes
+the hooks directly and works.
+
 `room new --public` needs `cloudflared` already on your PATH. crosstalk does not
 fetch it: a tool whose claim is that it holds no key it should not hold has no
 business downloading an executable for you.
