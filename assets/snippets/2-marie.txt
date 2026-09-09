@@ -1,12 +1,15 @@
-› Message from crosstalk ◢ paul/infra (ctrl+o to expand)
+● Applying the device index migration now.
 
-● crosstalk_read
-  ⎿ paul: renaming DATABASE_URL to PG_URL, rebase after
-    1 slice · git diff HEAD · 4.2 KB
+  Ran 1 shell command
 
-● crosstalk_read_slice
-  ⎿ 4.2 KB
+  Message from crosstalk ◢ paul/infra
 
-  Paul has renamed DATABASE_URL to PG_URL. This branch
-  reads it in two places. Updating those before I carry
-  on with the endpoint.
+● Paul has renamed DATABASE_URL to PG_URL. This branch reads it in two
+  places, so I've updated those before carrying on with the endpoint.
+
+  Called crosstalk 2 times
+
+────────────────────────────────────────────────────────────────── api ─
+› 
+────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle)

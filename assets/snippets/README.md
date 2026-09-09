@@ -43,3 +43,10 @@ Nothing tests an image. The prose in this README is checked against the code by
 `test/e2e.sh`, and these four are not, so they will go stale silently. If the
 CLI's output changes, regenerate from the `.txt` here rather than editing a
 screenshot.
+
+## SVG probe
+
+Temporary. Below is a ray.so SVG embedded the way the README would embed one.
+If it is blank, GitHub stripped the `foreignObject` and SVG is not an option.
+
+<img src="../svg-probe.svg" width="704" alt="ray.so svg probe">

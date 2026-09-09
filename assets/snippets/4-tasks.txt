@@ -1,3 +1,5 @@
+› /crosstalk:tasks
+
   #platform
     t_cbc4e65b  check the migration on staging
             open, from paul
@@ -5,3 +7,8 @@
             claimed by marie/api, from marie
     t_3d81ba44  bump the pg driver to 8.13
             for jo, from paul
+
+──────────────────────────────────────────────────────────────── infra ─
+› 
+────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle)

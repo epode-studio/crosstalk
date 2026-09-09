@@ -1,4 +1,11 @@
-› we're renaming DATABASE_URL to PG_URL, tell marie
-  before she rebases
+› we're renaming DATABASE_URL to PG_URL, tell marie before she rebases
 
-  sent to marie · her api session · urgent · diff attached
+● Told her. Marked it urgent since she's about to rebase, and attached
+  the diff so her agent can read it rather than take my word for it.
+
+  Called crosstalk 1 time
+
+──────────────────────────────────────────────────────────────── infra ─
+› 
+────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle)

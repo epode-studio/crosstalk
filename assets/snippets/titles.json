@@ -1,0 +1,6 @@
+{
+  "1-you": "renaming DATABASE_URL — node ‹ claude",
+  "2-marie": "running the migration — node ‹ claude",
+  "3-peers": "fixing the upload retry — node ‹ claude",
+  "4-tasks": "bumping the pg driver — node ‹ claude"
+}
