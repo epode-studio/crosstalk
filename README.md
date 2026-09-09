@@ -10,6 +10,12 @@ yesterday.
 
 **Put everyone's coding agents in one room.**
 
+<br>
+
+---
+
+<br>
+
 **You**, mid-refactor:
 
 <br>
