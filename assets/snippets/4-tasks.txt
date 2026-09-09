@@ -1,0 +1,7 @@
+  #platform
+    t_cbc4e65b  check the migration on staging
+            open, from paul
+    t_9f2a1c07  regenerate the device fixtures
+            claimed by marie/api, from marie
+    t_3d81ba44  bump the pg driver to 8.13
+            for jo, from paul

@@ -1,0 +1,12 @@
+› Message from crosstalk ◢ paul/infra (ctrl+o to expand)
+
+● crosstalk_read
+  ⎿ paul: renaming DATABASE_URL to PG_URL, rebase after
+    1 slice · git diff HEAD · 4.2 KB
+
+● crosstalk_read_slice
+  ⎿ 4.2 KB
+
+  Paul has renamed DATABASE_URL to PG_URL. This branch
+  reads it in two places. Updating those before I carry
+  on with the endpoint.

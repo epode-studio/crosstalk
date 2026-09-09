@@ -1,0 +1,4 @@
+› we're renaming DATABASE_URL to PG_URL, tell marie
+  before she rebases
+
+  sent to marie · her api session · urgent · diff attached

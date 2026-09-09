@@ -1,6 +1,6 @@
 {
   "name": "crosstalk",
-  "version": "0.1.38",
+  "version": "0.1.39",
   "type": "module",
   "license": "MIT",
   "description": "Messaging between two people's Claude Code sessions",
