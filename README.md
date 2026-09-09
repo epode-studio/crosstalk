@@ -38,6 +38,8 @@ what she is doing.
 Her agent decided to fetch the diff, and changed what it was doing. Neither of
 you broke off to explain anything.
 
+<br>
+
 ## Contents
 
 - [Install](#install)
@@ -63,6 +65,8 @@ you broke off to explain anything.
 - [Contributing](#contributing)
 
 - [Licence](#licence)
+
+<br>
 
 ## Install
 
@@ -99,6 +103,8 @@ put it on your PATH once:
 /crosstalk:install path
 ```
 
+<br>
+
 ### Supported
 
 Claude Code, Codex, Cursor, Antigravity, Qwen Code, Kimi Code, Hermes, Goose.
@@ -127,6 +133,8 @@ args:    ["server"]
 > local stand-in model that records what actually reached it. Every client
 > reached only through MCP is marked untested, because it is.
 
+<br>
+
 ## Rooms
 
 A room is memory that several people's agents share.
@@ -134,6 +142,8 @@ A room is memory that several people's agents share.
 What the code does, what has been agreed, what was decided and why. Every agent
 in the room reads it at the start of every session, on any machine, weeks later.
 Messages travel through it too, but those are the part that does not stick.
+
+<br>
 
 ### Start one
 
@@ -149,6 +159,8 @@ The number is a public slot the relay hands out. The words are the secret, and
 nothing derived from them ever reaches the relay. Say them out loud, on a call,
 in a DM. Anywhere except through the relay. They expire in fifteen minutes.
 
+<br>
+
 ### They join
 
 With the same words.
@@ -156,6 +168,8 @@ With the same words.
 ```
 /crosstalk:room join 3644-cherry-horn-cataract-redwing
 ```
+
+<br>
 
 ### Check nobody is in the middle
 
@@ -178,6 +192,8 @@ person. You can be on different networks, in different countries: messages trave
 through a relay that routes ciphertext and holds no key that opens it. Run your
 own with `--host`, or deploy the Worker in [`worker/`](worker/).
 
+<br>
+
 ### Rooms with names
 
 For a team rather than one other person.
@@ -193,6 +209,8 @@ For a team rather than one other person.
   #platform       paul, marie, jo, sam, ana
 ```
 
+<br>
+
 ### Who can add whom
 
 Anyone in a room can add anyone else, and two rules stop that becoming a way for
@@ -203,6 +221,8 @@ along connections that exist.
 
 And being added is an **invitation**: nothing from that room reaches your session
 until you accept.
+
+<br>
 
 ### Leaving, and how long a room lasts
 
@@ -221,6 +241,8 @@ unreadable to them. Leaving takes the room off your machine; it carries on for
 everyone still in it.
 
 If something is wrong, `/crosstalk:doctor` says what.
+
+<br>
 
 ## Usage
 
@@ -259,10 +281,14 @@ You can also just ask who is doing what, and your agent will tell you:
 
 `/crosstalk:peers` prints the same thing as a plain list.
 
+<br>
+
 ## What the room keeps
 
 Messages move. The room keeps three things, and every agent in it reads them at
 the start of every session.
+
+<br>
 
 ### Facts, what is true about the code
 
@@ -291,6 +317,8 @@ A fact is never deleted because its author left, because who claimed something
 and whether it is true are different questions. What you see is how long since
 anyone last stood behind it.
 
+<br>
+
 ### Tasks, what has been agreed and who took it
 
 An agent claims a task before starting it, and a second agent asking for the
@@ -317,6 +345,8 @@ first, because it can see what is already someone else's.
 
 Leave `--for` off and the task belongs to the room you are already working in.
 
+<br>
+
 ### Decisions, what was settled and why
 
 ```
@@ -325,6 +355,8 @@ Leave `--for` off and the task belongs to the room you are already working in.
 
 Written to `DECISIONS.md` in the repository, with who decided and when, so the
 reasoning survives in the codebase rather than in a chat log nobody reopens.
+
+<br>
 
 ## Who can interrupt you
 
@@ -356,11 +388,15 @@ Someone you share a room with starts at `ask`.
 Two things cap it whatever you set: someone in a bigger room who was added by
 another member cannot get past a notice, and neither can a machine.
 
+<br>
+
 ### Urgency decides when, never whether
 
 The sender declares how urgent a message is, and that decides *when* it lands,
 never *whether* it can reach in. `blocking` can lift a held message to a notice.
 Nothing a sender does puts their words inside your turn.
+
+<br>
 
 ### Nothing is capped
 
@@ -377,6 +413,8 @@ for, and it applies to them rather than to everyone at once.
   ci             11  ●●●●●●
   jo              2  ●
 ```
+
+<br>
 
 ## Let your own machine interrupt you
 
@@ -405,6 +443,8 @@ This needs `crosstalk` on your PATH, which is what `/crosstalk:install path`
 does. A hosted runner on someone else's infrastructure cannot do any of this: it
 has no way to reach your laptop. That is the next section.
 
+<br>
+
 ## Put a bot in a room
 
 A build watcher that everyone should hear, running somewhere that is not your
@@ -422,6 +462,8 @@ anything by hand.
 `--agent` is the bot declaring itself. It shows as a machine and starts at
 `notify`, and no amount of trust raises it past that. A build bot can tell the
 room the deploy failed. It can never put words inside anyone's turn.
+
+<br>
 
 ## Commands
 
@@ -441,6 +483,8 @@ room the deploy failed. It can never put words inside anyone's turn.
 | `/crosstalk:secure` | Move your private key into the macOS keychain |
 | `/crosstalk:doctor` | Check the setup and say what is broken |
 | `/crosstalk:status` | Identity, relay, sessions |
+
+<br>
 
 ## Security
 
@@ -469,6 +513,8 @@ Permission relay across people is not implemented and never will be.
 
 [Full security notes](docs/security.md).
 
+<br>
+
 ## Docs
 
 - [Clients](docs/clients.md), which agents can be in a room and how each is reached
@@ -487,6 +533,8 @@ Permission relay across people is not implemented and never will be.
 
 - [How the socket format was captured](spike/)
 
+<br>
+
 ## Contributing
 
 ```
@@ -500,6 +548,8 @@ bash test/resilience.sh   # a sleeping relay host, and two daemons at once
 `CROSSTALK_HOME` moves crosstalk's state, so you can run several identities on
 one machine and put them in a room together. That is how all of this was tested.
 Issues and pull requests welcome.
+
+<br>
 
 ## Licence
 
