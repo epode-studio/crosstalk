@@ -257,8 +257,8 @@ For **high-risk** topics, both of:
 
 - **An adversarial reviewer**: a reviewer agent told to find what is wrong,
   plus a dedicated security pass. Both must agree.
-- **A higher evidence bar**: property tests or equivalent, a staging run, and a
-  rollback plan written before merge.
+- **A higher evidence bar**: property tests or equivalent, and a flagged
+  rollout instead of a staging run (decision 15). The flag is the rollback plan.
 
 #### Why this is faster
 
@@ -362,6 +362,43 @@ changes is *when* a person looks and *at what*:
 **The claim:** fewer, earlier, smaller reviews, measured as time from idea to
 merge. That may be a sharper answer to Entire than push throughput.
 
+### 15. Feature flags instead of staging
+
+Today a feature ships when it works in main. Putting staging in front of that
+is too slow. Flags make "turned on" a separate step from "merged", and that step
+is reversible in seconds. **Merged means in main and off. Shipped means on.
+Rollback is turning the flag off, not a revert.**
+
+**Which topics get a flag:** high-risk ones only. Low and normal topics ship on
+merge, as today.
+
+**Where flags live:** both.
+
+- **Built in**, for teams with nothing: flag definitions in a repo file next to
+  the topic files, and live state (on/off per environment and audience) pushed
+  through the sealed relay. No vendor and no new service, so "zero migration"
+  still holds.
+- **Adapters** for a provider the app already uses (LaunchDarkly, PostHog,
+  GrowthBook, Statsig): crosstalk drives the flag and reads its metrics.
+
+**What replaces staging as evidence**, all four:
+
+| Step | What happens |
+|---|---|
+| **Preview per topic** | An ephemeral deploy with the topic's flag on, where agents run end-to-end checks before merge. |
+| **Dark launch** | After merge, the new path runs in production next to the old one, invisibly, and agents compare outputs. |
+| **Internal first** | On for your own accounts or team. Real use, with agents watching logs. |
+| **Auto kill switch** | Throughout the ramp, agents watch errors and latency and turn the flag off on any regression, before a person notices. |
+
+**Who turns it on:** each ramp step of a high-risk flag (internal, then a
+percentage, then everyone) is a question to a person, with the evidence from
+the previous step attached. Turning off is never a question: any agent watching
+may do it, and tells you after.
+
+A topic stays open while its flag exists. It closes when the flag is at 100%
+and an agent has removed the flag and the old path from the code, so flags do
+not pile up.
+
 ## Open questions
 
 1. **No-match behaviour** (decision 5): hold or spawn, and whether that depends
@@ -405,4 +442,12 @@ merge. That may be a sharper answer to Entire than push throughput.
     share blind spots with the author. Options: a different model for review,
     a different client (Codex reviewing Claude Code), or a peer's agent for
     high-risk topics.
+12. **Flags for normal-risk topics.** Decision 15 limits flags to high risk,
+    but ramping by risk (low on at merge, normal through internal then everyone
+    automatically if metrics hold) only means something if normal topics can
+    be flagged too. Possibly: optional for normal, at the author agent's
+    discretion when the change is user-visible.
+13. **Flags crossing the relay.** Built-in live flag state goes through the
+    relay, which makes the relay part of production: if it is unreachable, the
+    app must fall back to the last known state or a default, never fail.
 
