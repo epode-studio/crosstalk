@@ -21,6 +21,8 @@ export const P = {
   sessions: path.join(ROOT, "sessions.json"),
   outbox: path.join(ROOT, "outbox.json"),
   usage: path.join(ROOT, "usage.json"),
+  routes: path.join(ROOT, "routes.json"),
+  unrouted: path.join(ROOT, "unrouted.json"),
   daemonSock: path.join(ROOT, "daemon.sock"),
   daemonLock: path.join(ROOT, "daemon.lock"),
   log: path.join(ROOT, "daemon.log"),
@@ -238,3 +240,27 @@ export const saveRegistered = (s: Record<string, any>) => writeJson(P.sessions, 
 
 export const loadParked = (): { label: string; env: unknown }[] => readJson(P.parked, [])
 export const saveParked = (p: { label: string; env: unknown }[]) => writeJson(P.parked, p)
+
+/**
+ * Where a sender's work in one repo and branch should land, as the user said
+ * when no session matched. Keyed by footprint.bindingKey.
+ */
+export type Binding = { sessionId: string; name: string; at: number }
+export const loadRoutes = (): Record<string, Binding> => readJson(P.routes, {})
+export const saveRoutes = (r: Record<string, Binding>) => writeJson(P.routes, r)
+
+/** Messages that matched no session, or two equally, waiting for the user to say where. */
+export type Unrouted = {
+  id: string
+  label: string
+  env: unknown
+  stranger?: boolean
+  roomId?: string
+  at: number
+  why: "none" | "tie"
+  /** The session the question was put to, and whether it has been shown there. */
+  askedSession?: string
+  surfaced?: boolean
+}
+export const loadUnrouted = (): Unrouted[] => readJson(P.unrouted, [])
+export const saveUnrouted = (u: Unrouted[]) => writeJson(P.unrouted, u)

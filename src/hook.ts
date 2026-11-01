@@ -19,6 +19,7 @@ import fs from "node:fs"
 import { ensureDaemon, request } from "./client.ts"
 import { loadIdentity } from "./config.ts"
 import { rootFrom } from "./paths.ts"
+import { pathsFromToolInput } from "./footprint.ts"
 
 const input = await new Promise<string>((resolve) => {
   let raw = ""
@@ -210,6 +211,12 @@ async function registerSession() {
     cwd,
     socket: socket ?? "",
     transcript: hook.transcript_path ?? hook.transcriptPath,
+    // The files a tool call just touched, which is how the daemon learns what
+    // this session is working on and routes a peer's message about it here.
+    // A client that sends none is routed by repo and branch alone.
+    ...(/^post_?tool_?use$/i.test(eventName)
+      ? { touched: pathsFromToolInput(hook.tool_input ?? hook.toolInput ?? hook.tool_args) }
+      : {}),
   }).catch(() => {})
 }
 

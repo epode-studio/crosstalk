@@ -51,7 +51,16 @@ export type Envelope = {
   fact?: unknown
   /** A task operation, on kind "task", or a set of them on "task_sync". */
   task?: unknown
+  /**
+   * What the sending session is working on: repo remote, branch and the paths
+   * it touched most recently. The receiver routes by it. Sealed with the rest
+   * of the envelope, so the relay never sees it, and a peer that predates it
+   * ignores it and routes the old way.
+   */
+  footprint?: FootprintSummary
 }
+
+export type FootprintSummary = { repo?: string; branch?: string; paths?: string[] }
 
 export type SessionPresence = {
   name: string

@@ -123,6 +123,45 @@ export function injectNotice(
   )
 }
 
+/**
+ * A message matched none of this machine's sessions, or two of them equally,
+ * so it is held and the user is asked where it goes. Like any notice, none of
+ * the sender's words are in it. The repo and branch are theirs, so they are
+ * escaped like any other attribute.
+ */
+export function injectRouteQuestion(opts: InjectOptions, q: RouteQuestion) {
+  return send(opts, routeQuestionText(q))
+}
+
+export type RouteQuestion = {
+  id: string
+  peer: string
+  peerSession: string
+  repo?: string
+  branch?: string
+  why: "none" | "tie"
+  sessions: string[]
+}
+
+export function routeQuestionText(q: RouteQuestion): string {
+  const where =
+    [q.repo, q.branch].filter((v): v is string => !!v).map(attr).join(" @ ") || "an unknown repo"
+  const reason =
+    q.why === "tie"
+      ? `It matches more than one of your sessions equally`
+      : `None of your open sessions is working on it`
+  return [
+    `A message from ${attr(q.peer)}/${attr(q.peerSession)} about ${where} is held: which session should get it?`,
+    ``,
+    `<crosstalk route="${attr(q.id)}" peer="${attr(q.peer)}" repo="${attr(q.repo ?? "")}" branch="${attr(q.branch ?? "")}">`,
+    `${reason}, so crosstalk did not guess. Nothing has been delivered.`,
+    `Ask your user which session it belongs to, then call crosstalk_route with id "${attr(q.id)}" and that session's name.`,
+    `Open sessions: ${q.sessions.map(attr).join(", ") || "none"}.`,
+    `The answer is remembered for later messages from ${attr(q.peer)} about the same repo and branch.`,
+    `</crosstalk>`,
+  ].join("\n")
+}
+
 /** Full text inline, for a peer explicitly set to `deliver`. */
 export function injectMessage(
   opts: InjectOptions,
