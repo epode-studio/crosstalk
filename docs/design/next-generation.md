@@ -239,6 +239,44 @@ handled by the hook and never reaches the current agent. Asking the current
 agent itself ("what's running?") is the one way another thread enters its
 context, and only because you asked it.
 
+## The terminal is the app
+
+Superset (now [Paradev](https://paradev.com/)) and herdr are apps for running
+many agents at once: a sidebar of agents, their status, worktrees, launching,
+notifications. Your terminal already has tabs, titles, colours, badges and
+notifications. crosstalk drives them, so the terminal *becomes* the app.
+
+| Paradev | Your terminal, driven by crosstalk |
+|---|---|
+| Sidebar of agents | Your tabs, one per thread, named after it |
+| Working / blocked / waiting | Tab colour, badge and progress indicator |
+| Agent needs you | Desktop notification; clicking it focuses the tab |
+| Launch an agent | A new tab running your harness in its own git worktree |
+| Workspaces | One window per repo, one tab per thread |
+| Open in IDE | `@auth open` opens that worktree in your editor |
+| Phone app | Phone push for blocking questions, plus Claude's remote control |
+| Remote machines | Your linked machines |
+| Diff viewer | Left out on purpose: nobody reads code; you get evidence instead |
+
+**Full layout.** crosstalk arranges the windows itself: a window per repo, tabs
+in thread order, a tab opened when a thread gets a session, closed when the
+thread is done. It still never takes focus on its own.
+
+**tmux first.** It works inside every terminal and over SSH, has a complete
+scripting API, and makes remote machines free: a session on a linked machine is
+a tmux window there, attached from here. Status uses tmux's own window options
+(`rename-window`, `window-status-style`) rather than escape codes, which tmux
+does not pass through reliably. Other terminals get the basics first, status on
+tabs and notifications, and full layout later, starting with those with real
+APIs (iTerm2, kitty, WezTerm).
+
+Outside tmux, status is written as escape codes to the session's own tty, found
+from the process id in the session registry. crosstalk also emits herdr's open
+OSC 7501 status, so anything that reads it works too.
+
+**To test first:** whether Claude Code overwrites a tab or window name crosstalk
+sets, and whether writing to another session's tty is reliable outside tmux.
+
 ## Shipping
 
 Nobody reads code, so the PR is plumbing: agents open it, checks and a
