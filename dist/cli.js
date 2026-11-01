@@ -6846,8 +6846,45 @@ Claude Code and Codex install as a plugin instead:
   /plugin marketplace add epode-studio/crosstalk
   /plugin install crosstalk@epode`);
 }
+async function team() {
+  refuseIfIdentityDamaged();
+  identityOrCreate();
+  if (!await ensureDaemon(ROOT_DIR))
+    die("the daemon would not start. See ~/.claude/crosstalk/daemon.log");
+  const [verb, who] = positional;
+  if (verb === "trust" || verb === "distrust") {
+    if (!who)
+      die(`usage: crosstalk team ${verb} <login or question id>`);
+    const r = await request({ op: "team_answer", id: who, trust: verb === "trust" });
+    if (!r.ok)
+      die(r.error);
+    console.log(r.text);
+    return;
+  }
+  const r = await request({ op: "team", cwd: process.cwd(), refresh: true }, 90000);
+  if (has("--json"))
+    return console.log(JSON.stringify(r, null, 2));
+  if (r.note)
+    console.log(r.note);
+  if (r.repo)
+    console.log(`${r.repo}${r.you ? `: ${r.you}` : ""}`);
+  for (const p of r.trusted ?? [])
+    console.log(`  ${p.who.padEnd(24)} ${p.yours ? "your machine" : p.login} on ${p.machine}  ${p.fingerprint}`);
+  if (!(r.trusted ?? []).length)
+    console.log("  nobody trusted through this repository yet");
+  for (const q of r.pending ?? [])
+    console.log(`
+? ${q.question}
+  crosstalk team trust ${q.id}   or   crosstalk team distrust ${q.id}`);
+  for (const n of r.notTrusted ?? [])
+    console.log(`  not trusted: ${n.ref}: ${n.why}`);
+  if (r.error)
+    console.log(`
+${r.error}`);
+}
 var commands = {
   link,
+  team,
   post,
   attention,
   facts: factsCmd,

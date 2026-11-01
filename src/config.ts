@@ -47,6 +47,14 @@ export type Peer = {
   machine?: string
   /** True when this member is not a person. Capped at a notice, always. */
   isMachine?: boolean
+  /** Set when trusted through a repository (src/repotrust), not with words. */
+  via?: "repo"
+  /** Their GitHub login, for a peer trusted through a repository. */
+  person?: string
+  /** The repositories (owner/repo) that vouch for them. */
+  repos?: string[]
+  /** One of your own machines: a statement signed by a key on your own account. */
+  own?: boolean
 }
 
 

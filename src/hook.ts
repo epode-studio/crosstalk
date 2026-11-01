@@ -294,7 +294,7 @@ async function registerSession() {
     // worth showing, so fall back to the directory being worked in.
     name = hook.thread_name ?? (path.basename(cwd) || name)
   }
-  await request({
+  const registered = await request({
     op: "register",
     sessionId,
     pid: process.ppid,
@@ -308,7 +308,11 @@ async function registerSession() {
     ...(/^post_?tool_?use$/i.test(eventName)
       ? { touched: pathsFromToolInput(hook.tool_input ?? hook.toolInput ?? hook.tool_args) }
       : {}),
-  }).catch(() => {})
+  }).catch(() => null)
+  // A key-change question about someone trusted through this repo, for a
+  // session without the mod: shown to the person, never to the model.
+  if (registered?.systemMessage && restoreClient === "claude")
+    systemMessage = [systemMessage, String(registered.systemMessage)].filter(Boolean).join("\n")
 }
 
 /** Anything waiting, phrased as a notice with none of the sender's words in it. */
