@@ -232,9 +232,15 @@ the session registry.
 | kitty | `kitty @ launch --type=tab` | yes, `kitty @ ls` |
 | WezTerm | `wezterm cli spawn` | yes, `wezterm cli list-clients` |
 | tmux, inside any terminal | `tmux new-window` | yes |
-| Terminal.app | AppleScript | frontmost tab only |
+| Terminal.app | AppleScript (`do script`; tabs need Accessibility) | yes, by matching `tty of tab` |
 | Windows Terminal | `wt -w 0 nt` | no |
 | Ghostty, VS Code terminal | limited | limited |
+
+**Terminal.app comes first**, because it is what we use. It has no tab colour
+or badge escape codes, but its AppleScript can set a tab's background colour
+and settings profile, and read each tab's tty, which is enough to show status
+per tab and to know which session is in front. Opening a tab in an existing
+window needs Accessibility permission; without it, a new window.
 
 Terminals that can do neither get a desktop notification with the command to
 paste. On macOS, AppleScript needs a one-time Automation permission.
