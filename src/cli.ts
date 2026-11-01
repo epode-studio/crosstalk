@@ -16,6 +16,9 @@
 //   crosstalk peers | status | cost | attention | doctor
 //   crosstalk restore [--yes|--dry-run|no]  sessions lost to a restart
 //   crosstalk gather [--yes]             sessions started before crosstalk
+//   crosstalk spawn [--count N] [--background] "<task>"   new agents, own worktrees
+//   crosstalk show <name>                watch a background agent in a tab
+//   crosstalk cleanup [--yes]            remove merged agent worktrees
 //   crosstalk post "…" [--intent] [--source]
 //   crosstalk mute [peer] [minutes]
 //   crosstalk relay start|stop|status
@@ -53,6 +56,7 @@ import { rootFrom, shim } from "./paths.ts"
 import * as restore from "./restore.ts"
 import * as gather from "./gather.ts"
 import { uiCmd } from "./uicli.ts"
+import * as terminal from "./terminal/cli.ts"
 import fs from "node:fs"
 import path from "node:path"
 import os from "node:os"
@@ -1738,6 +1742,11 @@ const commands: Record<string, () => Promise<void>> = {
   install,
   restore: restoreCmd,
   gather: gatherCmd,
+  // The terminal workspace: src/terminal/cli.ts.
+  spawn: () => terminal.spawnCmd(argv),
+  show: () => terminal.showCmd(argv),
+  cleanup: () => terminal.cleanupCmd(argv),
+  term: () => terminal.termCmd(argv, ROOT_DIR),
   // For crosstalk's mod, not for people: see src/uicli.ts.
   ui: () => uiCmd(argv, ROOT_DIR),
 }

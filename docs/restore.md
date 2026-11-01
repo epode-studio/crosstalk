@@ -52,14 +52,17 @@ session goes to the terminal you are asking from:
 
 | Terminal | How | Layout |
 |---|---|---|
-| **Terminal.app** | AppleScript (`do script`), new tabs by Cmd-T through System Events | one window per old window, oldest first, tabs in their old order |
-| tmux | `tmux new-window -d -t <session>: -c <folder>`, and the tmux session is recreated if it is gone | windows in their old index order |
-| iTerm2 | AppleScript, `create tab` | one window per old window, tabs in order |
+| **Terminal.app** | AppleScript (`do script`), new tabs by Cmd-T through System Events | one window per repository, in the order each was first opened, tabs in their old order; into the window already holding that repository if one is open |
+| tmux | `tmux new-window -d -t <session>: -c <folder>`, and the tmux session is recreated if it is gone | windows in their old index order; agents crosstalk ran in the background go back to `tmux -L crosstalk` |
+| iTerm2 | AppleScript, `create tab` | one window per repository, tabs in order; into the window already holding it if one is open |
 | Ghostty | AppleScript keystrokes (Cmd-N, Cmd-T, typing the command) | tabs in one window |
-| kitty | `kitten @ launch --type=tab` (needs `allow_remote_control`) | tabs |
-| WezTerm | `wezterm cli spawn` | tabs |
+| kitty | `kitten @ launch --type=tab` (needs `allow_remote_control`) | tabs, beside the repository's open window if any |
+| WezTerm | `wezterm cli spawn` | tabs, in the repository's open window if any |
 | Windows Terminal | `wt -w 0 nt -d <folder>` | tabs |
 | anything else | the exact commands, shown to you and written to `~/.claude/crosstalk/restore-commands.sh` | paste each into a tab |
+
+Every worktree of a repository counts as that repository, so an agent's worktree comes back
+beside its main checkout. Existing tabs are never moved; see [the terminal workspace](terminal.md).
 
 Codex sessions come back as `codex resume <id>`. Clients that can't resume a session by id are
 skipped, and the result says so.

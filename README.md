@@ -167,23 +167,26 @@ terminal inside it, learn its window. crosstalk has none. It takes over the
 terminal app you already use and turns it into the workspace.
 
 - **Your tabs are the list of agents.** One per session, opened, arranged and
-  brought back by crosstalk. *(Opening and restoring tabs: here. Arranging a
-  window per repository and a tab per thread: coming.)*
+  brought back by crosstalk, one window per repository. *(Here. A tab per
+  thread: coming.)*
 - **Status at a glance.** Each tab shows whether its agent is working,
-  finished, or waiting on you, and a notification takes you straight to the one
-  that needs you. *(Coming.)*
+  finished, or waiting on you. *(Here: tab colour, progress or a tmux window
+  option, per terminal. A notification that takes you to the tab: coming.)*
 - **New agents on request.** "Put two more on auth" opens two tabs, each with
   its own agent in its own private copy of the code, already knowing what the
-  thread is about. *(Coming.)*
+  thread is about. *(Here, starting from the task you describe; knowing the
+  thread comes with threads. Finished worktrees are offered for cleanup once
+  their work is merged.)*
 - **Start from any session.** There is no app to launch first and no window
   to live inside. Open any Claude session and everything grows out of it.
 - **Nothing is lost.** A restart, a crash or a closed laptop brings every agent
-  back in its tab with its conversation. *(Coming: agents crosstalk starts for
-  you keep running in the background when you close the window.)*
+  back in its tab with its conversation, and agents crosstalk starts in the
+  background keep running when you close the window. "Show me auth" opens one.
 - **Not just your agents.** Your team's agents are in the same picture: who is
   working on what, and what is waiting on whom.
 
-Terminal.app first, then iTerm2, kitty, WezTerm, Ghostty and tmux.
+Terminal.app first, then iTerm2, kitty, WezTerm, Ghostty and tmux. What each
+terminal can and cannot do: [docs/terminal.md](docs/terminal.md).
 
 <br>
 

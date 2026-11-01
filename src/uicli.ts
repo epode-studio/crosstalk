@@ -16,6 +16,7 @@ import { daemonRunning, request } from "./client.ts"
 import * as restore from "./restore.ts"
 import * as ui from "./uistate.ts"
 import * as gather from "./gather.ts"
+import * as cleanup from "./cleanup.ts"
 
 type Out = Record<string, unknown>
 
@@ -85,6 +86,10 @@ async function watch(session: string, interval: number) {
       try {
         tendGather(session)
       } catch {}
+      try {
+        // Finished agent worktrees: offered once, checked at most every ten minutes.
+        cleanup.surface(session, cleanup.offerOnce(), true)
+      } catch {}
     }
     const w = { ...(await waiting(session, true)), note: gather.peekNote(session) ?? undefined }
     const line = JSON.stringify(w)
@@ -138,6 +143,7 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
       const value = arg(argv, "--value")
       if (id.startsWith("restore:")) return print(restoreAct(session, id, action, value, root))
       if (id.startsWith("gather:")) return print(gatherAct(session, id, action, value, root))
+      if (id.startsWith("cleanup:")) return print(cleanup.act(session, id, action, value))
       if (id.startsWith("gather-note:")) {
         const n = gather.takeNote(session, id)
         return print(n ? { ok: true, text: n.text } : { ok: false, error: "already shown" })

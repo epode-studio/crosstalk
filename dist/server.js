@@ -15831,9 +15831,9 @@ var ServerResultSchema2 = union([
 
 // src/server.ts
 import net2 from "net";
-import fs9 from "fs";
+import fs12 from "fs";
 import os6 from "os";
-import path11 from "path";
+import path15 from "path";
 
 // src/config.ts
 import fs from "node:fs";
@@ -16091,11 +16091,73 @@ var textSlice = (label, content) => make("text", label, content);
 // src/restore.ts
 import fs4 from "node:fs";
 import os3 from "node:os";
+import path6 from "node:path";
+import { spawn as spawn2, spawnSync as spawnSync2 } from "node:child_process";
+
+// src/terminal/repo.ts
+import { spawnSync } from "node:child_process";
 import path5 from "node:path";
-import { spawn as spawn2, spawnSync } from "node:child_process";
-var dir = () => path5.join(P2.root, "open");
+var git = (cwd, args) => {
+  try {
+    const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 1e4, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+    return { ok: r.status === 0, out: (r.stdout ?? "").trim() || (r.status === 0 ? "" : (r.stderr ?? "").trim()) };
+  } catch (e) {
+    return { ok: false, out: String(e) };
+  }
+};
+function parseWorktrees(porcelain) {
+  const out = [];
+  let cur = null;
+  for (const line of porcelain.split(`
+`)) {
+    if (line.startsWith("worktree ")) {
+      cur = { path: line.slice(9) };
+      out.push(cur);
+    } else if (!cur)
+      continue;
+    else if (line.startsWith("HEAD "))
+      cur.head = line.slice(5);
+    else if (line.startsWith("branch "))
+      cur.branch = line.slice(7).replace(/^refs\/heads\//, "");
+    else if (line === "bare")
+      cur.bare = true;
+    else if (line === "detached")
+      cur.detached = true;
+  }
+  return out;
+}
+function worktrees(cwd, g = git) {
+  const r = g(cwd, ["worktree", "list", "--porcelain"]);
+  return r.ok ? parseWorktrees(r.out) : [];
+}
+var cache = new Map;
+function repoOf(cwd, g = git) {
+  if (!cwd)
+    return null;
+  if (cache.has(cwd))
+    return cache.get(cwd);
+  let key = null;
+  const main = worktrees(cwd, g)[0];
+  if (main && !main.bare)
+    key = main.path;
+  else {
+    const top = g(cwd, ["rev-parse", "--show-toplevel"]);
+    if (top.ok && top.out)
+      key = top.out;
+  }
+  cache.set(cwd, key);
+  return key;
+}
+var repoKey = (cwd, g = git) => repoOf(cwd, g) ?? path5.resolve(cwd);
+var repoName = (root) => slug(path5.basename(root)) || "repo";
+function slug(s, max = 32) {
+  return s.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, max).replace(/-+$/g, "");
+}
+
+// src/restore.ts
+var dir = () => path6.join(P2.root, "open");
 var safe = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
-var fileOf = (id) => path5.join(dir(), `${safe(id)}.json`);
+var fileOf = (id) => path6.join(dir(), `${safe(id)}.json`);
 function readAll() {
   let names;
   try {
@@ -16106,7 +16168,7 @@ function readAll() {
   const out = [];
   for (const f of names) {
     try {
-      const r = JSON.parse(fs4.readFileSync(path5.join(dir(), f), "utf8"));
+      const r = JSON.parse(fs4.readFileSync(path6.join(dir(), f), "utf8"));
       if (r && typeof r.sessionId === "string")
         out.push(r);
     } catch {}
@@ -16124,7 +16186,7 @@ function removeRec(id) {
     fs4.unlinkSync(fileOf(id));
   } catch {}
 }
-var stateFile = () => path5.join(P2.root, "restore-state.json");
+var stateFile = () => path6.join(P2.root, "restore-state.json");
 function loadState() {
   try {
     return JSON.parse(fs4.readFileSync(stateFile(), "utf8"));
@@ -16177,7 +16239,7 @@ function ps(pid, field) {
   if (!pid || pid < 1)
     return null;
   try {
-    const r = spawnSync("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    const r = spawnSync2("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
     if (r.status !== 0)
       return null;
     return r.stdout.trim() || null;
@@ -16223,7 +16285,7 @@ function captureTerminal(env, pid, probe) {
   if (env.TMUX && env.TMUX_PANE) {
     t.tmux = { pane: env.TMUX_PANE, socket: env.TMUX.split(",")[0] };
     if (probe) {
-      const r = spawnSync("tmux", ["display", "-p", "-t", env.TMUX_PANE, "#{session_name}\t#{window_index}\t#{pane_index}"], { encoding: "utf8", timeout: 2000, env });
+      const r = spawnSync2("tmux", ["display", "-p", "-t", env.TMUX_PANE, "#{session_name}\t#{window_index}\t#{pane_index}"], { encoding: "utf8", timeout: 2000, env });
       const [s, w, p] = (r.stdout ?? "").trim().split("\t");
       if (r.status === 0 && s)
         Object.assign(t.tmux, { session: s, window: Number(w), paneIndex: Number(p) });
@@ -16242,7 +16304,7 @@ function captureTerminal(env, pid, probe) {
   if (env.TERM_PROGRAM === "Apple_Terminal" || env.TERM_SESSION_ID && !t.iterm) {
     t.apple = { sessionId: env.TERM_SESSION_ID };
     if (probe && t.tty && process.platform === "darwin" && env.TERM_PROGRAM === "Apple_Terminal") {
-      const r = spawnSync("osascript", ["-"], { input: appleLocateScript(t.tty), encoding: "utf8", timeout: 2500 });
+      const r = spawnSync2("osascript", ["-"], { input: appleLocateScript(t.tty), encoding: "utf8", timeout: 2500 });
       const [w, n] = (r.stdout ?? "").trim().split(" ").map(Number);
       if (r.status === 0 && w && n)
         Object.assign(t.apple, { window: w, tab: n });
@@ -16298,6 +16360,43 @@ function appName(t) {
     default:
       return "the app crosstalk runs in";
   }
+}
+var CROSSTALK_TMUX = "crosstalk";
+var isCrosstalkSocket = (s) => !!s && path6.basename(s) === CROSSTALK_TMUX;
+function anchorFor(repo, o) {
+  if (o.asking && kindOf(o.asking.terminal) && o.keyOf(o.asking.cwd) === repo)
+    return o.asking.terminal;
+  const live = o.recs.filter((r) => !r.endedAt && r.interactive !== false && kindOf(r.terminal) && !isCrosstalkSocket(r.terminal.tmux?.socket) && o.keyOf(r.cwd) === repo && o.alive(r)).sort((a, b) => b.seenAt - a.seenAt);
+  return live[0]?.terminal ?? null;
+}
+function appleIntoWindowScript(cmds, window, tabs) {
+  const L = [
+    `set crosstalkFallback to ""`,
+    `tell application "Terminal"`,
+    `	if not (exists window id ${window}) then`,
+    `		set crosstalkFallback to "gone"`,
+    `	else`,
+    `		set index of window id ${window} to 1`,
+    `		activate`,
+    `	end if`,
+    `end tell`
+  ];
+  for (const c of cmds)
+    L.push(`if crosstalkFallback is "" and ${tabs ? "true" : "false"} then`, `	try`, `		delay 0.3`, `		tell application "System Events" to keystroke "t" using command down`, `		delay 0.6`, `		tell application "Terminal" to do script ${asq(c)} in selected tab of front window`, `	on error errMsg number errNum`, `		set crosstalkFallback to (errNum as text)`, `		tell application "Terminal" to do script ${asq(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq(c)}`, `end if`);
+  L.push(`if crosstalkFallback is "gone" then set crosstalkFallback to ""`, `return "done " & crosstalkFallback`);
+  return L.join(`
+`);
+}
+function itermIntoWindowScript(cmds, tty) {
+  const L = [`tell application "iTerm2"`, `	set w to missing value`];
+  if (tty)
+    L.push(`	repeat with aw in windows`, `		repeat with t in tabs of aw`, `			repeat with s in sessions of t`, `				if (tty of s) is ${asq(tty)} then set w to aw`, `			end repeat`, `		end repeat`, `	end repeat`);
+  L.push(`	if w is missing value then`, `		set w to (create window with default profile)`, `		tell current session of w to write text ${asq(cmds[0])}`, `	else`, `		tell w`, `			set t to (create tab with default profile)`, `			tell current session of t to write text ${asq(cmds[0])}`, `		end tell`, `	end if`);
+  for (const c of cmds.slice(1))
+    L.push(`	tell w`, `		set t to (create tab with default profile)`, `		tell current session of t to write text ${asq(c)}`, `	end tell`);
+  L.push(`end tell`, `return "done "`);
+  return L.join(`
+`);
 }
 function usable(k, e, t) {
   switch (k) {
@@ -16370,59 +16469,80 @@ function plan(recs, e) {
   const byKind = groupBy(ok, (r) => adapterFor(r, e));
   const plans = [];
   const exec = (r) => resumeArgv(r, e.which(r.client === "codex" ? "codex" : "claude"));
+  const repoOf = e.repoOf;
+  const repoFirst = new Map;
+  if (repoOf) {
+    for (const r of ok)
+      if (!repoFirst.has(repoOf(r.cwd)))
+        repoFirst.set(repoOf(r.cwd), r.startedAt);
+  }
+  const byRepo = (rs, oldWindow) => {
+    const groups = groupBy(rs, (r) => repoOf ? repoOf(r.cwd) : oldWindow(r));
+    const keys = [...groups.keys()].sort((a, b) => repoOf ? repoFirst.get(a) - repoFirst.get(b) : num(Number(a)) - num(Number(b)));
+    return keys.map((k) => ({ key: k, recs: groups.get(k), anchor: repoOf ? e.anchorFor?.(k) ?? null : null }));
+  };
+  const inRepoOrder = (rs) => byRepo(rs, () => "").flatMap((x) => x.recs);
   for (const [kind, rs] of byKind) {
     if (kind === "tmux") {
-      const groups = groupBy(rs, (r) => r.terminal.tmux?.session ?? e.current.tmux?.session ?? "crosstalk");
-      for (const [name, g] of groups) {
+      const groups = groupBy(rs, (r) => `${isCrosstalkSocket(r.terminal.tmux?.socket) ? "L" : ""}	${r.terminal.tmux?.session ?? e.current.tmux?.session ?? "crosstalk"}`);
+      for (const [key, g] of groups) {
+        const [own, name] = key.split("\t");
+        const S = own ? ["-L", CROSSTALK_TMUX] : [];
         const sorted = [...g].sort((a, b) => num(a.terminal.tmux?.window) - num(b.terminal.tmux?.window) || num(a.terminal.tmux?.paneIndex) - num(b.terminal.tmux?.paneIndex) || a.startedAt - b.startedAt);
-        let exists = e.tmuxHasSession(name);
+        let exists = own ? e.tmuxHasSession(name, CROSSTALK_TMUX) : e.tmuxHasSession(name);
         const steps = sorted.map((r) => {
           const cmd = exec(r).map(shq).join(" ");
           if (!exists) {
             exists = true;
-            return { cmd: "tmux", args: ["new-session", "-d", "-s", name, "-c", r.cwd, cmd] };
+            return { cmd: "tmux", args: [...S, "new-session", "-d", "-s", name, "-c", r.cwd, cmd] };
           }
-          return { cmd: "tmux", args: ["new-window", "-d", "-t", `=${name}:`, "-c", r.cwd, cmd] };
+          return { cmd: "tmux", args: [...S, "new-window", "-d", "-t", `=${name}:`, "-c", r.cwd, cmd] };
         });
         plans.push({ kind: "tmux", sessions: sorted, steps });
       }
     } else if (kind === "apple") {
-      const groups = groupBy(rs, (r) => String(r.terminal.apple?.window ?? "?"));
-      const keys = [...groups.keys()].sort((a, b) => num(Number(a)) - num(Number(b)));
-      for (const k of keys) {
-        const g = [...groups.get(k)].sort((a, b) => num(a.terminal.apple?.tab) - num(b.terminal.apple?.tab) || a.startedAt - b.startedAt);
-        const tabs = e.tabs && g.length > 1;
+      for (const { recs, anchor } of byRepo(rs, (r) => String(r.terminal.apple?.window ?? "?"))) {
+        const g = [...recs].sort((a, b) => (repoOf ? num(a.terminal.apple?.window) - num(b.terminal.apple?.window) : 0) || num(a.terminal.apple?.tab) - num(b.terminal.apple?.tab) || a.startedAt - b.startedAt);
+        const into = anchor?.apple?.window;
+        const tabs = e.tabs && (g.length > 1 || !!into);
         plans.push({
           kind: "apple",
           sessions: g,
           needsAccessibility: tabs,
-          steps: [{ cmd: "osascript", args: ["-"], input: appleTerminalScript(g.map(typed), tabs) }]
+          steps: [{ cmd: "osascript", args: ["-"], input: into ? appleIntoWindowScript(g.map(typed), into, e.tabs) : appleTerminalScript(g.map(typed), tabs) }]
         });
       }
     } else if (kind === "iterm") {
-      const groups = groupBy(rs, (r) => String(r.terminal.iterm?.window ?? "?"));
-      for (const k of [...groups.keys()].sort((a, b) => num(Number(a)) - num(Number(b)))) {
-        const g = [...groups.get(k)].sort((a, b) => num(a.terminal.iterm?.tab) - num(b.terminal.iterm?.tab) || a.startedAt - b.startedAt);
-        plans.push({ kind: "iterm", sessions: g, steps: [{ cmd: "osascript", args: ["-"], input: itermScript(g.map(typed)) }] });
+      for (const { recs, anchor } of byRepo(rs, (r) => String(r.terminal.iterm?.window ?? "?"))) {
+        const g = [...recs].sort((a, b) => (repoOf ? num(a.terminal.iterm?.window) - num(b.terminal.iterm?.window) : 0) || num(a.terminal.iterm?.tab) - num(b.terminal.iterm?.tab) || a.startedAt - b.startedAt);
+        const input = anchor?.tty ? itermIntoWindowScript(g.map(typed), anchor.tty) : itermScript(g.map(typed));
+        plans.push({ kind: "iterm", sessions: g, steps: [{ cmd: "osascript", args: ["-"], input }] });
       }
     } else if (kind === "ghostty") {
+      const g = inRepoOrder(rs);
       if (e.tabs)
-        plans.push({ kind: "ghostty", sessions: rs, needsAccessibility: true, steps: [{ cmd: "osascript", args: ["-"], input: ghosttyScript(rs.map(typed)) }] });
+        plans.push({ kind: "ghostty", sessions: g, needsAccessibility: true, steps: [{ cmd: "osascript", args: ["-"], input: ghosttyScript(g.map(typed)) }] });
       else
-        plans.push({ kind: "manual", sessions: rs, steps: [] });
+        plans.push({ kind: "manual", sessions: g, steps: [] });
     } else if (kind === "kitty") {
       const to = e.current.kitty?.listenOn ?? rs[0].terminal.kitty?.listenOn;
-      plans.push({
-        kind: "kitty",
-        sessions: rs,
-        steps: rs.map((r) => ({ cmd: "kitten", args: ["@", "--to", to, "launch", "--type=tab", "--cwd", r.cwd, ...exec(r)] }))
-      });
+      for (const { recs, anchor } of byRepo(rs, () => "")) {
+        const match = anchor?.kitty?.window ? ["--match", `window_id:${anchor.kitty.window}`] : [];
+        plans.push({
+          kind: "kitty",
+          sessions: recs,
+          steps: recs.map((r) => ({ cmd: "kitten", args: ["@", "--to", to, "launch", "--type=tab", ...match, "--cwd", r.cwd, ...exec(r)] }))
+        });
+      }
     } else if (kind === "wezterm") {
-      plans.push({
-        kind: "wezterm",
-        sessions: rs,
-        steps: rs.map((r) => ({ cmd: "wezterm", args: ["cli", "spawn", "--cwd", r.cwd, "--", ...exec(r)] }))
-      });
+      for (const { recs, anchor } of byRepo(rs, () => "")) {
+        const at = anchor?.wezterm?.pane ? ["--pane-id", anchor.wezterm.pane] : [];
+        plans.push({
+          kind: "wezterm",
+          sessions: recs,
+          steps: recs.map((r) => ({ cmd: "wezterm", args: ["cli", "spawn", ...at, "--cwd", r.cwd, "--", ...exec(r)] }))
+        });
+      }
     } else if (kind === "wt") {
       plans.push({
         kind: "wt",
@@ -16469,20 +16589,20 @@ function accessibilityGranted() {
   const forced = process.env.CROSSTALK_FAKE_ACCESSIBILITY;
   if (forced)
     return forced === "yes";
-  const r = spawnSync("osascript", ["-l", "JavaScript", "-e", JXA_AX], { encoding: "utf8", timeout: 3000 });
+  const r = spawnSync2("osascript", ["-l", "JavaScript", "-e", JXA_AX], { encoding: "utf8", timeout: 3000 });
   const out = (r.stdout ?? "").trim();
   return out === "yes" ? true : out === "no" ? false : null;
 }
 function openSettings(pane) {
   if (process.env.CROSSTALK_NO_OPEN)
     return;
-  spawnSync("open", [SETTINGS_URL[pane]], { timeout: 5000 });
+  spawnSync2("open", [SETTINGS_URL[pane]], { timeout: 5000 });
 }
 function which(bin) {
-  for (const d of (process.env.PATH ?? "").split(path5.delimiter)) {
+  for (const d of (process.env.PATH ?? "").split(path6.delimiter)) {
     if (!d)
       continue;
-    const p = path5.join(d, bin);
+    const p = path6.join(d, bin);
     try {
       fs4.accessSync(p, fs4.constants.X_OK);
       return p;
@@ -16496,13 +16616,15 @@ function liveEnv(env, tabs) {
     current: captureTerminal(env, process.pid, true),
     has: (b) => !!which(b),
     which,
-    tmuxHasSession: (name) => spawnSync("tmux", ["has-session", "-t", `=${name}`], { stdio: "ignore", timeout: 2000 }).status === 0,
-    tabs
+    tmuxHasSession: (name, socket) => spawnSync2("tmux", [...socket ? ["-L", socket] : [], "has-session", "-t", `=${name}`], { stdio: "ignore", timeout: 2000, env: socket ? { ...env, TMUX: "" } : env }).status === 0,
+    tabs,
+    repoOf: (cwd) => repoKey(cwd),
+    anchorFor: (repo) => anchorFor(repo, { recs: readAll(), keyOf: (cwd) => repoKey(cwd), alive: recAlive })
   };
 }
-var label = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path5.basename(r.cwd) || r.sessionId.slice(0, 8);
+var label = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path6.basename(r.cwd) || r.sessionId.slice(0, 8);
 var names = (rs, max = 4) => rs.slice(0, max).map(label).join(", ") + (rs.length > max ? ", \u2026" : "");
-var commandsFile = () => path5.join(P2.root, "restore-commands.sh");
+var commandsFile = () => path6.join(P2.root, "restore-commands.sh");
 function ctxNow() {
   const now = Date.now();
   return { now, boot: bootTime(process.env, now), all: readAll(), alive: recAlive };
@@ -16532,7 +16654,7 @@ function describe2(self, env = process.env, dry = false) {
   return { ok: true, text: lines.join(`
 `), lost, restored: [] };
 }
-var pendingFile = () => path5.join(P2.root, "restore-pending.json");
+var pendingFile = () => path6.join(P2.root, "restore-pending.json");
 function claimPending() {
   const mine = `${pendingFile()}.${process.pid}`;
   try {
@@ -16551,7 +16673,7 @@ function claimPending() {
   }
 }
 function runStep(s) {
-  const r = spawnSync(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 60000 });
+  const r = spawnSync2(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 60000 });
   return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
 }
 function restore(o, only) {
@@ -16672,17 +16794,17 @@ function startWaiter(root) {
 // src/gather.ts
 import fs6 from "node:fs";
 import os5 from "node:os";
-import path7 from "node:path";
-import { spawn as spawn4, spawnSync as spawnSync3 } from "node:child_process";
+import path8 from "node:path";
+import { spawn as spawn4, spawnSync as spawnSync4 } from "node:child_process";
 
 // src/restore.ts
 import fs5 from "node:fs";
 import os4 from "node:os";
-import path6 from "node:path";
-import { spawn as spawn3, spawnSync as spawnSync2 } from "node:child_process";
-var dir2 = () => path6.join(P2.root, "open");
+import path7 from "node:path";
+import { spawn as spawn3, spawnSync as spawnSync3 } from "node:child_process";
+var dir2 = () => path7.join(P2.root, "open");
 var safe2 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
-var fileOf2 = (id) => path6.join(dir2(), `${safe2(id)}.json`);
+var fileOf2 = (id) => path7.join(dir2(), `${safe2(id)}.json`);
 function readAll2() {
   let names;
   try {
@@ -16693,12 +16815,19 @@ function readAll2() {
   const out = [];
   for (const f of names) {
     try {
-      const r = JSON.parse(fs5.readFileSync(path6.join(dir2(), f), "utf8"));
+      const r = JSON.parse(fs5.readFileSync(path7.join(dir2(), f), "utf8"));
       if (r && typeof r.sessionId === "string")
         out.push(r);
     } catch {}
   }
   return out;
+}
+function readOne(id) {
+  try {
+    return JSON.parse(fs5.readFileSync(fileOf2(id), "utf8"));
+  } catch {
+    return null;
+  }
 }
 function writeRec2(r) {
   fs5.mkdirSync(dir2(), { recursive: true, mode: 448 });
@@ -16719,7 +16848,7 @@ function ps2(pid, field) {
   if (!pid || pid < 1)
     return null;
   try {
-    const r = spawnSync2("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    const r = spawnSync3("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
     if (r.status !== 0)
       return null;
     return r.stdout.trim() || null;
@@ -16755,11 +16884,155 @@ var appleLocateScript2 = (tty) => [
   `return ""`
 ].join(`
 `);
+function captureTerminal2(env, pid, probe) {
+  const t = {};
+  if (env.TERM_PROGRAM)
+    t.program = env.TERM_PROGRAM;
+  const tty = ps2(pid, "tty");
+  if (tty && !/^\?+$/.test(tty))
+    t.tty = tty.startsWith("/dev/") ? tty : `/dev/${tty}`;
+  if (env.TMUX && env.TMUX_PANE) {
+    t.tmux = { pane: env.TMUX_PANE, socket: env.TMUX.split(",")[0] };
+    if (probe) {
+      const r = spawnSync3("tmux", ["display", "-p", "-t", env.TMUX_PANE, "#{session_name}\t#{window_index}\t#{pane_index}"], { encoding: "utf8", timeout: 2000, env });
+      const [s, w, p] = (r.stdout ?? "").trim().split("\t");
+      if (r.status === 0 && s)
+        Object.assign(t.tmux, { session: s, window: Number(w), paneIndex: Number(p) });
+    }
+  }
+  if (env.KITTY_WINDOW_ID || env.KITTY_LISTEN_ON)
+    t.kitty = { window: env.KITTY_WINDOW_ID, listenOn: env.KITTY_LISTEN_ON };
+  if (env.WEZTERM_PANE)
+    t.wezterm = { pane: env.WEZTERM_PANE };
+  if (env.ITERM_SESSION_ID) {
+    const m = /^w(\d+)t(\d+)p(\d+)/.exec(env.ITERM_SESSION_ID);
+    t.iterm = { id: env.ITERM_SESSION_ID, ...m ? { window: Number(m[1]), tab: Number(m[2]) } : {} };
+  }
+  if (env.WT_SESSION)
+    t.wt = { session: env.WT_SESSION };
+  if (env.TERM_PROGRAM === "Apple_Terminal" || env.TERM_SESSION_ID && !t.iterm) {
+    t.apple = { sessionId: env.TERM_SESSION_ID };
+    if (probe && t.tty && process.platform === "darwin" && env.TERM_PROGRAM === "Apple_Terminal") {
+      const r = spawnSync3("osascript", ["-"], { input: appleLocateScript2(t.tty), encoding: "utf8", timeout: 2500 });
+      const [w, n] = (r.stdout ?? "").trim().split(" ").map(Number);
+      if (r.status === 0 && w && n)
+        Object.assign(t.apple, { window: w, tab: n });
+    }
+    if (env.TERM_PROGRAM !== "Apple_Terminal" && !t.apple.window)
+      delete t.apple;
+  }
+  return t;
+}
+var shq2 = (s) => /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
 var asq2 = (s) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
+function kindOf2(t) {
+  if (!t)
+    return null;
+  if (t.tmux)
+    return "tmux";
+  if (t.program === "Apple_Terminal")
+    return "apple";
+  if (t.program === "iTerm.app" || t.iterm)
+    return "iterm";
+  if (t.program === "ghostty")
+    return "ghostty";
+  if (t.kitty)
+    return "kitty";
+  if (t.wezterm || t.program === "WezTerm")
+    return "wezterm";
+  if (t.wt)
+    return "wt";
+  if (t.apple)
+    return "apple";
+  return null;
+}
+var CROSSTALK_TMUX2 = "crosstalk";
+var isCrosstalkSocket2 = (s) => !!s && path7.basename(s) === CROSSTALK_TMUX2;
+function anchorFor2(repo, o) {
+  if (o.asking && kindOf2(o.asking.terminal) && o.keyOf(o.asking.cwd) === repo)
+    return o.asking.terminal;
+  const live = o.recs.filter((r) => !r.endedAt && r.interactive !== false && kindOf2(r.terminal) && !isCrosstalkSocket2(r.terminal.tmux?.socket) && o.keyOf(r.cwd) === repo && o.alive(r)).sort((a, b) => b.seenAt - a.seenAt);
+  return live[0]?.terminal ?? null;
+}
+function appleIntoWindowScript2(cmds, window, tabs) {
+  const L = [
+    `set crosstalkFallback to ""`,
+    `tell application "Terminal"`,
+    `	if not (exists window id ${window}) then`,
+    `		set crosstalkFallback to "gone"`,
+    `	else`,
+    `		set index of window id ${window} to 1`,
+    `		activate`,
+    `	end if`,
+    `end tell`
+  ];
+  for (const c of cmds)
+    L.push(`if crosstalkFallback is "" and ${tabs ? "true" : "false"} then`, `	try`, `		delay 0.3`, `		tell application "System Events" to keystroke "t" using command down`, `		delay 0.6`, `		tell application "Terminal" to do script ${asq2(c)} in selected tab of front window`, `	on error errMsg number errNum`, `		set crosstalkFallback to (errNum as text)`, `		tell application "Terminal" to do script ${asq2(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq2(c)}`, `end if`);
+  L.push(`if crosstalkFallback is "gone" then set crosstalkFallback to ""`, `return "done " & crosstalkFallback`);
+  return L.join(`
+`);
+}
+function itermIntoWindowScript2(cmds, tty) {
+  const L = [`tell application "iTerm2"`, `	set w to missing value`];
+  if (tty)
+    L.push(`	repeat with aw in windows`, `		repeat with t in tabs of aw`, `			repeat with s in sessions of t`, `				if (tty of s) is ${asq2(tty)} then set w to aw`, `			end repeat`, `		end repeat`, `	end repeat`);
+  L.push(`	if w is missing value then`, `		set w to (create window with default profile)`, `		tell current session of w to write text ${asq2(cmds[0])}`, `	else`, `		tell w`, `			set t to (create tab with default profile)`, `			tell current session of t to write text ${asq2(cmds[0])}`, `		end tell`, `	end if`);
+  for (const c of cmds.slice(1))
+    L.push(`	tell w`, `		set t to (create tab with default profile)`, `		tell current session of t to write text ${asq2(c)}`, `	end tell`);
+  L.push(`end tell`, `return "done "`);
+  return L.join(`
+`);
+}
+function appleTerminalScript2(cmds, tabs) {
+  const L = [`set crosstalkFallback to ""`, `tell application "Terminal"`, `	activate`, `	do script ${asq2(cmds[0])}`, `end tell`];
+  for (const c of cmds.slice(1)) {
+    if (!tabs) {
+      L.push(`tell application "Terminal" to do script ${asq2(c)}`);
+      continue;
+    }
+    L.push(`if crosstalkFallback is "" then`, `	try`, `		delay 0.3`, `		tell application "System Events" to keystroke "t" using command down`, `		delay 0.6`, `		tell application "Terminal" to do script ${asq2(c)} in selected tab of front window`, `	on error errMsg number errNum`, `		set crosstalkFallback to (errNum as text)`, `		tell application "Terminal" to do script ${asq2(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq2(c)}`, `end if`);
+  }
+  L.push(`return "done " & crosstalkFallback`);
+  return L.join(`
+`);
+}
+function ghosttyScript2(cmds) {
+  const L = [`set crosstalkFallback to ""`, `tell application "Ghostty" to activate`, `delay 0.5`, `try`];
+  cmds.forEach((c, i) => {
+    L.push(`	tell application "System Events"`, `		keystroke ${i === 0 ? `"n"` : `"t"`} using command down`, `		delay 0.8`, `		keystroke ${asq2(c)}`, `		key code 36`, `	end tell`);
+  });
+  L.push(`on error errMsg number errNum`, `	set crosstalkFallback to (errNum as text)`, `end try`, `return "done " & crosstalkFallback`);
+  return L.join(`
+`);
+}
 var REOPEN_SETTINGS_MS2 = 2 * 60 * 1000;
+function which2(bin) {
+  for (const d of (process.env.PATH ?? "").split(path7.delimiter)) {
+    if (!d)
+      continue;
+    const p = path7.join(d, bin);
+    try {
+      fs5.accessSync(p, fs5.constants.X_OK);
+      return p;
+    } catch {}
+  }
+  return;
+}
+function liveEnv2(env, tabs) {
+  return {
+    platform: process.platform,
+    current: captureTerminal2(env, process.pid, true),
+    has: (b) => !!which2(b),
+    which: which2,
+    tmuxHasSession: (name, socket) => spawnSync3("tmux", [...socket ? ["-L", socket] : [], "has-session", "-t", `=${name}`], { stdio: "ignore", timeout: 2000, env: socket ? { ...env, TMUX: "" } : env }).status === 0,
+    tabs,
+    repoOf: (cwd) => repoKey(cwd),
+    anchorFor: (repo) => anchorFor2(repo, { recs: readAll2(), keyOf: (cwd) => repoKey(cwd), alive: recAlive2 })
+  };
+}
 
 // src/gather.ts
-var registryDir = () => path7.join(os5.homedir(), ".claude", "sessions");
+var registryDir = () => path8.join(os5.homedir(), ".claude", "sessions");
 function readRegistry(dir = registryDir(), alive = (p) => pidAlive2(p)) {
   let files;
   try {
@@ -16770,7 +17043,7 @@ function readRegistry(dir = registryDir(), alive = (p) => pidAlive2(p)) {
   const out = [];
   for (const f of files) {
     try {
-      const e = JSON.parse(fs6.readFileSync(path7.join(dir, f), "utf8"));
+      const e = JSON.parse(fs6.readFileSync(path8.join(dir, f), "utf8"));
       const pid = Number(e.pid ?? f.slice(0, -5));
       if (!pid || typeof e.sessionId !== "string" || !e.sessionId)
         continue;
@@ -16800,7 +17073,7 @@ function ps3(pid, field) {
   if (!pid || pid < 1)
     return null;
   try {
-    const r = spawnSync3("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    const r = spawnSync4("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
     if (r.status !== 0)
       return null;
     return r.stdout.trim() || null;
@@ -16828,7 +17101,7 @@ function procEnv(pid) {
   if (process.platform !== "darwin")
     return null;
   try {
-    const r = spawnSync3("ps", ["-wwE", "-o", "command=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    const r = spawnSync4("ps", ["-wwE", "-o", "command=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
     if (r.status !== 0)
       return null;
     return parseEnv(r.stdout.trim(), /\s+/);
@@ -16837,7 +17110,7 @@ function procEnv(pid) {
   }
 }
 function tmuxPanes() {
-  const r = spawnSync3("tmux", ["list-panes", "-a", "-F", "#{pane_tty}\t#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{socket_path}"], { encoding: "utf8", timeout: 2000 });
+  const r = spawnSync4("tmux", ["list-panes", "-a", "-F", "#{pane_tty}\t#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{socket_path}"], { encoding: "utf8", timeout: 2000 });
   if (r.status !== 0)
     return [];
   return r.stdout.trim().split(`
@@ -16860,13 +17133,13 @@ function liveSys() {
     appleLocate: (tty) => {
       if (process.platform !== "darwin")
         return null;
-      const r = spawnSync3("osascript", ["-"], { input: appleLocateIfRunning(tty), encoding: "utf8", timeout: 2500 });
+      const r = spawnSync4("osascript", ["-"], { input: appleLocateIfRunning(tty), encoding: "utf8", timeout: 2500 });
       const [w, n] = (r.stdout ?? "").trim().split(" ").map(Number);
       return r.status === 0 && w && n ? { window: w, tab: n } : null;
     },
     kill: (pid, sig) => process.kill(pid, sig),
     run: (s) => {
-      const r = spawnSync3(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 30000 });
+      const r = spawnSync4(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 30000 });
       return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
     },
     sleep: (ms) => new Promise((r) => setTimeout(r, ms))
@@ -16969,7 +17242,7 @@ function watch(self, sys = liveSys()) {
     writeRec2(r);
   return recs;
 }
-var stateFile2 = () => path7.join(P2.root, "gather-state.json");
+var stateFile2 = () => path8.join(P2.root, "gather-state.json");
 function loadState2() {
   try {
     return JSON.parse(fs6.readFileSync(stateFile2(), "utf8"));
@@ -16985,7 +17258,7 @@ function saveState2(s) {
 }
 var sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 function locked(fn) {
-  const lock = path7.join(P2.root, "gather.lock");
+  const lock = path8.join(P2.root, "gather.lock");
   fs6.mkdirSync(P2.root, { recursive: true, mode: 448 });
   let held = false;
   for (let i = 0;i < 100 && !held; i++) {
@@ -17025,8 +17298,8 @@ function ancestors(pid = process.pid, sys = { ps: ps3 }) {
 function candidates(recs, o) {
   return recs.filter((r) => r.adopted === "watched" && !r.endedAt && r.interactive !== false && r.sessionId !== o.self && !(o.selfPids ?? []).includes(r.pid) && r.gather?.state !== "done" && o.alive(r)).sort((a, b) => a.startedAt - b.startedAt);
 }
-var label2 = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path7.basename(r.cwd) || r.sessionId.slice(0, 8);
-var job = () => path7.join(P2.root, "gather-job.json");
+var label2 = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path8.basename(r.cwd) || r.sessionId.slice(0, 8);
+var job = () => path8.join(P2.root, "gather-job.json");
 function loadJob() {
   try {
     return JSON.parse(fs6.readFileSync(job(), "utf8"));
@@ -17101,10 +17374,10 @@ var names2 = (rs, max = 4) => rs.slice(0, max).map(label2).join(", ") + (rs.leng
 
 // src/uistate.ts
 import fs7 from "node:fs";
-import path8 from "node:path";
+import path9 from "node:path";
 var FINAL = new Set(["answered", "handed", "muted"]);
-var file = () => path8.join(P2.root, "ui.json");
-var lockDir = () => path8.join(P2.root, "ui.lock");
+var file = () => path9.join(P2.root, "ui.json");
+var lockDir = () => path9.join(P2.root, "ui.lock");
 var WEEK = 7 * 24 * 60 * 60 * 1000;
 function read() {
   try {
@@ -17162,22 +17435,746 @@ function settle(items, id, state, now) {
 var MARKER_MS = 10 * 60 * 1000;
 var gatherId = (sessionId) => `gather:${sessionId}`;
 
-// src/paths.ts
-import path9 from "node:path";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
-var dirOf2 = (metaUrl) => path9.dirname(fileURLToPath2(metaUrl));
-var rootFrom2 = (metaUrl) => path9.join(dirOf2(metaUrl), "..");
-
-// src/channels.ts
+// src/spawn.ts
 import fs8 from "node:fs";
 import path10 from "node:path";
+import { spawnSync as spawnSync6 } from "node:child_process";
+
+// src/terminal/layout.ts
+import { spawnSync as spawnSync5 } from "node:child_process";
+var typedTab = (t) => `cd ${shq2(t.cwd)} && ${t.argv.map(shq2).join(" ")}`;
+var anchorFor3 = anchorFor2;
+var appleIntoWindowScript3 = appleIntoWindowScript2;
+var itermIntoWindowScript3 = itermIntoWindowScript2;
+var wtArg2 = (s) => s.replace(/;/g, "\\;");
+function usable2(k, e, t) {
+  switch (k) {
+    case "tmux":
+      return e.has("tmux");
+    case "apple":
+    case "iterm":
+    case "ghostty":
+      return e.platform === "darwin" && e.has("osascript");
+    case "kitty":
+      return e.has("kitten") && !!(t?.kitty?.listenOn ?? e.current.kitty?.listenOn);
+    case "wezterm":
+      return e.has("wezterm");
+    case "wt":
+      return e.platform === "win32" && e.has("wt");
+  }
+}
+function openTabs(tabs, o) {
+  const { env: e } = o;
+  const typed = tabs.map(typedTab);
+  if (!tabs.length)
+    return { kind: "manual", steps: [], where: "nowhere", typed };
+  if (tabs.some((t) => /[\n\r\0]/.test(t.cwd)))
+    return { kind: "manual", steps: [], where: "nowhere", typed };
+  const ak = kindOf2(o.anchor ?? undefined);
+  const ck = kindOf2(o.current);
+  let kind = null;
+  let anchor = null;
+  if (ak && usable2(ak, e, o.anchor)) {
+    kind = ak;
+    anchor = o.anchor;
+  } else if (ck && usable2(ck, e, o.current))
+    kind = ck;
+  if (!kind)
+    return { kind: "manual", steps: [], where: "nowhere", typed };
+  const name = repoName(o.repo);
+  const shell = (t) => t.argv.map(shq2).join(" ");
+  switch (kind) {
+    case "tmux": {
+      const sock = anchor?.tmux?.socket ?? o.current.tmux?.socket;
+      const S = sock ? ["-S", sock] : [];
+      let session = anchor?.tmux?.session;
+      const steps = [];
+      if (!session) {
+        session = name;
+        let exists = o.tmuxSession?.(session) ?? false;
+        for (const tab of tabs) {
+          if (!exists) {
+            exists = true;
+            steps.push({ cmd: "tmux", args: [...S, "new-session", "-d", "-s", session, "-c", tab.cwd, shell(tab)] });
+          } else
+            steps.push({ cmd: "tmux", args: [...S, "new-window", "-d", "-t", `=${session}:`, "-c", tab.cwd, shell(tab)] });
+        }
+        return { kind, steps, where: `tmux session "${session}"`, typed };
+      }
+      for (const tab of tabs)
+        steps.push({ cmd: "tmux", args: [...S, "new-window", "-d", "-t", `=${session}:`, "-c", tab.cwd, shell(tab)] });
+      return { kind, steps, where: `tmux session "${session}"`, typed };
+    }
+    case "apple": {
+      const w = anchor?.apple?.window;
+      const many = e.tabs;
+      const input = w ? appleIntoWindowScript3(typed, w, many) : appleTerminalScript2(typed, many && typed.length > 1);
+      return {
+        kind,
+        steps: [{ cmd: "osascript", args: ["-"], input }],
+        needsAccessibility: many && (!!w || typed.length > 1),
+        where: w ? `the Terminal window with ${name}` : `a new Terminal window`,
+        typed
+      };
+    }
+    case "iterm":
+      return { kind, steps: [{ cmd: "osascript", args: ["-"], input: itermIntoWindowScript3(typed, anchor?.tty) }], where: anchor ? `the iTerm2 window with ${name}` : "a new iTerm2 window", typed };
+    case "ghostty": {
+      const L = ghosttyScript2(typed);
+      const input = anchor ? L.replace(`keystroke "n" using command down`, `keystroke "t" using command down`) : L;
+      return { kind, steps: [{ cmd: "osascript", args: ["-"], input }], needsAccessibility: true, where: anchor ? "the front Ghostty window" : "a new Ghostty window", typed };
+    }
+    case "kitty": {
+      const to = anchor?.kitty?.listenOn ?? o.current.kitty?.listenOn;
+      const match = anchor?.kitty?.window ? ["--match", `window_id:${anchor.kitty.window}`] : [];
+      const steps = tabs.map((t, i) => ({
+        cmd: "kitten",
+        args: ["@", "--to", to, "launch", ...anchor || i > 0 ? ["--type=tab"] : ["--type=os-window"], ...match, "--cwd", t.cwd, ...t.argv]
+      }));
+      return { kind, steps, where: anchor ? `the kitty window with ${name}` : "a new kitty window", typed };
+    }
+    case "wezterm": {
+      const pane = anchor?.wezterm?.pane;
+      const steps = [];
+      tabs.forEach((t, i) => {
+        if (pane)
+          steps.push({ cmd: "wezterm", args: ["cli", "spawn", "--pane-id", pane, "--cwd", t.cwd, "--", ...t.argv] });
+        else if (i === 0)
+          steps.push({ cmd: "wezterm", args: ["cli", "spawn", "--new-window", "--cwd", t.cwd, "--", ...t.argv] });
+        else
+          steps.push({ cmd: "wezterm", args: ["cli", "spawn", "--cwd", t.cwd, "--", ...t.argv] });
+      });
+      return { kind, steps, where: pane ? `the WezTerm window with ${name}` : "a new WezTerm window", typed };
+    }
+    case "wt":
+      return { kind, steps: tabs.map((t) => ({ cmd: "wt", args: ["-w", "0", "nt", "-d", wtArg2(t.cwd), ...t.argv.map(wtArg2)] })), where: "Windows Terminal", typed };
+  }
+}
+function openForRepo(tabs, o) {
+  const g = o.git ?? git;
+  const env = liveEnv2(o.envVars ?? process.env, true);
+  const keyOf = (cwd) => repoKey(cwd, g);
+  const repo = keyOf(o.cwd);
+  const own = o.by ? readOne(o.by) : null;
+  const asking = own && kindOf2(own.terminal) ? { cwd: own.cwd, terminal: own.terminal } : { cwd: o.cwd, terminal: env.current };
+  const anchor = anchorFor3(repo, { recs: readAll2(), keyOf, asking, alive: recAlive2 });
+  const opened = openTabs(tabs, { anchor, current: env.current, env, repo, tmuxSession: env.tmuxHasSession });
+  let out = "";
+  let ok = opened.kind !== "manual";
+  for (const s of opened.steps) {
+    const r = runStep2(s, o.envVars);
+    out += r.out + `
+`;
+    if (!r.ok) {
+      ok = false;
+      break;
+    }
+  }
+  return { ok, opened, out: out.trim() };
+}
+function runStep2(s, env) {
+  const r = spawnSync5(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 60000, env: env ?? process.env });
+  return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
+}
+
+// src/spawn.ts
+var DEP_DIRS = ["node_modules", ".venv", "venv"];
+var MAX_AGENTS = 8;
+var BRANCH_PREFIX = "crosstalk/";
+var TMUX_SOCKET = "crosstalk";
+var dir3 = () => path10.join(P2.root, "spawned");
+var fileOf3 = (id) => path10.join(dir3(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+function readSpawned() {
+  let names;
+  try {
+    names = fs8.readdirSync(dir3()).filter((f) => f.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const f of names)
+    try {
+      const r = JSON.parse(fs8.readFileSync(path10.join(dir3(), f), "utf8"));
+      if (r?.id && r.worktree)
+        out.push(r);
+    } catch {}
+  return out.sort((a, b) => a.createdAt - b.createdAt);
+}
+function writeSpawned(r) {
+  fs8.mkdirSync(dir3(), { recursive: true, mode: 448 });
+  const tmp = `${fileOf3(r.id)}.${process.pid}.tmp`;
+  fs8.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 384 });
+  fs8.renameSync(tmp, fileOf3(r.id));
+}
+var STOP = new Set("a an the on to for and of in with at by from into onto this that it its be is are please can could would you start put get run spin up fire one two three four five six seven eight more another new agent agents session sessions claude someone somebody work working".split(" "));
+function nameFromTask(task) {
+  const words = task.toLowerCase().replace(/[^a-z0-9\s-]/g, " ").split(/\s+/).filter((w) => w && !STOP.has(w));
+  return slug(words.slice(0, 2).join("-"), 24) || "agent";
+}
+function namesFor(o) {
+  const base = slug(o.name ?? "", 24) || nameFromTask(o.task);
+  const out = [];
+  const free = (n) => !o.taken(n) && !out.includes(n);
+  if (o.count === 1) {
+    for (let i = 1;out.length < 1; i++) {
+      const n = i === 1 ? base : `${base}-${i}`;
+      if (free(n))
+        out.push(n);
+    }
+    return out;
+  }
+  for (let i = 1;out.length < o.count; i++)
+    if (free(`${base}-${i}`))
+      out.push(`${base}-${i}`);
+  return out;
+}
+function worktreeHome(o) {
+  const counts = new Map;
+  for (const w of o.worktrees.slice(1)) {
+    if (w.bare || !w.path)
+      continue;
+    const d = path10.dirname(w.path);
+    if (d === path10.dirname(o.main) && !/worktree/i.test(path10.basename(w.path)))
+      continue;
+    counts.set(d, (counts.get(d) ?? 0) + 1);
+  }
+  let best = null;
+  for (const [d, n] of counts)
+    if (!best || n > counts.get(best))
+      best = d;
+  return best ?? path10.join(o.home, "worktrees", repoName(o.main));
+}
+function planSpawn(o) {
+  const main = o.worktrees[0]?.path ?? o.top;
+  const where = worktreeHome({ main, worktrees: o.worktrees, home: o.home });
+  const rel = path10.relative(o.top, o.cwd);
+  const sub = rel && !rel.startsWith("..") && !path10.isAbsolute(rel) ? rel : "";
+  const count = Math.max(1, Math.min(MAX_AGENTS, Math.floor(o.count || 1)));
+  const names = namesFor({
+    count,
+    name: o.name,
+    task: o.task,
+    taken: (n) => o.exists(path10.join(where, n)) || o.branchExists(BRANCH_PREFIX + n)
+  });
+  return names.map((name) => {
+    const worktree = path10.join(where, name);
+    const cwd = sub ? path10.join(worktree, sub) : worktree;
+    const links = DEP_DIRS.filter((d) => o.exists(path10.join(main, d))).map((d) => [path10.join(main, d), path10.join(worktree, d)]);
+    return { name, branch: BRANCH_PREFIX + name, worktree, cwd, links, tab: { cwd, argv: [o.claude, o.task], name } };
+  });
+}
+var tmuxConf = () => path10.join(P2.root, "tmux.conf");
+var TMUX_CONF = [
+  `# crosstalk's own tmux server (tmux -L crosstalk), for agents it runs in the background.`,
+  `set -g status-left '#[bold]\u25e2 crosstalk#[default] #S  '`,
+  `set -g status-left-length 40`,
+  `set -g status-right '#{?#{==:#{@crosstalk_state},waiting},#[fg=colour208]\u25cf waiting on you,#{?#{==:#{@crosstalk_state},working},#[fg=colour33]\u25cf working,#{?#{==:#{@crosstalk_state},done},#[fg=colour34]\u2713 done,}}}'`,
+  `set -g set-titles on`,
+  `set -g set-titles-string '#S'`,
+  `set -g detach-on-destroy on`,
+  `set -g history-limit 50000`,
+  ``
+].join(`
+`);
+function ensureConf() {
+  fs8.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  try {
+    if (fs8.readFileSync(tmuxConf(), "utf8") === TMUX_CONF)
+      return;
+  } catch {}
+  fs8.writeFileSync(tmuxConf(), TMUX_CONF, { mode: 384 });
+}
+function cleanEnv(env) {
+  const e = { ...env };
+  delete e.TMUX;
+  delete e.TMUX_PANE;
+  return e;
+}
+var backgroundSteps = (p) => [
+  { cmd: "tmux", args: ["-L", TMUX_SOCKET, "-f", tmuxConf(), "new-session", "-d", "-s", p.name, "-c", p.cwd, p.tab.argv.map(shq2).join(" ")] }
+];
+var attachArgv = (name) => ["env", "-u", "TMUX", "-u", "TMUX_PANE", "tmux", "-L", TMUX_SOCKET, "attach-session", "-t", `=${name}`];
+function tmuxHas(name, env = process.env) {
+  return spawnSync6("tmux", ["-L", TMUX_SOCKET, "has-session", "-t", `=${name}`], { stdio: "ignore", timeout: 3000, env: cleanEnv(env) }).status === 0;
+}
+function run(s, env) {
+  const r = spawnSync6(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 60000, env });
+  return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
+}
+function which3(bin, env) {
+  for (const d of (env.PATH ?? "").split(path10.delimiter)) {
+    if (!d)
+      continue;
+    const p = path10.join(d, bin);
+    try {
+      fs8.accessSync(p, fs8.constants.X_OK);
+      return p;
+    } catch {}
+  }
+  return;
+}
+function excludeLinks(commonDir, names) {
+  if (!names.length)
+    return;
+  const f = path10.join(commonDir, "info", "exclude");
+  let text = "";
+  try {
+    text = fs8.readFileSync(f, "utf8");
+  } catch {}
+  const have = new Set(text.split(`
+`).map((l) => l.trim()));
+  const add = names.map((n) => `/${n}`).filter((l) => !have.has(l));
+  if (!add.length)
+    return;
+  fs8.mkdirSync(path10.dirname(f), { recursive: true });
+  fs8.writeFileSync(f, `${text}${text && !text.endsWith(`
+`) ? `
+` : ""}# crosstalk: dependency folders shared from the main checkout
+${add.join(`
+`)}
+`);
+}
+var plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+function spawnAgents(o) {
+  const g = o.git ?? git;
+  const env = o.env ?? process.env;
+  const task = (o.task ?? "").trim();
+  if (!task)
+    return { ok: false, text: "\u25e2 crosstalk: say what the new agent should do.", agents: [] };
+  const top = g(o.cwd, ["rev-parse", "--show-toplevel"]);
+  if (!top.ok || !top.out)
+    return { ok: false, text: `\u25e2 crosstalk: ${o.cwd} is not in a git repository, and each new agent needs its own copy of the code.`, agents: [] };
+  const base = g(o.cwd, ["rev-parse", "HEAD"]);
+  if (!base.ok)
+    return { ok: false, text: "\u25e2 crosstalk: this repository has no commit yet to start an agent from.", agents: [] };
+  const wts = worktrees(o.cwd, g);
+  const main = wts[0]?.path ?? top.out;
+  const common = g(o.cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  if (o.background && !which3("tmux", env))
+    return { ok: false, text: "\u25e2 crosstalk: background agents run in tmux, which is not installed here. Install tmux, or start the agent in a tab instead.", agents: [] };
+  const plans = planSpawn({
+    count: o.count ?? 1,
+    task,
+    name: o.name,
+    cwd: o.cwd,
+    top: top.out,
+    worktrees: wts,
+    home: P2.root,
+    claude: which3("claude", env) ?? "claude",
+    exists: (p) => fs8.existsSync(p),
+    branchExists: (b) => g(main, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]).ok
+  });
+  const made = [];
+  const notes = [];
+  for (const p of plans) {
+    fs8.mkdirSync(path10.dirname(p.worktree), { recursive: true });
+    const add = g(main, ["worktree", "add", "--quiet", "-b", p.branch, p.worktree, base.out]);
+    if (!add.ok) {
+      notes.push(`could not make a copy for ${p.name}: ${add.out.split(`
+`).pop()}`);
+      continue;
+    }
+    const linked = [];
+    for (const [from, to] of p.links) {
+      try {
+        if (fs8.existsSync(to))
+          continue;
+        fs8.symlinkSync(from, to, "dir");
+        linked.push(path10.basename(to));
+      } catch {}
+    }
+    if (common.ok)
+      excludeLinks(common.out, linked);
+    fs8.mkdirSync(p.cwd, { recursive: true });
+    const rec = {
+      id: `${repoName(main)}--${p.name}`,
+      name: p.name,
+      task,
+      repo: main,
+      worktree: p.worktree,
+      cwd: p.cwd,
+      branch: p.branch,
+      base: base.out,
+      createdAt: Date.now(),
+      background: !!o.background,
+      ...o.background ? { tmux: p.name } : {},
+      by: o.by,
+      links: linked
+    };
+    writeSpawned(rec);
+    made.push(rec);
+  }
+  if (!made.length)
+    return { ok: false, text: `\u25e2 crosstalk: started no agent. ${notes.join("; ")}`, agents: [] };
+  const started = plans.filter((p) => made.some((m) => m.name === p.name));
+  let where = "";
+  let ok = true;
+  if (o.background) {
+    ensureConf();
+    const failed = [];
+    for (const p of started) {
+      const r = run(backgroundSteps(p)[0], cleanEnv(env));
+      if (!r.ok)
+        failed.push(`${p.name} (${r.out.split(`
+`).pop()})`);
+    }
+    if (failed.length) {
+      ok = false;
+      notes.push(`could not start in the background: ${failed.join(", ")}`);
+    }
+    where = `in the background, where ${started.length === 1 ? "it keeps" : "they keep"} running when windows close. Say "show me ${started[0].name}" to watch ${started.length === 1 ? "it" : "one"}`;
+  } else {
+    const r = openForRepo(started.map((p) => p.tab), { cwd: o.cwd, envVars: env, git: g, by: o.by });
+    if (r.opened.kind === "manual" || !r.ok) {
+      ok = r.opened.kind === "manual";
+      fs8.mkdirSync(P2.root, { recursive: true, mode: 448 });
+      const file = path10.join(P2.root, "spawn-commands.sh");
+      fs8.writeFileSync(file, `#!/bin/sh
+# New agents crosstalk could not open a tab for. Each line is one tab.
+${r.opened.typed.join(`
+`)}
+`, { mode: 448 });
+      where = `but this terminal cannot open tabs from outside. Paste each line into its own tab (also in ${file}):
+${r.opened.typed.map((l) => `  ${l}`).join(`
+`)}`;
+      if (r.out)
+        notes.push(r.out.split(`
+`).pop());
+    } else
+      where = `in new tabs in ${r.opened.where}`;
+  }
+  const names = made.map((m) => m.name).join(", ");
+  const head = `\u25e2 crosstalk: started ${plural(made.length, "agent")} (${names}), each in its own copy of the code, ${where}.`;
+  const deps = made[0].links.length ? ` ${made[0].links.join(" and ")} ${made[0].links.length === 1 ? "is" : "are"} shared with the main checkout, not copied.` : "";
+  return { ok, text: head + deps + (notes.length ? `
+  ${notes.join(`
+  `)}` : ""), agents: made };
+}
+function findAgent(name, recs = readSpawned()) {
+  const n = slug(name);
+  const live = recs.filter((r) => !r.removedAt);
+  return live.find((r) => r.name === n) ?? live.filter((r) => r.name.startsWith(n)).pop() ?? live.find((r) => r.name.includes(n)) ?? null;
+}
+function show(o) {
+  const env = o.env ?? process.env;
+  const rec = findAgent(o.name);
+  const session = rec?.tmux ?? (tmuxHas(slug(o.name), env) ? slug(o.name) : null);
+  if (!session) {
+    if (rec && !rec.background)
+      return { ok: true, text: `\u25e2 crosstalk: ${rec.name} runs in a tab of its own already, in ${rec.cwd}.` };
+    const bg = readSpawned().filter((r) => r.background && !r.removedAt && tmuxHas(r.tmux, env)).map((r) => r.name);
+    return { ok: false, text: `\u25e2 crosstalk: no background agent called ${o.name}.${bg.length ? ` Running in the background: ${bg.join(", ")}.` : ""}` };
+  }
+  if (!tmuxHas(session, env))
+    return { ok: false, text: `\u25e2 crosstalk: ${rec?.name ?? session} is not running any more.` };
+  const r = openForRepo([{ cwd: rec?.cwd ?? o.cwd, argv: attachArgv(session), name: session }], { cwd: rec?.cwd ?? o.cwd, envVars: env, by: o.by });
+  if (r.opened.kind === "manual")
+    return { ok: true, text: `\u25e2 crosstalk: this terminal cannot open a tab from outside. To watch ${session}, run:
+  ${shq2("tmux")} -L ${TMUX_SOCKET} attach -t ${shq2("=" + session)}` };
+  if (!r.ok)
+    return { ok: false, text: `\u25e2 crosstalk: could not open a tab for ${session}: ${r.out.split(`
+`).pop()}` };
+  return { ok: true, text: `\u25e2 crosstalk: opened ${session} in a new tab in ${r.opened.where}. Closing that tab leaves it running.` };
+}
+
+// src/cleanup.ts
+import fs10 from "node:fs";
+import path12 from "node:path";
+import { spawnSync as spawnSync7 } from "node:child_process";
+
+// src/uistate.ts
+import fs9 from "node:fs";
+import path11 from "node:path";
+var FINAL2 = new Set(["answered", "handed", "muted"]);
+var file2 = () => path11.join(P2.root, "ui.json");
+var lockDir2 = () => path11.join(P2.root, "ui.lock");
+var WEEK2 = 7 * 24 * 60 * 60 * 1000;
+function read2() {
+  try {
+    const f = JSON.parse(fs9.readFileSync(file2(), "utf8"));
+    if (f && f.v === 1 && f.items && typeof f.items === "object")
+      return f;
+  } catch {}
+  return { v: 1, items: {} };
+}
+function write2(f) {
+  fs9.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  const tmp = `${file2()}.${process.pid}.tmp`;
+  fs9.writeFileSync(tmp, JSON.stringify(f, null, 2), { mode: 384 });
+  fs9.renameSync(tmp, file2());
+}
+var sleepSync3 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function withStore2(fn) {
+  fs9.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  let held = false;
+  for (let i = 0;i < 200 && !held; i++) {
+    try {
+      fs9.mkdirSync(lockDir2());
+      held = true;
+    } catch {
+      try {
+        if (Date.now() - fs9.statSync(lockDir2()).mtimeMs > 1e4)
+          fs9.rmdirSync(lockDir2());
+      } catch {}
+      sleepSync3(10);
+    }
+  }
+  try {
+    const f = read2();
+    const was = JSON.stringify(f);
+    const now = Date.now();
+    const out = fn(f.items, now);
+    for (const [id, it] of Object.entries(f.items))
+      if (FINAL2.has(it.state) && now - it.updatedAt > WEEK2 || now - it.updatedAt > 4 * WEEK2)
+        delete f.items[id];
+    if (JSON.stringify(f) !== was)
+      write2(f);
+    return out;
+  } finally {
+    if (held)
+      try {
+        fs9.rmdirSync(lockDir2());
+      } catch {}
+  }
+}
+function settle2(items, id, state, now) {
+  const it = items[id];
+  if (it && !FINAL2.has(it.state))
+    items[id] = { ...it, state, updatedAt: now };
+}
+var MARKER_MS2 = 10 * 60 * 1000;
+
+// src/cleanup.ts
+function select(recs, p) {
+  const out = [];
+  for (const r of recs) {
+    if (r.removedAt || !p.exists(r.worktree))
+      continue;
+    if (!p.ended(r))
+      continue;
+    if (!p.clean(r.worktree, r.links))
+      continue;
+    if (!p.branchExists(r.repo, r.branch))
+      out.push({ rec: r, why: "deleted" });
+    else if (p.merged(r.repo, r.branch, r.base))
+      out.push({ rec: r, why: "merged" });
+  }
+  return out;
+}
+function defaultBranch(repo, g = git) {
+  const o = g(repo, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
+  if (o.ok && o.out)
+    return o.out.replace(/^origin\//, "");
+  for (const b of ["main", "master", "trunk"])
+    if (g(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]).ok)
+      return b;
+  const h = g(repo, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+  return h.ok && h.out ? h.out : null;
+}
+function liveProbe(g = git) {
+  const defaults = new Map;
+  const def = (repo) => {
+    if (!defaults.has(repo))
+      defaults.set(repo, defaultBranch(repo, g));
+    return defaults.get(repo);
+  };
+  return {
+    exists: (p) => fs10.existsSync(p),
+    clean: (w, ignore) => {
+      const r = g(w, ["status", "--porcelain", "--untracked-files=all"]);
+      if (!r.ok)
+        return false;
+      const skip = new Set(ignore);
+      return r.out.split(`
+`).filter(Boolean).every((l) => l.startsWith("?? ") && skip.has(l.slice(3).replace(/\/$/, "")));
+    },
+    branchExists: (repo, b) => g(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]).ok,
+    merged: (repo, b, base) => {
+      const d = def(repo);
+      if (!d || d === b)
+        return false;
+      const tip = g(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]);
+      if (!tip.ok || base && tip.out === base)
+        return false;
+      const ahead = g(repo, ["rev-list", "--count", `${d}..${b}`]);
+      if (!ahead.ok || ahead.out !== "0") {
+        const remote = g(repo, ["rev-list", "--count", `origin/${d}..${b}`]);
+        if (!remote.ok || remote.out !== "0")
+          return false;
+      }
+      return true;
+    },
+    ended: (r) => {
+      if (r.background && r.tmux && tmuxHas(r.tmux))
+        return false;
+      const live = readAll2().some((x) => !x.endedAt && path12.resolve(x.cwd).startsWith(path12.resolve(r.worktree)) && recAlive2(x));
+      return !live;
+    }
+  };
+}
+function foreign(repos, mine, p, g = git) {
+  const out = [];
+  for (const repo of repos)
+    for (const w of worktrees(repo, g).slice(1)) {
+      if (w.bare || mine.has(path12.resolve(w.path)) || !p.exists(w.path))
+        continue;
+      if (!w.branch || !p.clean(w.path, []))
+        continue;
+      if (p.merged(repo, w.branch))
+        out.push({ path: w.path, branch: w.branch, repo });
+    }
+  return out;
+}
+function sizeKb(p) {
+  const r = spawnSync7("du", ["-sk", p], { encoding: "utf8", timeout: 60000 });
+  return Number((r.stdout ?? "").split(/\s/)[0]) || 0;
+}
+var human = (kb) => kb >= 1024 * 1024 ? `${(kb / 1024 / 1024).toFixed(1)} GB` : kb >= 1024 ? `${Math.round(kb / 1024)} MB` : `${kb} KB`;
+function removeOne(o, g = git) {
+  const kb = sizeKb(o.worktree);
+  for (const l of o.links) {
+    const p = path12.join(o.worktree, l);
+    try {
+      if (fs10.lstatSync(p).isSymbolicLink())
+        fs10.unlinkSync(p);
+    } catch {}
+  }
+  const r = g(o.repo, ["worktree", "remove", o.worktree]);
+  if (!r.ok) {
+    for (const l of o.links)
+      try {
+        fs10.symlinkSync(path12.join(o.repo, l), path12.join(o.worktree, l), "dir");
+      } catch {}
+    return { path: o.worktree, kb: 0, ok: false, why: r.out.split(`
+`).pop() };
+  }
+  g(o.repo, ["worktree", "prune"]);
+  if (o.ours && o.branch)
+    g(o.repo, ["branch", "-d", o.branch]);
+  return { path: o.worktree, kb, ok: true };
+}
+var cleanupId = (sessionId) => `cleanup:${sessionId}`;
+function run2(o) {
+  const g = o.git ?? git;
+  const p = o.probe ?? liveProbe(g);
+  const recs = readSpawned().filter((r) => !r.removedAt);
+  const mine = select(recs, p);
+  const repos = [...new Set([...recs.map((r) => r.repo), ...o.cwd ? [worktrees(o.cwd, g)[0]?.path].filter((x) => !!x) : []])];
+  const others = foreign(repos, new Set(recs.map((r) => path12.resolve(r.worktree))), p, g);
+  const still = recs.filter((r) => !mine.some((m) => m.rec.id === r.id) && p.exists(r.worktree));
+  if (!o.confirm) {
+    const lines = [];
+    if (!mine.length && !others.length)
+      lines.push("\u25e2 crosstalk: no worktree is ready to remove.");
+    if (mine.length) {
+      lines.push(`\u25e2 crosstalk: ${mine.length} worktree${mine.length === 1 ? "" : "s"} crosstalk made can go (merged or branch deleted, session ended):`);
+      for (const m of mine)
+        lines.push(`  ${m.rec.name.padEnd(16)} ${m.rec.worktree}  (${m.why === "merged" ? "merged" : "branch deleted"})`);
+    }
+    if (others.length) {
+      lines.push(`Merged worktrees crosstalk did not make, removed only if you name them:`);
+      for (const w of others)
+        lines.push(`  ${w.path}  (${w.branch})`);
+    }
+    if (still.length)
+      lines.push(`Still in use or not merged: ${still.map((r) => r.name).join(", ")}.`);
+    return { ok: true, text: lines.join(`
+`), removed: [] };
+  }
+  const removed = [];
+  for (const m of mine) {
+    const r = removeOne({ repo: m.rec.repo, worktree: m.rec.worktree, links: m.rec.links, branch: m.rec.branch, ours: true }, g);
+    removed.push(r);
+    if (r.ok)
+      writeSpawned({ ...m.rec, removedAt: Date.now() });
+  }
+  const asked = new Set((o.include ?? []).map((x) => path12.resolve(x)));
+  for (const w of others)
+    if (asked.has(path12.resolve(w.path)))
+      removed.push(removeOne({ repo: w.repo, worktree: w.path, links: [], ours: false }, g));
+  const unknown = [...asked].filter((a) => !others.some((w) => path12.resolve(w.path) === a));
+  const ok = removed.filter((r) => r.ok);
+  const kb = ok.reduce((s, r) => s + r.kb, 0);
+  const parts = [ok.length ? `\u25e2 crosstalk: removed ${ok.length} worktree${ok.length === 1 ? "" : "s"}, freeing ${human(kb)}.` : "\u25e2 crosstalk: removed no worktree."];
+  for (const r of removed.filter((x) => !x.ok))
+    parts.push(`  kept ${r.path}: ${r.why}`);
+  if (unknown.length)
+    parts.push(`  left alone, not a merged clean worktree: ${unknown.join(", ")}`);
+  return { ok: removed.every((r) => r.ok), text: parts.join(`
+`), removed };
+}
+
+// src/terminal/tools.ts
+var TOOLS = [
+  {
+    name: "crosstalk_spawn",
+    description: 'Start new Claude agents on a task, each in its own private copy of this repository (a git worktree on a new branch, dependencies shared, not copied) and its own tab in the user\'s terminal, in the window that already holds this repository. Call this whenever the user asks for more agents or another agent, e.g. "put two more on auth" (count 2, task about auth), "start an agent to fix the flaky login test", "get someone on the docs", "spin up three agents for the migration". Write `task` as the full instruction the new agent should start from, with the context it needs from this conversation. Use background: true when the user wants it to run in the background or out of sight ("in the background", "without a window"); it then keeps running when windows close and "show me <name>" opens it. Relay the result text to the user as it is.',
+    inputSchema: {
+      type: "object",
+      properties: {
+        task: { type: "string", description: "What each new agent should do: its first prompt, complete enough to start on its own" },
+        count: { type: "number", description: "How many agents, default 1, at most 8" },
+        name: { type: "string", description: "A short name for the agent(s), e.g. auth; several become auth-1, auth-2" },
+        background: { type: "boolean", description: "true runs it in crosstalk's background tmux instead of a tab" }
+      },
+      required: ["task"]
+    }
+  },
+  {
+    name: "crosstalk_show",
+    description: `Open a tab in the user's terminal attached to an agent crosstalk runs in the background, so they can watch or talk to it. Call this when the user asks to see, show, open, watch or attach to an agent, e.g. "show me auth". Closing that tab leaves the agent running. Relay the result text to the user as it is.`,
+    inputSchema: {
+      type: "object",
+      properties: { name: { type: "string", description: "The agent's name, e.g. auth or auth-2" } },
+      required: ["name"]
+    }
+  },
+  {
+    name: "crosstalk_cleanup",
+    description: `Remove agent worktrees that are done with: crosstalk's own worktrees whose branch is merged into the default branch (or deleted) and whose session has ended, reporting the disk space freed. Call this when the user asks to clean up, remove or prune worktrees or free disk space, or answers yes to crosstalk's offer to remove them, e.g. "clean up the worktrees". Without confirm it only lists what can go, including merged worktrees crosstalk did not make; call it with confirm: true when the user has agreed. Worktrees crosstalk did not make are removed only when the user names them: pass their paths in include. Relay the result text to the user as it is.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        confirm: { type: "boolean", description: "true removes them; false or absent only lists them" },
+        include: { type: "array", items: { type: "string" }, description: "Paths of worktrees crosstalk did not make that the user confirmed by name" }
+      }
+    }
+  }
+];
+var text = (out) => ({ content: [{ type: "text", text: out.text }], ...out.ok ? {} : { isError: true } });
+function callTool(name, a, o) {
+  switch (name) {
+    case "crosstalk_spawn":
+      return text(spawnAgents({ task: String(a.task ?? ""), count: Number(a.count ?? 1), name: a.name, background: !!a.background, cwd: o.cwd, by: o.sessionId || undefined }));
+    case "crosstalk_show":
+      return text(show({ name: String(a.name ?? ""), cwd: o.cwd, by: o.sessionId || undefined }));
+    case "crosstalk_cleanup": {
+      const out = run2({ confirm: !!a.confirm, include: Array.isArray(a.include) ? a.include.map(String) : [], cwd: o.cwd });
+      if (a.confirm && o.sessionId)
+        withStore2((items, now) => settle2(items, cleanupId(o.sessionId), "answered", now));
+      return text(out);
+    }
+    default:
+      return null;
+  }
+}
+
+// src/paths.ts
+import path13 from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
+var dirOf2 = (metaUrl) => path13.dirname(fileURLToPath2(metaUrl));
+var rootFrom2 = (metaUrl) => path13.join(dirOf2(metaUrl), "..");
+
+// src/channels.ts
+import fs11 from "node:fs";
+import path14 from "node:path";
 import { execFileSync as execFileSync3 } from "node:child_process";
 var SHELLS = new Set(["sh", "bash", "dash", "zsh", "env", "fish"]);
 function argvOf(pid) {
   if (!pid || pid <= 1)
     return null;
   try {
-    const raw = fs8.readFileSync(`/proc/${pid}/cmdline`, "utf8");
+    const raw = fs11.readFileSync(`/proc/${pid}/cmdline`, "utf8");
     const a = raw.split("\x00");
     if (a[a.length - 1] === "")
       a.pop();
@@ -17192,7 +18189,7 @@ function argvOf(pid) {
 }
 function parentOf(pid) {
   try {
-    const stat = fs8.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const stat = fs11.readFileSync(`/proc/${pid}/stat`, "utf8");
     return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]) || 0;
   } catch {}
   try {
@@ -17211,7 +18208,7 @@ function hostArgv(registryPid) {
     const a = argvOf(pid);
     if (!a)
       return null;
-    if (!SHELLS.has(path10.basename(a[0] ?? "")))
+    if (!SHELLS.has(path14.basename(a[0] ?? "")))
       return a;
     pid = parentOf(pid);
   }
@@ -17243,7 +18240,7 @@ function entryNamesUs(entry, o) {
 function managedSettings() {
   const file = process.env.CROSSTALK_MANAGED_SETTINGS ?? (process.platform === "darwin" ? "/Library/Application Support/ClaudeCode/managed-settings.json" : process.platform === "win32" ? "C:\\Program Files\\ClaudeCode\\managed-settings.json" : "/etc/claude-code/managed-settings.json");
   try {
-    return JSON.parse(fs8.readFileSync(file, "utf8"));
+    return JSON.parse(fs11.readFileSync(file, "utf8"));
   } catch {
     return null;
   }
@@ -17602,7 +18599,8 @@ mcp.setRequestHandler(ListToolsRequestSchema2, async () => ({
         },
         required: ["text"]
       }
-    }
+    },
+    ...TOOLS
   ]
 }));
 mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
@@ -17773,7 +18771,7 @@ mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
         return r.ok ? ok({ recorded: r.file }) : err(r.error ?? "failed");
       }
       default:
-        return err(`unknown tool ${req.params.name}`);
+        return callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD }) ?? err(`unknown tool ${req.params.name}`);
     }
   } catch (e) {
     if (e instanceof SliceRefused)
@@ -17783,11 +18781,11 @@ mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
 });
 function selfRegistration() {
   try {
-    const dir = path11.join(os6.homedir(), ".claude", "sessions");
-    for (const f of fs9.readdirSync(dir)) {
+    const dir = path15.join(os6.homedir(), ".claude", "sessions");
+    for (const f of fs12.readdirSync(dir)) {
       if (!f.endsWith(".json"))
         continue;
-      const e = JSON.parse(fs9.readFileSync(path11.join(dir, f), "utf8"));
+      const e = JSON.parse(fs12.readFileSync(path15.join(dir, f), "utf8"));
       if (e.sessionId !== SESSION_ID)
         continue;
       return {
