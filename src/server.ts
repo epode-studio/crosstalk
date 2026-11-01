@@ -26,6 +26,7 @@ import * as restore from "./restore.ts"
 import * as gather from "./gather.ts"
 import * as ui from "./uistate.ts"
 import { rootFrom } from "./paths.ts"
+import { channelVerdict, hostArgv } from "./channels.ts"
 
 /**
  * Claude Code and Codex name the session in the environment of everything they
@@ -574,9 +575,12 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 })
 
 // --- channel push -------------------------------------------------------------
-// Subscribe to the daemon so arrivals become <channel> events. When Claude Code
-// has not loaded this server as a channel, notifications are dropped silently
-// and the daemon's socket injection is what the user sees instead.
+// Subscribe to the daemon so arrivals become <channel> events, but only when
+// Claude Code will deliver them. A session that did not opt this server in with
+// --channels or the development flag drops every channel notification without
+// a word, and a subscription the daemon believed in meant it never fell back to
+// the inbox socket: the message reached nobody. See channels.ts for how "will
+// deliver" is decided, and why every doubt is "no".
 
 /**
  * Everything the daemon needs to reach this session, read from Claude Code's own
@@ -602,6 +606,8 @@ function selfRegistration() {
   return null
 }
 
+let channels: { on: boolean; why: string } | null = null
+
 function subscribe() {
   const sock = net.createConnection(P.daemonSock, () => {
     // Re-register on every connect. The daemon restarts more often than a
@@ -610,7 +616,15 @@ function subscribe() {
     // registered it; this process only inherited an environment.
     const reg = selfRegistration()
     if (reg) sock.write(JSON.stringify({ ...reg, refreshOnly: true }) + "\n")
-    sock.write(JSON.stringify({ op: "subscribe", sessionId: SESSION_ID }) + "\n")
+    // How the session was started does not change while it runs; decide once.
+    if (!channels) {
+      channels = channelVerdict(hostArgv(reg?.pid))
+      console.error(`crosstalk: channel push ${channels.on ? "on" : "off"} (${channels.why})`)
+    }
+    // `channels: true` is what makes the daemon count a push as delivered. A
+    // server from before this check sends none and is not believed.
+    if (channels.on && SESSION_ID)
+      sock.write(JSON.stringify({ op: "subscribe", sessionId: SESSION_ID, channels: true }) + "\n")
   })
   let rest = ""
   sock.on("data", async (b) => {

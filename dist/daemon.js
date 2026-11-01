@@ -2005,6 +2005,10 @@ async function handle(req, sock) {
       const { sessionId } = req;
       if (!sock || !sessionId)
         return { ok: false, error: "subscribe needs a sessionId" };
+      if (req.channels !== true) {
+        log(`ignored a subscriber for ${sessionId} that did not say channels are on`);
+        return { ok: true, subscribed: false };
+      }
       if (!subscribers.has(sessionId))
         subscribers.set(sessionId, new Set);
       subscribers.get(sessionId).add(sock);

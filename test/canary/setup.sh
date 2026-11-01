@@ -14,6 +14,7 @@
 #
 # EXTRA="--resume <id>" restarts the session in the same run without reseeding.
 # SETTINGS='<json>' writes the session's settings.json (drive-nomod.sh turns mods off with it).
+# FLAGS="<claude flags>" adds to the command line (drive-channels.sh loads crosstalk as a channel with it).
 set -euo pipefail
 RUN=$1 NAME=$2 COLS=${3:-200}
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -96,5 +97,5 @@ fi
 BOOT=$(cat "$RUN/boot")
 tmux kill-session -t "$NAME" 2>/dev/null || true
 tmux new-session -d -s "$NAME" -x "$COLS" -y 50 \
-  "source $ROOT/spike/mod/run/env.sh; cd $RUN/work; export PATH=$RUN/stub:\$PATH CLAUDE_CONFIG_DIR=$RUN/cfg CROSSTALK_HOME=$RUN/ana CROSSTALK_BOOT_TIME=$BOOT CROSSTALK_NO_WAITER=1 CROSSTALK_NO_OPEN=1 ${ENVX:-}; $(command -v claude) --plugin-dir ${PLUGIN:-$ROOT} --debug ${EXTRA:-}; sleep 600"
+  "source $ROOT/spike/mod/run/env.sh; cd $RUN/work; export PATH=$RUN/stub:\$PATH CLAUDE_CONFIG_DIR=$RUN/cfg CROSSTALK_HOME=$RUN/ana CROSSTALK_BOOT_TIME=$BOOT CROSSTALK_NO_WAITER=1 CROSSTALK_NO_OPEN=1 ${ENVX:-}; $(command -v claude) --plugin-dir ${PLUGIN:-$ROOT} --debug ${FLAGS:-} ${EXTRA:-}; sleep 600"
 echo "started $NAME in $RUN ($COLS columns)"
