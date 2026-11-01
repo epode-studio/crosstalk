@@ -167,9 +167,46 @@ does not. You answer with `@auth y`, or `@auth` and your words. The
 the prompt, so the firmware agent never sees either. Otherwise the fix for
 cross-talk would bring it straight back.
 
-"In a session" means the one you last typed in, which the same hook reports
-with its session id. crosstalk cannot see which window is in front of you, so
-the statusline badge in every session covers the gap.
+**"In a session" means the one you are looking at.** The last session you
+typed in is not necessarily that one, so crosstalk asks the terminal (see
+below). Where the terminal cannot say, it falls back to the last session you
+typed in, and the statusline badge in every session covers the gap.
+
+### The terminal
+
+crosstalk drives your terminal app through a small adapter per terminal, chosen
+from `$TERM_PROGRAM`. It matches a tab to a session by the process id or tty in
+the session registry.
+
+| Terminal | Open a tab | Knows which tab is in front |
+|---|---|---|
+| iTerm2 | AppleScript / Python API | yes |
+| kitty | `kitty @ launch --type=tab` | yes, `kitty @ ls` |
+| WezTerm | `wezterm cli spawn` | yes, `wezterm cli list-clients` |
+| tmux, inside any terminal | `tmux new-window` | yes |
+| Terminal.app | AppleScript | frontmost tab only |
+| Windows Terminal | `wt -w 0 nt` | no |
+| Ghostty, VS Code terminal | limited | limited |
+
+Terminals that can do neither get a desktop notification with the command to
+paste. On macOS, AppleScript needs a one-time Automation permission.
+
+**crosstalk never takes focus on its own.** It opens or focuses a tab only when
+you ask, or when you click a notification.
+
+### Focus-aware, plus an inbox
+
+Both:
+
+- **By default, focus-aware.** A question goes to the tab you are looking at,
+  hidden from its agent as above. A desktop notification names the asking
+  thread, and clicking it jumps to that session's tab.
+- **An inbox, when you want everything in one place.** `@inbox` opens a tab
+  with a session dedicated to questions from every thread. It runs in whatever
+  harness you last used, Claude Code, Codex or another, so you can answer in
+  loose language and ask it to sum a thread up before you decide. Its only
+  thread is your questions, so nothing in it pollutes a working session. Once
+  it is open, questions go there instead of to your working tabs.
 
 ## Getting someone on it
 
