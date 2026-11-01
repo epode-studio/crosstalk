@@ -217,19 +217,22 @@ paste. On macOS, AppleScript needs a one-time Automation permission.
 **crosstalk never takes focus on its own.** It opens or focuses a tab only when
 you ask, or when you click a notification.
 
-### Focus-aware, plus an inbox
-
-Both:
+### Focus-aware, plus a main session
 
 - **By default, focus-aware.** A question goes to the tab you are looking at,
   hidden from its agent as above. A desktop notification names the asking
   thread, and clicking it jumps to that session's tab.
-- **An inbox, when you want everything in one place.** `@inbox` opens a tab
-  with a session dedicated to questions from every thread. It runs in whatever
-  harness you last used, Claude Code, Codex or another, so you can answer in
-  loose language and ask it to sum a thread up before you decide. Its only
-  thread is your questions, so nothing in it pollutes a working session. Once
-  it is open, questions go there instead of to your working tabs.
+- **A main session, when you want one.** Any session becomes main when you say
+  so ("be my crosstalk main", or `@main`). Nothing new is launched. From then
+  on it only coordinates: it leaves its threads, so cross-cutting talk never
+  mixes with code work, and its context is threads, people and questions. It
+  gets the sidebar pane, and it is where you wrangle every session from.
+
+**With a main session open, working sessions only ask about their own
+thread.** Everything that cuts across threads goes to main instead: questions
+from other threads, unmatched messages, threads about to combine, a key that
+changed. A working session's band shows only what its own agents are waiting
+on. Closing main sends everything back to focus-aware.
 
 ## Getting someone on it
 
