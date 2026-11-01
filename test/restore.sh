@@ -11,6 +11,7 @@
 # stub `claude` on PATH records what it was started with.
 
 set -u
+export CROSSTALK_NO_GATHER=1  # sessions started before crosstalk: test/gather.sh, with a registry of its own
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 TMP=$(mktemp -d)

@@ -6,6 +6,8 @@
 //   a question     a peer's crosstalk ask: Answer / Hand to agent / Later / Mute
 //   a route        "which session gets ben's message?": the sessions, and Hold it
 //   restore        "Restore 6 sessions?": Restore / Open as windows / Not now
+//   gather         "4 Claude sessions started before crosstalk. Bring them in?":
+//                  Bring them in / Not now, and a toast once they are in
 //   status line    ◢ <threads or repo> · <n> waiting
 //
 // The mod keeps nothing that matters. What is waiting, and what became of it,
@@ -96,6 +98,7 @@ function size(bytes: number | undefined): string {
 function header(it: Item): string {
   if (it.kind === 'restore') return 'Restore'
   if (it.kind === 'route') return 'Route'
+  if (it.kind === 'gather') return 'Gather'
   return cut(it.thread ? `${it.from} · ${it.thread}` : it.from ?? 'crosstalk', 12)
 }
 
@@ -109,7 +112,7 @@ async function showStatus($: EngineInterface, open: Item[]) {
 }
 
 async function received($: EngineInterface, line: string) {
-  let w: { items?: Item[]; label?: string }
+  let w: { items?: Item[]; label?: string; note?: { id: string; text: string } }
   try {
     w = JSON.parse(line)
   } catch {
@@ -120,8 +123,21 @@ async function received($: EngineInterface, line: string) {
   const open = (w.items ?? []).filter(i => !FINAL.has(i.state) && !settled.has(i.id))
   await update($, items, () => open)
   await showStatus($, open)
+  if (w.note && !toasted.has(w.note.id)) {
+    toasted.add(w.note.id)
+    void tookNote($, w.note)
+  }
   // Not awaited: a picker can stay up for minutes, and the watch must keep reading.
   void maybeRaise($)
+}
+
+/** Receipts already toasted in this process. */
+const toasted = new Set<string>()
+
+/** The receipt for sessions brought in: taken once, so no other session or the hook shows it too. */
+async function tookNote($: EngineInterface, note: { id: string; text: string }) {
+  const r = await cli($, ['act', '--id', note.id, '--action', 'answer'])
+  if (r.ok) $.ui.toast(note.text.replace(/^◢ crosstalk: /, ''))
 }
 
 /** Settled in this process, so a line the watch printed before it knew cannot bring it back. */
@@ -184,6 +200,8 @@ async function raise($: EngineInterface, it: Item) {
   try {
     if (it.kind === 'restore')
       answer = await $.ui.ask(it.question ?? 'Restore your sessions?', { options: it.options ?? ['Restore', 'Open as windows', 'Not now'], header: header(it) })
+    else if (it.kind === 'gather')
+      answer = await $.ui.ask(it.question ?? 'Bring your other Claude sessions into crosstalk?', { options: it.options ?? ['Bring them in', 'Not now'], header: header(it) })
     else if (it.kind === 'route')
       answer = await $.ui.ask(it.question ?? 'Which session should get this message?', { options: it.options ?? ['Hold it'], header: header(it) })
     else {
@@ -212,6 +230,11 @@ async function answered($: EngineInterface, it: Item, answer: string) {
   if (it.kind === 'restore') {
     const r = await step($, it, 'answer', answer)
     await receipt($, `restore-${it.id}`, r.text ?? r.error ?? 'crosstalk: restore did not answer')
+    return
+  }
+  if (it.kind === 'gather') {
+    const r = await step($, it, 'answer', answer)
+    $.ui.toast((r.text ?? r.error ?? 'crosstalk: gather did not answer').replace(/^◢ crosstalk: /, '').replace(/\s+/g, ' '))
     return
   }
   if (it.kind === 'route') {
@@ -390,6 +413,16 @@ export const register: Register = on => {
                 <Text dimColor>
                   {' '}
                   · {it.count ?? 0} session{it.count === 1 ? '' : 's'} waiting · or say "restore them"{later(it)}
+                </Text>
+              </Text>
+            )
+          if (it.kind === 'gather')
+            return (
+              <Text key={it.id} wrap="truncate">
+                <Text color={THREAD} bold>◢ gather</Text>
+                <Text dimColor>
+                  {' '}
+                  · {it.count ?? 0} session{it.count === 1 ? '' : 's'} without crosstalk · or say "bring them in"{later(it)}
                 </Text>
               </Text>
             )
