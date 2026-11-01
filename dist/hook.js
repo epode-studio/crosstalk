@@ -2,9 +2,9 @@
 // @bun
 
 // src/hook.ts
-import path5 from "path";
-import os3 from "os";
-import fs3 from "fs";
+import path6 from "path";
+import os4 from "os";
+import fs4 from "fs";
 
 // src/client.ts
 import net from "node:net";
@@ -195,6 +195,697 @@ function pathsFromToolInput(input) {
   return [...new Set(out)].slice(0, 20);
 }
 
+// src/restore.ts
+import fs3 from "node:fs";
+import os3 from "node:os";
+import path5 from "node:path";
+import { spawn as spawn2, spawnSync } from "node:child_process";
+var dir = () => path5.join(P.root, "open");
+var safe = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
+var fileOf = (id) => path5.join(dir(), `${safe(id)}.json`);
+function readAll() {
+  let names;
+  try {
+    names = fs3.readdirSync(dir()).filter((f) => f.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const f of names) {
+    try {
+      const r = JSON.parse(fs3.readFileSync(path5.join(dir(), f), "utf8"));
+      if (r && typeof r.sessionId === "string")
+        out.push(r);
+    } catch {}
+  }
+  return out;
+}
+function readOne(id) {
+  try {
+    return JSON.parse(fs3.readFileSync(fileOf(id), "utf8"));
+  } catch {
+    return null;
+  }
+}
+function writeRec(r) {
+  fs3.mkdirSync(dir(), { recursive: true, mode: 448 });
+  const tmp = `${fileOf(r.sessionId)}.${process.pid}.tmp`;
+  fs3.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 384 });
+  fs3.renameSync(tmp, fileOf(r.sessionId));
+}
+function removeRec(id) {
+  try {
+    fs3.unlinkSync(fileOf(id));
+  } catch {}
+}
+function prune(now = Date.now()) {
+  for (const r of readAll())
+    if (r.endedAt && now - r.endedAt > DAY || now - r.seenAt > 7 * DAY)
+      removeRec(r.sessionId);
+}
+var stateFile = () => path5.join(P.root, "restore-state.json");
+function loadState() {
+  try {
+    return JSON.parse(fs3.readFileSync(stateFile(), "utf8"));
+  } catch {
+    return {};
+  }
+}
+function saveState(s) {
+  fs3.mkdirSync(P.root, { recursive: true, mode: 448 });
+  fs3.writeFileSync(stateFile(), JSON.stringify(s, null, 2), { mode: 384 });
+}
+var DAY = 24 * 60 * 60 * 1000;
+var WINDOW_MS = DAY;
+var SHUTDOWN_MS = 10 * 60 * 1000;
+var BURST_MS = 10 * 1000;
+function bootTime(env = process.env, now = Date.now()) {
+  const forced = Number(env.CROSSTALK_BOOT_TIME);
+  if (forced > 0)
+    return forced;
+  return now - os3.uptime() * 1000;
+}
+function endedNormally(r, all, boot) {
+  if (!r.endedAt)
+    return false;
+  if (r.endReason !== "other")
+    return true;
+  if (r.endedAt < boot && boot - r.endedAt <= SHUTDOWN_MS)
+    return false;
+  const burst = all.some((o) => o.sessionId !== r.sessionId && o.endReason === "other" && !!o.endedAt && Math.abs(o.endedAt - r.endedAt) <= BURST_MS);
+  return !burst;
+}
+function isLost(r, c) {
+  if (r.interactive === false)
+    return false;
+  if (endedNormally(r, c.all, c.boot))
+    return false;
+  const before = r.seenAt < c.boot;
+  const ref = before ? c.boot : c.now;
+  if (ref - r.seenAt > WINDOW_MS)
+    return false;
+  if (!before && r.client !== "claude")
+    return false;
+  return !c.alive(r);
+}
+function lostSessions(c, self) {
+  return order(c.all.filter((r) => r.sessionId !== self && isLost(r, c)));
+}
+var order = (rs) => [...rs].sort((a, b) => a.startedAt - b.startedAt);
+function ps(pid, field) {
+  if (!pid || pid < 1)
+    return null;
+  try {
+    const r = spawnSync("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    if (r.status !== 0)
+      return null;
+    return r.stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+function pidAlive(pid, pidStart) {
+  if (!pid || pid < 1)
+    return false;
+  try {
+    process.kill(pid, 0);
+  } catch (e) {
+    if (e?.code !== "EPERM")
+      return false;
+  }
+  if (!pidStart)
+    return true;
+  const now = ps(pid, "lstart");
+  return now === null ? true : now === pidStart;
+}
+var recAlive = (r) => pidAlive(r.pid, r.pidStart);
+var SHELL = /^-?(sh|bash|zsh|dash|fish|ksh|tcsh|csh)$/;
+function sessionPid(sessionId) {
+  try {
+    const reg = path5.join(os3.homedir(), ".claude", "sessions");
+    for (const f of fs3.readdirSync(reg)) {
+      if (!f.endsWith(".json"))
+        continue;
+      try {
+        const e = JSON.parse(fs3.readFileSync(path5.join(reg, f), "utf8"));
+        if (e.sessionId === sessionId && Number(e.pid) > 0)
+          return Number(e.pid);
+      } catch {}
+    }
+  } catch {}
+  let pid = process.ppid;
+  for (let i = 0;i < 4; i++) {
+    const comm = ps(pid, "comm");
+    if (!comm || !SHELL.test(path5.basename(comm)))
+      break;
+    const up = Number(ps(pid, "ppid"));
+    if (!up || up <= 1)
+      break;
+    pid = up;
+  }
+  return pid;
+}
+var appleLocateScript = (tty) => [
+  `tell application "Terminal"`,
+  `	repeat with w in windows`,
+  `		set n to 0`,
+  `		repeat with t in tabs of w`,
+  `			set n to n + 1`,
+  `			if (tty of t) is ${asq(tty)} then return ((id of w) as text) & " " & (n as text)`,
+  `		end repeat`,
+  `	end repeat`,
+  `end tell`,
+  `return ""`
+].join(`
+`);
+function captureTerminal(env, pid, probe) {
+  const t = {};
+  if (env.TERM_PROGRAM)
+    t.program = env.TERM_PROGRAM;
+  const tty = ps(pid, "tty");
+  if (tty && !/^\?+$/.test(tty))
+    t.tty = tty.startsWith("/dev/") ? tty : `/dev/${tty}`;
+  if (env.TMUX && env.TMUX_PANE) {
+    t.tmux = { pane: env.TMUX_PANE, socket: env.TMUX.split(",")[0] };
+    if (probe) {
+      const r = spawnSync("tmux", ["display", "-p", "-t", env.TMUX_PANE, "#{session_name}\t#{window_index}\t#{pane_index}"], { encoding: "utf8", timeout: 2000, env });
+      const [s, w, p] = (r.stdout ?? "").trim().split("\t");
+      if (r.status === 0 && s)
+        Object.assign(t.tmux, { session: s, window: Number(w), paneIndex: Number(p) });
+    }
+  }
+  if (env.KITTY_WINDOW_ID || env.KITTY_LISTEN_ON)
+    t.kitty = { window: env.KITTY_WINDOW_ID, listenOn: env.KITTY_LISTEN_ON };
+  if (env.WEZTERM_PANE)
+    t.wezterm = { pane: env.WEZTERM_PANE };
+  if (env.ITERM_SESSION_ID) {
+    const m = /^w(\d+)t(\d+)p(\d+)/.exec(env.ITERM_SESSION_ID);
+    t.iterm = { id: env.ITERM_SESSION_ID, ...m ? { window: Number(m[1]), tab: Number(m[2]) } : {} };
+  }
+  if (env.WT_SESSION)
+    t.wt = { session: env.WT_SESSION };
+  if (env.TERM_PROGRAM === "Apple_Terminal" || env.TERM_SESSION_ID && !t.iterm) {
+    t.apple = { sessionId: env.TERM_SESSION_ID };
+    if (probe && t.tty && process.platform === "darwin" && env.TERM_PROGRAM === "Apple_Terminal") {
+      const r = spawnSync("osascript", ["-"], { input: appleLocateScript(t.tty), encoding: "utf8", timeout: 2500 });
+      const [w, n] = (r.stdout ?? "").trim().split(" ").map(Number);
+      if (r.status === 0 && w && n)
+        Object.assign(t.apple, { window: w, tab: n });
+    }
+    if (env.TERM_PROGRAM !== "Apple_Terminal" && !t.apple.window)
+      delete t.apple;
+  }
+  return t;
+}
+var shq = (s) => /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
+var asq = (s) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
+function resumeArgv(r, bin) {
+  if (r.client === "claude")
+    return [bin ?? "claude", "--resume", r.sessionId];
+  if (r.client === "codex")
+    return [bin ?? "codex", "resume", r.sessionId];
+  return null;
+}
+var typed = (r) => `cd ${shq(r.cwd)} && ${resumeArgv(r).map(shq).join(" ")}`;
+function kindOf(t) {
+  if (!t)
+    return null;
+  if (t.tmux)
+    return "tmux";
+  if (t.program === "Apple_Terminal")
+    return "apple";
+  if (t.program === "iTerm.app" || t.iterm)
+    return "iterm";
+  if (t.program === "ghostty")
+    return "ghostty";
+  if (t.kitty)
+    return "kitty";
+  if (t.wezterm || t.program === "WezTerm")
+    return "wezterm";
+  if (t.wt)
+    return "wt";
+  if (t.apple)
+    return "apple";
+  return null;
+}
+function appName(t) {
+  switch (t?.program) {
+    case "Apple_Terminal":
+      return "Terminal";
+    case "iTerm.app":
+      return "iTerm";
+    case "ghostty":
+      return "Ghostty";
+    case "WezTerm":
+      return "WezTerm";
+    case "vscode":
+      return "Visual Studio Code";
+    default:
+      return "the app crosstalk runs in";
+  }
+}
+function usable(k, e, t) {
+  switch (k) {
+    case "tmux":
+      return e.has("tmux");
+    case "apple":
+    case "iterm":
+    case "ghostty":
+      return e.platform === "darwin" && e.has("osascript");
+    case "kitty":
+      return e.has("kitten") && !!(e.current.kitty?.listenOn ?? t?.kitty?.listenOn);
+    case "wezterm":
+      return e.has("wezterm");
+    case "wt":
+      return e.platform === "win32" && e.has("wt");
+  }
+}
+function adapterFor(r, e) {
+  if (/[\n\r\0]/.test(r.cwd) || !r.cwd)
+    return "manual";
+  const own = kindOf(r.terminal);
+  if (own && usable(own, e, r.terminal))
+    return own;
+  const cur = kindOf(e.current);
+  if (cur && usable(cur, e, e.current))
+    return cur;
+  return "manual";
+}
+var groupBy = (xs, key) => {
+  const m = new Map;
+  for (const x of xs)
+    m.set(key(x), [...m.get(key(x)) ?? [], x]);
+  return m;
+};
+var num = (n) => n === undefined || Number.isNaN(n) ? Infinity : n;
+function appleTerminalScript(cmds, tabs) {
+  const L = [`set crosstalkFallback to ""`, `tell application "Terminal"`, `	activate`, `	do script ${asq(cmds[0])}`, `end tell`];
+  for (const c of cmds.slice(1)) {
+    if (!tabs) {
+      L.push(`tell application "Terminal" to do script ${asq(c)}`);
+      continue;
+    }
+    L.push(`if crosstalkFallback is "" then`, `	try`, `		delay 0.3`, `		tell application "System Events" to keystroke "t" using command down`, `		delay 0.6`, `		tell application "Terminal" to do script ${asq(c)} in selected tab of front window`, `	on error errMsg number errNum`, `		set crosstalkFallback to (errNum as text)`, `		tell application "Terminal" to do script ${asq(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq(c)}`, `end if`);
+  }
+  L.push(`return "done " & crosstalkFallback`);
+  return L.join(`
+`);
+}
+function itermScript(cmds) {
+  const L = [`tell application "iTerm2"`, `	activate`, `	set w to (create window with default profile)`, `	tell current session of w to write text ${asq(cmds[0])}`];
+  for (const c of cmds.slice(1))
+    L.push(`	tell w`, `		set t to (create tab with default profile)`, `		tell current session of t to write text ${asq(c)}`, `	end tell`);
+  L.push(`end tell`, `return "done "`);
+  return L.join(`
+`);
+}
+function ghosttyScript(cmds) {
+  const L = [`set crosstalkFallback to ""`, `tell application "Ghostty" to activate`, `delay 0.5`, `try`];
+  cmds.forEach((c, i) => {
+    L.push(`	tell application "System Events"`, `		keystroke ${i === 0 ? `"n"` : `"t"`} using command down`, `		delay 0.8`, `		keystroke ${asq(c)}`, `		key code 36`, `	end tell`);
+  });
+  L.push(`on error errMsg number errNum`, `	set crosstalkFallback to (errNum as text)`, `end try`, `return "done " & crosstalkFallback`);
+  return L.join(`
+`);
+}
+var wtArg = (s) => s.replace(/;/g, "\\;");
+function plan(recs, e) {
+  const skipped = recs.filter((r) => !resumeArgv(r));
+  const ok = order(recs.filter((r) => resumeArgv(r)));
+  const byKind = groupBy(ok, (r) => adapterFor(r, e));
+  const plans = [];
+  const exec = (r) => resumeArgv(r, e.which(r.client === "codex" ? "codex" : "claude"));
+  for (const [kind, rs] of byKind) {
+    if (kind === "tmux") {
+      const groups = groupBy(rs, (r) => r.terminal.tmux?.session ?? e.current.tmux?.session ?? "crosstalk");
+      for (const [name, g] of groups) {
+        const sorted = [...g].sort((a, b) => num(a.terminal.tmux?.window) - num(b.terminal.tmux?.window) || num(a.terminal.tmux?.paneIndex) - num(b.terminal.tmux?.paneIndex) || a.startedAt - b.startedAt);
+        let exists = e.tmuxHasSession(name);
+        const steps = sorted.map((r) => {
+          const cmd = exec(r).map(shq).join(" ");
+          if (!exists) {
+            exists = true;
+            return { cmd: "tmux", args: ["new-session", "-d", "-s", name, "-c", r.cwd, cmd] };
+          }
+          return { cmd: "tmux", args: ["new-window", "-d", "-t", `=${name}:`, "-c", r.cwd, cmd] };
+        });
+        plans.push({ kind: "tmux", sessions: sorted, steps });
+      }
+    } else if (kind === "apple") {
+      const groups = groupBy(rs, (r) => String(r.terminal.apple?.window ?? "?"));
+      const keys = [...groups.keys()].sort((a, b) => num(Number(a)) - num(Number(b)));
+      for (const k of keys) {
+        const g = [...groups.get(k)].sort((a, b) => num(a.terminal.apple?.tab) - num(b.terminal.apple?.tab) || a.startedAt - b.startedAt);
+        const tabs = e.tabs && g.length > 1;
+        plans.push({
+          kind: "apple",
+          sessions: g,
+          needsAccessibility: tabs,
+          steps: [{ cmd: "osascript", args: ["-"], input: appleTerminalScript(g.map(typed), tabs) }]
+        });
+      }
+    } else if (kind === "iterm") {
+      const groups = groupBy(rs, (r) => String(r.terminal.iterm?.window ?? "?"));
+      for (const k of [...groups.keys()].sort((a, b) => num(Number(a)) - num(Number(b)))) {
+        const g = [...groups.get(k)].sort((a, b) => num(a.terminal.iterm?.tab) - num(b.terminal.iterm?.tab) || a.startedAt - b.startedAt);
+        plans.push({ kind: "iterm", sessions: g, steps: [{ cmd: "osascript", args: ["-"], input: itermScript(g.map(typed)) }] });
+      }
+    } else if (kind === "ghostty") {
+      if (e.tabs)
+        plans.push({ kind: "ghostty", sessions: rs, needsAccessibility: true, steps: [{ cmd: "osascript", args: ["-"], input: ghosttyScript(rs.map(typed)) }] });
+      else
+        plans.push({ kind: "manual", sessions: rs, steps: [] });
+    } else if (kind === "kitty") {
+      const to = e.current.kitty?.listenOn ?? rs[0].terminal.kitty?.listenOn;
+      plans.push({
+        kind: "kitty",
+        sessions: rs,
+        steps: rs.map((r) => ({ cmd: "kitten", args: ["@", "--to", to, "launch", "--type=tab", "--cwd", r.cwd, ...exec(r)] }))
+      });
+    } else if (kind === "wezterm") {
+      plans.push({
+        kind: "wezterm",
+        sessions: rs,
+        steps: rs.map((r) => ({ cmd: "wezterm", args: ["cli", "spawn", "--cwd", r.cwd, "--", ...exec(r)] }))
+      });
+    } else if (kind === "wt") {
+      plans.push({
+        kind: "wt",
+        sessions: rs,
+        steps: rs.map((r) => ({ cmd: "wt", args: ["-w", "0", "nt", "-d", wtArg(r.cwd), ...exec(r).map(wtArg)] }))
+      });
+    } else {
+      plans.push({ kind: "manual", sessions: rs, steps: [] });
+    }
+  }
+  return { plans, skipped };
+}
+var SETTINGS_URL = {
+  accessibility: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+  automation: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"
+};
+function classifyOsaError(text) {
+  if (/-1743\b|not authori[sz]ed to send apple events/i.test(text))
+    return "automation";
+  if (/-25211\b|-1719\b|^1002$|\(1002\)|assistive access|not allowed to send keystrokes|accessibility/i.test(text.trim()))
+    return "accessibility";
+  return null;
+}
+var REOPEN_SETTINGS_MS = 2 * 60 * 1000;
+function shouldOpenSettings(o) {
+  if (!o.userAction)
+    return false;
+  const last = o.state.settingsOpened?.[o.pane];
+  return !(last && o.now - last < REOPEN_SETTINGS_MS);
+}
+function permissionSteps(pane, app) {
+  return pane === "accessibility" ? [
+    `System Settings → Privacy & Security → Accessibility → turn on ${app}`,
+    `open "${SETTINGS_URL.accessibility}"`
+  ] : [
+    `System Settings → Privacy & Security → Automation → ${app} → turn on System Events`,
+    `open "${SETTINGS_URL.automation}"`
+  ];
+}
+var JXA_AX = `ObjC.import("ApplicationServices"); var f; try { f = $.AXIsProcessTrusted() } catch (e) { ObjC.bindFunction("AXIsProcessTrusted", ["bool", []]); f = $.AXIsProcessTrusted() } f ? "yes" : "no"`;
+function accessibilityGranted() {
+  if (process.platform !== "darwin")
+    return null;
+  const forced = process.env.CROSSTALK_FAKE_ACCESSIBILITY;
+  if (forced)
+    return forced === "yes";
+  const r = spawnSync("osascript", ["-l", "JavaScript", "-e", JXA_AX], { encoding: "utf8", timeout: 3000 });
+  const out = (r.stdout ?? "").trim();
+  return out === "yes" ? true : out === "no" ? false : null;
+}
+function openSettings(pane) {
+  if (process.env.CROSSTALK_NO_OPEN)
+    return;
+  spawnSync("open", [SETTINGS_URL[pane]], { timeout: 5000 });
+}
+function which(bin) {
+  for (const d of (process.env.PATH ?? "").split(path5.delimiter)) {
+    if (!d)
+      continue;
+    const p = path5.join(d, bin);
+    try {
+      fs3.accessSync(p, fs3.constants.X_OK);
+      return p;
+    } catch {}
+  }
+  return;
+}
+function liveEnv(env, tabs) {
+  return {
+    platform: process.platform,
+    current: captureTerminal(env, process.pid, true),
+    has: (b) => !!which(b),
+    which,
+    tmuxHasSession: (name) => spawnSync("tmux", ["has-session", "-t", `=${name}`], { stdio: "ignore", timeout: 2000 }).status === 0,
+    tabs
+  };
+}
+var label = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path5.basename(r.cwd) || r.sessionId.slice(0, 8);
+var names = (rs, max = 4) => rs.slice(0, max).map(label).join(", ") + (rs.length > max ? ", …" : "");
+var commandsFile = () => path5.join(P.root, "restore-commands.sh");
+function ctxNow() {
+  const now = Date.now();
+  return { now, boot: bootTime(process.env, now), all: readAll(), alive: recAlive };
+}
+function question(lost, boot, current) {
+  if (!lost.length)
+    return null;
+  const n = lost.length;
+  const restart = lost.some((r) => r.seenAt < boot);
+  const what = `${n} session${n === 1 ? " was" : "s were"} open ${restart ? "before the restart" : "when they were cut off"}`;
+  const k = kindOf(current);
+  const firstTime = (k === "apple" || k === "ghostty") && process.platform === "darwin" && !loadState().tabsWorked && n > 1 ? ` The first time, macOS asks whether ${appName(current)} may control System Events: allow it, so they open as tabs.` : "";
+  return `◢ crosstalk: ${what} (${names(lost)}). Say "restore them" to bring ${n === 1 ? "it" : "them"} back.${firstTime}`;
+}
+function askOnce(self, current) {
+  const c = ctxNow();
+  const lost = lostSessions(c, self);
+  if (!lost.some((r) => !r.askedAt))
+    return null;
+  const lock = path5.join(dir(), ".asking");
+  try {
+    fs3.mkdirSync(dir(), { recursive: true, mode: 448 });
+    try {
+      if (Date.now() - fs3.statSync(lock).mtimeMs > 30000)
+        fs3.rmdirSync(lock);
+    } catch {}
+    fs3.mkdirSync(lock);
+  } catch {
+    return null;
+  }
+  try {
+    const fresh = lostSessions(ctxNow(), self);
+    if (!fresh.some((r) => !r.askedAt))
+      return null;
+    for (const r of fresh)
+      if (!r.askedAt)
+        writeRec({ ...r, askedAt: Date.now() });
+    return question(fresh, c.boot, current);
+  } finally {
+    try {
+      fs3.rmdirSync(lock);
+    } catch {}
+  }
+}
+function forget(self) {
+  const lost = lostSessions(ctxNow(), self);
+  for (const r of lost)
+    removeRec(r.sessionId);
+  return {
+    ok: true,
+    text: lost.length ? `◢ crosstalk: left ${lost.length} session${lost.length === 1 ? "" : "s"} closed.` : "◢ crosstalk: nothing to restore.",
+    lost,
+    restored: []
+  };
+}
+var pendingFile = () => path5.join(P.root, "restore-pending.json");
+function claimPending() {
+  const mine = `${pendingFile()}.${process.pid}`;
+  try {
+    fs3.renameSync(pendingFile(), mine);
+  } catch {
+    return null;
+  }
+  try {
+    return JSON.parse(fs3.readFileSync(mine, "utf8"));
+  } catch {
+    return null;
+  } finally {
+    try {
+      fs3.unlinkSync(mine);
+    } catch {}
+  }
+}
+function runStep(s) {
+  const r = spawnSync(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 60000 });
+  return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
+}
+function restore(o, only) {
+  const env = o.env ?? process.env;
+  const lost = only ?? lostSessions(ctxNow(), o.self);
+  if (!lost.length)
+    return { ok: true, text: "◢ crosstalk: nothing to restore.", lost, restored: [] };
+  claimPending();
+  const e = liveEnv(env, o.tabs ?? true);
+  let { plans, skipped } = plan(lost, e);
+  const app = appName(e.current);
+  const notes = [];
+  const state = loadState();
+  if (plans.some((p) => p.needsAccessibility) && accessibilityGranted() === false) {
+    const opened = shouldOpenSettings({ pane: "accessibility", userAction: o.userAction, state, now: Date.now() });
+    if (opened) {
+      openSettings("accessibility");
+      saveState({ ...state, settingsOpened: { ...state.settingsOpened, accessibility: Date.now() } });
+    }
+    const p = { ids: lost.map((r) => r.sessionId), current: e.current, until: Date.now() + WAIT_MS(), self: o.self };
+    fs3.mkdirSync(P.root, { recursive: true, mode: 448 });
+    fs3.writeFileSync(pendingFile(), JSON.stringify(p), { mode: 384 });
+    startWaiter(o.root);
+    const [steps, cmd] = permissionSteps("accessibility", app);
+    return {
+      ok: true,
+      text: [
+        `◢ crosstalk needs permission to open tabs in ${app}.`,
+        opened ? `  Opened System Settings. Turn on ${app} under Accessibility; crosstalk will finish restoring by itself.` : `  ${steps}`,
+        ...opened ? [] : [`  ${cmd}`, `  crosstalk will finish restoring by itself once it is on.`]
+      ].join(`
+`),
+      lost,
+      restored: []
+    };
+  }
+  for (const r of lost)
+    removeRec(r.sessionId);
+  const restored = [];
+  const failed = [];
+  const manual = [];
+  let missing = null;
+  for (const p of plans) {
+    if (p.kind === "manual") {
+      manual.push(...p.sessions);
+      continue;
+    }
+    let ok = true;
+    let out = "";
+    for (const s of p.steps) {
+      const r = runStep(s);
+      out += r.out + `
+`;
+      if (!r.ok) {
+        ok = false;
+        break;
+      }
+    }
+    const fellBack = /done (-?\d+)/.exec(out);
+    if (ok && fellBack) {
+      missing = classifyOsaError(fellBack[1]) ?? "automation";
+      notes.push(`Opened ${p.sessions.length} in ${app} as separate windows: ${app} ${missing === "accessibility" ? "may not type keys (Accessibility)" : "may not control System Events (Automation)"}.`);
+    } else if (ok && p.needsAccessibility)
+      saveState({ ...loadState(), tabsWorked: Date.now() });
+    if (ok)
+      restored.push(...p.sessions);
+    else {
+      missing ??= classifyOsaError(out);
+      failed.push(...p.sessions);
+      notes.push(`${p.kind} could not open ${names(p.sessions)}: ${out.trim().split(`
+`).pop()}`);
+    }
+  }
+  const rest = [...manual, ...failed];
+  for (const r of failed)
+    writeRec(r);
+  if (rest.length) {
+    const lines = rest.map(typed);
+    fs3.mkdirSync(P.root, { recursive: true, mode: 448 });
+    fs3.writeFileSync(commandsFile(), `#!/bin/sh
+# Sessions crosstalk could not reopen by itself. Each line is one tab.
+${lines.join(`
+`)}
+`, { mode: 448 });
+    notes.push(`Paste each line into its own tab (also in ${commandsFile()}):`, ...lines.map((l) => `  ${l}`));
+  }
+  if (skipped.length)
+    notes.push(`Skipped ${names(skipped)}: ${[...new Set(skipped.map((r) => r.client))].join(", ")} cannot resume a session.`);
+  for (const r of skipped)
+    removeRec(r.sessionId);
+  if (missing && process.platform === "darwin") {
+    const opened = shouldOpenSettings({ pane: missing, userAction: o.userAction, state: loadState(), now: Date.now() });
+    if (opened) {
+      openSettings(missing);
+      const s = loadState();
+      saveState({ ...s, settingsOpened: { ...s.settingsOpened, [missing]: Date.now() } });
+    }
+    const [steps, cmd] = permissionSteps(missing, app);
+    notes.push(opened ? `Opened System Settings, so next time they open as tabs: ${steps}` : `For tabs next time: ${steps}`, `  ${cmd}`);
+  }
+  const head = restored.length ? `◢ crosstalk: reopened ${restored.length} session${restored.length === 1 ? "" : "s"} (${names(restored)}).` : `◢ crosstalk: reopened nothing.`;
+  return { ok: !failed.length, text: [head, ...notes.map((n) => `  ${n}`)].join(`
+`), lost, restored };
+}
+var WAIT_MS = () => Number(process.env.CROSSTALK_RESTORE_WAIT_MS ?? 2 * 60 * 1000);
+function startWaiter(root) {
+  if (process.env.CROSSTALK_NO_WAITER)
+    return;
+  try {
+    const child = spawn2(shim(root ?? rootFrom(import.meta.url)), ["restore", "--finish"], {
+      detached: true,
+      stdio: "ignore"
+    });
+    child.unref();
+  } catch {}
+}
+function parseShortcut(prompt) {
+  const m = /^@restore(?:\s+(\S+))?$/i.exec(prompt.trim());
+  if (!m)
+    return null;
+  const w = (m[1] ?? "").toLowerCase();
+  if (!w || w === "yes" || w === "y")
+    return "yes";
+  if (w === "no" || w === "n")
+    return "no";
+  if (w === "windows")
+    return "windows";
+  return null;
+}
+function note(o) {
+  const now = Date.now();
+  const before = readOne(o.sessionId);
+  if (/^SessionEnd$/i.test(o.event)) {
+    if (before)
+      writeRec({ ...before, endedAt: now, endReason: o.reason ?? "other", seenAt: now });
+    return;
+  }
+  const start = /^SessionStart$/i.test(o.event);
+  const turnEnd = /^Stop$/i.test(o.event);
+  if (!start && before && !turnEnd) {
+    if (now - before.seenAt > 60000)
+      writeRec({ ...before, seenAt: now, cwd: o.cwd || before.cwd });
+    return;
+  }
+  const pid = start || !before ? sessionPid(o.sessionId) : before.pid;
+  const args = start || !before ? ps(pid, "args") ?? "" : "";
+  const rec = {
+    sessionId: o.sessionId,
+    cwd: o.cwd,
+    client: o.client,
+    name: o.name ?? before?.name,
+    pid,
+    pidStart: start || !before ? ps(pid, "lstart") ?? undefined : before.pidStart,
+    interactive: start || !before ? !/(^|\s)(-p|--print)(\s|$)/.test(args) : before.interactive,
+    startedAt: before?.startedAt ?? now,
+    seenAt: now,
+    terminal: captureTerminal(o.env, pid, true)
+  };
+  writeRec(rec);
+  if (start)
+    prune(now);
+}
+
 // src/hook.ts
 var input = await new Promise((resolve) => {
   let raw = "";
@@ -231,14 +922,45 @@ function agyCwd() {
   if (Array.isArray(ws) && typeof ws[0] === "string" && ws[0])
     return ws[0];
   const here = process.cwd();
-  if (AGENT_DIRS.has(path5.basename(here)))
-    return path5.dirname(here);
+  if (AGENT_DIRS.has(path6.basename(here)))
+    return path6.dirname(here);
   return here;
 }
 var cwd = hook.cwd ?? hook.working_dir ?? hook.workspace_roots?.[0] ?? (isAgy ? agyCwd() : process.cwd());
 var DELIVERS = isGoose ? /^Stop$/i : isKimi ? /^UserPromptSubmit$/ : isCursor ? /^(sessionStart|beforeSubmitPrompt|preToolUse|postToolUse|postToolUseFailure)$/ : /^(SessionStart|UserPromptSubmit|PreToolUse|PostToolUse|PreInvocation|pre_llm_call)$/i;
+var restoreClient = isAgy || isHermes || isGoose || isCursor || isKimi ? null : hook.thread_id || /[\\/]\.codex[\\/]/.test(String(hook.transcript_path ?? "")) ? "codex" : "claude";
+var systemMessage;
+if (restoreClient && sessionId && !process.env.CROSSTALK_NO_RESTORE) {
+  try {
+    if (/^UserPromptSubmit$/.test(eventName)) {
+      const want = parseShortcut(String(hook.prompt ?? ""));
+      if (want) {
+        const out = want === "no" ? forget(sessionId) : restore({
+          self: sessionId,
+          tabs: want !== "windows",
+          userAction: true,
+          root: rootFrom2(import.meta.url)
+        });
+        process.stdout.write(JSON.stringify({ decision: "block", reason: out.text }));
+        process.exit(0);
+      }
+    }
+    if (!/^(PostToolUse|PreToolUse)$/i.test(eventName))
+      note({
+        event: eventName,
+        sessionId,
+        cwd,
+        client: restoreClient,
+        env: process.env,
+        source: hook.source,
+        reason: hook.reason
+      });
+    if (isSessionStart && restoreClient === "claude" && !/^(clear|compact)$/.test(String(hook.source ?? "")))
+      systemMessage = askOnce(sessionId, captureTerminal(process.env, process.pid, false)) ?? undefined;
+  } catch {}
+}
 if (!loadIdentity() || !sessionId) {
-  process.stdout.write(JSON.stringify(isGoose ? { decision: "allow" } : isAgy || isHermes || isKimi || isCursor ? {} : { continue: true }));
+  process.stdout.write(JSON.stringify(isGoose ? { decision: "allow" } : isAgy || isHermes || isKimi || isCursor ? {} : { continue: true, ...systemMessage ? { systemMessage } : {} }));
   process.exit(0);
 }
 var root = rootFrom2(import.meta.url);
@@ -249,11 +971,11 @@ async function registerSession() {
   let name = `session-${process.ppid}`;
   if (socket) {
     try {
-      const dir = path5.join(os3.homedir(), ".claude", "sessions");
-      for (const f of fs3.readdirSync(dir)) {
+      const dir = path6.join(os4.homedir(), ".claude", "sessions");
+      for (const f of fs4.readdirSync(dir)) {
         if (!f.endsWith(".json"))
           continue;
-        const e = JSON.parse(fs3.readFileSync(path5.join(dir, f), "utf8"));
+        const e = JSON.parse(fs4.readFileSync(path6.join(dir, f), "utf8"));
         if (e.sessionId === sessionId) {
           name = e.name ?? name;
           break;
@@ -261,7 +983,7 @@ async function registerSession() {
       }
     } catch {}
   } else {
-    name = hook.thread_name ?? (path5.basename(cwd) || name);
+    name = hook.thread_name ?? (path6.basename(cwd) || name);
   }
   await request({
     op: "register",
@@ -307,6 +1029,8 @@ var say = (extra) => {
     process.exit(0);
   }
   const out = { continue: true };
+  if (systemMessage)
+    out.systemMessage = systemMessage;
   if (extra)
     out.hookSpecificOutput = { hookEventName: eventName, additionalContext: extra };
   process.stdout.write(JSON.stringify(out));
