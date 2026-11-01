@@ -60,8 +60,14 @@ the lost sessions through an adapter per terminal. See [restore.md](restore.md).
 
 **Channel MCP server** is the target, and what the server already declares.
 During the channels research preview a custom channel needs
-`--dangerously-load-development-channels crosstalk`, which shows a warning dialog
-at every launch, so it is not the default path yet.
+`--dangerously-load-development-channels plugin:crosstalk@<marketplace>`, which
+shows a warning dialog at every launch, so it is not the default path yet.
+Claude Code tells a channel server nothing about whether it was opted in (the
+initialize request is the same either way) and drops the events of one that
+was not, silently. So the server reads the command line Claude Code was started
+with ([`src/channels.ts`](../src/channels.ts)) and subscribes for push only when
+it names crosstalk; otherwise the daemon uses the inbox socket below. A mod that
+is live takes precedence over both.
 
 **Session inbox socket** is what runs today, with no flag and no allowlist. The
 daemon writes to `CLAUDE_CODE_MESSAGING_SOCKET` using a payload format that is

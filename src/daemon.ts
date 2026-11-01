@@ -1254,6 +1254,15 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
     case "subscribe": {
       const { sessionId } = req
       if (!sock || !sessionId) return { ok: false, error: "subscribe needs a sessionId" }
+      // Claude Code drops a channel event silently unless the session opted
+      // this server in, so a subscription stands for delivery only when the
+      // server says channels are on (channels.ts). One from before that check
+      // subscribed regardless and is not believed: its session gets the inbox
+      // notice instead, which reaches the person either way.
+      if (req.channels !== true) {
+        log(`ignored a subscriber for ${sessionId} that did not say channels are on`)
+        return { ok: true, subscribed: false }
+      }
       if (!subscribers.has(sessionId)) subscribers.set(sessionId, new Set())
       subscribers.get(sessionId)!.add(sock)
       sock.on("close", () => subscribers.get(sessionId)?.delete(sock))

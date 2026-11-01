@@ -15831,9 +15831,9 @@ var ServerResultSchema2 = union([
 
 // src/server.ts
 import net2 from "net";
-import fs5 from "fs";
+import fs6 from "fs";
 import os4 from "os";
-import path7 from "path";
+import path8 from "path";
 
 // src/config.ts
 import fs from "node:fs";
@@ -16675,6 +16675,117 @@ import { fileURLToPath as fileURLToPath2 } from "node:url";
 var dirOf2 = (metaUrl) => path6.dirname(fileURLToPath2(metaUrl));
 var rootFrom2 = (metaUrl) => path6.join(dirOf2(metaUrl), "..");
 
+// src/channels.ts
+import fs5 from "node:fs";
+import path7 from "node:path";
+import { execFileSync as execFileSync3 } from "node:child_process";
+var SHELLS = new Set(["sh", "bash", "dash", "zsh", "env", "fish"]);
+function argvOf(pid) {
+  if (!pid || pid <= 1)
+    return null;
+  try {
+    const raw = fs5.readFileSync(`/proc/${pid}/cmdline`, "utf8");
+    const a = raw.split("\x00");
+    if (a[a.length - 1] === "")
+      a.pop();
+    return a.length ? a : null;
+  } catch {}
+  try {
+    const out = execFileSync3("ps", ["-ww", "-o", "args=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    const line = out.trim();
+    return line ? line.split(/\s+/) : null;
+  } catch {}
+  return null;
+}
+function parentOf(pid) {
+  try {
+    const stat = fs5.readFileSync(`/proc/${pid}/stat`, "utf8");
+    return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]) || 0;
+  } catch {}
+  try {
+    return Number(execFileSync3("ps", ["-o", "ppid=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 }).trim()) || 0;
+  } catch {}
+  return 0;
+}
+function hostArgv(registryPid) {
+  if (registryPid) {
+    const a = argvOf(registryPid);
+    if (a)
+      return a;
+  }
+  let pid = process.ppid;
+  for (let i = 0;i < 3 && pid > 1; i++) {
+    const a = argvOf(pid);
+    if (!a)
+      return null;
+    if (!SHELLS.has(path7.basename(a[0] ?? "")))
+      return a;
+    pid = parentOf(pid);
+  }
+  return null;
+}
+function flagValues(argv, flag) {
+  const out = [];
+  for (let i = 0;i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--")
+      break;
+    if (a.startsWith(flag + "="))
+      out.push(...a.slice(flag.length + 1).split(/[\s,]+/).filter(Boolean));
+    else if (a === flag) {
+      while (i + 1 < argv.length && !argv[i + 1].startsWith("-"))
+        out.push(argv[++i]);
+    }
+  }
+  return out;
+}
+function entryNamesUs(entry, o) {
+  if (o.plugin) {
+    if (!entry.startsWith("plugin:"))
+      return false;
+    return entry.slice(7).split("@")[0] === o.pluginName;
+  }
+  return entry === `server:${o.serverName}`;
+}
+function managedSettings() {
+  const file = process.env.CROSSTALK_MANAGED_SETTINGS ?? (process.platform === "darwin" ? "/Library/Application Support/ClaudeCode/managed-settings.json" : process.platform === "win32" ? "C:\\Program Files\\ClaudeCode\\managed-settings.json" : "/etc/claude-code/managed-settings.json");
+  try {
+    return JSON.parse(fs5.readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+var truthy = (v) => !!v && v !== "0" && v.toLowerCase() !== "false";
+function channelVerdict(argv, env = process.env, policy = managedSettings()) {
+  const forced = env.CROSSTALK_CHANNELS;
+  if (forced === "on" || forced === "1")
+    return { on: true, why: "CROSSTALK_CHANNELS=on" };
+  if (forced === "off" || forced === "0")
+    return { on: false, why: "CROSSTALK_CHANNELS=off" };
+  if (!argv)
+    return { on: false, why: "could not read how Claude Code was started" };
+  const o = {
+    plugin: !!env.CLAUDE_PLUGIN_ROOT,
+    serverName: env.CROSSTALK_SERVER_NAME ?? "crosstalk",
+    pluginName: "crosstalk"
+  };
+  const dev = flagValues(argv, "--dangerously-load-development-channels").filter((e) => entryNamesUs(e, o));
+  const allow = Array.isArray(policy?.allowedChannelPlugins) ? policy.allowedChannelPlugins : [];
+  const orgAllows = allow.some((a) => (typeof a === "string" ? a.split("@")[0] : a?.plugin) === o.pluginName);
+  const listed = flagValues(argv, "--channels").filter((e) => entryNamesUs(e, o) && o.plugin && orgAllows);
+  if (!dev.length && !listed.length)
+    return { on: false, why: "not named in --channels or --dangerously-load-development-channels" };
+  if (argv.some((a) => a === "-p" || a === "--print" || a.startsWith("--sdk-url") || a.startsWith("--input-format") || a.startsWith("--output-format")))
+    return { on: false, why: "non-interactive session (-p or the SDK)" };
+  if ((env.CLAUDE_CODE_ENTRYPOINT ?? "").startsWith("sdk"))
+    return { on: false, why: "started by the SDK" };
+  if (truthy(env.CLAUDE_CODE_USE_BEDROCK) || truthy(env.CLAUDE_CODE_USE_VERTEX) || truthy(env.CLAUDE_CODE_USE_FOUNDRY))
+    return { on: false, why: "channels are not available on third-party providers" };
+  if (policy && policy.channelsEnabled !== true)
+    return { on: false, why: "managed settings do not set channelsEnabled" };
+  return { on: true, why: `named in ${dev.length ? "--dangerously-load-development-channels" : "--channels"}` };
+}
+
 // src/server.ts
 var SESSION_ID = process.env.CLAUDE_CODE_SESSION_ID ?? "";
 var CWD = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
@@ -17139,11 +17250,11 @@ mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
 });
 function selfRegistration() {
   try {
-    const dir = path7.join(os4.homedir(), ".claude", "sessions");
-    for (const f of fs5.readdirSync(dir)) {
+    const dir = path8.join(os4.homedir(), ".claude", "sessions");
+    for (const f of fs6.readdirSync(dir)) {
       if (!f.endsWith(".json"))
         continue;
-      const e = JSON.parse(fs5.readFileSync(path7.join(dir, f), "utf8"));
+      const e = JSON.parse(fs6.readFileSync(path8.join(dir, f), "utf8"));
       if (e.sessionId !== SESSION_ID)
         continue;
       return {
@@ -17158,13 +17269,19 @@ function selfRegistration() {
   } catch {}
   return null;
 }
+var channels = null;
 function subscribe() {
   const sock = net2.createConnection(P.daemonSock, () => {
     const reg = selfRegistration();
     if (reg)
       sock.write(JSON.stringify({ ...reg, refreshOnly: true }) + `
 `);
-    sock.write(JSON.stringify({ op: "subscribe", sessionId: SESSION_ID }) + `
+    if (!channels) {
+      channels = channelVerdict(hostArgv(reg?.pid));
+      console.error(`crosstalk: channel push ${channels.on ? "on" : "off"} (${channels.why})`);
+    }
+    if (channels.on && SESSION_ID)
+      sock.write(JSON.stringify({ op: "subscribe", sessionId: SESSION_ID, channels: true }) + `
 `);
   });
   let rest = "";
