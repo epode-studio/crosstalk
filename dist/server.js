@@ -16007,7 +16007,7 @@ function make(kind, label, content) {
   let body = content;
   if (Buffer.byteLength(body, "utf8") > MAX_SLICE_BYTES) {
     body = body.slice(0, MAX_SLICE_BYTES) + `
-… truncated at ${MAX_SLICE_BYTES} bytes`;
+\u2026 truncated at ${MAX_SLICE_BYTES} bytes`;
   }
   return {
     kind,
@@ -16455,10 +16455,10 @@ function shouldOpenSettings(o) {
 }
 function permissionSteps(pane, app) {
   return pane === "accessibility" ? [
-    `System Settings → Privacy & Security → Accessibility → turn on ${app}`,
+    `System Settings \u2192 Privacy & Security \u2192 Accessibility \u2192 turn on ${app}`,
     `open "${SETTINGS_URL.accessibility}"`
   ] : [
-    `System Settings → Privacy & Security → Automation → ${app} → turn on System Events`,
+    `System Settings \u2192 Privacy & Security \u2192 Automation \u2192 ${app} \u2192 turn on System Events`,
     `open "${SETTINGS_URL.automation}"`
   ];
 }
@@ -16501,7 +16501,7 @@ function liveEnv(env, tabs) {
   };
 }
 var label = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path5.basename(r.cwd) || r.sessionId.slice(0, 8);
-var names = (rs, max = 4) => rs.slice(0, max).map(label).join(", ") + (rs.length > max ? ", …" : "");
+var names = (rs, max = 4) => rs.slice(0, max).map(label).join(", ") + (rs.length > max ? ", \u2026" : "");
 var commandsFile = () => path5.join(P2.root, "restore-commands.sh");
 function ctxNow() {
   const now = Date.now();
@@ -16510,8 +16510,8 @@ function ctxNow() {
 function describe2(self, env = process.env, dry = false) {
   const lost = lostSessions(ctxNow(), self);
   if (!lost.length)
-    return { ok: true, text: "◢ crosstalk: nothing to restore.", lost, restored: [] };
-  const lines = [`◢ crosstalk: ${lost.length} session${lost.length === 1 ? "" : "s"} to restore:`];
+    return { ok: true, text: "\u25e2 crosstalk: nothing to restore.", lost, restored: [] };
+  const lines = [`\u25e2 crosstalk: ${lost.length} session${lost.length === 1 ? "" : "s"} to restore:`];
   for (const r of lost)
     lines.push(`  ${label(r).padEnd(16)} ${r.cwd}  (${r.client}${resumeArgv(r) ? "" : ", cannot resume"})`);
   if (dry) {
@@ -16558,7 +16558,7 @@ function restore(o, only) {
   const env = o.env ?? process.env;
   const lost = only ?? lostSessions(ctxNow(), o.self);
   if (!lost.length)
-    return { ok: true, text: "◢ crosstalk: nothing to restore.", lost, restored: [] };
+    return { ok: true, text: "\u25e2 crosstalk: nothing to restore.", lost, restored: [] };
   claimPending();
   const e = liveEnv(env, o.tabs ?? true);
   let { plans, skipped } = plan(lost, e);
@@ -16579,7 +16579,7 @@ function restore(o, only) {
     return {
       ok: true,
       text: [
-        `◢ crosstalk needs permission to open tabs in ${app}.`,
+        `\u25e2 crosstalk needs permission to open tabs in ${app}.`,
         opened ? `  Opened System Settings. Turn on ${app} under Accessibility; crosstalk will finish restoring by itself.` : `  ${steps}`,
         ...opened ? [] : [`  ${cmd}`, `  crosstalk will finish restoring by itself once it is on.`]
       ].join(`
@@ -16652,7 +16652,7 @@ ${lines.join(`
     const [steps, cmd] = permissionSteps(missing, app);
     notes.push(opened ? `Opened System Settings, so next time they open as tabs: ${steps}` : `For tabs next time: ${steps}`, `  ${cmd}`);
   }
-  const head = restored.length ? `◢ crosstalk: reopened ${restored.length} session${restored.length === 1 ? "" : "s"} (${names(restored)}).` : `◢ crosstalk: reopened nothing.`;
+  const head = restored.length ? `\u25e2 crosstalk: reopened ${restored.length} session${restored.length === 1 ? "" : "s"} (${names(restored)}).` : `\u25e2 crosstalk: reopened nothing.`;
   return { ok: !failed.length, text: [head, ...notes.map((n) => `  ${n}`)].join(`
 `), lost, restored };
 }

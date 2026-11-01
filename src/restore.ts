@@ -700,6 +700,14 @@ export function question(lost: Rec[], boot: number, current: Term): string | nul
  * sessions opened at the same moment do not both ask.
  */
 export function askOnce(self: string, current: Term): string | null {
+  return askOnceOffer(self, current)?.text ?? null
+}
+
+/** The question as askOnce puts it, with what the mod's picker needs to put it its own way. */
+export type Offer = { text: string; count: number; names: string[]; restart: boolean }
+
+/** askOnce, keeping what it claimed, for a surface that phrases the question itself. */
+export function askOnceOffer(self: string, current: Term): Offer | null {
   const c = ctxNow()
   const lost = lostSessions(c, self)
   if (!lost.some((r) => !r.askedAt)) return null
@@ -717,7 +725,14 @@ export function askOnce(self: string, current: Term): string | null {
     const fresh = lostSessions(ctxNow(), self)
     if (!fresh.some((r) => !r.askedAt)) return null
     for (const r of fresh) if (!r.askedAt) writeRec({ ...r, askedAt: Date.now() })
-    return question(fresh, c.boot, current)
+    const text = question(fresh, c.boot, current)
+    if (!text) return null
+    return {
+      text,
+      count: fresh.length,
+      names: fresh.slice(0, 4).map(label).concat(fresh.length > 4 ? ["…"] : []),
+      restart: fresh.some((r) => r.seenAt < c.boot),
+    }
   } finally {
     try {
       fs.rmdirSync(lock)

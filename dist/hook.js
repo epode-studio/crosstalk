@@ -2,9 +2,9 @@
 // @bun
 
 // src/hook.ts
-import path6 from "path";
+import path7 from "path";
 import os4 from "os";
-import fs4 from "fs";
+import fs5 from "fs";
 
 // src/client.ts
 import net from "node:net";
@@ -600,10 +600,10 @@ function shouldOpenSettings(o) {
 }
 function permissionSteps(pane, app) {
   return pane === "accessibility" ? [
-    `System Settings → Privacy & Security → Accessibility → turn on ${app}`,
+    `System Settings \u2192 Privacy & Security \u2192 Accessibility \u2192 turn on ${app}`,
     `open "${SETTINGS_URL.accessibility}"`
   ] : [
-    `System Settings → Privacy & Security → Automation → ${app} → turn on System Events`,
+    `System Settings \u2192 Privacy & Security \u2192 Automation \u2192 ${app} \u2192 turn on System Events`,
     `open "${SETTINGS_URL.automation}"`
   ];
 }
@@ -646,7 +646,7 @@ function liveEnv(env, tabs) {
   };
 }
 var label = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path5.basename(r.cwd) || r.sessionId.slice(0, 8);
-var names = (rs, max = 4) => rs.slice(0, max).map(label).join(", ") + (rs.length > max ? ", …" : "");
+var names = (rs, max = 4) => rs.slice(0, max).map(label).join(", ") + (rs.length > max ? ", \u2026" : "");
 var commandsFile = () => path5.join(P.root, "restore-commands.sh");
 function ctxNow() {
   const now = Date.now();
@@ -660,9 +660,9 @@ function question(lost, boot, current) {
   const what = `${n} session${n === 1 ? " was" : "s were"} open ${restart ? "before the restart" : "when they were cut off"}`;
   const k = kindOf(current);
   const firstTime = (k === "apple" || k === "ghostty") && process.platform === "darwin" && !loadState().tabsWorked && n > 1 ? ` The first time, macOS asks whether ${appName(current)} may control System Events: allow it, so they open as tabs.` : "";
-  return `◢ crosstalk: ${what} (${names(lost)}). Say "restore them" to bring ${n === 1 ? "it" : "them"} back.${firstTime}`;
+  return `\u25e2 crosstalk: ${what} (${names(lost)}). Say "restore them" to bring ${n === 1 ? "it" : "them"} back.${firstTime}`;
 }
-function askOnce(self, current) {
+function askOnceOffer(self, current) {
   const c = ctxNow();
   const lost = lostSessions(c, self);
   if (!lost.some((r) => !r.askedAt))
@@ -685,7 +685,15 @@ function askOnce(self, current) {
     for (const r of fresh)
       if (!r.askedAt)
         writeRec({ ...r, askedAt: Date.now() });
-    return question(fresh, c.boot, current);
+    const text = question(fresh, c.boot, current);
+    if (!text)
+      return null;
+    return {
+      text,
+      count: fresh.length,
+      names: fresh.slice(0, 4).map(label).concat(fresh.length > 4 ? ["\u2026"] : []),
+      restart: fresh.some((r) => r.seenAt < c.boot)
+    };
   } finally {
     try {
       fs3.rmdirSync(lock);
@@ -698,7 +706,7 @@ function forget(self) {
     removeRec(r.sessionId);
   return {
     ok: true,
-    text: lost.length ? `◢ crosstalk: left ${lost.length} session${lost.length === 1 ? "" : "s"} closed.` : "◢ crosstalk: nothing to restore.",
+    text: lost.length ? `\u25e2 crosstalk: left ${lost.length} session${lost.length === 1 ? "" : "s"} closed.` : "\u25e2 crosstalk: nothing to restore.",
     lost,
     restored: []
   };
@@ -729,7 +737,7 @@ function restore(o, only) {
   const env = o.env ?? process.env;
   const lost = only ?? lostSessions(ctxNow(), o.self);
   if (!lost.length)
-    return { ok: true, text: "◢ crosstalk: nothing to restore.", lost, restored: [] };
+    return { ok: true, text: "\u25e2 crosstalk: nothing to restore.", lost, restored: [] };
   claimPending();
   const e = liveEnv(env, o.tabs ?? true);
   let { plans, skipped } = plan(lost, e);
@@ -750,7 +758,7 @@ function restore(o, only) {
     return {
       ok: true,
       text: [
-        `◢ crosstalk needs permission to open tabs in ${app}.`,
+        `\u25e2 crosstalk needs permission to open tabs in ${app}.`,
         opened ? `  Opened System Settings. Turn on ${app} under Accessibility; crosstalk will finish restoring by itself.` : `  ${steps}`,
         ...opened ? [] : [`  ${cmd}`, `  crosstalk will finish restoring by itself once it is on.`]
       ].join(`
@@ -823,7 +831,7 @@ ${lines.join(`
     const [steps, cmd] = permissionSteps(missing, app);
     notes.push(opened ? `Opened System Settings, so next time they open as tabs: ${steps}` : `For tabs next time: ${steps}`, `  ${cmd}`);
   }
-  const head = restored.length ? `◢ crosstalk: reopened ${restored.length} session${restored.length === 1 ? "" : "s"} (${names(restored)}).` : `◢ crosstalk: reopened nothing.`;
+  const head = restored.length ? `\u25e2 crosstalk: reopened ${restored.length} session${restored.length === 1 ? "" : "s"} (${names(restored)}).` : `\u25e2 crosstalk: reopened nothing.`;
   return { ok: !failed.length, text: [head, ...notes.map((n) => `  ${n}`)].join(`
 `), lost, restored };
 }
@@ -886,6 +894,114 @@ function note(o) {
     prune(now);
 }
 
+// src/uistate.ts
+import fs4 from "node:fs";
+import path6 from "node:path";
+var FINAL = new Set(["answered", "handed", "muted"]);
+var file = () => path6.join(P.root, "ui.json");
+var lockDir = () => path6.join(P.root, "ui.lock");
+var markers = () => path6.join(P.root, "ui-mod");
+var safe2 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
+var WEEK = 7 * 24 * 60 * 60 * 1000;
+function read() {
+  try {
+    const f = JSON.parse(fs4.readFileSync(file(), "utf8"));
+    if (f && f.v === 1 && f.items && typeof f.items === "object")
+      return f;
+  } catch {}
+  return { v: 1, items: {} };
+}
+function write(f) {
+  fs4.mkdirSync(P.root, { recursive: true, mode: 448 });
+  const tmp = `${file()}.${process.pid}.tmp`;
+  fs4.writeFileSync(tmp, JSON.stringify(f, null, 2), { mode: 384 });
+  fs4.renameSync(tmp, file());
+}
+var sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function withStore(fn) {
+  fs4.mkdirSync(P.root, { recursive: true, mode: 448 });
+  let held = false;
+  for (let i = 0;i < 200 && !held; i++) {
+    try {
+      fs4.mkdirSync(lockDir());
+      held = true;
+    } catch {
+      try {
+        if (Date.now() - fs4.statSync(lockDir()).mtimeMs > 1e4)
+          fs4.rmdirSync(lockDir());
+      } catch {}
+      sleepSync(10);
+    }
+  }
+  try {
+    const f = read();
+    const was = JSON.stringify(f);
+    const now = Date.now();
+    const out = fn(f.items, now);
+    for (const [id, it] of Object.entries(f.items))
+      if (FINAL.has(it.state) && now - it.updatedAt > WEEK || now - it.updatedAt > 4 * WEEK)
+        delete f.items[id];
+    if (JSON.stringify(f) !== was)
+      write(f);
+    return out;
+  } finally {
+    if (held)
+      try {
+        fs4.rmdirSync(lockDir());
+      } catch {}
+  }
+}
+function upsert(items, it, now) {
+  const before = items[it.id];
+  if (!before)
+    return items[it.id] = { ...it, state: "pending", createdAt: now, updatedAt: now };
+  if (FINAL.has(before.state))
+    return before;
+  const moved = before.sessionId !== it.sessionId;
+  items[it.id] = {
+    ...before,
+    ...it,
+    state: before.state,
+    raisedAt: moved ? undefined : before.raisedAt,
+    createdAt: before.createdAt,
+    updatedAt: moved ? now : before.updatedAt
+  };
+  return items[it.id];
+}
+var MARKER_MS = 10 * 60 * 1000;
+function modActive(sessionId, now = Date.now()) {
+  try {
+    return now - fs4.statSync(path6.join(markers(), safe2(sessionId))).mtimeMs < MARKER_MS;
+  } catch {
+    return false;
+  }
+}
+var restoreId = (sessionId) => `restore:${sessionId}`;
+function restoreSurface(sessionId, offer) {
+  if (!offer)
+    return {};
+  if (!modActive(sessionId))
+    return { systemMessage: offer.text };
+  const n = offer.count;
+  const when = offer.restart === false ? n === 1 ? "that was cut off" : "that were cut off" : "from before the restart";
+  try {
+    return { item: storeRestore(sessionId, offer, n, when) };
+  } catch {
+    return { systemMessage: offer.text };
+  }
+}
+function storeRestore(sessionId, offer, n, when) {
+  return withStore((items, now) => upsert(items, {
+    id: restoreId(sessionId),
+    kind: "restore",
+    sessionId,
+    count: n,
+    names: offer.names,
+    question: `Restore ${n} session${n === 1 ? "" : "s"} ${when}? (${offer.names.join(", ")})`,
+    options: ["Restore", "Open as windows", "Not now"]
+  }, now));
+}
+
 // src/hook.ts
 var input = await new Promise((resolve) => {
   let raw = "";
@@ -922,8 +1038,8 @@ function agyCwd() {
   if (Array.isArray(ws) && typeof ws[0] === "string" && ws[0])
     return ws[0];
   const here = process.cwd();
-  if (AGENT_DIRS.has(path6.basename(here)))
-    return path6.dirname(here);
+  if (AGENT_DIRS.has(path7.basename(here)))
+    return path7.dirname(here);
   return here;
 }
 var cwd = hook.cwd ?? hook.working_dir ?? hook.workspace_roots?.[0] ?? (isAgy ? agyCwd() : process.cwd());
@@ -956,7 +1072,7 @@ if (restoreClient && sessionId && !process.env.CROSSTALK_NO_RESTORE) {
         reason: hook.reason
       });
     if (isSessionStart && restoreClient === "claude" && !/^(clear|compact)$/.test(String(hook.source ?? "")))
-      systemMessage = askOnce(sessionId, captureTerminal(process.env, process.pid, false)) ?? undefined;
+      systemMessage = restoreSurface(sessionId, askOnceOffer(sessionId, captureTerminal(process.env, process.pid, false))).systemMessage;
   } catch {}
 }
 if (!loadIdentity() || !sessionId) {
@@ -971,11 +1087,11 @@ async function registerSession() {
   let name = `session-${process.ppid}`;
   if (socket) {
     try {
-      const dir = path6.join(os4.homedir(), ".claude", "sessions");
-      for (const f of fs4.readdirSync(dir)) {
+      const dir = path7.join(os4.homedir(), ".claude", "sessions");
+      for (const f of fs5.readdirSync(dir)) {
         if (!f.endsWith(".json"))
           continue;
-        const e = JSON.parse(fs4.readFileSync(path6.join(dir, f), "utf8"));
+        const e = JSON.parse(fs5.readFileSync(path7.join(dir, f), "utf8"));
         if (e.sessionId === sessionId) {
           name = e.name ?? name;
           break;
@@ -983,7 +1099,7 @@ async function registerSession() {
       }
     } catch {}
   } else {
-    name = hook.thread_name ?? (path6.basename(cwd) || name);
+    name = hook.thread_name ?? (path7.basename(cwd) || name);
   }
   await request({
     op: "register",

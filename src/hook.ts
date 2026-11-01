@@ -21,6 +21,7 @@ import { loadIdentity } from "./config.ts"
 import { rootFrom } from "./paths.ts"
 import { pathsFromToolInput } from "./footprint.ts"
 import * as restore from "./restore.ts"
+import * as ui from "./uistate.ts"
 
 const input = await new Promise<string>((resolve) => {
   let raw = ""
@@ -215,9 +216,14 @@ if (restoreClient && sessionId && !process.env.CROSSTALK_NO_RESTORE) {
         source: hook.source,
         reason: hook.reason,
       })
+    // With crosstalk's mod running in this session, the offer becomes its
+    // picker instead (the mod marked the session before this hook ran), so
+    // exactly one of the two ever shows.
     if (isSessionStart && restoreClient === "claude" && !/^(clear|compact)$/.test(String(hook.source ?? "")))
-      systemMessage =
-        restore.askOnce(sessionId, restore.captureTerminal(process.env, process.pid, false)) ?? undefined
+      systemMessage = ui.restoreSurface(
+        sessionId,
+        restore.askOnceOffer(sessionId, restore.captureTerminal(process.env, process.pid, false)),
+      ).systemMessage
   } catch {}
 }
 

@@ -7,6 +7,21 @@ Claude Code session you open afterwards says:
 ◢ crosstalk: 6 sessions were open before the restart (api, firmware, docs, web, …). Say "restore them" to bring them back.
 ```
 
+With crosstalk's mod running (an interactive Claude Code that loads mods), the same question
+is Claude Code's own picker instead, as soon as your prompt is empty and nothing is running:
+
+```
+ ☐ Restore
+Restore 3 sessions from before the restart? (firmware, docs, web)
+❯ 1. Restore
+  2. Open as windows
+  3. Not now
+```
+
+Exactly one of the two shows: the mod tells the hook it is there before the hook runs. "Not
+now" forgets nothing, and Esc puts it off until your next turn has ended. It never pops up by
+itself again after a `--resume`.
+
 **Just say "restore them".** Each session comes back in its own tab of your terminal, in the
 same order, in its folder, as `claude --resume <id>`. The conversation comes back with it, so
 you don't need to paste anything.
