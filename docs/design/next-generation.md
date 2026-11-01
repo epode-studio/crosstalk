@@ -211,6 +211,116 @@ The three claims crosstalk should be able to back with numbers:
 Correct routing is not on that list because it is the minimum, not a selling
 point. It still needs tests that prove it.
 
+### 14. Fully AI-native: no human reads code
+
+The way we work: **nobody ever reads a line of code.** People decide what should
+happen and judge whether it did. Agents write the code, and other agents review
+it. Everything below follows from that.
+
+So the PR diff is the wrong thing to put in front of a person, and **the topic
+is the trail**. A topic is the unit of work from first idea to merge. It can
+exist before any branch, produce several PRs across several repos, and stays
+open until its questions are resolved. Riding the PR is not a stage on the way:
+filling in a description nobody opens buys nothing.
+
+**The PR is plumbing.** Agents open it, the checks and the reviewer agent gate
+it, and it auto-merges. People never open it. Branch protection on the host
+still applies, and is satisfied by checks and the reviewer agent rather than a
+person.
+
+#### What a person approves, by risk
+
+| Risk | A person approves | Then |
+|---|---|---|
+| **Low** | Nothing | Merges on green checks and the reviewer agent's sign-off. Shown in the digest afterwards. |
+| **Normal** | The intent up front, and the questions agents surface | Agents build against the agreed goal and decisions. Merges without a person once the evidence passes. |
+| **High** (auth, payments, migrations, anything marked) | The intent up front, the questions, and the **evidence of behaviour** before merge | As below, plus a higher evidence bar. |
+
+Answering the questions agents surface counts as approval at every level.
+Agents classify risk from the files and the topic, and a person can always
+raise it, never lower it silently.
+
+**Evidence of behaviour** is a plain-language summary of what changed in
+behaviour, with proof: tests added, evals passed, before and after, a demo or
+screenshot where there is something to see. It never includes a diff.
+
+#### Who reviews the code
+
+**A different agent session**, started by crosstalk in the topic with fresh
+context, so it does not share the author's blind spots or its reasoning. Its
+findings go back to the author agent, which fixes them, until the reviewer
+agrees. A person hears about it only as a question when the two cannot agree,
+written in plain language: what they disagree on and what each option means
+for behaviour.
+
+For **high-risk** topics, both of:
+
+- **An adversarial reviewer**: a reviewer agent told to find what is wrong,
+  plus a dedicated security pass. Both must agree.
+- **A higher evidence bar**: property tests or equivalent, a staging run, and a
+  rollback plan written before merge.
+
+#### Why this is faster
+
+The slow parts of shipping today are a person reading a diff and waiting for
+CI. Here the first is gone, and what is left of human attention goes earlier
+and higher:
+
+| Gain | How |
+|---|---|
+| Wrong approaches caught before code | The approach is agreed in the topic ("v2 tokens, v1 until 0.2"). Agents produce wrong-but-complete code fast, so this is where human judgment does most. |
+| People never see work that fails | Author and reviewer agents iterate until tests, evals and review agree. |
+| One approval for a change across repos | API + client + docs is one intent, approved once. |
+| Questions don't wait for anyone to notice | A blocked agent asks inline in seconds (decision 8). |
+| Context comes with every decision | The recap explains why, for people and for the reviewer agent. Also where the token saving comes from. |
+
+**What it does not do:** CI is still compute. Checks run in the session before
+a push (only the tests the change affects) so hosted CI confirms rather than
+discovers, but a slow suite stays slow.
+
+**The claim:** a person spends their attention on intent and evidence, never
+code, measured as time from idea to merge and human minutes per merged topic.
+
+## Open questions
+- keep the v1 endpoint? (api-worker, blocking)
+
+## Decisions
+- 2026-11-01 · paul · v1 tokens accepted until 0.2
+```
+
+This is the topic registry that inference matches against (files, branches,
+recap), and it is readable by any human or agent with no crosstalk installed.
+Agents write to it from hooks as they work: the Stop hook updates status,
+recap and open questions. People read it, or edit it by hand.
+
+### 13. Positioning: Entire without the forge
+
+[Entire](https://entire.com/) is a hosted Git forge that keeps the *why*
+behind code: agent sessions captured as checkpoints linked to commits, Trails
+in place of pull requests, a shared memory built from sessions and a code graph,
+and search across all of it. To get any of that you move your repositories to
+them.
+
+crosstalk makes the same promise without the forge. It lives in the git you
+already have, on whatever host, as files in the repository plus a sealed relay.
+Nothing to migrate, and nothing hosted that can read your code.
+
+What we capture is **recaps, not transcripts**. Each topic file holds the recap,
+decisions and open questions, linked to the commits made under it (in
+`.crosstalk/` or git notes). That is small enough to review in a diff and
+keeps raw prompts out of the repository.
+
+The three claims crosstalk should be able to back with numbers:
+
+| Claim | How to prove it |
+|---|---|
+| **Fewer tokens** | Agents start from topic memory instead of re-reading the repo. Measure tokens-to-first-useful-edit with and without, on real sessions. |
+| **Zero migration** | One plugin command on an existing repo and host. Nothing else to set up. The install test is the proof. |
+| **No one can read it** | The relay sees only ciphertext. A forge has to read your code to host it; crosstalk never holds it. |
+
+Correct routing is not on that list because it is the minimum, not a selling
+point. It still needs tests that prove it.
+
 ### 14. Why the topic could be the trail: fewer, earlier, smaller reviews
 
 Two ways a topic can meet code review:
@@ -282,12 +392,17 @@ merge. That may be a sharper answer to Entire than push throughput.
 8. **Diff churn.** Agents writing on every Stop will touch files in every
    commit. Possibly keep `.crosstalk/` on its own branch or ref, or only write
    when something actually changed.
-9. **When to move from riding the PR to being the trail** (decision 14).
-   Likely once a whole team is on crosstalk, since people outside it see only
-   the PRs and not the topic connecting them.
+9. **How risk is classified** (decision 14). File paths and topic content
+   are the obvious inputs. Mistakes that lower risk are the dangerous kind, so
+   possibly: an agent may raise a topic's risk on its own, and lowering it is a
+   question to a person.
 10. **Repo-kept recaps vs "no one can read it".** A topic file committed to a
     public repo is readable by everyone, which breaks the third claim for that
     topic. Possibly: topic files are sealed to members unless the topic is
     marked public, or the repo copy keeps only decisions and the recap stays on
     the relay.
+11. **Reviewer independence.** A fresh session on the same model may still
+    share blind spots with the author. Options: a different model for review,
+    a different client (Codex reviewing Claude Code), or a peer's agent for
+    high-risk topics.
 
