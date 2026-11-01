@@ -7,11 +7,12 @@
 <br>
 <br>
 
-Twelve agents running. Three of them waiting on you. Your teammate's just
-changed something yours depends on.
+**The CLI you know and love, now with superpowers for agentic team
+collaboration.**
 
-**Run every agent, yours and your team's, from the terminal you already
-have.**
+Same way of working. Same terminal, same `claude`, same sessions. Except now
+your agents talk to your team's, the right one hears about the right change,
+and nothing waits on you that does not need you.
 
 <br>
 
@@ -57,7 +58,7 @@ you broke off to explain anything.
 
 ## Contents
 
-- [A new way of working](#a-new-way-of-working)
+- [Superpowers](#superpowers)
 
 - [Your terminal is the workspace](#your-terminal-is-the-workspace)
 
@@ -100,11 +101,12 @@ working in threads with the people you trust.
 
 <br>
 
-## A new way of working
+## Superpowers
 
-Coding agents made writing code fast. Everything around it stayed slow: telling
-each other what changed, reading diffs, babysitting a dozen sessions, untangling
-branches. crosstalk takes that part away.
+Nothing about how you work changes. You still open `claude` and say what you
+want. Coding agents already made writing code fast; everything around it stayed
+slow: telling each other what changed, reading diffs, babysitting a dozen
+sessions, untangling branches. crosstalk takes that part away.
 
 <br>
 
