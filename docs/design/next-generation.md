@@ -152,12 +152,24 @@ There is no separate approval step. Answering is approving.
 
 | The asker is | You are | It appears |
 |---|---|---|
-| blocked | in a session | inline, in that session |
+| blocked | in a session | shown to you in that session, hidden from its agent |
 | blocked | away | on your phone |
 | not blocked | anywhere | in the digest at the next pause |
 
 The statusline always shows how many are waiting. The answer goes back to
 whoever asked.
+
+**A question never enters another thread's context.** A question from auth
+shown while you are in firmware is for you, not for the firmware agent. It
+appears as a hook message and in the statusline, which you see and the model
+does not. You answer with `@auth y`, or `@auth` and your words. The
+`UserPromptSubmit` hook routes the answer to the session that asked and blocks
+the prompt, so the firmware agent never sees either. Otherwise the fix for
+cross-talk would bring it straight back.
+
+"In a session" means the one you last typed in, which the same hook reports
+with its session id. crosstalk cannot see which window is in front of you, so
+the statusline badge in every session covers the gap.
 
 ## Getting someone on it
 
@@ -184,6 +196,11 @@ Here that place is **whichever session you are in**. Any session can:
 
 The statusline in every session shows how many are waiting on you. There is no
 home session and no window.
+
+Steering goes the same way: `@api stop` or `@auth put two more on it` is
+handled by the hook and never reaches the current agent. Asking the current
+agent itself ("what's running?") is the one way another thread enters its
+context, and only because you asked it.
 
 ## Shipping
 
