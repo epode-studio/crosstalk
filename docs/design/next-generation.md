@@ -259,6 +259,28 @@ from other threads, unmatched messages, threads about to combine, a key that
 changed. A working session's band shows only what its own agents are waiting
 on. Closing main sends everything back to focus-aware.
 
+## Answers become rules
+
+The second time you give the same answer to the same kind of question,
+crosstalk asks once more: "Always do this?" Yes makes it a **standing rule**,
+and it never asks that again. The number of questions should shrink every week;
+that is the metric.
+
+Rules are **repo-wide from the start**, kept in one file on the thread ref.
+A rule takes effect for the whole team at once and shows up once in each
+teammate's digest. Anyone can change or undo it, and that is announced too.
+
+## Agents talk without being told
+
+When an agent changes a file, function, API or schema that another thread's
+footprint includes, that thread's agent hears about it, with the diff attached.
+No person is involved unless the agent receiving it needs a decision.
+
+**Conflicts are agreed before they happen.** When two threads edit the same
+function before either has merged, both agents are told at once. They agree who
+changes what, or one rebases onto the other, and record it as a decision in
+both threads. A person is asked only if they cannot agree.
+
 ## Getting someone on it
 
 There is one idea: **get someone on it**. Whether that means steering a session
@@ -268,6 +290,21 @@ Fanning out is starting several features at once.
 
 Routing to the right open session ships first, since that is today's bug.
 Everything else builds on the same matching.
+
+**Sessions are disposable.** The thread file carries the work, so instead of
+letting a session compact again and again, crosstalk ends it when its context
+is spent and starts a fresh one from the thread.
+
+**Staffing is a suggestion.** "auth has been stuck for 2 hours, add a second
+agent?" is a question. There are no budgets to set or watch.
+
+**Restarts restore themselves.** crosstalk remembers every open session's id,
+folder and terminal tab. After a restart, crosstalk sees that sessions were
+open and none of them ended normally. The first session you open asks once:
+"Restore your 6 sessions from before the restart?" Yes reopens each one in its
+own tab, in the same order, as `claude --resume <id>` in its folder, so the
+conversation comes back whole. Sessions crosstalk started in the background
+resume by themselves.
 
 A session crosstalk starts has the permissions of whoever caused it. A verified
 person's message can get a session on it on your machine. When nothing open
