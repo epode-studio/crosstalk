@@ -6,7 +6,7 @@ whether it reached crosstalk through the plugin or through MCP alone.
 **Generated** by `bun scripts/tools-doc.ts`, from the server itself. Edit the
 tool, not this file.
 
-18 tools.
+19 tools.
 
 ## Messages
 
@@ -67,5 +67,6 @@ Not yet grouped.
 | Tool | Arguments | What it does |
 |---|---|---|
 | `crosstalk_route` | `id`?, `session`? | Say which of your user's sessions a held message belongs to. crosstalk holds a peer's message when it matches none of this machine's sessions by repo, branch and files, or matches two equally, and asks instead of guessing. Ask your user, then call this with the id from the notice and the session's name; the choice is remembered for that peer's later messages about the same repo and branch. With no arguments, lists what is held and the open sessions. |
+| `crosstalk_restore` | `confirm`? | Reopen the user's own sessions that were open before a restart, crash, or force-quit of their terminal: each comes back in its own terminal tab, in its folder, with its conversation (claude --resume). Call this whenever the user asks to restore, reopen, resume or bring back their sessions, tabs or terminals, e.g. "restore them". Without confirm it only lists what would be reopened; call it with confirm: true when the user has asked for the restore, and relay the result text to them as it is. If it says a macOS permission is needed, System Settings has been opened and crosstalk finishes by itself once it is turned on; nothing else is needed. |
 
 A `?` marks an optional argument.

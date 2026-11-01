@@ -45,6 +45,17 @@ A peer that sends no footprint (an older crosstalk, or a session outside a git
 repo) is routed as before: an idle session, else any live one, else the first
 registered. So is every message on a machine where no session is in a repo.
 
+## Restore after a restart
+
+The hook keeps one small file per open session in `open/` under crosstalk's
+home: its id, folder, client, process and terminal tab. These records can't
+live in the daemon. After a restart, the daemon isn't running. When it starts,
+it drops every session whose process is gone, and those are exactly the
+sessions to bring back. A session whose process disappeared without a
+`SessionEnd` was lost. The first session opened afterwards asks once, through
+a `systemMessage` the model never sees. The `crosstalk_restore` tool reopens
+the lost sessions through an adapter per terminal. See [restore.md](restore.md).
+
 ## Two transports
 
 **Channel MCP server** is the target, and what the server already declares.
@@ -100,6 +111,7 @@ src/link.ts      encrypted channel to the relay
 src/rooms.ts     rooms, invitations, room keys
 src/inject.ts    writes into a session's inbox socket
 src/footprint.ts what a session is working on, and matching a message to it
+src/restore.ts   which sessions a restart lost, and reopening them per terminal
 src/policy.ts    intent plus your state decides what interrupts you
 src/crypto.ts    identities, phrase exchange, sealing
 relay/relay.ts   the relay
@@ -115,6 +127,7 @@ bun relay/relay.ts          # a relay on :8787
 bun src/cli.ts doctor
 bash test/resilience.sh     # the sleep failure modes
 bun run test:routing        # messages reach the session on the same work
+bun run test:restore        # sessions come back after a restart (real tmux)
 bun scripts/release.ts "what changed"
 ```
 

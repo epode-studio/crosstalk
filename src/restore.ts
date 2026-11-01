@@ -1,0 +1,1023 @@
+// Restore after a restart.
+//
+// Every open session leaves a small record of where it was: its id, folder,
+// client, process and terminal tab. A session that ends normally says so
+// through the SessionEnd hook. One whose process is gone without having said
+// so was lost, to a restart or to its terminal dying, and the next session
+// opened offers to bring all of them back, each in its own tab, as
+// `claude --resume <id>` in its folder.
+//
+// The records are one file per session under <crosstalk home>/open/, written by
+// the hook itself. They cannot live in the daemon's sessions.json: the daemon
+// is not running after a restart, and the first thing it does on starting is
+// drop every session whose process has gone, which is exactly the list wanted
+// here. One file per session also means sessions starting together (as they
+// do right after a restore) never overwrite each other.
+//
+// Nothing here needs an identity, a room or the daemon.
+
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
+import { spawn, spawnSync } from "node:child_process"
+import { P } from "./config.ts"
+import { rootFrom, shim } from "./paths.ts"
+
+// --- records -------------------------------------------------------------------
+
+/** Where a session's terminal tab was, in whatever terms its terminal uses. */
+export type Term = {
+  /** TERM_PROGRAM: Apple_Terminal, iTerm.app, ghostty, WezTerm, tmux, vscode … */
+  program?: string
+  /** The session's controlling tty, e.g. /dev/ttys003. */
+  tty?: string
+  tmux?: { pane: string; socket?: string; session?: string; window?: number; paneIndex?: number }
+  kitty?: { window?: string; listenOn?: string }
+  wezterm?: { pane: string }
+  /** ITERM_SESSION_ID, "w0t1p0:<uuid>": window, tab and pane by position. */
+  iterm?: { id: string; window?: number; tab?: number }
+  /** Terminal.app. `window` is the window's AppleScript id, `tab` its 1-based tab index. */
+  apple?: { sessionId?: string; window?: number; tab?: number }
+  wt?: { session: string }
+}
+
+export type Rec = {
+  sessionId: string
+  cwd: string
+  /** "claude" or "codex"; anything else is recorded but cannot be resumed. */
+  client: string
+  name?: string
+  pid: number
+  /** The process's start time as ps prints it, so a reused pid is not mistaken for it. */
+  pidStart?: string
+  /** False for `claude -p` and the like, which have no tab to come back to. */
+  interactive?: boolean
+  startedAt: number
+  seenAt: number
+  terminal: Term
+  endedAt?: number
+  endReason?: string
+  /** When the question about this session was put, so it is put once. */
+  askedAt?: number
+}
+
+const dir = () => path.join(P.root, "open")
+const safe = (id: string) => id.replace(/[^A-Za-z0-9._-]/g, "_")
+const fileOf = (id: string) => path.join(dir(), `${safe(id)}.json`)
+
+export function readAll(): Rec[] {
+  let names: string[]
+  try {
+    names = fs.readdirSync(dir()).filter((f) => f.endsWith(".json"))
+  } catch {
+    return []
+  }
+  const out: Rec[] = []
+  for (const f of names) {
+    try {
+      const r = JSON.parse(fs.readFileSync(path.join(dir(), f), "utf8"))
+      if (r && typeof r.sessionId === "string") out.push(r)
+    } catch {}
+  }
+  return out
+}
+
+export function readOne(id: string): Rec | null {
+  try {
+    return JSON.parse(fs.readFileSync(fileOf(id), "utf8"))
+  } catch {
+    return null
+  }
+}
+
+export function writeRec(r: Rec) {
+  fs.mkdirSync(dir(), { recursive: true, mode: 0o700 })
+  const tmp = `${fileOf(r.sessionId)}.${process.pid}.tmp`
+  fs.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 0o600 })
+  fs.renameSync(tmp, fileOf(r.sessionId))
+}
+
+export function removeRec(id: string) {
+  try {
+    fs.unlinkSync(fileOf(id))
+  } catch {}
+}
+
+/** Records nobody will ever ask about again: ended or seen over a week ago. */
+export function prune(now = Date.now()) {
+  for (const r of readAll())
+    if ((r.endedAt && now - r.endedAt > DAY) || now - r.seenAt > 7 * DAY) removeRec(r.sessionId)
+}
+
+// --- small state ---------------------------------------------------------------
+
+type State = {
+  /** When System Settings was last opened for each pane, so it is not opened twice in a row. */
+  settingsOpened?: { accessibility?: number; automation?: number }
+  /** Set once Terminal has opened tabs through System Events, so the first-time note stops. */
+  tabsWorked?: number
+}
+const stateFile = () => path.join(P.root, "restore-state.json")
+export function loadState(): State {
+  try {
+    return JSON.parse(fs.readFileSync(stateFile(), "utf8"))
+  } catch {
+    return {}
+  }
+}
+export function saveState(s: State) {
+  fs.mkdirSync(P.root, { recursive: true, mode: 0o700 })
+  fs.writeFileSync(stateFile(), JSON.stringify(s, null, 2), { mode: 0o600 })
+}
+
+// --- detection -----------------------------------------------------------------
+
+const DAY = 24 * 60 * 60 * 1000
+/** Only sessions seen this close to the restart count; ones lost weeks ago do not. */
+export const WINDOW_MS = DAY
+/** A SessionEnd this close before the boot came from the shutdown, not from the person. */
+export const SHUTDOWN_MS = 10 * 60 * 1000
+/** Two or more sessions ending this close together went down with their terminal. */
+export const BURST_MS = 10 * 1000
+
+/** When this machine booted. CROSSTALK_BOOT_TIME (ms since epoch) fakes it for tests. */
+export function bootTime(env: NodeJS.ProcessEnv = process.env, now = Date.now()): number {
+  const forced = Number(env.CROSSTALK_BOOT_TIME)
+  if (forced > 0) return forced
+  return now - os.uptime() * 1000
+}
+
+/**
+ * Whether a session was ended on purpose.
+ *
+ * Claude Code names why a session ended. clear, logout and leaving at the
+ * prompt are a person's choice. "other" is everything else, which includes a
+ * terminal dying under it (SIGHUP), so it counts as a normal end only when it
+ * stands alone: one tab closed. Several ending in the same few seconds, or any
+ * ending in the minutes before a restart, is the terminal or the machine
+ * going down.
+ */
+export function endedNormally(r: Rec, all: Rec[], boot: number): boolean {
+  if (!r.endedAt) return false
+  if (r.endReason !== "other") return true
+  if (r.endedAt < boot && boot - r.endedAt <= SHUTDOWN_MS) return false
+  const burst = all.some(
+    (o) =>
+      o.sessionId !== r.sessionId &&
+      o.endReason === "other" &&
+      !!o.endedAt &&
+      Math.abs(o.endedAt - r.endedAt!) <= BURST_MS,
+  )
+  return !burst
+}
+
+export type Ctx = { now: number; boot: number; all: Rec[]; alive: (r: Rec) => boolean }
+
+/**
+ * Lost: not ended on purpose, its process gone, and seen recently.
+ *
+ * Before this boot, recently means within a day of the boot. Within this boot
+ * (a force-quit or crashed terminal) it means within a day of now, and it only
+ * applies to Claude Code: Codex has no SessionEnd hook, so a Codex session
+ * that ended normally looks exactly like one that was lost, and is only
+ * offered back across a restart.
+ */
+export function isLost(r: Rec, c: Ctx): boolean {
+  if (r.interactive === false) return false
+  if (endedNormally(r, c.all, c.boot)) return false
+  const before = r.seenAt < c.boot
+  const ref = before ? c.boot : c.now
+  if (ref - r.seenAt > WINDOW_MS) return false
+  if (!before && r.client !== "claude") return false
+  return !c.alive(r)
+}
+
+export function lostSessions(c: Ctx, self?: string): Rec[] {
+  return order(c.all.filter((r) => r.sessionId !== self && isLost(r, c)))
+}
+
+/** Oldest first, which is the order they were opened in. */
+const order = (rs: Rec[]) => [...rs].sort((a, b) => a.startedAt - b.startedAt)
+
+// --- processes -----------------------------------------------------------------
+
+function ps(pid: number, field: string): string | null {
+  if (!pid || pid < 1) return null
+  try {
+    const r = spawnSync("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 })
+    if (r.status !== 0) return null
+    return r.stdout.trim() || null
+  } catch {
+    return null
+  }
+}
+
+/** Alive, and the same process: a pid reused since then has a different start time. */
+export function pidAlive(pid: number, pidStart?: string): boolean {
+  if (!pid || pid < 1) return false
+  try {
+    process.kill(pid, 0)
+  } catch (e: any) {
+    if (e?.code !== "EPERM") return false
+  }
+  if (!pidStart) return true
+  const now = ps(pid, "lstart")
+  return now === null ? true : now === pidStart
+}
+
+export const recAlive = (r: Rec) => pidAlive(r.pid, r.pidStart)
+
+const SHELL = /^-?(sh|bash|zsh|dash|fish|ksh|tcsh|csh)$/
+
+/**
+ * The client's own process. Claude Code lists it in its session registry; for
+ * anything else, walk up from the hook past the shells that ran it.
+ */
+export function sessionPid(sessionId: string): number {
+  try {
+    const reg = path.join(os.homedir(), ".claude", "sessions")
+    for (const f of fs.readdirSync(reg)) {
+      if (!f.endsWith(".json")) continue
+      try {
+        const e = JSON.parse(fs.readFileSync(path.join(reg, f), "utf8"))
+        if (e.sessionId === sessionId && Number(e.pid) > 0) return Number(e.pid)
+      } catch {}
+    }
+  } catch {}
+  let pid = process.ppid
+  for (let i = 0; i < 4; i++) {
+    const comm = ps(pid, "comm")
+    if (!comm || !SHELL.test(path.basename(comm))) break
+    const up = Number(ps(pid, "ppid"))
+    if (!up || up <= 1) break
+    pid = up
+  }
+  return pid
+}
+
+// --- the terminal ----------------------------------------------------------------
+
+/** Terminal.app's window id and tab index for a tty, by asking Terminal itself. */
+export const appleLocateScript = (tty: string) =>
+  [
+    `tell application "Terminal"`,
+    `\trepeat with w in windows`,
+    `\t\tset n to 0`,
+    `\t\trepeat with t in tabs of w`,
+    `\t\t\tset n to n + 1`,
+    `\t\t\tif (tty of t) is ${asq(tty)} then return ((id of w) as text) & " " & (n as text)`,
+    `\t\tend repeat`,
+    `\tend repeat`,
+    `end tell`,
+    `return ""`,
+  ].join("\n")
+
+/**
+ * Everything the environment says about where this session is showing. With
+ * `probe`, also ask tmux and Terminal.app for the window and tab, which costs
+ * a process or two, so it is done when a session starts and at the end of a
+ * turn, not on every tool call.
+ */
+export function captureTerminal(env: NodeJS.ProcessEnv, pid: number, probe: boolean): Term {
+  const t: Term = {}
+  if (env.TERM_PROGRAM) t.program = env.TERM_PROGRAM
+  const tty = ps(pid, "tty")
+  if (tty && !/^\?+$/.test(tty)) t.tty = tty.startsWith("/dev/") ? tty : `/dev/${tty}`
+  if (env.TMUX && env.TMUX_PANE) {
+    t.tmux = { pane: env.TMUX_PANE, socket: env.TMUX.split(",")[0] }
+    if (probe) {
+      const r = spawnSync(
+        "tmux",
+        ["display", "-p", "-t", env.TMUX_PANE, "#{session_name}\t#{window_index}\t#{pane_index}"],
+        { encoding: "utf8", timeout: 2000, env },
+      )
+      const [s, w, p] = (r.stdout ?? "").trim().split("\t")
+      if (r.status === 0 && s) Object.assign(t.tmux, { session: s, window: Number(w), paneIndex: Number(p) })
+    }
+  }
+  if (env.KITTY_WINDOW_ID || env.KITTY_LISTEN_ON)
+    t.kitty = { window: env.KITTY_WINDOW_ID, listenOn: env.KITTY_LISTEN_ON }
+  if (env.WEZTERM_PANE) t.wezterm = { pane: env.WEZTERM_PANE }
+  if (env.ITERM_SESSION_ID) {
+    const m = /^w(\d+)t(\d+)p(\d+)/.exec(env.ITERM_SESSION_ID)
+    t.iterm = { id: env.ITERM_SESSION_ID, ...(m ? { window: Number(m[1]), tab: Number(m[2]) } : {}) }
+  }
+  if (env.WT_SESSION) t.wt = { session: env.WT_SESSION }
+  if (env.TERM_PROGRAM === "Apple_Terminal" || (env.TERM_SESSION_ID && !t.iterm)) {
+    t.apple = { sessionId: env.TERM_SESSION_ID }
+    if (probe && t.tty && process.platform === "darwin" && env.TERM_PROGRAM === "Apple_Terminal") {
+      const r = spawnSync("osascript", ["-"], { input: appleLocateScript(t.tty), encoding: "utf8", timeout: 2500 })
+      const [w, n] = (r.stdout ?? "").trim().split(" ").map(Number)
+      if (r.status === 0 && w && n) Object.assign(t.apple, { window: w, tab: n })
+    }
+    if (env.TERM_PROGRAM !== "Apple_Terminal" && !t.apple.window) delete t.apple
+  }
+  return t
+}
+
+// --- what to run -----------------------------------------------------------------
+
+/** One POSIX shell word. */
+export const shq = (s: string) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`)
+/** One AppleScript string literal. */
+export const asq = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
+
+/** The command that brings a session back, or null for a client that cannot resume. */
+export function resumeArgv(r: Rec, bin?: string): string[] | null {
+  if (r.client === "claude") return [bin ?? "claude", "--resume", r.sessionId]
+  if (r.client === "codex") return [bin ?? "codex", "resume", r.sessionId]
+  return null
+}
+
+/** What a person would type: go to the folder, resume. */
+export const typed = (r: Rec) => `cd ${shq(r.cwd)} && ${resumeArgv(r)!.map(shq).join(" ")}`
+
+export type Kind = "tmux" | "apple" | "iterm" | "ghostty" | "kitty" | "wezterm" | "wt"
+
+export function kindOf(t: Term | undefined): Kind | null {
+  if (!t) return null
+  if (t.tmux) return "tmux"
+  if (t.program === "Apple_Terminal") return "apple"
+  if (t.program === "iTerm.app" || t.iterm) return "iterm"
+  if (t.program === "ghostty") return "ghostty"
+  if (t.kitty) return "kitty"
+  if (t.wezterm || t.program === "WezTerm") return "wezterm"
+  if (t.wt) return "wt"
+  if (t.apple) return "apple"
+  return null
+}
+
+/** The app macOS asks about: the one the hook runs inside. */
+export function appName(t: Term | undefined): string {
+  switch (t?.program) {
+    case "Apple_Terminal":
+      return "Terminal"
+    case "iTerm.app":
+      return "iTerm"
+    case "ghostty":
+      return "Ghostty"
+    case "WezTerm":
+      return "WezTerm"
+    case "vscode":
+      return "Visual Studio Code"
+    default:
+      return "the app crosstalk runs in"
+  }
+}
+
+export type Step = { cmd: string; args: string[]; input?: string }
+export type Plan = {
+  kind: Kind | "manual"
+  sessions: Rec[]
+  steps: Step[]
+  /** Opening tabs in this terminal types keys through System Events, which needs Accessibility. */
+  needsAccessibility?: boolean
+}
+
+export type Env = {
+  platform: NodeJS.Platform
+  /** The asking session's terminal, used for any session whose own cannot be reached. */
+  current: Term
+  has: (bin: string) => boolean
+  /** Absolute path of a binary, so terminals that exec directly need no PATH. */
+  which: (bin: string) => string | undefined
+  tmuxHasSession: (name: string) => boolean
+  /** False to open one window per session instead of tabs (no Accessibility). */
+  tabs: boolean
+}
+
+function usable(k: Kind, e: Env, t: Term | undefined): boolean {
+  switch (k) {
+    case "tmux":
+      return e.has("tmux")
+    case "apple":
+    case "iterm":
+    case "ghostty":
+      return e.platform === "darwin" && e.has("osascript")
+    case "kitty":
+      return e.has("kitten") && !!(e.current.kitty?.listenOn ?? t?.kitty?.listenOn)
+    case "wezterm":
+      return e.has("wezterm")
+    case "wt":
+      return e.platform === "win32" && e.has("wt")
+  }
+}
+
+/** Which adapter a session goes to: its own terminal, else the asking one's, else none. */
+export function adapterFor(r: Rec, e: Env): Kind | "manual" {
+  if (/[\n\r\0]/.test(r.cwd) || !r.cwd) return "manual"
+  const own = kindOf(r.terminal)
+  if (own && usable(own, e, r.terminal)) return own
+  const cur = kindOf(e.current)
+  if (cur && usable(cur, e, e.current)) return cur
+  return "manual"
+}
+
+const groupBy = <T>(xs: T[], key: (x: T) => string) => {
+  const m = new Map<string, T[]>()
+  for (const x of xs) m.set(key(x), [...(m.get(key(x)) ?? []), x])
+  return m
+}
+const num = (n: number | undefined) => (n === undefined || Number.isNaN(n) ? Infinity : n)
+
+/**
+ * Terminal.app, one window. The first session opens the window; each next one
+ * is a new tab (Cmd-T through System Events, the only way Terminal opens a tab
+ * from a script) running its command. If System Events refuses, that and every
+ * later session in the window gets a window of its own instead, and the script
+ * returns the error number so the reason can say what permission is missing.
+ */
+export function appleTerminalScript(cmds: string[], tabs: boolean): string {
+  const L: string[] = [`set crosstalkFallback to ""`, `tell application "Terminal"`, `\tactivate`, `\tdo script ${asq(cmds[0])}`, `end tell`]
+  for (const c of cmds.slice(1)) {
+    if (!tabs) {
+      L.push(`tell application "Terminal" to do script ${asq(c)}`)
+      continue
+    }
+    L.push(
+      `if crosstalkFallback is "" then`,
+      `\ttry`,
+      `\t\tdelay 0.3`,
+      `\t\ttell application "System Events" to keystroke "t" using command down`,
+      `\t\tdelay 0.6`,
+      `\t\ttell application "Terminal" to do script ${asq(c)} in selected tab of front window`,
+      `\ton error errMsg number errNum`,
+      `\t\tset crosstalkFallback to (errNum as text)`,
+      `\t\ttell application "Terminal" to do script ${asq(c)}`,
+      `\tend try`,
+      `else`,
+      `\ttell application "Terminal" to do script ${asq(c)}`,
+      `end if`,
+    )
+  }
+  L.push(`return "done " & crosstalkFallback`)
+  return L.join("\n")
+}
+
+/** iTerm2 opens tabs through its own scripting, so it needs no Accessibility. */
+export function itermScript(cmds: string[]): string {
+  const L = [`tell application "iTerm2"`, `\tactivate`, `\tset w to (create window with default profile)`, `\ttell current session of w to write text ${asq(cmds[0])}`]
+  for (const c of cmds.slice(1))
+    L.push(`\ttell w`, `\t\tset t to (create tab with default profile)`, `\t\ttell current session of t to write text ${asq(c)}`, `\tend tell`)
+  L.push(`end tell`, `return "done "`)
+  return L.join("\n")
+}
+
+/** Ghostty has no tab scripting: a new window, then Cmd-T and the command typed. */
+export function ghosttyScript(cmds: string[]): string {
+  const L = [`set crosstalkFallback to ""`, `tell application "Ghostty" to activate`, `delay 0.5`, `try`]
+  cmds.forEach((c, i) => {
+    L.push(
+      `\ttell application "System Events"`,
+      `\t\tkeystroke ${i === 0 ? `"n"` : `"t"`} using command down`,
+      `\t\tdelay 0.8`,
+      `\t\tkeystroke ${asq(c)}`,
+      `\t\tkey code 36`,
+      `\tend tell`,
+    )
+  })
+  L.push(`on error errMsg number errNum`, `\tset crosstalkFallback to (errNum as text)`, `end try`, `return "done " & crosstalkFallback`)
+  return L.join("\n")
+}
+
+/** Windows Terminal reads `;` as its own command separator. */
+const wtArg = (s: string) => s.replace(/;/g, "\\;")
+
+export function plan(recs: Rec[], e: Env): { plans: Plan[]; skipped: Rec[] } {
+  const skipped = recs.filter((r) => !resumeArgv(r))
+  const ok = order(recs.filter((r) => resumeArgv(r)))
+  const byKind = groupBy(ok, (r) => adapterFor(r, e))
+  const plans: Plan[] = []
+  const exec = (r: Rec) => resumeArgv(r, e.which(r.client === "codex" ? "codex" : "claude"))!
+
+  for (const [kind, rs] of byKind) {
+    if (kind === "tmux") {
+      // One group per tmux session, windows in their old order.
+      const groups = groupBy(rs, (r) => r.terminal.tmux?.session ?? e.current.tmux?.session ?? "crosstalk")
+      for (const [name, g] of groups) {
+        const sorted = [...g].sort(
+          (a, b) =>
+            num(a.terminal.tmux?.window) - num(b.terminal.tmux?.window) ||
+            num(a.terminal.tmux?.paneIndex) - num(b.terminal.tmux?.paneIndex) ||
+            a.startedAt - b.startedAt,
+        )
+        let exists = e.tmuxHasSession(name)
+        const steps: Step[] = sorted.map((r) => {
+          const cmd = exec(r).map(shq).join(" ")
+          if (!exists) {
+            exists = true
+            return { cmd: "tmux", args: ["new-session", "-d", "-s", name, "-c", r.cwd, cmd] }
+          }
+          return { cmd: "tmux", args: ["new-window", "-d", "-t", `=${name}:`, "-c", r.cwd, cmd] }
+        })
+        plans.push({ kind: "tmux", sessions: sorted, steps })
+      }
+    } else if (kind === "apple") {
+      // One window per old window, oldest window first, tabs in their old order.
+      const groups = groupBy(rs, (r) => String(r.terminal.apple?.window ?? "?"))
+      const keys = [...groups.keys()].sort((a, b) => num(Number(a)) - num(Number(b)))
+      for (const k of keys) {
+        const g = [...groups.get(k)!].sort(
+          (a, b) => num(a.terminal.apple?.tab) - num(b.terminal.apple?.tab) || a.startedAt - b.startedAt,
+        )
+        const tabs = e.tabs && g.length > 1
+        plans.push({
+          kind: "apple",
+          sessions: g,
+          needsAccessibility: tabs,
+          steps: [{ cmd: "osascript", args: ["-"], input: appleTerminalScript(g.map(typed), tabs) }],
+        })
+      }
+    } else if (kind === "iterm") {
+      const groups = groupBy(rs, (r) => String(r.terminal.iterm?.window ?? "?"))
+      for (const k of [...groups.keys()].sort((a, b) => num(Number(a)) - num(Number(b)))) {
+        const g = [...groups.get(k)!].sort((a, b) => num(a.terminal.iterm?.tab) - num(b.terminal.iterm?.tab) || a.startedAt - b.startedAt)
+        plans.push({ kind: "iterm", sessions: g, steps: [{ cmd: "osascript", args: ["-"], input: itermScript(g.map(typed)) }] })
+      }
+    } else if (kind === "ghostty") {
+      if (e.tabs) plans.push({ kind: "ghostty", sessions: rs, needsAccessibility: true, steps: [{ cmd: "osascript", args: ["-"], input: ghosttyScript(rs.map(typed)) }] })
+      else plans.push({ kind: "manual", sessions: rs, steps: [] })
+    } else if (kind === "kitty") {
+      const to = e.current.kitty?.listenOn ?? rs[0].terminal.kitty?.listenOn!
+      plans.push({
+        kind: "kitty",
+        sessions: rs,
+        steps: rs.map((r) => ({ cmd: "kitten", args: ["@", "--to", to, "launch", "--type=tab", "--cwd", r.cwd, ...exec(r)] })),
+      })
+    } else if (kind === "wezterm") {
+      plans.push({
+        kind: "wezterm",
+        sessions: rs,
+        steps: rs.map((r) => ({ cmd: "wezterm", args: ["cli", "spawn", "--cwd", r.cwd, "--", ...exec(r)] })),
+      })
+    } else if (kind === "wt") {
+      plans.push({
+        kind: "wt",
+        sessions: rs,
+        steps: rs.map((r) => ({ cmd: "wt", args: ["-w", "0", "nt", "-d", wtArg(r.cwd), ...exec(r).map(wtArg)] })),
+      })
+    } else {
+      plans.push({ kind: "manual", sessions: rs, steps: [] })
+    }
+  }
+  return { plans, skipped }
+}
+
+// --- permissions (macOS) -------------------------------------------------------
+
+export type Pane = "accessibility" | "automation"
+
+export const SETTINGS_URL: Record<Pane, string> = {
+  accessibility: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+  automation: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
+}
+
+/** What an osascript failure was about, from its error number or text. */
+export function classifyOsaError(text: string): Pane | null {
+  if (/-1743\b|not authori[sz]ed to send apple events/i.test(text)) return "automation"
+  // 1002 is what System Events answers a keystroke with when it may not type.
+  if (/-25211\b|-1719\b|^1002$|\(1002\)|assistive access|not allowed to send keystrokes|accessibility/i.test(text.trim()))
+    return "accessibility"
+  return null
+}
+
+/** Settings is only ever opened because the person just asked to restore, and not twice in a row. */
+export const REOPEN_SETTINGS_MS = 2 * 60 * 1000
+export function shouldOpenSettings(o: { pane: Pane; userAction: boolean; state: State; now: number }): boolean {
+  if (!o.userAction) return false
+  const last = o.state.settingsOpened?.[o.pane]
+  return !(last && o.now - last < REOPEN_SETTINGS_MS)
+}
+
+/** The steps, in words, for turning a permission on. */
+export function permissionSteps(pane: Pane, app: string): string[] {
+  return pane === "accessibility"
+    ? [
+        `System Settings → Privacy & Security → Accessibility → turn on ${app}`,
+        `open "${SETTINGS_URL.accessibility}"`,
+      ]
+    : [
+        `System Settings → Privacy & Security → Automation → ${app} → turn on System Events`,
+        `open "${SETTINGS_URL.automation}"`,
+      ]
+}
+
+const JXA_AX = `ObjC.import("ApplicationServices"); var f; try { f = $.AXIsProcessTrusted() } catch (e) { ObjC.bindFunction("AXIsProcessTrusted", ["bool", []]); f = $.AXIsProcessTrusted() } f ? "yes" : "no"`
+/**
+ * Whether the app crosstalk runs in may type keys, asked without asking the
+ * person: AXIsProcessTrusted only reports, it never prompts. null when unknown.
+ */
+export function accessibilityGranted(): boolean | null {
+  if (process.platform !== "darwin") return null
+  const forced = process.env.CROSSTALK_FAKE_ACCESSIBILITY
+  if (forced) return forced === "yes"
+  const r = spawnSync("osascript", ["-l", "JavaScript", "-e", JXA_AX], { encoding: "utf8", timeout: 3000 })
+  const out = (r.stdout ?? "").trim()
+  return out === "yes" ? true : out === "no" ? false : null
+}
+
+const JXA_AUTOMATION = `ObjC.import("Foundation"); ObjC.import("CoreServices");
+var d = $.NSAppleEventDescriptor.descriptorWithBundleIdentifier("com.apple.systemevents");
+String($.AEDeterminePermissionToAutomateTarget(d.aeDesc, 0x2A2A2A2A, 0x2A2A2A2A, false))`
+/**
+ * Whether the app crosstalk runs in may control System Events, without
+ * prompting: AEDeterminePermissionToAutomateTarget with askUserIfNeeded false.
+ * "ask" means macOS has not been asked yet and will ask on the first restore.
+ */
+export function automationGranted(): "yes" | "no" | "ask" | null {
+  if (process.platform !== "darwin") return null
+  const r = spawnSync("osascript", ["-l", "JavaScript", "-e", JXA_AUTOMATION], { encoding: "utf8", timeout: 3000 })
+  const code = Number((r.stdout ?? "").trim())
+  if (r.status !== 0 || Number.isNaN(code)) return null
+  if (code === 0) return "yes"
+  if (code === -1743) return "no"
+  if (code === -1744) return "ask"
+  return null
+}
+
+function openSettings(pane: Pane) {
+  if (process.env.CROSSTALK_NO_OPEN) return
+  spawnSync("open", [SETTINGS_URL[pane]], { timeout: 5000 })
+}
+
+function notify(text: string) {
+  if (process.platform !== "darwin" || process.env.CROSSTALK_NO_OPEN) return
+  spawnSync("osascript", ["-e", `display notification ${asq(text)} with title "crosstalk"`], { timeout: 5000 })
+}
+
+// --- doing it --------------------------------------------------------------------
+
+function which(bin: string): string | undefined {
+  for (const d of (process.env.PATH ?? "").split(path.delimiter)) {
+    if (!d) continue
+    const p = path.join(d, bin)
+    try {
+      fs.accessSync(p, fs.constants.X_OK)
+      return p
+    } catch {}
+  }
+  return undefined
+}
+
+export function liveEnv(env: NodeJS.ProcessEnv, tabs: boolean): Env {
+  return {
+    platform: process.platform,
+    current: captureTerminal(env, process.pid, true),
+    has: (b) => !!which(b),
+    which,
+    tmuxHasSession: (name) => spawnSync("tmux", ["has-session", "-t", `=${name}`], { stdio: "ignore", timeout: 2000 }).status === 0,
+    tabs,
+  }
+}
+
+const label = (r: Rec) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path.basename(r.cwd) || r.sessionId.slice(0, 8)
+export const names = (rs: Rec[], max = 4) =>
+  rs.slice(0, max).map(label).join(", ") + (rs.length > max ? ", …" : "")
+
+export const commandsFile = () => path.join(P.root, "restore-commands.sh")
+
+export function ctxNow(): Ctx {
+  const now = Date.now()
+  return { now, boot: bootTime(process.env, now), all: readAll(), alive: recAlive }
+}
+
+/** The question, for the first session opened. Null when there is nothing to ask. */
+export function question(lost: Rec[], boot: number, current: Term): string | null {
+  if (!lost.length) return null
+  const n = lost.length
+  const restart = lost.some((r) => r.seenAt < boot)
+  const what = `${n} session${n === 1 ? " was" : "s were"} open ${restart ? "before the restart" : "when they were cut off"}`
+  const k = kindOf(current)
+  const firstTime =
+    (k === "apple" || k === "ghostty") && process.platform === "darwin" && !loadState().tabsWorked && n > 1
+      ? ` The first time, macOS asks whether ${appName(current)} may control System Events: allow it, so they open as tabs.`
+      : ""
+  return `◢ crosstalk: ${what} (${names(lost)}). Say "restore them" to bring ${n === 1 ? "it" : "them"} back.${firstTime}`
+}
+
+/**
+ * Put the question once. Marks each lost session as asked, under a lock so two
+ * sessions opened at the same moment do not both ask.
+ */
+export function askOnce(self: string, current: Term): string | null {
+  const c = ctxNow()
+  const lost = lostSessions(c, self)
+  if (!lost.some((r) => !r.askedAt)) return null
+  const lock = path.join(dir(), ".asking")
+  try {
+    fs.mkdirSync(dir(), { recursive: true, mode: 0o700 })
+    try {
+      if (Date.now() - fs.statSync(lock).mtimeMs > 30_000) fs.rmdirSync(lock)
+    } catch {}
+    fs.mkdirSync(lock)
+  } catch {
+    return null
+  }
+  try {
+    const fresh = lostSessions(ctxNow(), self)
+    if (!fresh.some((r) => !r.askedAt)) return null
+    for (const r of fresh) if (!r.askedAt) writeRec({ ...r, askedAt: Date.now() })
+    return question(fresh, c.boot, current)
+  } finally {
+    try {
+      fs.rmdirSync(lock)
+    } catch {}
+  }
+}
+
+export type Outcome = { ok: boolean; text: string; lost: Rec[]; restored: Rec[] }
+
+/** What would be reopened, without doing it. */
+export function describe(self: string | undefined, env: NodeJS.ProcessEnv = process.env, dry = false): Outcome {
+  const lost = lostSessions(ctxNow(), self)
+  if (!lost.length) return { ok: true, text: "◢ crosstalk: nothing to restore.", lost, restored: [] }
+  const lines = [`◢ crosstalk: ${lost.length} session${lost.length === 1 ? "" : "s"} to restore:`]
+  for (const r of lost) lines.push(`  ${label(r).padEnd(16)} ${r.cwd}  (${r.client}${resumeArgv(r) ? "" : ", cannot resume"})`)
+  if (dry) {
+    const { plans } = plan(lost, liveEnv(env, true))
+    for (const p of plans) {
+      lines.push("", `  ${p.kind}: ${p.sessions.map(label).join(", ")}${p.needsAccessibility ? "  (tabs need Accessibility)" : ""}`)
+      if (p.kind === "manual") for (const r of p.sessions) lines.push(`    ${typed(r)}`)
+      for (const s of p.steps) {
+        lines.push(`    $ ${[s.cmd, ...s.args].map(shq).join(" ")}`)
+        if (s.input) lines.push(...s.input.split("\n").map((l) => `      ${l}`))
+      }
+    }
+  }
+  return { ok: true, text: lines.join("\n"), lost, restored: [] }
+}
+
+/** Forget the lost sessions: the person said no. */
+export function forget(self: string | undefined): Outcome {
+  const lost = lostSessions(ctxNow(), self)
+  for (const r of lost) removeRec(r.sessionId)
+  return {
+    ok: true,
+    text: lost.length ? `◢ crosstalk: left ${lost.length} session${lost.length === 1 ? "" : "s"} closed.` : "◢ crosstalk: nothing to restore.",
+    lost,
+    restored: [],
+  }
+}
+
+const pendingFile = () => path.join(P.root, "restore-pending.json")
+type Pending = { ids: string[]; current: Term; until: number; self?: string }
+
+/**
+ * Take the pending restore for this process, atomically, so the background
+ * waiter and a person asking again never both run it.
+ */
+function claimPending(): Pending | null {
+  const mine = `${pendingFile()}.${process.pid}`
+  try {
+    fs.renameSync(pendingFile(), mine)
+  } catch {
+    return null
+  }
+  try {
+    return JSON.parse(fs.readFileSync(mine, "utf8"))
+  } catch {
+    return null
+  } finally {
+    try {
+      fs.unlinkSync(mine)
+    } catch {}
+  }
+}
+
+export type RunOpts = {
+  self?: string
+  env?: NodeJS.ProcessEnv
+  /** False opens one window per session, needing no Accessibility. */
+  tabs?: boolean
+  /** True when a person just asked for this; only then may System Settings be opened. */
+  userAction: boolean
+  /** Where the plugin lives, for starting the background waiter. */
+  root?: string
+}
+
+function runStep(s: Step): { ok: boolean; out: string } {
+  const r = spawnSync(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 60_000 })
+  return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() }
+}
+
+/**
+ * Reopen every lost session.
+ *
+ * The records are removed before anything opens, since a resumed session
+ * registers again under the same id within a second and must not find itself
+ * listed as lost; any that fail to open are written back.
+ */
+export function restore(o: RunOpts, only?: Rec[]): Outcome {
+  const env = o.env ?? process.env
+  const lost = only ?? lostSessions(ctxNow(), o.self)
+  if (!lost.length) return { ok: true, text: "◢ crosstalk: nothing to restore.", lost, restored: [] }
+  claimPending() // anything waiting in the background is superseded by this
+
+  const e = liveEnv(env, o.tabs ?? true)
+  let { plans, skipped } = plan(lost, e)
+  const app = appName(e.current)
+  const notes: string[] = []
+  const state = loadState()
+
+  // Tabs in Terminal.app and Ghostty are typed through System Events. Check
+  // before opening anything, so the restore is not half done when it stops.
+  if (plans.some((p) => p.needsAccessibility) && accessibilityGranted() === false) {
+    const opened = shouldOpenSettings({ pane: "accessibility", userAction: o.userAction, state, now: Date.now() })
+    if (opened) {
+      openSettings("accessibility")
+      saveState({ ...state, settingsOpened: { ...state.settingsOpened, accessibility: Date.now() } })
+    }
+    const p: Pending = { ids: lost.map((r) => r.sessionId), current: e.current, until: Date.now() + WAIT_MS(), self: o.self }
+    fs.mkdirSync(P.root, { recursive: true, mode: 0o700 })
+    fs.writeFileSync(pendingFile(), JSON.stringify(p), { mode: 0o600 })
+    startWaiter(o.root)
+    const [steps, cmd] = permissionSteps("accessibility", app)
+    return {
+      ok: true,
+      text: [
+        `◢ crosstalk needs permission to open tabs in ${app}.`,
+        opened ? `  Opened System Settings. Turn on ${app} under Accessibility; crosstalk will finish restoring by itself.` : `  ${steps}`,
+        ...(opened ? [] : [`  ${cmd}`, `  crosstalk will finish restoring by itself once it is on.`]),
+      ].join("\n"),
+      lost,
+      restored: [],
+    }
+  }
+
+  for (const r of lost) removeRec(r.sessionId)
+  const restored: Rec[] = []
+  const failed: Rec[] = []
+  const manual: Rec[] = []
+  let missing: Pane | null = null
+
+  for (const p of plans) {
+    if (p.kind === "manual") {
+      manual.push(...p.sessions)
+      continue
+    }
+    let ok = true
+    let out = ""
+    for (const s of p.steps) {
+      const r = runStep(s)
+      out += r.out + "\n"
+      if (!r.ok) {
+        ok = false
+        break
+      }
+    }
+    const fellBack = /done (-?\d+)/.exec(out)
+    if (ok && fellBack) {
+      // The script opened every session, but as separate windows from the
+      // point System Events refused.
+      missing = classifyOsaError(fellBack[1]) ?? "automation"
+      notes.push(
+        `Opened ${p.sessions.length} in ${app} as separate windows: ${app} ${missing === "accessibility" ? "may not type keys (Accessibility)" : "may not control System Events (Automation)"}.`,
+      )
+    } else if (ok && p.needsAccessibility) saveState({ ...loadState(), tabsWorked: Date.now() })
+    if (ok) restored.push(...p.sessions)
+    else {
+      missing ??= classifyOsaError(out)
+      failed.push(...p.sessions)
+      notes.push(`${p.kind} could not open ${names(p.sessions)}: ${out.trim().split("\n").pop()}`)
+    }
+  }
+  // Whatever could not be opened, the person can paste in one go.
+  const rest = [...manual, ...failed]
+  for (const r of failed) writeRec(r)
+  if (rest.length) {
+    const lines = rest.map(typed)
+    fs.mkdirSync(P.root, { recursive: true, mode: 0o700 })
+    fs.writeFileSync(commandsFile(), `#!/bin/sh\n# Sessions crosstalk could not reopen by itself. Each line is one tab.\n${lines.join("\n")}\n`, { mode: 0o700 })
+    notes.push(`Paste each line into its own tab (also in ${commandsFile()}):`, ...lines.map((l) => `  ${l}`))
+  }
+  if (skipped.length) notes.push(`Skipped ${names(skipped)}: ${[...new Set(skipped.map((r) => r.client))].join(", ")} cannot resume a session.`)
+  for (const r of skipped) removeRec(r.sessionId)
+  if (missing && process.platform === "darwin") {
+    const opened = shouldOpenSettings({ pane: missing, userAction: o.userAction, state: loadState(), now: Date.now() })
+    if (opened) {
+      openSettings(missing)
+      const s = loadState()
+      saveState({ ...s, settingsOpened: { ...s.settingsOpened, [missing]: Date.now() } })
+    }
+    const [steps, cmd] = permissionSteps(missing, app)
+    notes.push(opened ? `Opened System Settings, so next time they open as tabs: ${steps}` : `For tabs next time: ${steps}`, `  ${cmd}`)
+  }
+  const head = restored.length
+    ? `◢ crosstalk: reopened ${restored.length} session${restored.length === 1 ? "" : "s"} (${names(restored)}).`
+    : `◢ crosstalk: reopened nothing.`
+  return { ok: !failed.length, text: [head, ...notes.map((n) => `  ${n}`)].join("\n"), lost, restored }
+}
+
+// --- waiting for Accessibility ---------------------------------------------------
+
+const WAIT_MS = () => Number(process.env.CROSSTALK_RESTORE_WAIT_MS ?? 2 * 60 * 1000)
+const POLL_MS = 2000
+
+function startWaiter(root?: string) {
+  if (process.env.CROSSTALK_NO_WAITER) return
+  try {
+    const child = spawn(shim(root ?? rootFrom(import.meta.url)), ["restore", "--finish"], {
+      detached: true,
+      stdio: "ignore",
+    })
+    child.unref()
+  } catch {}
+}
+
+/**
+ * Runs detached after a restore stopped for Accessibility: checks every two
+ * seconds, without side effects, and finishes the restore with tabs as soon
+ * as the permission is on. If it never comes, nothing opens by surprise
+ * minutes later; the sessions stay listed and a notification says so.
+ */
+export async function finishWhenPermitted(): Promise<string> {
+  let p: Pending | null = null
+  try {
+    p = JSON.parse(fs.readFileSync(pendingFile(), "utf8"))
+  } catch {}
+  if (!p) return "nothing pending"
+  while (Date.now() < p.until) {
+    if (accessibilityGranted() === true) break
+    await new Promise((r) => setTimeout(r, POLL_MS))
+    if (!fs.existsSync(pendingFile())) return "taken over"
+  }
+  const mine = claimPending()
+  if (!mine) return "taken over"
+  if (accessibilityGranted() !== true) {
+    notify(`No Accessibility permission yet, so nothing was reopened. Say "restore them" in any session to try again.`)
+    return "timed out"
+  }
+  const recs = mine.ids.map(readOne).filter((r): r is Rec => !!r)
+  const env = { ...process.env, ...termEnv(mine.current) }
+  const out = restore({ self: mine.self, env, userAction: false }, recs)
+  notify(out.restored.length ? `Reopened ${out.restored.length} session${out.restored.length === 1 ? "" : "s"}.` : out.text)
+  return out.text
+}
+
+/** Enough of an environment for captureTerminal to see the terminal it was asked from. */
+function termEnv(t: Term): NodeJS.ProcessEnv {
+  const e: NodeJS.ProcessEnv = {}
+  if (t.program) e.TERM_PROGRAM = t.program
+  if (t.apple?.sessionId) e.TERM_SESSION_ID = t.apple.sessionId
+  return e
+}
+
+// --- the hook's part -------------------------------------------------------------
+
+/** `@restore`, `@restore no`, `@restore windows`: a shortcut nobody has to know. */
+export function parseShortcut(prompt: string): "yes" | "no" | "windows" | null {
+  const m = /^@restore(?:\s+(\S+))?$/i.exec(prompt.trim())
+  if (!m) return null
+  const w = (m[1] ?? "").toLowerCase()
+  if (!w || w === "yes" || w === "y") return "yes"
+  if (w === "no" || w === "n") return "no"
+  if (w === "windows") return "windows"
+  return null
+}
+
+/**
+ * Keep this session's record current. Called by the hook on every event that
+ * is cheap enough: a session start captures everything, the end of a turn
+ * refreshes the tab position, a prompt only says the session is alive.
+ */
+export function note(o: {
+  event: string
+  sessionId: string
+  cwd: string
+  client: string
+  name?: string
+  env: NodeJS.ProcessEnv
+  source?: string
+  reason?: string
+}) {
+  const now = Date.now()
+  const before = readOne(o.sessionId)
+  if (/^SessionEnd$/i.test(o.event)) {
+    if (before) writeRec({ ...before, endedAt: now, endReason: o.reason ?? "other", seenAt: now })
+    return
+  }
+  const start = /^SessionStart$/i.test(o.event)
+  const turnEnd = /^Stop$/i.test(o.event)
+  if (!start && before && !turnEnd) {
+    // A prompt or tool call: only that it is still here, at most once a minute.
+    if (now - before.seenAt > 60_000) writeRec({ ...before, seenAt: now, cwd: o.cwd || before.cwd })
+    return
+  }
+  const pid = start || !before ? sessionPid(o.sessionId) : before.pid
+  const args = start || !before ? ps(pid, "args") ?? "" : ""
+  const rec: Rec = {
+    sessionId: o.sessionId,
+    cwd: o.cwd,
+    client: o.client,
+    name: o.name ?? before?.name,
+    pid,
+    pidStart: start || !before ? ps(pid, "lstart") ?? undefined : before.pidStart,
+    interactive: start || !before ? !/(^|\s)(-p|--print)(\s|$)/.test(args) : before.interactive,
+    // A resumed session keeps its id, and is the same piece of work.
+    startedAt: before?.startedAt ?? now,
+    seenAt: now,
+    terminal: captureTerminal(o.env, pid, true),
+  }
+  writeRec(rec)
+  if (start) prune(now)
+}

@@ -636,13 +636,15 @@ Permission relay across people is not implemented and never will be.
 
 ## Docs
 
-- [Tools](docs/tools.md), the 17 an agent gets, and what each one is for
+- [Tools](docs/tools.md), the 19 an agent gets, and what each one is for
 
 - [Clients](docs/clients.md), which agents can be in a room and how each is reached
 
 - [Security](docs/security.md), the threat model and what the relay can see
 
 - [Architecture](docs/architecture.md), how the pieces fit and what happens when a machine sleeps
+
+- [Restore after a restart](docs/restore.md), getting every session back in its tab after a restart or crash
 
 - [Design notes](docs/design/attention.md), why interruption works the way it does
 

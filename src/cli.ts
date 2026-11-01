@@ -13,6 +13,7 @@
 //   crosstalk facts | tasks | room       what the room keeps
 //   crosstalk relay [status|start|stop]  the relay, not the server itself
 //   crosstalk peers | status | cost | attention | doctor
+//   crosstalk restore [--yes|--dry-run|no]  sessions lost to a restart
 //   crosstalk post "…" [--intent] [--source]
 //   crosstalk mute [peer] [minutes]
 //   crosstalk relay start|stop|status
@@ -47,6 +48,7 @@ import { summarise } from "./usage.ts"
 import * as trust from "./trust.ts"
 import * as facts from "./facts.ts"
 import { rootFrom, shim } from "./paths.ts"
+import * as restore from "./restore.ts"
 import fs from "node:fs"
 import path from "node:path"
 import os from "node:os"
@@ -609,6 +611,43 @@ async function doctor() {
         false,
         `${pending.join(", ")} not trusted yet, so codex will skip them. Run codex, then /hooks, and trust the crosstalk entries.`,
       ])
+  }
+
+  // Restore after a restart: what is waiting to be reopened, and on a Mac
+  // whether the two permissions tabs need are on. Both checks only ask macOS,
+  // they never prompt.
+  {
+    const lost = restore.lostSessions(restore.ctxNow(), process.env.CLAUDE_CODE_SESSION_ID)
+    rows.push([
+      "restore",
+      lost.length ? false : null,
+      lost.length
+        ? `${lost.length} session(s) lost to a restart (${restore.names(lost)}). Say "restore them", or run crosstalk restore --yes`
+        : "nothing to restore",
+    ])
+    if (process.platform === "darwin") {
+      const app = restore.appName(restore.captureTerminal(process.env, process.pid, false))
+      const ax = restore.accessibilityGranted()
+      const [axSteps, axCmd] = restore.permissionSteps("accessibility", app)
+      rows.push([
+        "accessibility",
+        ax,
+        ax === true
+          ? `${app} may open tabs`
+          : `${ax === false ? "off" : "unknown"}; without it restored sessions open as one window each.\n${" ".repeat(26)}${axSteps}\n${" ".repeat(26)}${axCmd}`,
+      ])
+      const au = restore.automationGranted()
+      const [auSteps, auCmd] = restore.permissionSteps("automation", app)
+      rows.push([
+        "automation",
+        au === "yes" ? true : au === "no" ? false : null,
+        au === "yes"
+          ? `${app} may control System Events`
+          : au === "ask"
+            ? `macOS will ask once, the first time sessions are restored as tabs; allow it`
+            : `${au === "no" ? "off" : "unknown"}; tabs need ${app} to control System Events.\n${" ".repeat(26)}${auSteps}\n${" ".repeat(26)}${auCmd}`,
+      ])
+    }
   }
 
   const relayUrl = loadRelay().url
@@ -1582,6 +1621,33 @@ async function installPath() {
   )
 }
 
+/**
+ * Sessions lost to a restart or a dead terminal, for scripts. In a session,
+ * saying "restore them" does the same through crosstalk_restore.
+ *
+ *   crosstalk restore             list them
+ *   crosstalk restore --dry-run   and exactly what would be run, AppleScript included
+ *   crosstalk restore --yes       reopen them (--windows: one window each, no tabs)
+ *   crosstalk restore no          forget them
+ */
+async function restoreCmd() {
+  const self = process.env.CLAUDE_CODE_SESSION_ID || undefined
+  if (has("--finish")) {
+    await restore.finishWhenPermitted()
+    return
+  }
+  if (positional[0] === "no") return console.log(restore.forget(self).text)
+  if (has("--yes") || has("-y") || positional[0] === "yes") {
+    const out = restore.restore({ self, tabs: !has("--windows"), userAction: true, root: ROOT_DIR })
+    console.log(out.text)
+    if (!out.ok) process.exit(1)
+    return
+  }
+  const d = restore.describe(self, process.env, has("--dry-run"))
+  console.log(d.text)
+  if (d.lost.length && !has("--dry-run")) console.log(`\n  crosstalk restore --yes     reopen them\n  crosstalk restore --dry-run show exactly what would run`)
+}
+
 /** Everything a client needs, per client. */
 async function install() {
   const who = (positional[0] ?? "").toLowerCase()
@@ -1621,5 +1687,6 @@ const commands: Record<string, () => Promise<void>> = {
   daemon,
   relay,
   install,
+  restore: restoreCmd,
 }
 await (commands[cmd] ?? (async () => die(`unknown command "${cmd}"`)))()
