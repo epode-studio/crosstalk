@@ -43,6 +43,8 @@ import * as rooms from "./rooms.ts"
 import * as facts from "./facts.ts"
 import * as tasks from "./tasks.ts"
 import type { Envelope, Frame, Intent, Kind, SessionPresence, Slice } from "./protocol.ts"
+import { ThreadService } from "./threads/service.ts"
+import * as threadModel from "./threads/model.ts"
 
 const identity = loadIdentity()
 if (!identity) {
@@ -75,6 +77,8 @@ type Registered = {
   footprint?: footprint.SessionFootprint
   /** When crosstalk's mod in this session last asked what to show. Not persisted: a new daemon waits to hear again. */
   modSeenAt?: number
+  /** The title crosstalk gave the session (`auth · api`), so the registry's copy of it is not taken for its name. */
+  title?: string
 }
 
 /**
@@ -112,12 +116,50 @@ const persistSessions = () => saveRegistered(Object.fromEntries(sessions))
 // does not keep naming sessions this daemon has already forgotten.
 persistSessions()
 
+// --- threads ----------------------------------------------------------------------
+// Found from each session's footprint, synced to their people over the relay,
+// committed to refs/crosstalk/threads on change. All of it in src/threads/.
+
+const threads = new ThreadService({
+  identity,
+  peers: () => loadPeers(),
+  send: (label, env) => sendEnvelope(label, env),
+  log,
+  file: path.join(P.root, "threads.json"),
+  settleMs: Number(process.env.CROSSTALK_THREAD_SETTLE_MS ?? 3000),
+  network: process.env.CROSSTALK_THREADS_NO_PUSH !== "1",
+  fadeDays: Number(process.env.CROSSTALK_THREAD_FADE_DAYS ?? 14),
+})
+
+/** Tell the threads where a session is and what it touched. Never lets a thread problem stop a registration. */
+function observeThreads(reg: Registered) {
+  try {
+    const fp = footprintOf(reg)
+    threads.observe({
+      sessionId: reg.sessionId,
+      name: reg.name,
+      cwd: reg.cwd,
+      repo: fp.repo,
+      branch: fp.branch,
+      root: fp.root,
+      paths: footprint.summarise(fp)?.paths ?? [],
+    })
+  } catch (e) {
+    log(`threads: ${(e as Error).message}`)
+  }
+}
+
+/** A thread's name for a card, from the ids a message carried. */
+const threadNames = (ids?: string[]) =>
+  ids?.length ? [...new Set(ids.map((id) => threads.thread(id)?.meta.value.name).filter((n): n is string => !!n))].join(", ") || undefined : undefined
+
 /** Drop pull-mode sessions that have gone quiet. Returns how many went. */
 function sweepSessions(): number {
   let gone = 0
   for (const [id, reg] of [...sessions]) {
     if (stillAround(id, reg)) continue
     sessions.delete(id)
+    threads.forget(id)
     gone++
   }
   if (gone) persistSessions()
@@ -164,10 +206,15 @@ const localPresence = (): SessionPresence[] => {
   for (const reg of sessions.values()) {
     const known = live.find((s) => s.sessionId === reg.sessionId)
     out.push({
-      name: known?.name ?? reg.name,
+      // The registry shows the title crosstalk gave it; peers know it by its name.
+      name: known?.name && known.name !== reg.title ? known.name : reg.name,
       cwd: known?.cwd ?? reg.cwd,
       status: known?.status ?? "unknown",
       lastSeen: known?.updatedAt ?? Date.now(),
+      // For a peer's threads to find this session. Sealed pairwise, and only
+      // ever sent to people with a direct channel, like the cwd above.
+      ...(reg.footprint?.repo ? { footprint: footprint.summarise(reg.footprint) } : {}),
+      threads: threads.idsFor(reg.sessionId),
     })
   }
   return out
@@ -238,6 +285,21 @@ function routeInbound(peerLabel: string, env: Envelope): Route {
     if (named) return { target: named, how: "named" }
   }
   const fp = footprint.parseSummary(env.footprint)
+  // Talking is per thread: a session in the sender's thread gets it, and among
+  // several of them the footprint picks.
+  if (Array.isArray(env.threads) && env.threads.length) {
+    const inThread = threads
+      .sessionsIn(env.threads.filter((t): t is string => typeof t === "string").slice(0, 20))
+      .map((id) => sessions.get(id))
+      .filter((s): s is Registered => !!s)
+    if (inThread.length === 1) return { target: inThread[0], how: "thread" }
+    if (inThread.length > 1) {
+      const c = fp ? footprint.choose(inThread.map((s) => ({ item: s, fp: footprintOf(s) })), fp) : undefined
+      const recent = new Map(listLocalSessions().map((s) => [s.sessionId, s.updatedAt]))
+      const newest = [...inThread].sort((a, b) => (recent.get(b.sessionId) ?? b.seenAt ?? 0) - (recent.get(a.sessionId) ?? a.seenAt ?? 0))[0]
+      return { target: c?.pick ?? newest, how: "thread" }
+    }
+  }
   if (!fp || !sessions.size) return { target: pickSession(), how: "no footprint" }
   const bound = routes[footprint.bindingKey(peerLabel, fp)]
   const boundTo = bound && byNameOrId(bound)
@@ -410,14 +472,20 @@ function uiSync(sid: string): ui.UiItem[] {
           kind: m.kind === "ask" && m.correlation ? "ask" : "message",
           sessionId: sid,
           from: m.from,
-          thread: m.thread ?? m.room ?? (m.fromSession !== "-" ? m.fromSession : undefined),
+          thread: threadNames(m.threads) ?? m.thread ?? m.room ?? (m.fromSession !== "-" ? m.fromSession : undefined),
           text: m.text,
           chips: m.slices.map((s) => ({ kind: s.kind, label: s.label, bytes: s.bytes })),
           ts: m.ts,
+          ...(m.auto ? { auto: true } : {}),
         },
         now,
       )
     }
+    // "Which thread is this session part of?", when its files match two equally.
+    const tq = threads.question(sid)
+    if (tq) ui.upsert(items, { id: tq.id, kind: "thread", sessionId: sid, question: tq.question, options: tq.options, ts: now }, now)
+    for (const it of Object.values(items))
+      if (it.kind === "thread" && it.sessionId === sid && it.id !== tq?.id) ui.settle(items, it.id, "answered", now)
     const waiting = new Set(unrouted.map(routeId))
     for (const u of unrouted) {
       if (u.askedSession !== sid && sessions.has(u.askedSession ?? "")) continue
@@ -744,6 +812,23 @@ function onEnvelope(
 
   if (env.kind === "presence") {
     peerPresence.set(peerLabel, { sessions: env.presence ?? [], at: Date.now() })
+    if (!ctx?.room)
+      try {
+        threads.peerPresence(peerLabel, env.presence)
+      } catch (e) {
+        log(`threads: ${(e as Error).message}`)
+      }
+    return
+  }
+
+  // Thread state comes only over a direct channel, never through a room.
+  if (env.kind === "thread") {
+    if (ctx?.room) return log(`ignored a thread sent through #${ctx.room.name}`)
+    try {
+      threads.accept(peerLabel, env)
+    } catch (e) {
+      log(`threads: ${(e as Error).message}`)
+    }
     return
   }
 
@@ -816,6 +901,10 @@ function onEnvelope(
     room: ctx?.room ? `#${ctx.room.name}` : env.room,
     correlation: env.correlation,
     ts: env.ts,
+    // About this session's own thread: its mod hands it to the agent, as data.
+    ...(route.how === "thread"
+      ? { threads: threads.idsFor(target.sessionId).filter((id) => (env.threads ?? []).some((t) => threads.resolve(t) === id)), auto: true }
+      : {}),
   }
   seenIds.set(env.id, Date.now())
   hold(target.sessionId, h, env.slices)
@@ -1275,7 +1364,10 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       sessions.set(sessionId, {
         sessionId,
         pid: req.pid,
-        name: req.name,
+        // Claude Code's registry shows the title crosstalk gave the session
+        // (`auth · api`); it is still called what it was called.
+        name: before?.title && req.name === before.title ? before.name : req.name,
+        title: before?.title,
         // A client that registers without one gets "", which matches no repo,
         // which is what an absent cwd already did.
         cwd: req.cwd ?? "",
@@ -1328,7 +1420,9 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         if (Date.now() - (reg.seenAt ?? 0) < QUIET_MS) continue
         sessions.delete(id)
         delete held[id]
+        threads.forget(id)
       }
+      observeThreads(sessions.get(sessionId)!)
       persistSessions()
       log(
         `registered session ${req.name} (${req.cwd})${req.socket ? "" : " [pull mode, no inbox socket]"}`,
@@ -1397,6 +1491,19 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
     }
 
     case "tasks": {
+      // Same split as facts: a session in a thread adds to the thread, and a
+      // task id the thread holds is claimed and finished there.
+      const self = req.sessionId ? resolveSession(req) : undefined
+      const mine = self ? threads.idsFor(self.sessionId) : []
+      if (req.write && (req.thread || (mine.length && !req.room))) {
+        const inThread =
+          req.write === "add" || mine.some((id) => threads.thread(id)?.tasks[String(req.id)]) || req.thread
+        if (inThread && (req.write === "add" || req.write === "claim" || req.write === "done")) {
+          const owner = req.thread ?? mine.find((id) => threads.thread(id)?.tasks[String(req.id)])
+          const r = threads.task(self?.sessionId, { op: req.write, text: req.text, id: req.id, note: req.note, thread: owner })
+          return r.ok ? { ok: true, thread: r.thread, op: req.write, id: r.id } : r
+        }
+      }
       const store = tasks.load()
       const roomNames = [
         ...Object.keys(loadPeers()),
@@ -1453,6 +1560,16 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
     }
 
     case "facts": {
+      // New facts from a session in a thread go to the thread; the room store
+      // keeps working for everything else, and for anything named to a room.
+      const self = req.sessionId ? resolveSession(req) : undefined
+      const mine = self ? threads.idsFor(self.sessionId) : []
+      if (req.write === "add" && (req.thread || (mine.length && !req.room))) {
+        const text = String(req.text ?? "").trim()
+        if (!text) return { ok: false, error: "a fact needs some text" }
+        const r = threads.fact(self?.sessionId, { text, thread: req.thread })
+        return r.ok ? { ok: true, thread: r.thread, op: "add", id: r.id } : r
+      }
       const store = facts.load()
       const roomNames = [
         ...Object.keys(loadPeers()),
@@ -1674,7 +1791,35 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
             : { queued: true, note: "the relay is unreachable; held and will go when the link is back" }),
         }
       }
+      // No recipient: the people in this session's threads, and only their
+      // sessions in those threads, since the thread ids travel with it.
+      if (!String(req.to ?? "").trim()) {
+        const self = resolveSession(req)
+        const r = self ? threads.recipients(self.sessionId) : { threads: [], labels: [] }
+        const names = r.threads.map((id) => threads.thread(id)?.meta.value.name).join(", ")
+        if (!r.threads.length)
+          return { ok: false, error: "this session is in no thread yet, so there is nobody to send to without a name. Say who it is for." }
+        if (!r.labels.length) return { ok: false, error: `nobody else is in ${names} yet. Say who it is for.` }
+        if (req.op === "ask" && r.labels.length > 1)
+          return { ok: false, error: `ask waits on one person, and ${names} has ${r.labels.join(", ")}. Say whose answer you need.` }
+        const sent: string[] = []
+        const failed: { to: string; error: string }[] = []
+        let last: any
+        for (const label of r.labels) {
+          last = await handle({ ...req, to: label, threadIds: r.threads }, sock)
+          if (last?.ok) sent.push(label)
+          else failed.push({ to: label, error: last?.error ?? "not sent" })
+        }
+        if (!sent.length) return { ok: false, error: failed.map((f) => `${f.to}: ${f.error}`).join("; ") }
+        return { ...(req.op === "ask" ? last : { ok: true, id: last?.id }), threads: names, sentTo: sent, ...(failed.length ? { failed } : {}) }
+      }
       const [label, session] = String(req.to).split("/")
+      const fromThreads: string[] = Array.isArray(req.threadIds)
+        ? req.threadIds
+        : (() => {
+            const self = resolveSession(req)
+            return self ? threads.idsFor(self.sessionId) : []
+          })()
       const env: Envelope = {
         v: 1,
         id: crypto.randomUUID(),
@@ -1695,6 +1840,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         room: req.room,
         correlation: req.op === "ask" ? crypto.randomUUID() : undefined,
         footprint: senderFootprint(req),
+        ...(fromThreads.length ? { threads: fromThreads } : {}),
       }
       // An agent that tells you everything is worse than silence, so what it
       // sends without being asked is rationed and has to justify itself.
@@ -1869,7 +2015,14 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       if (!sid) return { ok: false, error: "ui needs a sessionId" }
       const reg = sessions.get(sid)
       if (reg && req.mod) reg.modSeenAt = Date.now()
-      return { ok: true, items: uiSync(sid), label: identity!.label }
+      return {
+        ok: true,
+        items: uiSync(sid),
+        label: identity!.label,
+        threads: threads.namesFor(sid),
+        // The mod toasts these; taken here, the hook does not show them again.
+        ...(req.mod ? { threadNotes: threads.takeNotes(sid) } : {}),
+      }
     }
 
     // The person acted on something the mod showed. The state is recorded
@@ -1889,6 +2042,15 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         // Muted is done with: read, so neither a notice nor a card brings it back.
         if (r.ok && action === "mute" && before.kind !== "route") markHeld(id, settledHeld)
         return r
+      }
+
+      if (before.kind === "thread") {
+        if (action !== "answer" || !value) return { ok: false, error: "a thread question is answered with a thread" }
+        const claim = ui.withStore((items, now) => ui.act(items, id, "answer", now, value))
+        if (!claim.ok) return claim
+        const r = threads.answer(sid, value)
+        if (!r.ok) ui.withStore((items, now) => ui.reopen(items, id, now))
+        return { ...r, item: claim.item }
       }
 
       if (before.kind === "route") {
@@ -1983,6 +2145,33 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
     }
 
     case "decide": {
+      // A session in a thread records it in the thread, which its people get
+      // at once and the ref keeps. Anywhere else, DECISIONS.md as before.
+      const inThread = resolveSession(req)
+      if (req.thread || (inThread && threads.idsFor(inThread.sessionId).length)) {
+        const r = threads.decide(inThread?.sessionId, {
+          text: String(req.text ?? "").trim(),
+          rationale: req.rationale,
+          session: inThread?.name,
+          thread: req.thread,
+        })
+        if (!r.ok) return r
+        if (req.tell) {
+          const [label] = String(req.tell).split("/")
+          sendEnvelope(label, {
+            v: 1,
+            id: crypto.randomUUID(),
+            ts: Date.now(),
+            from: identity!.label,
+            fromSession: inThread?.name ?? "-",
+            to: label,
+            kind: "decision",
+            intent: "fyi",
+            text: `Decision recorded in ${r.thread}: ${req.text}${req.rationale ? `\n\n${req.rationale}` : ""}`,
+          })
+        }
+        return { ok: true, thread: r.thread }
+      }
       const cwd = req.repo ?? sessionById(req.sessionId)?.cwd ?? process.cwd()
       const file = appendDecision(cwd, {
         text: String(req.text),
@@ -2006,6 +2195,61 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         })
       }
       return { ok: true, file }
+    }
+
+    // A session's threads: for the hook's banner and title, and the mod's status line.
+    case "threads": {
+      const self = resolveSession(req)
+      if (!self) return { ok: true, threads: [], all: threads.list() }
+      // With the mod there, its toasts carry the notices; the hook only takes the banner.
+      const out = threads.forSession(self.sessionId, self.name, !!req.consume, !!req.consume && !modLive(self) && !req.mod)
+      // The title is offered only when it changes, so a name the person gave
+      // the session afterwards is not overwritten on every prompt.
+      const retitle = !!req.consume && !!out.title && out.title !== self.title
+      if (retitle) {
+        self.title = out.title
+        persistSessions()
+      }
+      return { ok: true, ...out, title: retitle ? out.title : undefined, currentTitle: out.title, mod: modLive(self) }
+    }
+
+    // crosstalk_thread: place this session, or change one of its threads.
+    case "thread": {
+      const self = resolveSession(req)
+      const sid = self?.sessionId
+      if (req.pick) {
+        if (!sid) return { ok: false, error: "no session to place" }
+        const r = threads.answer(sid, String(req.pick))
+        if (r.ok) ui.withStore((items, now) => {
+          for (const it of Object.values(items)) if (it.kind === "thread" && it.sessionId === sid) ui.settle(items, it.id, "answered", now)
+        })
+        return r
+      }
+      if (req.leave) return sid ? threads.leave(sid, String(req.leave)) : { ok: false, error: "no session" }
+      return threads.edit(sid, {
+        thread: req.thread,
+        status: req.status,
+        public: req.public,
+        recap: req.recap,
+        feature: req.feature,
+        question: req.question,
+        answer: req.answer,
+        rule: req.rule,
+      })
+    }
+
+    case "thread_read": {
+      const self = resolveSession(req)
+      if (req.thread) {
+        const t = threads.find(self?.sessionId, String(req.thread))
+        return t ? { ok: true, threads: [threadModel.view(t)] } : { ok: false, error: `no thread called "${req.thread}"`, all: threads.list() }
+      }
+      const mine = self ? threads.idsFor(self.sessionId) : []
+      return {
+        ok: true,
+        threads: mine.map((id) => threadModel.view(threads.thread(id)!)),
+        ...(mine.length ? {} : { note: "this session is in no thread yet", all: threads.list() }),
+      }
     }
 
     case "usage":
@@ -2091,7 +2335,22 @@ control.listen(P.daemonSock, () => {
   fs.writeFileSync(P.daemonLock, String(process.pid), { mode: 0o600 })
   log(`daemon up as "${identity!.label}" on ${P.daemonSock}`)
   connect()
+  // Sessions that outlived the last daemon are placed again, and every repo
+  // with threads catches up with its remote. Neither can hold anything up.
+  threads.retain([...sessions.keys()])
+  for (const reg of sessions.values()) observeThreads(reg)
+  threads.fade()
+  void threads.syncAll()
 })
+
+setInterval(() => {
+  try {
+    threads.fade()
+  } catch (e) {
+    log(`threads: ${(e as Error).message}`)
+  }
+  void threads.syncAll()
+}, Number(process.env.CROSSTALK_THREAD_SYNC_MS ?? 5 * 60_000))
 
 // Only tidy up what this process owns. A daemon that stood down, or one being
 // killed while another is serving, must not unlink the live socket: the next

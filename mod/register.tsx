@@ -8,6 +8,10 @@
 //   restore        "Restore 6 sessions?": Restore / Open as windows / Not now
 //   gather         "4 Claude sessions started before crosstalk. Bring them in?":
 //                  Bring them in / Not now, and a toast once they are in
+//   thread         "which thread is api part of?": the threads, New thread, No thread
+//   thread note    "auth and auth-ui combined…": a toast
+//   own thread     a message about this session's own thread is handed to the
+//                  agent by itself (as data), when the prompt is empty and idle
 //   status line    ◢ <threads or repo> · <n> waiting
 //
 // The mod keeps nothing that matters. What is waiting, and what became of it,
@@ -45,6 +49,8 @@ let session = ''
 let bin = ''
 let label = ''
 let repo = ''
+/** This session's threads, from the daemon: what the status line leads with. */
+let threadNames: string[] = []
 let interactive = false
 let busy = false
 let asking = false
@@ -99,12 +105,14 @@ function header(it: Item): string {
   if (it.kind === 'restore') return 'Restore'
   if (it.kind === 'route') return 'Route'
   if (it.kind === 'gather') return 'Gather'
+  if (it.kind === 'thread') return 'Thread'
   return cut(it.thread ? `${it.from} · ${it.thread}` : it.from ?? 'crosstalk', 12)
 }
 
 async function showStatus($: EngineInterface, open: Item[]) {
+  // `◢ auth · tokens · 1 waiting`: the session's own threads first, else what the cards are about.
   const threads = [...new Set(open.filter(isCard).map(i => i.thread).filter((t): t is string => !!t))]
-  const where = threads.length ? threads.slice(0, 3).join(', ') : repo
+  const where = threadNames.length ? threadNames.slice(0, 3).join(' · ') : threads.length ? threads.slice(0, 3).join(', ') : repo
   // Nothing waiting and no room: say nothing, rather than a line in every session.
   const text = open.length || label ? `◢ ${where || 'crosstalk'} · ${open.length} waiting` : undefined
   if (text !== lastStatus) $.ui.status(text)
@@ -112,7 +120,7 @@ async function showStatus($: EngineInterface, open: Item[]) {
 }
 
 async function received($: EngineInterface, line: string) {
-  let w: { items?: Item[]; label?: string; note?: { id: string; text: string } }
+  let w: { items?: Item[]; label?: string; note?: { id: string; text: string }; threads?: string[]; threadNotes?: { id: string; text: string }[] }
   try {
     w = JSON.parse(line)
   } catch {
@@ -120,6 +128,12 @@ async function received($: EngineInterface, line: string) {
   }
   lastLineAt = await $.clock.now()
   label = w.label ?? ''
+  threadNames = Array.isArray(w.threads) ? w.threads.filter((t): t is string => typeof t === 'string') : []
+  for (const n of w.threadNotes ?? [])
+    if (!toasted.has(n.id)) {
+      toasted.add(n.id)
+      $.ui.toast(oneLine(n.text.replace(/^◢ crosstalk: /, '')))
+    }
   const open = (w.items ?? []).filter(i => !FINAL.has(i.state) && !settled.has(i.id))
   await update($, items, () => open)
   await showStatus($, open)
@@ -176,12 +190,20 @@ async function watch($: EngineInterface) {
 /** Raise the first picker that may come up by itself now, if the person is not busy. */
 async function maybeRaise($: EngineInterface) {
   if (asking || busy || !interactive) return
-  const next = (await read($, items)).find(raisable)
+  const all = await read($, items)
+  // About this session's own thread: it goes to the agent without asking, once.
+  const own = all.find(i => i.auto && isCard(i) && i.state === 'pending' && i.raisedAt === undefined)
+  const next = own ?? all.find(raisable)
   if (!next) return
   const box = await $.prompt.read()
   if (box.text.trim()) return
   asking = true
   try {
+    if (own) {
+      await markRaised($, own.id, await $.clock.now())
+      await hand($, own)
+      return
+    }
     const r = await cli($, ['act', '--id', next.id, '--action', 'raised'])
     if (!r.ok) {
       // Settled elsewhere meanwhile (another session, "restore them"): not ours to ask.
@@ -204,6 +226,8 @@ async function raise($: EngineInterface, it: Item) {
       answer = await $.ui.ask(it.question ?? 'Bring your other Claude sessions into crosstalk?', { options: it.options ?? ['Bring them in', 'Not now'], header: header(it) })
     else if (it.kind === 'route')
       answer = await $.ui.ask(it.question ?? 'Which session should get this message?', { options: it.options ?? ['Hold it'], header: header(it) })
+    else if (it.kind === 'thread')
+      answer = await $.ui.ask(it.question ?? 'Which thread is this session part of?', { options: it.options ?? ['New thread', 'No thread'], header: header(it) })
     else {
       const what = it.kind === 'ask' ? 'asks' : 'says'
       const options = it.kind === 'ask' ? ['Answer', 'Hand to agent', 'Later', 'Mute'] : ['Hand to agent', 'Reply', 'Mute', 'Later']
@@ -235,6 +259,11 @@ async function answered($: EngineInterface, it: Item, answer: string) {
   if (it.kind === 'gather') {
     const r = await step($, it, 'answer', answer)
     $.ui.toast((r.text ?? r.error ?? 'crosstalk: gather did not answer').replace(/^◢ crosstalk: /, '').replace(/\s+/g, ' '))
+    return
+  }
+  if (it.kind === 'thread') {
+    const r = await step($, it, 'answer', answer)
+    $.ui.toast(r.ok ? (r.threads?.length ? `this session is in ${r.threads.join(', ')}` : 'this session is in no thread') : `not placed: ${r.error ?? 'no answer'}`)
     return
   }
   if (it.kind === 'route') {
@@ -423,6 +452,16 @@ export const register: Register = on => {
                 <Text dimColor>
                   {' '}
                   · {it.count ?? 0} session{it.count === 1 ? '' : 's'} without crosstalk · or say "bring them in"{later(it)}
+                </Text>
+              </Text>
+            )
+          if (it.kind === 'thread')
+            return (
+              <Text key={it.id} wrap="truncate">
+                <Text color={THREAD} bold>◢ thread</Text>
+                <Text dimColor>
+                  {' '}
+                  · which thread is this session part of?{later(it)}
                 </Text>
               </Text>
             )

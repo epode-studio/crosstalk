@@ -43,6 +43,7 @@ const GROUPS: [string, string, string[]][] = [
   ["Tasks", "Work a room has agreed, and who took it.", ["crosstalk_tasks", "crosstalk_task_add", "crosstalk_task_claim", "crosstalk_task_done"]],
   ["Facts", "What the room keeps deriving and would rather not derive again.", ["crosstalk_facts", "crosstalk_remember", "crosstalk_confirm", "crosstalk_correct"]],
   ["Decisions", "What was settled, written where the code lives.", ["crosstalk_decide"]],
+  ["Threads", "A piece of work and the conversation about it, found from what each session works on.", ["crosstalk_thread_read", "crosstalk_thread"]],
 ]
 
 const byName = new Map(tools.map((t) => [t.name, t]))

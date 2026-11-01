@@ -379,18 +379,41 @@ not need to know about them.
 
 ## Threads
 
-*(Coming.)* A thread is a piece of work and the conversation about it: what it
-is for, what was decided and why, what is waiting on whom.
+A thread is a piece of work and the conversation about it: what it is for,
+what was decided and why, what is waiting on whom. *(First version: found,
+synced and committed as below. Recaps written at the end of a turn, disposable
+sessions, production feeding threads, and digests and PR descriptions read from
+them are coming.)*
 
-- **Threads find themselves.** Nobody names one or joins one. crosstalk sees
-  what a session is working on and puts it with the people working on the same
-  thing.
+- **Threads find themselves.** Nobody names one or joins one. A session on a
+  work branch is in that branch's thread; on the default branch, the thread
+  whose files it touches. When it touches two threads' files equally, you are
+  asked once. A teammate's session on the same branch or the same files joins
+  the thread too, and threads that turn out to be one piece of work combine,
+  telling everyone who can now read what.
+- **Talking is per thread.** Say "tell them the token format changed" and it
+  goes to the people in this session's threads, and reaches only their
+  sessions in those threads. A message about a session's own thread goes to
+  its agent by itself, as data.
+- **Decisions, facts and tasks live in the thread.** In a thread, they are
+  sections of it, synced to its people at once; outside one they work as
+  before.
+- **Sealed unless public.** Each section is sealed separately to the thread's
+  people. Mark a thread public to commit it in plain text and list it in
+  `THREADS.md`, the one file crosstalk ever writes in your working tree, left
+  unstaged for you to commit or not.
+- **You can see them.** The status line reads `◢ token-v2 · 1 waiting`, the
+  session's title leads with its threads, and the opening line says which it
+  joined and why.
 - **Sessions are disposable.** The thread carries the work, so a session that
   runs out of context is replaced by a fresh one that carries on.
 - **Production feeds threads.** Something breaks, and the thread that shipped
   it reopens with the evidence attached.
-- **Nothing bloats.** Threads live on their own git ref, never in your working
-  tree or main's history.
+- **Nothing bloats.** Threads live on their own git ref,
+  `refs/crosstalk/threads`, never in your working tree or main's history. It
+  gets a commit only when a status, feature, decision, question or rule
+  changes, and is pushed and fetched with your own git credentials, quietly.
+  A thread nobody touches for 14 days archives down to its decisions.
 
 The why behind the code, kept in the git you already have, on any host, sealed
 so no host can read it. No new forge to move to.

@@ -2,10 +2,10 @@
 // @bun
 
 // src/daemon.ts
-import fs11 from "fs";
+import fs12 from "fs";
 import net2 from "net";
-import path14 from "path";
-import crypto7 from "crypto";
+import path16 from "path";
+import crypto11 from "crypto";
 
 // src/config.ts
 import fs from "node:fs";
@@ -1088,6 +1088,1710 @@ function digest2(who, rooms, s = load5()) {
 `);
 }
 
+// src/threads/service.ts
+import fs11 from "node:fs";
+import path15 from "node:path";
+import crypto10 from "node:crypto";
+
+// src/crypto.ts
+import crypto7 from "node:crypto";
+var b643 = (b) => Buffer.from(b).toString("base64");
+var un643 = (s) => Buffer.from(s, "base64");
+var xPriv2 = (id) => crypto7.createPrivateKey({ key: un643(id.x.priv), type: "pkcs8", format: "der" });
+var xPub2 = (spki) => crypto7.createPublicKey({ key: un643(spki), type: "spki", format: "der" });
+function fingerprint2(edPubB64) {
+  const h = crypto7.createHash("sha256").update(un643(edPubB64)).digest("hex");
+  return h.slice(0, 16).match(/.{4}/g).join("-");
+}
+function seal2(key, plaintext) {
+  const nonce = crypto7.randomBytes(12);
+  const c = crypto7.createCipheriv("aes-256-gcm", key, nonce);
+  const ct = Buffer.concat([c.update(plaintext, "utf8"), c.final()]);
+  return b643(Buffer.concat([nonce, c.getAuthTag(), ct]));
+}
+function open2(key, sealed) {
+  const raw = un643(sealed);
+  const d = crypto7.createDecipheriv("aes-256-gcm", key, raw.subarray(0, 12));
+  d.setAuthTag(raw.subarray(12, 28));
+  return Buffer.concat([d.update(raw.subarray(28)), d.final()]).toString("utf8");
+}
+function channelKey2(id, peer) {
+  const shared = crypto7.diffieHellman({ privateKey: xPriv2(id), publicKey: xPub2(peer.xPub) });
+  const ends = [fingerprint2(id.ed.pub), peer.fingerprint].sort().join("|");
+  return Buffer.from(crypto7.hkdfSync("sha256", shared, Buffer.from(ends), "crosstalk/channel/v1", 32));
+}
+var SCRYPT2 = { N: 32768, r: 8, p: 1, maxmem: 256 * 1024 * 1024 };
+
+// src/footprint.ts
+var SUMMARY_PATHS2 = 12;
+function normaliseRemote2(url) {
+  let u = url.trim();
+  if (!u)
+    return "";
+  const scp = /^(?:[^@/]+@)?([^:/]+):(?!\/)(.+)$/.exec(u);
+  if (scp && !/^[a-z]+:\/\//i.test(u))
+    u = `${scp[1]}/${scp[2]}`;
+  else
+    u = u.replace(/^[a-z+]+:\/\//i, "").replace(/^[^@/]+@/, "").replace(/^([^/:]+):\d+\//, "$1/");
+  return u.replace(/\.git\/?$/, "").replace(/\/+$/, "").toLowerCase();
+}
+function parseSummary2(v) {
+  if (!v || typeof v !== "object")
+    return;
+  const o = v;
+  if (typeof o.repo !== "string" || !o.repo)
+    return;
+  return {
+    repo: normaliseRemote2(o.repo).slice(0, 200),
+    branch: typeof o.branch === "string" && o.branch ? o.branch.slice(0, 200) : undefined,
+    paths: Array.isArray(o.paths) ? o.paths.filter((p) => typeof p === "string").slice(0, SUMMARY_PATHS2 * 2) : undefined
+  };
+}
+
+// src/threads/model.ts
+import crypto8 from "node:crypto";
+var STATUSES = ["active", "waiting", "done", "archived"];
+var LISTS = [
+  "people",
+  "sessions",
+  "files",
+  "branches",
+  "features",
+  "questions",
+  "decisions",
+  "facts",
+  "tasks",
+  "rules"
+];
+var SECTIONS = ["meta", "recap", ...LISTS];
+var COMMITTED = ["meta", "features", "decisions", "questions", "rules"];
+var newThreadId = () => crypto8.randomBytes(8).toString("hex");
+var newItemId = (prefix) => `${prefix}_${crypto8.randomBytes(5).toString("hex")}`;
+var newer = (a, b) => a.l !== b.l ? a.l > b.l : a.by > b.by;
+function create(o) {
+  const now = o.now ?? Date.now();
+  const s = { l: 1, by: o.by };
+  return {
+    v: 1,
+    id: o.id ?? newThreadId(),
+    meta: { ...s, value: { name: o.name, status: "active", public: !!o.public, repo: o.repo, createdAt: now, createdBy: o.by } },
+    recap: { ...s, value: "" },
+    people: { [o.by]: { ...s, id: o.by, label: o.label } },
+    sessions: {},
+    files: {},
+    branches: {},
+    features: {},
+    questions: {},
+    decisions: {},
+    facts: {},
+    tasks: {},
+    rules: {},
+    lamport: 1,
+    touchedAt: now
+  };
+}
+function mergeItems(a = {}, b = {}) {
+  const out = { ...a };
+  for (const [id, it] of Object.entries(b)) {
+    const mine = out[id];
+    if (!mine || newer(it, mine))
+      out[id] = it;
+  }
+  return out;
+}
+var pick = (a, b) => newer(b, a) ? b : a;
+function merge(a, b) {
+  if (a.id !== b.id)
+    throw new Error(`cannot merge thread ${a.id} with ${b.id}`);
+  const out = {
+    ...a,
+    meta: pick(a.meta, b.meta),
+    recap: pick(a.recap, b.recap),
+    lamport: Math.max(a.lamport, b.lamport),
+    touchedAt: Math.max(a.touchedAt, b.touchedAt)
+  };
+  for (const k of LISTS)
+    out[k] = mergeItems(a[k], b[k]);
+  return out;
+}
+function same(a, b) {
+  return canonical(a) === canonical(b);
+}
+function canonical(v) {
+  if (v === undefined)
+    return "null";
+  return JSON.stringify(v, (_k, x) => x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([p], [q]) => p < q ? -1 : p > q ? 1 : 0)) : x);
+}
+function committedDigest(t) {
+  const h = crypto8.createHash("sha256");
+  for (const s of COMMITTED)
+    h.update(s + canonical(t[s]));
+  return h.digest("hex").slice(0, 16);
+}
+function tick(t, by, now = Date.now()) {
+  t.lamport += 1;
+  t.touchedAt = Math.max(t.touchedAt, now);
+  return { l: t.lamport, by };
+}
+function setMeta(t, by, patch, now = Date.now()) {
+  const next = { ...t.meta.value, ...patch };
+  if (canonical(next) === canonical(t.meta.value))
+    return false;
+  t.meta = { ...tick(t, by, now), value: next };
+  return true;
+}
+function setRecap(t, by, text, now = Date.now()) {
+  if (t.recap.value === text)
+    return false;
+  t.recap = { ...tick(t, by, now), value: text };
+  return true;
+}
+function put(t, list, id, data, by, now = Date.now()) {
+  const items = t[list];
+  const before = items[id];
+  if (before && !before.gone) {
+    const { l: _l, by: _b, id: _i, gone: _g, ...rest } = before;
+    if (canonical(rest) === canonical(data))
+      return false;
+  }
+  items[id] = { ...data, ...tick(t, by, now), id };
+  return true;
+}
+function remove(t, list, id, by, now = Date.now()) {
+  const items = t[list];
+  const before = items[id];
+  if (!before || before.gone)
+    return false;
+  items[id] = { ...before, ...tick(t, by, now), id, gone: true };
+  return true;
+}
+function live(t, list) {
+  return Object.values(t[list]).filter((i) => !i.gone).sort((a, b) => (a.at ?? 0) - (b.at ?? 0) || (a.id < b.id ? -1 : 1));
+}
+var ids = (t, list) => live(t, list).map((i) => i.id);
+var isLive = (t) => !t.meta.value.combinedInto && t.meta.value.status !== "archived";
+function slug(s, max = 40) {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, max).replace(/-+$/g, "") || "thread";
+}
+function view(t) {
+  const m = t.meta.value;
+  return {
+    id: t.id,
+    name: m.name,
+    status: m.status,
+    public: m.public,
+    repo: m.repo,
+    combinedInto: m.combinedInto,
+    people: live(t, "people").map((p) => p.label),
+    sessions: live(t, "sessions").map((s) => `${s.label}/${s.name}${s.branch ? ` @ ${s.branch}` : ""}`),
+    files: ids(t, "files"),
+    branches: ids(t, "branches"),
+    features: live(t, "features").map((f) => ({ name: f.name, risk: f.risk, ...f.flag ? { flag: f.flag } : {} })),
+    recap: t.recap.value,
+    questions: live(t, "questions").map((q) => ({ id: q.id, text: q.text, blocking: !!q.blocking, who: q.who, ...q.answer ? { answer: q.answer, answeredBy: q.answeredBy } : {} })),
+    decisions: live(t, "decisions").map((d) => ({ id: d.id, text: d.text, who: d.who, at: d.at, ...d.rationale ? { rationale: d.rationale } : {} })),
+    facts: live(t, "facts").map((f) => ({ id: f.id, text: f.text, who: f.who, at: f.at })),
+    tasks: live(t, "tasks").map((k) => ({ id: k.id, text: k.text, who: k.who, state: k.state, ...k.claimedBy ? { claimedBy: k.claimedBy } : {}, ...k.note ? { note: k.note } : {} })),
+    rules: live(t, "rules").map((r) => ({ id: r.id, text: r.text, who: r.who })),
+    touchedAt: t.touchedAt
+  };
+}
+function parseThread(v) {
+  if (!v || typeof v !== "object")
+    return null;
+  const o = v;
+  if (o.v !== 1 || typeof o.id !== "string" || !/^[0-9a-f]{8,32}$/.test(o.id))
+    return null;
+  const stamp = (s) => s && typeof s.l === "number" && typeof s.by === "string";
+  if (!stamp(o.meta) || !o.meta.value || typeof o.meta.value.name !== "string" || !STATUSES.includes(o.meta.value.status))
+    return null;
+  if (!stamp(o.recap) || typeof o.recap.value !== "string")
+    return null;
+  const out = {
+    v: 1,
+    id: o.id,
+    meta: { l: o.meta.l, by: o.meta.by, value: { ...o.meta.value, name: slug(o.meta.value.name), public: !!o.meta.value.public, repo: String(o.meta.value.repo ?? "") } },
+    recap: { l: o.recap.l, by: o.recap.by, value: o.recap.value.slice(0, 4000) },
+    lamport: Number(o.lamport) || 0,
+    touchedAt: Number(o.touchedAt) || 0
+  };
+  for (const k of LISTS) {
+    const src = o[k] && typeof o[k] === "object" ? o[k] : {};
+    const items = {};
+    for (const [id, it] of Object.entries(src).slice(0, 2000))
+      if (stamp(it) && typeof id === "string" && id.length <= 300 && it.id === id)
+        items[id] = it;
+    out[k] = items;
+  }
+  for (const k of [out.meta, out.recap, ...LISTS.flatMap((k) => Object.values(out[k]))])
+    out.lamport = Math.max(out.lamport, k.l);
+  return out;
+}
+var people = (t) => ids(t, "people");
+
+// src/threads/seal.ts
+import crypto9 from "node:crypto";
+var newKey = () => crypto9.randomBytes(32);
+var selfPeer = (id) => ({
+  label: id.label,
+  edPub: id.ed.pub,
+  xPub: id.x.pub,
+  fingerprint: fingerprint2(id.ed.pub),
+  joinedAt: 0
+});
+function wrapKey(id, key, recipients) {
+  const me = selfPeer(id);
+  const out = new Map;
+  for (const p of [me, ...recipients]) {
+    if (out.has(p.fingerprint))
+      continue;
+    out.set(p.fingerprint, { to: p.fingerprint, from: me.fingerprint, k: seal2(channelKey2(id, p), key.toString("base64")) });
+  }
+  return [...out.values()].sort((a, b) => a.to < b.to ? -1 : 1);
+}
+function unwrapKey(id, wraps, peers) {
+  const me = selfPeer(id);
+  const byFp = new Map(peers.map((p) => [p.fingerprint, p]));
+  byFp.set(me.fingerprint, me);
+  for (const w of wraps) {
+    if (w.to !== me.fingerprint)
+      continue;
+    const from = byFp.get(w.from);
+    if (!from)
+      continue;
+    try {
+      const k = Buffer.from(open2(channelKey2(id, from), w.k), "base64");
+      if (k.length === 32)
+        return k;
+    } catch {}
+  }
+  return null;
+}
+var sealSection = (key, thread, name, value) => seal2(key, JSON.stringify({ t: thread, s: name, v: value }));
+function openSection(key, thread, name, blob) {
+  const o = JSON.parse(open2(key, blob));
+  if (o?.t !== thread || o?.s !== name)
+    throw new Error(`section ${name} does not belong here`);
+  return o.v;
+}
+
+// src/threads/format.ts
+var HEADER2 = "crosstalk: thread/v1";
+var STATE_OPEN = "<!-- crosstalk:state";
+var STATE_CLOSE = "-->";
+var word = (s) => /^[A-Za-z0-9][A-Za-z0-9 ._/*@+-]*$/.test(s) && !/[ ]$/.test(s) ? s : JSON.stringify(s);
+var list = (xs) => `[${xs.map(word).join(", ")}]`;
+var day = (ms) => new Date(ms).toISOString().slice(0, 10);
+var oneLine = (s) => s.replace(/\s+/g, " ").trim();
+function fileName(t, taken = new Set) {
+  if (!t.meta.value.public)
+    return `${t.id}.md`;
+  const plain = `${t.meta.value.name}.md`;
+  return taken.has(plain) ? `${t.meta.value.name}.${t.id.slice(0, 8)}.md` : plain;
+}
+function renderPublic(t) {
+  const v = view(t);
+  const fm = [
+    "---",
+    HEADER2,
+    `id: ${t.id}`,
+    `name: ${word(v.name)}`,
+    `status: ${v.status}`,
+    `public: true`,
+    `repo: ${word(v.repo)}`,
+    `people: ${list(v.people)}`,
+    `files: ${list(v.files)}`,
+    `branches: ${list(v.branches)}`,
+    ...v.combinedInto ? [`combined-into: ${v.combinedInto}`] : []
+  ];
+  if (v.features.length) {
+    fm.push("features:");
+    for (const f of v.features) {
+      fm.push(`  - name: ${word(f.name)}`);
+      if (f.risk === "risky")
+        fm.push(`    risk: risky`);
+      if (f.flag)
+        fm.push(`    flag: ${word(f.flag)}`);
+    }
+  } else
+    fm.push("features: []");
+  fm.push("---");
+  const body = ["", "## Recap", v.recap ? oneLine(v.recap) : "", ""];
+  body.push("## Questions", ...live(t, "questions").map((q) => `- ${oneLine(q.text)}${q.blocking ? " (blocking)" : ""}${q.answer ? ` \u2192 ${oneLine(q.answer)}` : ""}`), "");
+  body.push("## Decisions", ...live(t, "decisions").map((d) => `- ${day(d.at)} \u00b7 ${d.who} \u00b7 ${oneLine(d.text)}`), "");
+  body.push("## Facts", ...live(t, "facts").map((f) => `- ${oneLine(f.text)}`), "");
+  body.push("## Tasks", ...live(t, "tasks").map((k) => `- [${k.state === "done" ? "x" : " "}] ${oneLine(k.text)}`), "");
+  body.push("## Rules", ...live(t, "rules").map((r) => `- ${oneLine(r.text)}`), "");
+  const state = canonical(t).replace(/-->/g, "--\\u003e");
+  body.push(STATE_OPEN, state, STATE_CLOSE, "");
+  return [...fm, ...body].join(`
+`);
+}
+function renderSealed(t, key, wraps) {
+  const seal = typeof key === "function" ? key : (s, v) => sealSection(key, t.id, s, v);
+  const lines = ["---", HEADER2, `id: ${t.id}`, "sealed: true", "keys:"];
+  for (const w of wraps)
+    lines.push(`  - ${w.to} ${w.from} ${w.k}`);
+  lines.push("---");
+  for (const s of SECTIONS)
+    lines.push(`${s}: ${seal(s, t[s])}`);
+  lines.push(`clock: ${seal("clock", { lamport: t.lamport, touchedAt: t.touchedAt })}`);
+  return lines.join(`
+`) + `
+`;
+}
+function frontmatter(text) {
+  const m = /^---\n([\s\S]*?)\n---\n?/.exec(text);
+  return m ? { fm: m[1].split(`
+`), body: text.slice(m[0].length) } : null;
+}
+var unword = (s) => {
+  const t = s.trim();
+  if (t.startsWith('"')) {
+    try {
+      return String(JSON.parse(t));
+    } catch {}
+  }
+  return t.replace(/\s+#.*$/, "").trim();
+};
+function unlist(s) {
+  const t = s.replace(/\s+#.*$/, "").trim();
+  if (!t.startsWith("["))
+    return t ? [unword(t)] : [];
+  const inner = t.replace(/^\[|\]$/g, "");
+  const out = [];
+  for (const m of inner.matchAll(/"(?:[^"\\]|\\.)*"|[^,]+/g)) {
+    const v = unword(m[0]);
+    if (v)
+      out.push(v);
+  }
+  return out;
+}
+function parse(text) {
+  const f = frontmatter(text);
+  if (!f)
+    return { kind: "unknown" };
+  const get = (k) => f.fm.find((l) => l.startsWith(`${k}:`))?.slice(k.length + 1).trim();
+  const id = get("id") ?? "";
+  if (!/^[0-9a-f]{8,32}$/.test(id))
+    return { kind: "unknown" };
+  if (get("sealed") === "true") {
+    const wraps = [];
+    for (const l of f.fm) {
+      const m = /^\s+-\s+(\S+)\s+(\S+)\s+(\S+)\s*$/.exec(l);
+      if (m)
+        wraps.push({ to: m[1], from: m[2], k: m[3] });
+    }
+    const blobs = new Map;
+    for (const l of f.body.split(`
+`)) {
+      const m = /^([a-z]+): (\S+)$/.exec(l);
+      if (m)
+        blobs.set(m[1], m[2]);
+    }
+    return {
+      kind: "sealed",
+      id,
+      wraps,
+      open: (key) => {
+        try {
+          const o = { v: 1, id };
+          for (const s of SECTIONS)
+            o[s] = openSection(key, id, s, blobs.get(s) ?? "");
+          const c = openSection(key, id, "clock", blobs.get("clock") ?? "");
+          o.lamport = c.lamport;
+          o.touchedAt = c.touchedAt;
+          return parseThread(o);
+        } catch {
+          return null;
+        }
+      }
+    };
+  }
+  const s = f.body.indexOf(STATE_OPEN);
+  if (s !== -1) {
+    const e = f.body.indexOf(STATE_CLOSE, s + STATE_OPEN.length);
+    try {
+      const t = parseThread(JSON.parse(f.body.slice(s + STATE_OPEN.length, e === -1 ? undefined : e)));
+      if (t && t.id === id)
+        return { kind: "public", id, thread: t };
+    } catch {}
+  }
+  const t = fromMarkdown(id, f.fm, f.body);
+  return t ? { kind: "public", id, thread: t } : { kind: "unknown" };
+}
+function fromMarkdown(id, fm, body) {
+  const get = (k) => fm.find((l) => l.startsWith(`${k}:`))?.slice(k.length + 1).trim();
+  const status = (get("status") ?? "active").replace(/\s+#.*$/, "");
+  if (!STATUSES.includes(status))
+    return null;
+  const by = "markdown";
+  const t = create({ id, name: unword(get("name") ?? id), repo: unword(get("repo") ?? ""), by, label: by, now: 0, public: true });
+  t.people = {};
+  t.meta = { l: 0, by, value: { ...t.meta.value, status, combinedInto: get("combined-into") || undefined } };
+  t.recap.l = 0;
+  t.lamport = 0;
+  const mark = (list, key, data) => t[list][key] = { ...data, l: 0, by, id: key };
+  for (const p of unlist(get("people") ?? ""))
+    mark("people", `label:${p}`, { label: p });
+  unlist(get("files") ?? "").forEach((p, i) => mark("files", p, { at: i }));
+  unlist(get("branches") ?? "").forEach((b, i) => mark("branches", b, { at: i }));
+  let cur = null;
+  const flush = () => cur && mark("features", slug(cur.name), cur);
+  const fi = fm.findIndex((l) => /^features:\s*$/.test(l));
+  if (fi !== -1)
+    for (const l of fm.slice(fi + 1)) {
+      if (!/^\s/.test(l))
+        break;
+      const item = /^\s+-\s+name:\s*(.+)$/.exec(l);
+      const kv = /^\s+(risk|flag):\s*(.+)$/.exec(l);
+      if (item) {
+        flush();
+        cur = { name: unword(item[1]), risk: "everyday" };
+      } else if (kv && cur) {
+        if (kv[1] === "risk")
+          cur.risk = unword(kv[2]) === "risky" ? "risky" : "everyday";
+        else
+          cur.flag = unword(kv[2]);
+      }
+    }
+  flush();
+  const sections = new Map;
+  let at = null;
+  for (const l of body.split(`
+`)) {
+    const h = /^## (.+)$/.exec(l);
+    if (h) {
+      at = h[1].trim().toLowerCase();
+      sections.set(at, []);
+    } else if (at && l.trim())
+      sections.get(at).push(l);
+  }
+  t.recap.value = (sections.get("recap") ?? []).join(" ").trim();
+  const bullets = (k) => (sections.get(k) ?? []).filter((l) => l.startsWith("- ")).map((l) => l.slice(2).trim());
+  bullets("questions").forEach((q, i) => {
+    const blocking = /\(blocking\)\s*$/.test(q);
+    mark("questions", `md_q${i}`, { text: q.replace(/\s*\(blocking\)\s*$/, ""), blocking, who: "", at: 0 });
+  });
+  bullets("decisions").forEach((d, i) => {
+    const m = /^(\d{4}-\d{2}-\d{2})\s+\u00b7\s+([^\u00b7]+?)\s+\u00b7\s+(.+)$/.exec(d);
+    mark("decisions", `md_d${i}`, m ? { text: m[3], who: m[2], at: Date.parse(m[1]) } : { text: d, who: "", at: 0 });
+  });
+  bullets("facts").forEach((x, i) => mark("facts", `md_f${i}`, { text: x, who: "", at: 0 }));
+  bullets("tasks").forEach((x, i) => {
+    const m = /^\[( |x)\]\s+(.+)$/.exec(x);
+    mark("tasks", `md_t${i}`, { text: m ? m[2] : x, who: "", at: 0, state: m?.[1] === "x" ? "done" : "open" });
+  });
+  bullets("rules").forEach((x, i) => mark("rules", `md_r${i}`, { text: x, who: "", at: 0 }));
+  return t;
+}
+function summary(threads) {
+  const pub = threads.filter((t) => t.meta.value.public && !t.meta.value.combinedInto).sort((a, b) => a.meta.value.name < b.meta.value.name ? -1 : 1);
+  const lines = [
+    "# Threads",
+    "",
+    "Public crosstalk threads in this repository. Written by crosstalk when a",
+    "thread's status changes; the threads themselves live on refs/crosstalk/threads.",
+    "Sealed threads never appear here.",
+    ""
+  ];
+  for (const t of pub) {
+    const v = view(t);
+    const open = v.questions.filter((q) => !q.answer);
+    const last = v.decisions[v.decisions.length - 1];
+    lines.push(`- **${v.name}** \u00b7 ${v.status} \u00b7 ${v.people.join(", ") || "nobody yet"}`);
+    const more = [];
+    if (open.length)
+      more.push(`${open.length} open question${open.length === 1 ? "" : "s"}: ${oneLine(open[0].text)}`);
+    if (last)
+      more.push(`latest decision: ${oneLine(last.text)}`);
+    if (more.length)
+      lines.push(`  ${more.join(" \u00b7 ")}`);
+  }
+  if (!pub.length)
+    lines.push("_No public threads._");
+  return lines.join(`
+`) + `
+`;
+}
+
+// src/threads/store.ts
+import { spawn, spawnSync as spawnSync2 } from "node:child_process";
+var REF = "refs/crosstalk/threads";
+var SYNC_REF = "refs/crosstalk/sync/threads";
+var REFSPEC = "+refs/crosstalk/*:refs/crosstalk/*";
+var RULES_FILE = "RULES.md";
+var ZERO = "0000000000000000000000000000000000000000";
+var quietEnv = (extra = {}) => ({
+  ...process.env,
+  GIT_TERMINAL_PROMPT: "0",
+  GIT_ASKPASS: process.env.GIT_ASKPASS ?? "",
+  GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? "ssh -o BatchMode=yes -o ConnectTimeout=10",
+  ...extra
+});
+function git2(root, args, input, env) {
+  try {
+    const r = spawnSync2("git", ["-C", root, ...args], {
+      encoding: "utf8",
+      input,
+      timeout: 1e4,
+      env: quietEnv(env),
+      maxBuffer: 64 * 1024 * 1024
+    });
+    return { ok: r.status === 0, out: (r.stdout ?? "").replace(/\n$/, ""), err: (r.stderr ?? "").trim() };
+  } catch (e) {
+    return { ok: false, out: "", err: e.message };
+  }
+}
+var refCommit = (root, ref = REF) => {
+  const r = git2(root, ["rev-parse", "-q", "--verify", `${ref}^{commit}`]);
+  return r.ok && r.out ? r.out : undefined;
+};
+function readRef(root, ref = REF) {
+  const commit = refCommit(root, ref);
+  if (!commit)
+    return { files: {} };
+  const ls = git2(root, ["ls-tree", "-z", commit]);
+  const files = {};
+  if (!ls.ok)
+    return { commit, files };
+  for (const entry of ls.out.split("\x00")) {
+    const m = /^\d+ blob ([0-9a-f]+)\t(.+)$/.exec(entry);
+    if (!m)
+      continue;
+    const blob = git2(root, ["cat-file", "blob", m[1]]);
+    if (blob.ok)
+      files[m[2]] = blob.out + `
+`;
+  }
+  return { commit, files };
+}
+var isAncestor = (root, a, b) => spawnSync2("git", ["-C", root, "merge-base", "--is-ancestor", a, b], { env: quietEnv(), timeout: 1e4 }).status === 0;
+function writeRef(root, files, message, o = { author: "crosstalk" }) {
+  const ref = o.ref ?? REF;
+  const base = refCommit(root, ref);
+  const lines = [];
+  for (const name of Object.keys(files).sort()) {
+    if (!/^[A-Za-z0-9._-]+$/.test(name))
+      continue;
+    const h = git2(root, ["hash-object", "-w", "--stdin"], files[name]);
+    if (!h.ok)
+      return;
+    lines.push(`100644 blob ${h.out}	${name}`);
+  }
+  const tree = git2(root, ["mktree"], lines.length ? lines.join(`
+`) + `
+` : "");
+  if (!tree.ok)
+    return;
+  const parents = [base, ...o.extraParents ?? []].filter((p, i, a) => !!p && a.indexOf(p) === i);
+  if (base && !o.extraParents?.length) {
+    const cur = git2(root, ["rev-parse", `${base}^{tree}`]);
+    if (cur.ok && cur.out === tree.out)
+      return;
+  }
+  const who = { GIT_AUTHOR_NAME: o.author, GIT_AUTHOR_EMAIL: "crosstalk@localhost", GIT_COMMITTER_NAME: o.author, GIT_COMMITTER_EMAIL: "crosstalk@localhost" };
+  const commit = git2(root, ["commit-tree", tree.out, ...parents.flatMap((p) => ["-p", p]), "-m", message], undefined, who);
+  if (!commit.ok)
+    return;
+  const upd = git2(root, ["update-ref", "-m", "crosstalk: threads", ref, commit.out, base ?? ZERO]);
+  return upd.ok ? commit.out : undefined;
+}
+function remoteName(root) {
+  const r = git2(root, ["remote"]);
+  if (!r.ok || !r.out)
+    return;
+  const all = r.out.split(`
+`).filter(Boolean);
+  return all.includes("origin") ? "origin" : all[0];
+}
+function ensureRefspec(root, remote = remoteName(root)) {
+  if (!remote)
+    return false;
+  const have = git2(root, ["config", "--get-all", `remote.${remote}.fetch`]);
+  if (have.out.split(`
+`).includes(REFSPEC))
+    return false;
+  return git2(root, ["config", "--add", `remote.${remote}.fetch`, REFSPEC]).ok;
+}
+function defaultBranch(root, remote = remoteName(root)) {
+  if (remote) {
+    const r = git2(root, ["symbolic-ref", "-q", "--short", `refs/remotes/${remote}/HEAD`]);
+    if (r.ok && r.out)
+      return r.out.slice(remote.length + 1);
+  }
+  return;
+}
+function run(root, args, timeoutMs) {
+  return new Promise((resolve) => {
+    let err = "";
+    let done = false;
+    const p = spawn("git", ["-C", root, ...args], { env: quietEnv(), stdio: ["ignore", "ignore", "pipe"] });
+    const t = setTimeout(() => {
+      if (done)
+        return;
+      done = true;
+      p.kill("SIGKILL");
+      resolve({ ok: false, err: "timed out" });
+    }, timeoutMs);
+    p.stderr?.on("data", (d) => err += d);
+    p.on("error", (e) => {
+      if (done)
+        return;
+      done = true;
+      clearTimeout(t);
+      resolve({ ok: false, err: e.message });
+    });
+    p.on("close", (code) => {
+      if (done)
+        return;
+      done = true;
+      clearTimeout(t);
+      resolve({ ok: code === 0, err: err.trim().slice(0, 300) });
+    });
+  });
+}
+async function fetchRemote(root, remote = remoteName(root), timeoutMs = 30000) {
+  if (!remote)
+    return { ok: false, err: "no remote" };
+  const args = (head) => ["fetch", "-q", "--no-tags", ...head ? ["--no-write-fetch-head"] : [], "--refmap=", remote, `+${REF}:${SYNC_REF}`];
+  let r = await run(root, args(true), timeoutMs);
+  if (!r.ok && /unknown option|usage: git fetch/i.test(r.err))
+    r = await run(root, args(false), timeoutMs);
+  return r.ok || /couldn't find remote ref/i.test(r.err) ? { ok: true, err: "" } : r;
+}
+async function pushRemote(root, remote = remoteName(root), timeoutMs = 30000) {
+  if (!remote)
+    return { ok: false, err: "no remote" };
+  return run(root, ["push", "-q", "--no-verify", remote, `${REF}:${REF}`], timeoutMs);
+}
+
+// src/threads/infer.ts
+import path14 from "node:path";
+var DEFAULTS = new Set(["main", "master", "trunk", "develop", "development", "default", "dev"]);
+var isDefaultBranch = (branch, remoteDefault) => !branch || branch === remoteDefault || !remoteDefault && DEFAULTS.has(branch);
+var MIN_CLUSTER = 3;
+function nameFromBranch(branch) {
+  const parts = branch.split("/").filter(Boolean);
+  const last = parts[parts.length - 1] ?? branch;
+  return last.toLowerCase().replace(/^(feat|feature|fix|bugfix|hotfix|chore|wip)[-_]/, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "thread";
+}
+function covers(pattern, file) {
+  if (pattern.endsWith("/**"))
+    return file.startsWith(pattern.slice(0, -2));
+  return pattern === file;
+}
+var overlap = (patterns, paths) => paths.filter((p) => patterns.some((q) => covers(q, p))).length;
+function filesConverge(a, b) {
+  if (!a.length || !b.length)
+    return null;
+  const shared = new Set;
+  for (const x of a)
+    if (x.endsWith("/**") ? b.includes(x) : b.some((q) => covers(q, x)))
+      shared.add(x);
+  for (const x of b)
+    if (!x.endsWith("/**") && a.some((q) => covers(q, x)))
+      shared.add(x);
+  const out = [...shared].sort();
+  if (out.some((x) => x.endsWith("/**")))
+    return out;
+  return out.length >= 2 && out.length * 2 >= Math.min(a.length, b.length) ? out : null;
+}
+function cluster(paths, claimed, min = MIN_CLUSTER) {
+  const free = paths.filter((p) => !claimed.some((q) => covers(q, p)));
+  if (free.length < min)
+    return null;
+  const byDir = new Map;
+  for (const p of free) {
+    let d = path14.posix.dirname(p);
+    while (d && d !== ".") {
+      (byDir.get(d) ?? byDir.set(d, []).get(d)).push(p);
+      d = path14.posix.dirname(d);
+    }
+  }
+  const best = [...byDir.entries()].filter(([, fs]) => fs.length >= min).sort((a, b) => b[0].split("/").length - a[0].split("/").length || b[1].length - a[1].length)[0];
+  return best ? { dir: best[0], files: best[1] } : null;
+}
+var nameFromDir = (dir) => nameFromBranch(path14.posix.basename(dir));
+function place(fp, threads, min = MIN_CLUSTER) {
+  if (!fp.repo)
+    return { kind: "none", why: "not in a git repo with a remote" };
+  const here = threads.filter((t) => t.repo === fp.repo && !t.combinedInto);
+  if (fp.branch && !fp.onDefault) {
+    const same = here.filter((t) => t.branches.includes(fp.branch));
+    if (same.length)
+      return { kind: "join", threads: same.map((t) => ({ id: t.id, why: `same branch ${fp.branch}` })) };
+    const taken = new Set(here.filter((t) => t.live).map((t) => t.name));
+    let name = nameFromBranch(fp.branch);
+    for (let i = 2;taken.has(name); i++)
+      name = `${nameFromBranch(fp.branch)}-${i}`;
+    return { kind: "create", name, branch: fp.branch, files: [], why: `new branch ${fp.branch}` };
+  }
+  if (!fp.paths.length)
+    return { kind: "none", why: "on the default branch and nothing touched yet" };
+  const scored = here.map((t) => ({ t, n: overlap(t.files, fp.paths) })).filter((s) => s.n > 0).sort((a, b) => b.n - a.n);
+  if (scored.length) {
+    const top = scored.filter((s) => s.n === scored[0].n);
+    if (top.length > 1)
+      return { kind: "ask", candidates: top.map((s) => s.t.id), why: `touches ${top.map((s) => s.t.name).join(" and ")} equally` };
+    const t = scored[0].t;
+    return { kind: "join", threads: [{ id: t.id, why: `touches ${t.name}'s files` }] };
+  }
+  const c = cluster(fp.paths, here.flatMap((t) => t.files), min);
+  if (!c)
+    return { kind: "none", why: "on the default branch, no thread's files touched yet" };
+  const taken = new Set(here.filter((t) => t.live).map((t) => t.name));
+  let name = nameFromDir(c.dir);
+  for (let i = 2;taken.has(name); i++)
+    name = `${nameFromDir(c.dir)}-${i}`;
+  return { kind: "create", name, files: [`${c.dir}/**`], why: `new files in ${c.dir}` };
+}
+function matchesPeer(t, fp) {
+  if (!t.live || t.combinedInto || !fp.repo || fp.repo !== t.repo)
+    return null;
+  if (fp.branch && !fp.onDefault && t.branches.includes(fp.branch))
+    return `same branch ${fp.branch}`;
+  const files = filesConverge(t.files, fp.paths);
+  return files ? `same files (${files.slice(0, 3).join(", ")})` : null;
+}
+function converge(a, b) {
+  if (a.id === b.id || a.repo !== b.repo || !a.live || !b.live || a.combinedInto || b.combinedInto)
+    return null;
+  const branch = a.branches.find((x) => b.branches.includes(x));
+  if (branch)
+    return `both on branch ${branch}`;
+  const files = filesConverge(a.files, b.files);
+  return files ? `both touch ${files.slice(0, 3).join(", ")}` : null;
+}
+var survivor = (a, b) => a.createdAt !== b.createdAt ? a.createdAt < b.createdAt ? [a, b] : [b, a] : a.id < b.id ? [a, b] : [b, a];
+
+// src/threads/service.ts
+var empty2 = () => ({
+  v: 1,
+  threads: {},
+  keys: {},
+  committed: {},
+  placed: {},
+  banner: {},
+  notes: {},
+  questions: {},
+  noticed: [],
+  opaque: {},
+  roots: {},
+  publicStatus: {},
+  blobs: {}
+});
+var MAX_FILES = 60;
+var SESSION_REFRESH_MS = 10 * 60000;
+var PEER_SESSION_MS = 24 * 60 * 60000;
+var DAY = 24 * 60 * 60000;
+var NEW_THREAD = "New thread";
+var NO_THREAD = "No thread";
+
+class ThreadService {
+  d;
+  st;
+  locals = new Map;
+  touched = new Set;
+  capable = new Set;
+  timers = new Map;
+  syncing = new Map;
+  defaults = new Map;
+  refspecDone = new Set;
+  clones = new Map;
+  readLocal = new Set;
+  me;
+  label;
+  constructor(d) {
+    this.d = d;
+    this.me = fingerprint2(d.identity.ed.pub);
+    this.label = d.identity.label;
+    this.st = this.load();
+  }
+  now = () => this.d.now ? this.d.now() : Date.now();
+  load() {
+    try {
+      const raw = JSON.parse(fs11.readFileSync(this.d.file, "utf8"));
+      if (raw?.v !== 1)
+        return empty2();
+      const st = { ...empty2(), ...raw };
+      for (const [id, t] of Object.entries(st.threads)) {
+        const ok = parseThread(t);
+        if (ok)
+          st.threads[id] = ok;
+        else
+          delete st.threads[id];
+      }
+      return st;
+    } catch {
+      return empty2();
+    }
+  }
+  save() {
+    fs11.mkdirSync(path15.dirname(this.d.file), { recursive: true, mode: 448 });
+    const tmp = `${this.d.file}.${process.pid}.tmp`;
+    fs11.writeFileSync(tmp, JSON.stringify(this.st), { mode: 384 });
+    fs11.renameSync(tmp, this.d.file);
+  }
+  thread(id) {
+    return this.st.threads[this.resolve(id)];
+  }
+  resolve(id) {
+    let cur = id;
+    for (let i = 0;i < 10; i++) {
+      const next = this.st.threads[cur]?.meta.value.combinedInto;
+      if (!next || !this.st.threads[next])
+        break;
+      cur = next;
+    }
+    return cur;
+  }
+  lite(t) {
+    return {
+      id: t.id,
+      name: t.meta.value.name,
+      repo: t.meta.value.repo,
+      live: isLive(t),
+      branches: ids(t, "branches"),
+      files: ids(t, "files"),
+      createdAt: t.meta.value.createdAt,
+      combinedInto: t.meta.value.combinedInto
+    };
+  }
+  lites(repo) {
+    return Object.values(this.st.threads).filter((t) => !repo || t.meta.value.repo === repo).map((t) => this.lite(t));
+  }
+  idsFor(sessionId) {
+    const p = this.st.placed[sessionId];
+    if (!p)
+      return [];
+    return [...new Set(p.threads.map((id) => this.resolve(id)))].filter((id) => this.st.threads[id]);
+  }
+  namesFor(sessionId) {
+    return this.idsFor(sessionId).map((id) => this.st.threads[id].meta.value.name);
+  }
+  title(sessionId, name) {
+    const names = this.namesFor(sessionId);
+    return names.length ? `${names.slice(0, 2).join(" \u00b7 ")} \u00b7 ${name}` : undefined;
+  }
+  sessionsIn(threadIds) {
+    const want = new Set(threadIds.map((id) => this.resolve(id)));
+    return [...this.locals.keys()].filter((sid) => this.idsFor(sid).some((id) => want.has(id)));
+  }
+  recipients(sessionId) {
+    const threads = this.idsFor(sessionId);
+    const fps = new Set(threads.flatMap((id) => ids(this.st.threads[id], "people")));
+    fps.delete(this.me);
+    const labels = Object.values(this.d.peers()).filter((p) => fps.has(p.fingerprint)).map((p) => p.label);
+    return { threads, labels: [...new Set(labels)] };
+  }
+  forSession(sessionId, name, consume, takeNotes = consume) {
+    const ids = this.idsFor(sessionId);
+    const out = {
+      threads: ids.map((id) => {
+        const t = this.st.threads[id];
+        return {
+          id,
+          name: t.meta.value.name,
+          status: t.meta.value.status,
+          people: live(t, "people").map((p) => p.label),
+          why: this.st.placed[sessionId]?.why[id],
+          questions: live(t, "questions").filter((q) => !q.answer).length
+        };
+      }),
+      title: this.title(sessionId, name),
+      banner: (this.st.banner[sessionId] ?? []).map((b) => `${b.name} (${b.why})`),
+      notes: takeNotes ? (this.st.notes[sessionId] ?? []).map((n) => n.text) : [],
+      question: this.question(sessionId)
+    };
+    if (consume && this.st.banner[sessionId]?.length || takeNotes && this.st.notes[sessionId]?.length) {
+      if (consume)
+        delete this.st.banner[sessionId];
+      if (takeNotes)
+        delete this.st.notes[sessionId];
+      this.save();
+    }
+    return out;
+  }
+  takeNotes(sessionId) {
+    const n = this.st.notes[sessionId] ?? [];
+    if (n.length) {
+      delete this.st.notes[sessionId];
+      this.save();
+    }
+    return n;
+  }
+  question(sessionId) {
+    const q = this.st.questions[sessionId];
+    if (!q)
+      return;
+    const names = q.candidates.map((id) => this.st.threads[id]?.meta.value.name).filter((n) => !!n);
+    if (names.length < 2)
+      return;
+    const s = this.locals.get(sessionId);
+    return {
+      id: `thread:${sessionId}:${q.at}`,
+      question: `${s?.name ?? "This session"} ${q.why}. Which thread is it part of?`,
+      options: [...names.slice(0, 3), NEW_THREAD, NO_THREAD]
+    };
+  }
+  find(sessionId, nameOrId) {
+    const mine = sessionId ? this.idsFor(sessionId).map((id) => this.st.threads[id]) : [];
+    if (!nameOrId)
+      return mine[0];
+    const n = slug(nameOrId);
+    const all = [...mine, ...Object.values(this.st.threads).filter((t) => !t.meta.value.combinedInto)];
+    const t = all.find((t) => t.id === nameOrId || t.meta.value.name === n) ?? all.find((t) => t.meta.value.name.startsWith(n));
+    return t ? this.st.threads[this.resolve(t.id)] : undefined;
+  }
+  list() {
+    return Object.values(this.st.threads).filter((t) => !t.meta.value.combinedInto).map((t) => ({
+      id: t.id,
+      name: t.meta.value.name,
+      status: t.meta.value.status,
+      public: t.meta.value.public,
+      repo: t.meta.value.repo,
+      people: live(t, "people").map((p) => p.label)
+    }));
+  }
+  observe(s) {
+    this.locals.set(s.sessionId, s);
+    this.place(s);
+    this.flush();
+  }
+  forget(sessionId) {
+    const p = this.st.placed[sessionId];
+    this.locals.delete(sessionId);
+    if (!p)
+      return;
+    for (const id of p.threads) {
+      const t = this.st.threads[this.resolve(id)];
+      if (t && remove(t, "sessions", `${this.me}:${p.name ?? sessionId}`, this.me, this.now()))
+        this.touched.add(t.id);
+    }
+    delete this.st.placed[sessionId];
+    delete this.st.questions[sessionId];
+    this.flush();
+  }
+  retain(live) {
+    const keep = new Set(live);
+    for (const sid of Object.keys(this.st.placed))
+      if (!keep.has(sid))
+        this.forget(sid);
+  }
+  onDefault(s) {
+    if (!s.root)
+      return isDefaultBranch(s.branch);
+    let c = this.defaults.get(s.root);
+    if (!c || this.now() - c.at > 10 * 60000) {
+      c = { at: this.now(), v: defaultBranch(s.root) };
+      this.defaults.set(s.root, c);
+    }
+    return isDefaultBranch(s.branch, c.v);
+  }
+  footprint(s) {
+    return { repo: s.repo, branch: s.branch, paths: s.paths, onDefault: this.onDefault(s) };
+  }
+  place(s) {
+    if (!s.repo)
+      return;
+    if (s.root) {
+      const cur = this.st.roots[s.repo];
+      if (!cur || !fs11.existsSync(cur))
+        this.st.roots[s.repo] = s.root;
+      (this.clones.get(s.repo) ?? this.clones.set(s.repo, new Set).get(s.repo)).add(s.root);
+      if (!this.readLocal.has(s.root)) {
+        this.readLocal.add(s.root);
+        this.mergeRef(s.root, s.repo, REF);
+        this.mergeRef(s.root, s.repo, SYNC_REF);
+      }
+    }
+    const fp = this.footprint(s);
+    const rec = this.st.placed[s.sessionId] ??= { threads: [], why: {} };
+    rec.name = s.name;
+    rec.threads = rec.threads.map((id) => this.resolve(id)).filter((id) => this.st.threads[id]);
+    let want;
+    if (rec.pinned) {
+      rec.pinned = rec.pinned.map((id) => this.resolve(id)).filter((id) => this.st.threads[id]);
+      want = rec.pinned.map((id) => ({ id, why: rec.why[id] ?? "you chose it" }));
+      if (!fp.onDefault && fp.branch && !rec.pinned.some((id) => ids(this.st.threads[id], "branches").includes(fp.branch))) {
+        delete rec.pinned;
+        return this.place(s);
+      }
+    } else {
+      const p = place(fp, this.lites(s.repo));
+      if (p.kind === "join")
+        want = p.threads;
+      else if (p.kind === "create") {
+        const t = this.createThread(s, p.name, p.why);
+        if (p.branch)
+          put(t, "branches", p.branch, { at: this.now() }, this.me, this.now());
+        for (const f of p.files)
+          put(t, "files", f, { at: this.now() }, this.me, this.now());
+        want = [{ id: t.id, why: p.why }];
+      } else if (p.kind === "ask") {
+        const before = this.st.questions[s.sessionId];
+        if (!before || before.candidates.join() !== p.candidates.join())
+          this.st.questions[s.sessionId] = { candidates: p.candidates, why: p.why, at: this.now() };
+        want = rec.threads.map((id) => ({ id, why: rec.why[id] ?? "" }));
+      } else {
+        want = fp.onDefault ? rec.threads.map((id) => ({ id, why: rec.why[id] ?? "" })) : [];
+      }
+      if (fp.onDefault) {
+        for (const id of rec.threads)
+          if (!want.some((w) => w.id === id))
+            want.push({ id, why: rec.why[id] ?? "" });
+      }
+    }
+    const wantIds = want.map((w) => this.resolve(w.id));
+    for (const id of rec.threads)
+      if (!wantIds.includes(id)) {
+        const t = this.st.threads[id];
+        if (t && remove(t, "sessions", `${this.me}:${s.name}`, this.me, this.now()))
+          this.touched.add(id);
+        delete rec.why[id];
+      }
+    for (const w of want) {
+      const id = this.resolve(w.id);
+      const t = this.st.threads[id];
+      if (!t)
+        continue;
+      if (!rec.threads.includes(id)) {
+        (this.st.banner[s.sessionId] ??= []).push({ name: t.meta.value.name, why: w.why || "matched" });
+        rec.why[id] = w.why;
+      }
+      this.join(t, s, fp);
+    }
+    rec.threads = [...new Set(wantIds)].filter((id) => this.st.threads[id]);
+  }
+  createThread(s, name, why) {
+    const t = create({ name, repo: s.repo, by: this.me, label: this.label, now: this.now() });
+    this.st.threads[t.id] = t;
+    this.st.keys[t.id] = newKey().toString("base64");
+    this.touched.add(t.id);
+    this.d.log(`thread ${name} started for ${s.name}: ${why}`);
+    return t;
+  }
+  join(t, s, fp) {
+    const now = this.now();
+    let changed = false;
+    if (t.meta.value.status === "archived" && !t.meta.value.combinedInto) {
+      changed = setMeta(t, this.me, { status: "active" }, now) || changed;
+    }
+    changed = put(t, "people", this.me, { label: this.label }, this.me, now) || changed;
+    const sid = `${this.me}:${s.name}`;
+    const was = t.sessions[sid];
+    if (!was || was.gone || was.name !== s.name || was.branch !== s.branch || now - was.at > SESSION_REFRESH_MS)
+      changed = put(t, "sessions", sid, { person: this.me, label: this.label, name: s.name, branch: s.branch, at: now }, this.me, now) || changed;
+    if (fp.branch && !fp.onDefault && ids(t, "branches").length && !t.branches[fp.branch])
+      changed = put(t, "branches", fp.branch, { at: now }, this.me, now) || changed;
+    const files = ids(t, "files");
+    for (const p of s.paths.slice(0, 12)) {
+      if (files.length >= MAX_FILES)
+        break;
+      if (files.some((q) => covers(q, p)))
+        continue;
+      changed = put(t, "files", p, { at: now }, this.me, now) || changed;
+      files.push(p);
+    }
+    if (changed)
+      this.touched.add(t.id);
+  }
+  answer(sessionId, pick) {
+    const s = this.locals.get(sessionId);
+    const q = this.st.questions[sessionId];
+    delete this.st.questions[sessionId];
+    const rec = this.st.placed[sessionId] ??= { threads: [], why: {} };
+    if (pick === NO_THREAD) {
+      rec.pinned = [];
+    } else if (pick === NEW_THREAD) {
+      if (!s?.repo)
+        return { ok: false, error: "this session is not in a git repo with a remote" };
+      const base = slug(nameFromDir(path15.posix.dirname(s.paths[0] ?? s.name)) || s.name);
+      const taken = new Set(this.list().map((t) => t.name));
+      let name = base;
+      for (let i = 2;taken.has(name); i++)
+        name = `${base}-${i}`;
+      const t = this.createThread(s, name, "you asked for a new thread");
+      for (const p of s.paths.slice(0, 12))
+        put(t, "files", p, { at: this.now() }, this.me, this.now());
+      rec.pinned = [t.id];
+      rec.why[t.id] = "you asked for a new thread";
+    } else {
+      const t = this.find(sessionId, pick) ?? (q ? q.candidates.map((id) => this.st.threads[id]).find((t) => t?.meta.value.name === pick) : undefined);
+      if (!t)
+        return { ok: false, error: `no thread called "${pick}". Threads: ${this.list().map((t) => t.name).join(", ") || "none"}` };
+      rec.pinned = [...new Set([...rec.pinned ?? [], t.id])];
+      rec.why[t.id] = "you chose it";
+    }
+    if (s)
+      this.place(s);
+    this.flush();
+    return { ok: true, threads: this.namesFor(sessionId) };
+  }
+  leave(sessionId, nameOrId) {
+    const t = this.find(sessionId, nameOrId);
+    if (!t)
+      return { ok: false, error: `no thread called "${nameOrId}"` };
+    const rec = this.st.placed[sessionId] ??= { threads: [], why: {} };
+    rec.pinned = this.idsFor(sessionId).filter((id) => id !== t.id);
+    const s = this.locals.get(sessionId);
+    if (s)
+      this.place(s);
+    this.flush();
+    return { ok: true, threads: this.namesFor(sessionId) };
+  }
+  peerPresence(label, sessions) {
+    const peer = this.d.peers()[label];
+    if (!peer || !Array.isArray(sessions))
+      return;
+    if (sessions.some((s) => Array.isArray(s.threads)))
+      this.capable.add(label);
+    else
+      return;
+    const now = this.now();
+    for (const ps of sessions) {
+      const sum = parseSummary2(ps.footprint);
+      if (!sum?.repo)
+        continue;
+      const fp = {
+        repo: sum.repo,
+        branch: sum.branch,
+        paths: sum.paths ?? [],
+        onDefault: isDefaultBranch(sum.branch, this.defaultFor(sum.repo))
+      };
+      for (const t of Object.values(this.st.threads)) {
+        if (!people(t).includes(this.me))
+          continue;
+        const why = matchesPeer(this.lite(t), fp);
+        if (!why)
+          continue;
+        const isNew = !t.people[peer.fingerprint] || !!t.people[peer.fingerprint].gone;
+        let changed = put(t, "people", peer.fingerprint, { label: peer.label }, this.me, now);
+        if (isNew) {
+          const note = { id: `join:${t.id}:${peer.fingerprint}`, text: `\u25e2 crosstalk: ${peer.label} joined ${t.meta.value.name} (${why}) and can now read it.` };
+          for (const sid of this.sessionsIn([t.id]))
+            (this.st.notes[sid] ??= []).push(note);
+        }
+        const sid = `${peer.fingerprint}:${ps.name}`;
+        const was = t.sessions[sid];
+        if (!was || was.gone || was.branch !== sum.branch || now - was.at > SESSION_REFRESH_MS)
+          changed = put(t, "sessions", sid, { person: peer.fingerprint, label: peer.label, name: ps.name, branch: sum.branch, at: now }, this.me, now) || changed;
+        if (changed) {
+          this.d.log(`thread ${t.meta.value.name}: ${peer.label}/${ps.name} joined (${why})`);
+          this.touched.add(t.id);
+        }
+      }
+    }
+    this.flush();
+  }
+  defaultFor(repo) {
+    const root = this.st.roots[repo];
+    if (!root)
+      return;
+    return this.defaults.get(root)?.v ?? defaultBranch(root);
+  }
+  accept(label, env) {
+    const peer = this.d.peers()[label];
+    if (!peer)
+      return this.d.log(`ignored a thread from ${label}: no direct channel`);
+    this.capable.add(label);
+    const sync = env.threadSync;
+    const inc = parseThread(sync?.thread);
+    if (!inc)
+      return this.d.log(`ignored a malformed thread from ${label}`);
+    const known = this.st.threads[inc.id];
+    const theirPeople = people(inc);
+    if (!theirPeople.includes(peer.fingerprint))
+      return this.d.log(`ignored thread ${inc.id} from ${label}: they are not in it`);
+    if (!known && !theirPeople.includes(this.me))
+      return this.d.log(`ignored thread ${inc.id} from ${label}: it does not name us`);
+    if (known && !people(known).includes(this.me) && !theirPeople.includes(this.me))
+      return;
+    if (typeof sync?.key === "string" && Buffer.from(sync.key, "base64").length === 32) {
+      const mine = this.st.keys[inc.id];
+      if (!mine || sync.key < mine)
+        this.st.keys[inc.id] = sync.key;
+    }
+    const merged = known ? merge(known, inc) : inc;
+    if (known && same(known, merged))
+      return;
+    this.st.threads[inc.id] = merged;
+    this.touched.add(inc.id);
+    this.d.log(`thread ${merged.meta.value.name} updated by ${label}`);
+    this.reconcile();
+    this.flush();
+  }
+  broadcast(t, skip) {
+    const people2 = new Set(people(t));
+    for (const p of Object.values(this.d.peers())) {
+      if (!people2.has(p.fingerprint) || p.fingerprint === this.me || skip.has(p.label))
+        continue;
+      if (!this.capable.has(p.label))
+        continue;
+      this.d.send(p.label, {
+        v: 1,
+        id: crypto10.randomUUID(),
+        ts: this.now(),
+        from: this.label,
+        fromSession: "-",
+        to: p.label,
+        kind: "thread",
+        intent: "fyi",
+        text: "",
+        threadSync: { thread: t, key: this.st.keys[t.id] }
+      });
+    }
+  }
+  reconcile() {
+    for (let round = 0;round < 5; round++) {
+      let any = false;
+      const all = Object.values(this.st.threads);
+      for (const x of all) {
+        const into = x.meta.value.combinedInto;
+        if (into && this.st.threads[into] && !this.st.noticed.includes(x.id)) {
+          this.absorb(this.st.threads[this.resolve(into)], x, `combined by ${x.meta.by === this.me ? "you" : this.labelOf(x.meta.by)}`);
+          any = true;
+        }
+      }
+      const live = Object.values(this.st.threads).filter((t) => isLive(t) && people(t).includes(this.me));
+      outer:
+        for (let i = 0;i < live.length; i++)
+          for (let j = i + 1;j < live.length; j++) {
+            const why = converge(this.lite(live[i]), this.lite(live[j]));
+            if (!why)
+              continue;
+            const [s, x] = survivor({ id: live[i].id, createdAt: live[i].meta.value.createdAt, t: live[i] }, { id: live[j].id, createdAt: live[j].meta.value.createdAt, t: live[j] });
+            this.absorb(s.t, x.t, why);
+            any = true;
+            break outer;
+          }
+      if (!any)
+        break;
+    }
+    for (const s of this.locals.values())
+      this.place(s);
+  }
+  labelOf(fp) {
+    if (fp === this.me)
+      return this.label;
+    return Object.values(this.d.peers()).find((p) => p.fingerprint === fp)?.label ?? fp.slice(0, 9);
+  }
+  absorb(s, x, why) {
+    const now = this.now();
+    const before = { s: live(s, "people").map((p) => p.label), x: live(x, "people").map((p) => p.label) };
+    for (const list of LISTS)
+      for (const it of live(x, list)) {
+        const { l: _l, by: _b, id, gone: _g, ...data } = it;
+        const mine = s[list][id];
+        if (mine && !mine.gone)
+          continue;
+        put(s, list, id, data, this.me, now);
+      }
+    if (!s.recap.value && x.recap.value)
+      setRecap(s, this.me, x.recap.value, now);
+    if (s.meta.value.public !== x.meta.value.public && x.meta.value.public === false)
+      setMeta(s, this.me, { public: false }, now);
+    if (x.meta.value.combinedInto !== s.id)
+      setMeta(x, this.me, { combinedInto: s.id, status: "archived" }, now);
+    if (!this.st.keys[s.id] && this.st.keys[x.id])
+      this.st.keys[s.id] = this.st.keys[x.id];
+    for (const p of Object.values(this.st.placed)) {
+      p.threads = [...new Set(p.threads.map((id) => id === x.id ? s.id : id))];
+      if (p.pinned)
+        p.pinned = [...new Set(p.pinned.map((id) => id === x.id ? s.id : id))];
+      if (p.why[x.id] && !p.why[s.id])
+        p.why[s.id] = p.why[x.id];
+    }
+    this.touched.add(s.id);
+    this.touched.add(x.id);
+    if (this.st.noticed.includes(x.id))
+      return;
+    this.st.noticed.push(x.id);
+    const newToS = before.x.filter((p) => !before.s.includes(p));
+    const newToX = before.s.filter((p) => !before.x.includes(p));
+    const sName = s.meta.value.name;
+    const xName = x.meta.value.name;
+    const reads = [];
+    if (newToS.length)
+      reads.push(`${newToS.join(", ")} can now read ${sName}`);
+    if (newToX.length)
+      reads.push(`${newToX.join(", ")} can now read what was in ${xName}`);
+    const text = `\u25e2 crosstalk: ${xName === sName ? `two ${sName} threads` : `${xName} and ${sName}`} combined into ${sName} (${why}). ` + (reads.length ? reads.join("; ") + "." : "Nobody new can read anything.");
+    this.d.log(text);
+    const note = { id: `combine:${x.id}`, text };
+    const sids = new Set([...this.locals.keys()].filter((sid) => (this.st.placed[sid]?.threads ?? []).includes(s.id)));
+    for (const sid of sids)
+      (this.st.notes[sid] ??= []).push(note);
+  }
+  fade() {
+    const days = this.d.fadeDays ?? 14;
+    const now = this.now();
+    for (const t of Object.values(this.st.threads)) {
+      if (!isLive(t) || now - t.touchedAt < days * DAY)
+        continue;
+      if (this.sessionsIn([t.id]).length)
+        continue;
+      if (live(t, "sessions").some((s) => s.person !== this.me && now - s.at < Math.min(PEER_SESSION_MS, days * DAY)))
+        continue;
+      squash(t, this.me, now);
+      this.touched.add(t.id);
+      this.d.log(`thread ${t.meta.value.name} archived after ${days} quiet days`);
+    }
+    this.flush();
+  }
+  target(sessionId, name) {
+    const t = this.find(sessionId, name);
+    if (t)
+      return t;
+    return { error: name ? `no thread called "${name}"` : "this session is in no thread yet" };
+  }
+  decide(sessionId, o) {
+    const t = this.target(sessionId, o.thread);
+    if ("error" in t)
+      return { ok: false, error: t.error };
+    const now = this.now();
+    put(t, "decisions", newItemId("d"), { text: o.text, who: this.label, at: now, ...o.rationale ? { rationale: o.rationale } : {}, ...o.session ? { session: o.session } : {} }, this.me, now);
+    this.touched.add(t.id);
+    this.flush();
+    return { ok: true, thread: t.meta.value.name };
+  }
+  fact(sessionId, o) {
+    const t = this.target(sessionId, o.thread);
+    if ("error" in t)
+      return { ok: false, error: t.error };
+    const now = this.now();
+    const id = newItemId("f");
+    put(t, "facts", id, { text: o.text, who: this.label, at: now }, this.me, now);
+    this.touched.add(t.id);
+    this.flush();
+    return { ok: true, thread: t.meta.value.name, id };
+  }
+  task(sessionId, o) {
+    const t = this.target(sessionId, o.thread);
+    if ("error" in t)
+      return { ok: false, error: t.error };
+    const now = this.now();
+    if (o.op === "add") {
+      if (!o.text?.trim())
+        return { ok: false, error: "a task needs some text" };
+      const id = newItemId("t");
+      put(t, "tasks", id, { text: o.text.trim(), who: this.label, at: now, state: "open" }, this.me, now);
+      this.touched.add(t.id);
+      this.flush();
+      return { ok: true, thread: t.meta.value.name, id };
+    }
+    const k = o.id ? t.tasks[o.id] : undefined;
+    if (!k || k.gone)
+      return { ok: false, error: `no task ${o.id} in ${t.meta.value.name}` };
+    const { l: _l, by: _b, id: _i, gone: _g, ...data } = k;
+    if (o.op === "claim") {
+      if (k.state !== "open" && k.claimedBy !== this.label)
+        return { ok: false, error: "somebody else has that one. Pick a different task rather than doing it twice." };
+      put(t, "tasks", k.id, { ...data, state: "claimed", claimedBy: this.label }, this.me, now);
+    } else
+      put(t, "tasks", k.id, { ...data, state: "done", doneBy: this.label, ...o.note ? { note: o.note } : {} }, this.me, now);
+    this.touched.add(t.id);
+    this.flush();
+    return { ok: true, thread: t.meta.value.name, id: k.id };
+  }
+  edit(sessionId, o) {
+    const t = this.target(sessionId, o.thread);
+    if ("error" in t)
+      return { ok: false, error: t.error };
+    const now = this.now();
+    let changed = false;
+    if (o.status) {
+      if (!STATUSES.includes(o.status))
+        return { ok: false, error: `status is one of ${STATUSES.join(", ")}` };
+      if (o.status === "archived")
+        changed = squash(t, this.me, now) || changed;
+      else
+        changed = setMeta(t, this.me, { status: o.status }, now) || changed;
+    }
+    if (o.public !== undefined)
+      changed = setMeta(t, this.me, { public: !!o.public }, now) || changed;
+    if (o.recap !== undefined)
+      changed = setRecap(t, this.me, String(o.recap).slice(0, 4000), now) || changed;
+    if (o.feature?.name) {
+      const id = slug(o.feature.name, 60);
+      changed = o.feature.remove ? remove(t, "features", id, this.me, now) || changed : put(t, "features", id, { name: o.feature.name, risk: o.feature.risk === "risky" ? "risky" : "everyday", ...o.feature.flag ? { flag: o.feature.flag } : {} }, this.me, now) || changed;
+    }
+    if (o.question?.text)
+      changed = put(t, "questions", newItemId("q"), { text: o.question.text, blocking: !!o.question.blocking, who: this.label, at: now }, this.me, now) || changed;
+    if (o.answer?.id) {
+      const q = t.questions[o.answer.id];
+      if (!q || q.gone)
+        return { ok: false, error: `no question ${o.answer.id}` };
+      const { l: _l, by: _b, id: _i, gone: _g, ...data } = q;
+      changed = put(t, "questions", q.id, { ...data, answer: o.answer.text, answeredBy: this.label }, this.me, now) || changed;
+    }
+    if (o.rule?.text)
+      changed = put(t, "rules", newItemId("r"), { text: o.rule.text, who: this.label, at: now, ...o.rule.when ? { when: o.rule.when } : {}, ...o.rule.then ? { then: o.rule.then } : {} }, this.me, now) || changed;
+    if (changed)
+      this.touched.add(t.id);
+    this.flush();
+    return { ok: true, thread: view(t) };
+  }
+  flush() {
+    const skip = new Set;
+    if (this.touched.size) {
+      const ids = [...this.touched];
+      this.touched.clear();
+      this.save();
+      for (const id of ids) {
+        const t = this.st.threads[id];
+        if (!t)
+          continue;
+        this.broadcast(t, skip);
+        if (committedDigest(t) !== this.st.committed[id])
+          this.schedule(t.meta.value.repo);
+      }
+    } else
+      this.save();
+  }
+  schedule(repo) {
+    if (!repo || !this.st.roots[repo])
+      return;
+    clearTimeout(this.timers.get(repo));
+    this.timers.set(repo, setTimeout(() => {
+      this.timers.delete(repo);
+      this.sync(repo, true);
+    }, this.d.settleMs ?? 3000));
+  }
+  async syncAll() {
+    for (const repo of Object.keys(this.st.roots))
+      await this.sync(repo, false);
+  }
+  sync(repo, commit) {
+    const running = this.syncing.get(repo);
+    if (running)
+      return running.then(() => this.sync(repo, commit));
+    const p = this.syncOnce(repo, commit).catch((e) => this.d.log(`thread sync for ${repo} failed: ${e.message}`)).finally(() => this.syncing.delete(repo));
+    this.syncing.set(repo, p);
+    return p;
+  }
+  async syncOnce(repo, commit) {
+    const root = this.st.roots[repo];
+    if (!root || !fs11.existsSync(root))
+      return;
+    const remote = remoteName(root);
+    for (const clone of new Set([root, ...this.clones.get(repo) ?? []])) {
+      if (this.refspecDone.has(clone) || !fs11.existsSync(clone))
+        continue;
+      const r = remoteName(clone);
+      if (r && ensureRefspec(clone, r))
+        this.d.log(`added ${REFSPEC} to ${r}'s fetch in ${clone}`);
+      this.refspecDone.add(clone);
+    }
+    const network = this.d.network !== false && !!remote;
+    if (network) {
+      const f = await fetchRemote(root, remote);
+      if (!f.ok)
+        this.d.log(`thread fetch from ${remote} failed quietly: ${f.err}`);
+    }
+    this.mergeRef(root, repo, SYNC_REF);
+    this.mergeRef(root, repo, REF);
+    this.reconcile();
+    this.flush();
+    const mine = Object.values(this.st.threads).filter((t) => t.meta.value.repo === repo);
+    const due = commit || mine.some((t) => committedDigest(t) !== this.st.committed[t.id]);
+    if (!due)
+      return;
+    for (let attempt = 0;attempt < 2; attempt++) {
+      const files = this.render(repo);
+      const local = refCommit(root);
+      const remoteHead = refCommit(root, SYNC_REF);
+      const extra = remoteHead && remoteHead !== local && !(local && isAncestor(root, remoteHead, local)) ? [remoteHead] : [];
+      const made = writeRef(root, files, commitMessage(mine), { author: `crosstalk (${this.label})`, extraParents: extra });
+      for (const t of mine)
+        this.st.committed[t.id] = committedDigest(t);
+      this.save();
+      this.writeSummary(repo, root);
+      if (made)
+        this.d.log(`committed ${Object.keys(files).length} thread file(s) to ${REF} in ${root}`);
+      if (!network)
+        return;
+      const r = await pushRemote(root, remote);
+      if (r.ok)
+        return void this.d.log(`pushed ${REF} to ${remote}`);
+      this.d.log(`thread push to ${remote} failed quietly${attempt ? "" : ", fetching and trying once more"}: ${r.err}`);
+      if (attempt)
+        return;
+      await fetchRemote(root, remote);
+      this.mergeRef(root, repo, SYNC_REF);
+      this.reconcile();
+      this.flush();
+    }
+  }
+  mergeRef(root, repo, ref) {
+    const { files } = readRef(root, ref);
+    const peers = Object.values(this.d.peers());
+    for (const [name, text] of Object.entries(files)) {
+      if (name === RULES_FILE) {
+        (this.st.opaque[repo] ??= {})[name] = text;
+        continue;
+      }
+      const p = parse(text);
+      let t = null;
+      if (p.kind === "public")
+        t = p.thread;
+      else if (p.kind === "sealed") {
+        let key = this.st.keys[p.id] ? Buffer.from(this.st.keys[p.id], "base64") : null;
+        t = key ? p.open(key) : null;
+        if (!t) {
+          key = unwrapKey(this.d.identity, p.wraps, peers);
+          t = key ? p.open(key) : null;
+          if (t && key)
+            this.st.keys[p.id] = key.toString("base64");
+        }
+      }
+      if (!t || t.meta.value.repo && t.meta.value.repo !== repo) {
+        if (!this.st.threads[p.kind === "unknown" ? "" : p.id])
+          (this.st.opaque[repo] ??= {})[name] = text;
+        continue;
+      }
+      if (this.st.opaque[repo])
+        delete this.st.opaque[repo][name];
+      const known = this.st.threads[t.id];
+      const merged = known ? merge(known, t) : t;
+      if (!known || !same(known, merged)) {
+        this.st.threads[t.id] = merged;
+        this.touched.add(t.id);
+      }
+      if (!known && merged.meta.value.combinedInto && !this.st.noticed.includes(t.id))
+        this.st.noticed.push(t.id);
+    }
+  }
+  render(repo) {
+    const out = { ...this.st.opaque[repo] ?? {} };
+    const taken = new Set(Object.keys(out));
+    const byFp = new Map(Object.values(this.d.peers()).map((p) => [p.fingerprint, p]));
+    for (const t of Object.values(this.st.threads).sort((a, b) => a.meta.value.createdAt - b.meta.value.createdAt || (a.id < b.id ? -1 : 1))) {
+      if (t.meta.value.repo !== repo)
+        continue;
+      const name = fileName(t, taken);
+      taken.add(name);
+      if (t.meta.value.public) {
+        out[name] = renderPublic(t);
+        continue;
+      }
+      const k = this.st.keys[t.id];
+      if (!k)
+        continue;
+      const key = Buffer.from(k, "base64");
+      const recipients = people(t).map((fp) => byFp.get(fp)).filter((p) => !!p);
+      out[name] = renderSealed(t, this.sealer(t.id, key), this.wraps(t.id, key, recipients));
+    }
+    return out;
+  }
+  sealer(id, key) {
+    const kh = crypto10.createHash("sha256").update(key).digest("hex").slice(0, 8);
+    return (section, value) => {
+      const h = kh + crypto10.createHash("sha256").update(canonical(value)).digest("hex").slice(0, 24);
+      const slot = `${id}/${section}`;
+      const c = this.st.blobs[slot];
+      if (c?.h === h)
+        return c.b;
+      const b = sealSection(key, id, section, value);
+      this.st.blobs[slot] = { h, b };
+      return b;
+    };
+  }
+  wraps(id, key, recipients) {
+    const kh = crypto10.createHash("sha256").update(key).digest("hex").slice(0, 8);
+    const h = kh + recipients.map((p) => p.fingerprint).sort().join(",");
+    const slot = `${id}/wraps`;
+    const c = this.st.blobs[slot];
+    if (c?.h === h)
+      return JSON.parse(c.b);
+    const w = wrapKey(this.d.identity, key, recipients);
+    this.st.blobs[slot] = { h, b: JSON.stringify(w) };
+    return w;
+  }
+  writeSummary(repo, root) {
+    const pub = Object.values(this.st.threads).filter((t) => t.meta.value.repo === repo && t.meta.value.public && !t.meta.value.combinedInto);
+    const now = Object.fromEntries(pub.map((t) => [t.id, t.meta.value.status]));
+    const before = this.st.publicStatus[repo] ?? {};
+    if (canonical(now) === canonical(before))
+      return;
+    this.st.publicStatus[repo] = now;
+    this.save();
+    const file = path15.join(root, "THREADS.md");
+    if (!pub.length && !fs11.existsSync(file))
+      return;
+    const text = summary(pub);
+    try {
+      if (fs11.existsSync(file) && fs11.readFileSync(file, "utf8") === text)
+        return;
+      fs11.writeFileSync(file, text);
+    } catch {
+      return;
+    }
+    this.d.log(`wrote ${file}`);
+    const note = { id: `summary:${repo}:${Date.now()}`, text: `\u25e2 crosstalk: updated THREADS.md in ${path15.basename(root)} because a public thread's status changed. It is left unstaged; commit it if you want it in the repo.` };
+    for (const [sid, s] of this.locals)
+      if (s.repo === repo)
+        (this.st.notes[sid] ??= []).push(note);
+    this.save();
+  }
+}
+function squash(t, by, now) {
+  let changed = setMeta(t, by, { status: "archived" }, now);
+  for (const list of ["facts", "tasks", "questions", "sessions"])
+    for (const id of ids(t, list))
+      changed = remove(t, list, id, by, now) || changed;
+  if (t.recap.value)
+    changed = setRecap(t, by, "", now) || changed;
+  return changed;
+}
+function commitMessage(threads) {
+  const names = threads.filter((t) => !t.meta.value.combinedInto).map((t) => t.meta.value.public ? t.meta.value.name : t.id.slice(0, 8));
+  return `crosstalk: threads (${names.slice(0, 5).join(", ")}${names.length > 5 ? ", \u2026" : ""})`;
+}
+
+// src/threads/model.ts
+var LISTS2 = [
+  "people",
+  "sessions",
+  "files",
+  "branches",
+  "features",
+  "questions",
+  "decisions",
+  "facts",
+  "tasks",
+  "rules"
+];
+var SECTIONS2 = ["meta", "recap", ...LISTS2];
+function live2(t, list) {
+  return Object.values(t[list]).filter((i) => !i.gone).sort((a, b) => (a.at ?? 0) - (b.at ?? 0) || (a.id < b.id ? -1 : 1));
+}
+var ids2 = (t, list) => live2(t, list).map((i) => i.id);
+function view2(t) {
+  const m = t.meta.value;
+  return {
+    id: t.id,
+    name: m.name,
+    status: m.status,
+    public: m.public,
+    repo: m.repo,
+    combinedInto: m.combinedInto,
+    people: live2(t, "people").map((p) => p.label),
+    sessions: live2(t, "sessions").map((s) => `${s.label}/${s.name}${s.branch ? ` @ ${s.branch}` : ""}`),
+    files: ids2(t, "files"),
+    branches: ids2(t, "branches"),
+    features: live2(t, "features").map((f) => ({ name: f.name, risk: f.risk, ...f.flag ? { flag: f.flag } : {} })),
+    recap: t.recap.value,
+    questions: live2(t, "questions").map((q) => ({ id: q.id, text: q.text, blocking: !!q.blocking, who: q.who, ...q.answer ? { answer: q.answer, answeredBy: q.answeredBy } : {} })),
+    decisions: live2(t, "decisions").map((d) => ({ id: d.id, text: d.text, who: d.who, at: d.at, ...d.rationale ? { rationale: d.rationale } : {} })),
+    facts: live2(t, "facts").map((f) => ({ id: f.id, text: f.text, who: f.who, at: f.at })),
+    tasks: live2(t, "tasks").map((k) => ({ id: k.id, text: k.text, who: k.who, state: k.state, ...k.claimedBy ? { claimedBy: k.claimedBy } : {}, ...k.note ? { note: k.note } : {} })),
+    rules: live2(t, "rules").map((r) => ({ id: r.id, text: r.text, who: r.who })),
+    touchedAt: t.touchedAt
+  };
+}
+
 // src/daemon.ts
 var identity = loadIdentity();
 if (!identity) {
@@ -1105,12 +2809,40 @@ var stillAround = (id, reg) => reg.socket ? listLocalSessions().some((s) => s.se
 var sessions = new Map(Object.entries(loadRegistered()).filter(([id, reg]) => stillAround(id, reg)));
 var persistSessions = () => saveRegistered(Object.fromEntries(sessions));
 persistSessions();
+var threads = new ThreadService({
+  identity,
+  peers: () => loadPeers(),
+  send: (label, env) => sendEnvelope(label, env),
+  log,
+  file: path16.join(P.root, "threads.json"),
+  settleMs: Number(process.env.CROSSTALK_THREAD_SETTLE_MS ?? 3000),
+  network: process.env.CROSSTALK_THREADS_NO_PUSH !== "1",
+  fadeDays: Number(process.env.CROSSTALK_THREAD_FADE_DAYS ?? 14)
+});
+function observeThreads(reg) {
+  try {
+    const fp = footprintOf(reg);
+    threads.observe({
+      sessionId: reg.sessionId,
+      name: reg.name,
+      cwd: reg.cwd,
+      repo: fp.repo,
+      branch: fp.branch,
+      root: fp.root,
+      paths: summarise(fp)?.paths ?? []
+    });
+  } catch (e) {
+    log(`threads: ${e.message}`);
+  }
+}
+var threadNames = (ids) => ids?.length ? [...new Set(ids.map((id) => threads.thread(id)?.meta.value.name).filter((n) => !!n))].join(", ") || undefined : undefined;
 function sweepSessions() {
   let gone = 0;
   for (const [id, reg] of [...sessions]) {
     if (stillAround(id, reg))
       continue;
     sessions.delete(id);
+    threads.forget(id);
     gone++;
   }
   if (gone)
@@ -1134,10 +2866,12 @@ var localPresence = () => {
   for (const reg of sessions.values()) {
     const known = live.find((s) => s.sessionId === reg.sessionId);
     out.push({
-      name: known?.name ?? reg.name,
+      name: known?.name && known.name !== reg.title ? known.name : reg.name,
       cwd: known?.cwd ?? reg.cwd,
       status: known?.status ?? "unknown",
-      lastSeen: known?.updatedAt ?? Date.now()
+      lastSeen: known?.updatedAt ?? Date.now(),
+      ...reg.footprint?.repo ? { footprint: summarise(reg.footprint) } : {},
+      threads: threads.idsFor(reg.sessionId)
     });
   }
   return out;
@@ -1177,6 +2911,17 @@ function routeInbound(peerLabel, env) {
       return { target: named, how: "named" };
   }
   const fp = parseSummary(env.footprint);
+  if (Array.isArray(env.threads) && env.threads.length) {
+    const inThread = threads.sessionsIn(env.threads.filter((t) => typeof t === "string").slice(0, 20)).map((id) => sessions.get(id)).filter((s) => !!s);
+    if (inThread.length === 1)
+      return { target: inThread[0], how: "thread" };
+    if (inThread.length > 1) {
+      const c = fp ? choose(inThread.map((s) => ({ item: s, fp: footprintOf(s) })), fp) : undefined;
+      const recent = new Map(listLocalSessions().map((s) => [s.sessionId, s.updatedAt]));
+      const newest = [...inThread].sort((a, b) => (recent.get(b.sessionId) ?? b.seenAt ?? 0) - (recent.get(a.sessionId) ?? a.seenAt ?? 0))[0];
+      return { target: c?.pick ?? newest, how: "thread" };
+    }
+  }
   if (!fp || !sessions.size)
     return { target: pickSession(), how: "no footprint" };
   const bound = routes[bindingKey(peerLabel, fp)];
@@ -1307,12 +3052,19 @@ function uiSync(sid) {
         kind: m.kind === "ask" && m.correlation ? "ask" : "message",
         sessionId: sid,
         from: m.from,
-        thread: m.thread ?? m.room ?? (m.fromSession !== "-" ? m.fromSession : undefined),
+        thread: threadNames(m.threads) ?? m.thread ?? m.room ?? (m.fromSession !== "-" ? m.fromSession : undefined),
         text: m.text,
         chips: m.slices.map((s) => ({ kind: s.kind, label: s.label, bytes: s.bytes })),
-        ts: m.ts
+        ts: m.ts,
+        ...m.auto ? { auto: true } : {}
       }, now);
     }
+    const tq = threads.question(sid);
+    if (tq)
+      upsert(items, { id: tq.id, kind: "thread", sessionId: sid, question: tq.question, options: tq.options, ts: now }, now);
+    for (const it of Object.values(items))
+      if (it.kind === "thread" && it.sessionId === sid && it.id !== tq?.id)
+        settle(items, it.id, "answered", now);
     const waiting = new Set(unrouted.map(routeId));
     for (const u of unrouted) {
       if (u.askedSession !== sid && sessions.has(u.askedSession ?? ""))
@@ -1577,6 +3329,22 @@ function onEnvelope(peerLabel, env, ctx) {
   }
   if (env.kind === "presence") {
     peerPresence.set(peerLabel, { sessions: env.presence ?? [], at: Date.now() });
+    if (!ctx?.room)
+      try {
+        threads.peerPresence(peerLabel, env.presence);
+      } catch (e) {
+        log(`threads: ${e.message}`);
+      }
+    return;
+  }
+  if (env.kind === "thread") {
+    if (ctx?.room)
+      return log(`ignored a thread sent through #${ctx.room.name}`);
+    try {
+      threads.accept(peerLabel, env);
+    } catch (e) {
+      log(`threads: ${e.message}`);
+    }
     return;
   }
   if (env.kind === "answer" && env.correlation) {
@@ -1608,7 +3376,7 @@ function onEnvelope(peerLabel, env, ctx) {
     if (env.correlation)
       sendEnvelope(peerLabel, {
         v: 1,
-        id: crypto7.randomUUID(),
+        id: crypto11.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: "-",
@@ -1645,7 +3413,8 @@ function onEnvelope(peerLabel, env, ctx) {
     replyTo: env.replyTo,
     room: ctx?.room ? `#${ctx.room.name}` : env.room,
     correlation: env.correlation,
-    ts: env.ts
+    ts: env.ts,
+    ...route.how === "thread" ? { threads: threads.idsFor(target.sessionId).filter((id) => (env.threads ?? []).some((t) => threads.resolve(t) === id)), auto: true } : {}
   };
   seenIds.set(env.id, Date.now());
   hold(target.sessionId, h, env.slices);
@@ -1724,7 +3493,7 @@ function acceptRoomKey(peerLabel, env) {
 function sendRoomKey(peerLabel, room) {
   return sendEnvelope(peerLabel, {
     v: 1,
-    id: crypto7.randomUUID(),
+    id: crypto11.randomUUID(),
     ts: Date.now(),
     from: identity.label,
     fromSession: "-",
@@ -1819,7 +3588,7 @@ function acceptTasks(peerLabel, env) {
     if (all.length)
       sendEnvelope(peerLabel, {
         v: 1,
-        id: crypto7.randomUUID(),
+        id: crypto11.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: "-",
@@ -1840,7 +3609,7 @@ function broadcastTask(room, op) {
       continue;
     sendEnvelope(label, {
       v: 1,
-      id: crypto7.randomUUID(),
+      id: crypto11.randomUUID(),
       ts: Date.now(),
       from: identity.label,
       fromSession: "-",
@@ -1861,7 +3630,7 @@ function broadcastFact(room, op) {
       continue;
     sendEnvelope(label, {
       v: 1,
-      id: crypto7.randomUUID(),
+      id: crypto11.randomUUID(),
       ts: Date.now(),
       from: identity.label,
       fromSession: "-",
@@ -1880,7 +3649,7 @@ function shareFacts(peerLabel, room) {
     return;
   sendEnvelope(peerLabel, {
     v: 1,
-    id: crypto7.randomUUID(),
+    id: crypto11.randomUUID(),
     ts: Date.now(),
     from: identity.label,
     fromSession: "-",
@@ -1901,7 +3670,7 @@ function requestFactSync() {
     for (const label of Object.keys(loadPeers()))
       sendEnvelope(label, {
         v: 1,
-        id: crypto7.randomUUID(),
+        id: crypto11.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: "-",
@@ -1916,7 +3685,7 @@ function requestFactSync() {
     for (const label of Object.keys(loadPeers()))
       sendEnvelope(label, {
         v: 1,
-        id: crypto7.randomUUID(),
+        id: crypto11.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: "-",
@@ -1962,7 +3731,7 @@ function publishPresence() {
   for (const label of Object.keys(loadPeers())) {
     sendEnvelope(label, {
       v: 1,
-      id: crypto7.randomUUID(),
+      id: crypto11.randomUUID(),
       ts: Date.now(),
       from: identity.label,
       fromSession: "-",
@@ -2022,7 +3791,8 @@ async function handle(req, sock) {
       sessions.set(sessionId, {
         sessionId,
         pid: req.pid,
-        name: req.name,
+        name: before?.title && req.name === before.title ? before.name : req.name,
+        title: before?.title,
         cwd: req.cwd ?? "",
         socket: req.socket,
         token: req.token,
@@ -2066,7 +3836,9 @@ async function handle(req, sock) {
           continue;
         sessions.delete(id);
         delete held[id];
+        threads.forget(id);
       }
+      observeThreads(sessions.get(sessionId));
       persistSessions();
       log(`registered session ${req.name} (${req.cwd})${req.socket ? "" : " [pull mode, no inbox socket]"}`);
       publishPresence();
@@ -2090,7 +3862,7 @@ async function handle(req, sock) {
       const intent = req.intent ?? "fyi";
       const decision = triage("notify", intent, "message", statusOf(target.sessionId));
       const h = {
-        id: crypto7.randomUUID(),
+        id: crypto11.randomUUID(),
         from: source,
         fromSession: "-",
         intent,
@@ -2126,6 +3898,16 @@ async function handle(req, sock) {
       };
     }
     case "tasks": {
+      const self = req.sessionId ? resolveSession(req) : undefined;
+      const mine = self ? threads.idsFor(self.sessionId) : [];
+      if (req.write && (req.thread || mine.length && !req.room)) {
+        const inThread = req.write === "add" || mine.some((id) => threads.thread(id)?.tasks[String(req.id)]) || req.thread;
+        if (inThread && (req.write === "add" || req.write === "claim" || req.write === "done")) {
+          const owner = req.thread ?? mine.find((id) => threads.thread(id)?.tasks[String(req.id)]);
+          const r = threads.task(self?.sessionId, { op: req.write, text: req.text, id: req.id, note: req.note, thread: owner });
+          return r.ok ? { ok: true, thread: r.thread, op: req.write, id: r.id } : r;
+        }
+      }
       const store = load5();
       const roomNames = [
         ...Object.keys(loadPeers()),
@@ -2180,6 +3962,15 @@ async function handle(req, sock) {
       };
     }
     case "facts": {
+      const self = req.sessionId ? resolveSession(req) : undefined;
+      const mine = self ? threads.idsFor(self.sessionId) : [];
+      if (req.write === "add" && (req.thread || mine.length && !req.room)) {
+        const text = String(req.text ?? "").trim();
+        if (!text)
+          return { ok: false, error: "a fact needs some text" };
+        const r = threads.fact(self?.sessionId, { text, thread: req.thread });
+        return r.ok ? { ok: true, thread: r.thread, op: "add", id: r.id } : r;
+      }
       const store = load4();
       const roomNames = [
         ...Object.keys(loadPeers()),
@@ -2364,7 +4155,7 @@ async function handle(req, sock) {
           return { ok: false, error: `no key for #${room.name}` };
         const env = {
           v: 1,
-          id: crypto7.randomUUID(),
+          id: crypto11.randomUUID(),
           ts: Date.now(),
           from: identity.label,
           fromSession: sessionById(req.sessionId)?.name ?? "-",
@@ -2390,10 +4181,38 @@ async function handle(req, sock) {
           ...queuedNow ? {} : { queued: true, note: "the relay is unreachable; held and will go when the link is back" }
         };
       }
+      if (!String(req.to ?? "").trim()) {
+        const self = resolveSession(req);
+        const r = self ? threads.recipients(self.sessionId) : { threads: [], labels: [] };
+        const names = r.threads.map((id) => threads.thread(id)?.meta.value.name).join(", ");
+        if (!r.threads.length)
+          return { ok: false, error: "this session is in no thread yet, so there is nobody to send to without a name. Say who it is for." };
+        if (!r.labels.length)
+          return { ok: false, error: `nobody else is in ${names} yet. Say who it is for.` };
+        if (req.op === "ask" && r.labels.length > 1)
+          return { ok: false, error: `ask waits on one person, and ${names} has ${r.labels.join(", ")}. Say whose answer you need.` };
+        const sent = [];
+        const failed = [];
+        let last;
+        for (const label of r.labels) {
+          last = await handle({ ...req, to: label, threadIds: r.threads }, sock);
+          if (last?.ok)
+            sent.push(label);
+          else
+            failed.push({ to: label, error: last?.error ?? "not sent" });
+        }
+        if (!sent.length)
+          return { ok: false, error: failed.map((f) => `${f.to}: ${f.error}`).join("; ") };
+        return { ...req.op === "ask" ? last : { ok: true, id: last?.id }, threads: names, sentTo: sent, ...failed.length ? { failed } : {} };
+      }
       const [label, session] = String(req.to).split("/");
+      const fromThreads = Array.isArray(req.threadIds) ? req.threadIds : (() => {
+        const self = resolveSession(req);
+        return self ? threads.idsFor(self.sessionId) : [];
+      })();
       const env = {
         v: 1,
-        id: crypto7.randomUUID(),
+        id: crypto11.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: sessionById(req.sessionId)?.name ?? "-",
@@ -2409,8 +4228,9 @@ async function handle(req, sock) {
         thread: req.thread,
         replyTo: req.replyTo,
         room: req.room,
-        correlation: req.op === "ask" ? crypto7.randomUUID() : undefined,
-        footprint: senderFootprint(req)
+        correlation: req.op === "ask" ? crypto11.randomUUID() : undefined,
+        footprint: senderFootprint(req),
+        ...fromThreads.length ? { threads: fromThreads } : {}
       };
       if (req.unprompted) {
         if (!String(req.because ?? "").trim())
@@ -2451,7 +4271,7 @@ async function handle(req, sock) {
       const [label] = String(req.to).split("/");
       const env = {
         v: 1,
-        id: crypto7.randomUUID(),
+        id: crypto11.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: sessionById(req.sessionId)?.name ?? "-",
@@ -2566,7 +4386,13 @@ async function handle(req, sock) {
       const reg = sessions.get(sid);
       if (reg && req.mod)
         reg.modSeenAt = Date.now();
-      return { ok: true, items: uiSync(sid), label: identity.label };
+      return {
+        ok: true,
+        items: uiSync(sid),
+        label: identity.label,
+        threads: threads.namesFor(sid),
+        ...req.mod ? { threadNotes: threads.takeNotes(sid) } : {}
+      };
     }
     case "ui_act": {
       const sid = String(req.sessionId ?? "");
@@ -2583,6 +4409,17 @@ async function handle(req, sock) {
         if (r.ok && action === "mute" && before.kind !== "route")
           markHeld(id, settledHeld);
         return r;
+      }
+      if (before.kind === "thread") {
+        if (action !== "answer" || !value)
+          return { ok: false, error: "a thread question is answered with a thread" };
+        const claim = withStore((items, now) => act(items, id, "answer", now, value));
+        if (!claim.ok)
+          return claim;
+        const r = threads.answer(sid, value);
+        if (!r.ok)
+          withStore((items, now) => reopen(items, id, now));
+        return { ...r, item: claim.item };
       }
       if (before.kind === "route") {
         if (action !== "answer" || !value)
@@ -2673,6 +4510,34 @@ async function handle(req, sock) {
       return { ok: true, mutedUntil: until, muted: who };
     }
     case "decide": {
+      const inThread = resolveSession(req);
+      if (req.thread || inThread && threads.idsFor(inThread.sessionId).length) {
+        const r = threads.decide(inThread?.sessionId, {
+          text: String(req.text ?? "").trim(),
+          rationale: req.rationale,
+          session: inThread?.name,
+          thread: req.thread
+        });
+        if (!r.ok)
+          return r;
+        if (req.tell) {
+          const [label] = String(req.tell).split("/");
+          sendEnvelope(label, {
+            v: 1,
+            id: crypto11.randomUUID(),
+            ts: Date.now(),
+            from: identity.label,
+            fromSession: inThread?.name ?? "-",
+            to: label,
+            kind: "decision",
+            intent: "fyi",
+            text: `Decision recorded in ${r.thread}: ${req.text}${req.rationale ? `
+
+${req.rationale}` : ""}`
+          });
+        }
+        return { ok: true, thread: r.thread };
+      }
       const cwd = req.repo ?? sessionById(req.sessionId)?.cwd ?? process.cwd();
       const file = appendDecision(cwd, {
         text: String(req.text),
@@ -2685,7 +4550,7 @@ async function handle(req, sock) {
         const [label] = String(req.tell).split("/");
         sendEnvelope(label, {
           v: 1,
-          id: crypto7.randomUUID(),
+          id: crypto11.randomUUID(),
           ts: Date.now(),
           from: identity.label,
           fromSession: sessionById(req.sessionId)?.name ?? "-",
@@ -2698,6 +4563,59 @@ ${req.rationale}` : ""}`
         });
       }
       return { ok: true, file };
+    }
+    case "threads": {
+      const self = resolveSession(req);
+      if (!self)
+        return { ok: true, threads: [], all: threads.list() };
+      const out = threads.forSession(self.sessionId, self.name, !!req.consume, !!req.consume && !modLive(self) && !req.mod);
+      const retitle = !!req.consume && !!out.title && out.title !== self.title;
+      if (retitle) {
+        self.title = out.title;
+        persistSessions();
+      }
+      return { ok: true, ...out, title: retitle ? out.title : undefined, currentTitle: out.title, mod: modLive(self) };
+    }
+    case "thread": {
+      const self = resolveSession(req);
+      const sid = self?.sessionId;
+      if (req.pick) {
+        if (!sid)
+          return { ok: false, error: "no session to place" };
+        const r = threads.answer(sid, String(req.pick));
+        if (r.ok)
+          withStore((items, now) => {
+            for (const it of Object.values(items))
+              if (it.kind === "thread" && it.sessionId === sid)
+                settle(items, it.id, "answered", now);
+          });
+        return r;
+      }
+      if (req.leave)
+        return sid ? threads.leave(sid, String(req.leave)) : { ok: false, error: "no session" };
+      return threads.edit(sid, {
+        thread: req.thread,
+        status: req.status,
+        public: req.public,
+        recap: req.recap,
+        feature: req.feature,
+        question: req.question,
+        answer: req.answer,
+        rule: req.rule
+      });
+    }
+    case "thread_read": {
+      const self = resolveSession(req);
+      if (req.thread) {
+        const t = threads.find(self?.sessionId, String(req.thread));
+        return t ? { ok: true, threads: [view2(t)] } : { ok: false, error: `no thread called "${req.thread}"`, all: threads.list() };
+      }
+      const mine = self ? threads.idsFor(self.sessionId) : [];
+      return {
+        ok: true,
+        threads: mine.map((id) => view2(threads.thread(id))),
+        ...mine.length ? {} : { note: "this session is in no thread yet", all: threads.list() }
+      };
     }
     case "usage":
       return { ok: true, ...summarise2() };
@@ -2713,7 +4631,7 @@ ${req.rationale}` : ""}`
       return { ok: false, error: `unknown op "${req.op}"` };
   }
 }
-fs11.mkdirSync(path14.dirname(P.daemonSock), { recursive: true, mode: 448 });
+fs12.mkdirSync(path16.dirname(P.daemonSock), { recursive: true, mode: 448 });
 var control = net2.createServer((sock) => {
   let rest = "";
   sock.on("data", async (buf) => {
@@ -2739,7 +4657,7 @@ var control = net2.createServer((sock) => {
   sock.on("error", () => {});
 });
 var alreadyRunning = () => new Promise((resolve) => {
-  if (!fs11.existsSync(P.daemonSock))
+  if (!fs12.existsSync(P.daemonSock))
     return resolve(false);
   const probe = net2.createConnection(P.daemonSock);
   const done = (answer) => {
@@ -2753,31 +4671,44 @@ var alreadyRunning = () => new Promise((resolve) => {
 if (await alreadyRunning()) {
   let who = "";
   try {
-    who = ` as pid ${Number(fs11.readFileSync(P.daemonLock, "utf8"))}`;
+    who = ` as pid ${Number(fs12.readFileSync(P.daemonLock, "utf8"))}`;
   } catch {}
   console.error(`crosstalk: a daemon is already running${who}`);
   process.exit(0);
 }
 try {
-  fs11.unlinkSync(P.daemonSock);
+  fs12.unlinkSync(P.daemonSock);
 } catch {}
 control.listen(P.daemonSock, () => {
-  fs11.chmodSync(P.daemonSock, 384);
-  fs11.writeFileSync(P.daemonLock, String(process.pid), { mode: 384 });
+  fs12.chmodSync(P.daemonSock, 384);
+  fs12.writeFileSync(P.daemonLock, String(process.pid), { mode: 384 });
   log(`daemon up as "${identity.label}" on ${P.daemonSock}`);
   connect();
+  threads.retain([...sessions.keys()]);
+  for (const reg of sessions.values())
+    observeThreads(reg);
+  threads.fade();
+  threads.syncAll();
 });
+setInterval(() => {
+  try {
+    threads.fade();
+  } catch (e) {
+    log(`threads: ${e.message}`);
+  }
+  threads.syncAll();
+}, Number(process.env.CROSSTALK_THREAD_SYNC_MS ?? 5 * 60000));
 var bye = () => {
   let mine = false;
   try {
-    mine = Number(fs11.readFileSync(P.daemonLock, "utf8")) === process.pid;
+    mine = Number(fs12.readFileSync(P.daemonLock, "utf8")) === process.pid;
   } catch {}
   if (mine) {
     try {
-      fs11.unlinkSync(P.daemonSock);
+      fs12.unlinkSync(P.daemonSock);
     } catch {}
     try {
-      fs11.unlinkSync(P.daemonLock);
+      fs12.unlinkSync(P.daemonLock);
     } catch {}
   }
   process.exit(0);

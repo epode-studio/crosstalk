@@ -210,6 +210,10 @@ export type Held = {
   surfaced?: boolean
   ts: number
   readAt?: number
+  /** The receiving session's threads this message was about (src/threads/). */
+  threads?: string[]
+  /** About the session's own thread, so it goes to its agent without a picker. */
+  auto?: boolean
 }
 
 export const loadQueue = (): Record<string, Held[]> => readJson(P.queue, {})

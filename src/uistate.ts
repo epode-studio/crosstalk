@@ -30,7 +30,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { P } from "./config.ts"
 
-export type UiKind = "restore" | "message" | "ask" | "route" | "gather"
+export type UiKind = "restore" | "message" | "ask" | "route" | "gather" | "thread"
 export type UiState = "pending" | "answered" | "handed" | "muted" | "later"
 export type UiAction = "hand" | "answer" | "mute" | "later" | "raised"
 
@@ -66,6 +66,8 @@ export type UiItem = {
   /** route: each option's session id, so a session renamed meanwhile is still the one picked. */
   targets?: Record<string, string>
   ts?: number
+  /** message: about this session's own thread, so the mod hands it to the agent without asking. */
+  auto?: boolean
 }
 
 type File = { v: 1; items: Record<string, UiItem> }
