@@ -1,401 +1,279 @@
-# The next generation: topics, not rooms
+# The next generation
 
-Status: workshopped, not built. Decisions below come from an interview on
-2026-11-01; what is still open is at the end.
+Status: workshopped, not built. Decided in an interview on 2026-11-01.
+
+## In two sentences
+
+**You say what you want, and you answer questions.** Everything else is agents
+working in threads with the people you trust.
 
 ## The problem this fixes
 
 A room today belongs to an identity, not to a session. When a message arrives,
 `pickSession()` in `src/daemon.ts` delivers it to the session the sender named,
-or else to whichever local session Claude Code reports as idle, or else to any
-live one, or else to the first one ever registered. Nothing about the message's
-subject takes part in that choice.
+or else to whichever local session is idle, or any live one, or the first one
+ever registered. The message's subject plays no part. So with api, firmware and
+docs open, a note about the auth token format lands in whichever is idle: the
+right person, the wrong chat.
 
-So with three sessions open, api, firmware and docs, a note about the auth token
-format lands in whichever of them happens to be idle. That is the cross-talk:
-the right person, the wrong chat.
+And crosstalk can only talk to sessions you already started. It cannot start
+one, reopen one, or bring a question from one to where you are looking.
 
-The second gap is that crosstalk can only talk to sessions you already started.
-It cannot start one, reopen one, or bring a question from one into the place you
-are looking.
+## Four nouns
+
+| Noun | What it is |
+|---|---|
+| **People** | Everyone you have verified with four words. |
+| **Threads** | A piece of work and the conversation about it, shared with some of those people. One file in the repo. |
+| **Features** | The shippable parts of a thread. Each is everyday or risky, and may have a flag. |
+| **Questions** | The only way crosstalk ever asks anything of a person. |
+
+Sessions, recaps, reviewers, footprints and relays exist, but they are
+machinery. Nobody needs to know about them to use crosstalk.
+
+Words used everywhere, in docs, tool output and the statusline: these four and
+nothing else.
 
 ## Principles
 
-- **As native to the code CLI as possible.** No app, no TUI, no web dashboard,
-  no tmux requirement. The control surface is plugin + hooks + MCP + one daemon,
-  and you drive it in plain language from any session you already have open.
-- **Automatic before explicit.** You should almost never have to say which
-  topic or session something belongs to. When crosstalk is unsure it asks once,
-  and remembers.
-- **Inference picks the conversation, not the audience.** Working out what a
-  session is about may change *which of your sessions* hears something. It
-  never pulls in someone you have not verified. The one place it can widen who
-  reads a topic is combining two topics (decision 9), and that is announced.
+- **Native to the code CLI.** No app, no TUI, no dashboard, no tmux. Plugin,
+  hooks, MCP and one daemon. You drive it in plain language from any session.
+- **Automatic before explicit.** You never say which thread or session
+  something belongs to. When crosstalk is unsure, it asks once and remembers.
 - **Nobody reads code.** People decide what should happen and judge whether it
-  did. Agents write the code, and other agents review it (decision 14).
+  did. Agents write the code, and other agents review it.
+- **One place.** The thread file is the only state. Everything you see is read
+  from it.
 
-## Decisions
+## People
 
-### 1. The topic is the room
+You verify someone once, with four words read aloud and two fingerprints that
+cross over, as today. After that they are **verified**, and that is the only
+level there is: verified people in a thread can do anything in it. There is no
+ladder.
 
-There are no named rooms any more. Every topic is its own sealed room, created
-on demand when a session starts working on something new.
+You can **mute** a person or a thread. Nothing else about who may interrupt you
+needs configuring, because interruptions follow the question rule below.
 
-Under the topics there is still a trust layer. It is just not called a room:
-it is the set of people whose identity you have verified (four words, crossed
-fingerprints, as today). A topic can only ever include people from that set.
+A verified person's words still always arrive as data, never inside your turn
+(see `DECISIONS.md`). Being verified decides what they can do, not how their
+text is presented to your agent.
 
-### 2. Sessions are bound to topics by inference
+This is a clean break: existing rooms are not converted, and people verify each
+other again.
 
-A session follows **any number of topics, equally**. Nothing is primary.
-Relevance scoring decides how strongly each message matters to each session.
+Bots need a decision: probably a bot is a member that can post to a thread but
+cannot start sessions on your machine.
 
-What the inference reads:
+## Threads
 
-| Signal | Source | Cost |
-|---|---|---|
-| Files touched | `PostToolUse` paths | Free, deterministic, hard to fool |
-| Repo and branch | git remote, `HEAD` | Free, a strong prior |
-| A recap | a `/recap`-style summary of the session's recent turns | Tokens, so only when needed |
-
-**Files and branch decide most of the time.** A recap is computed at the end of
-a turn (Stop) only when the files are ambiguous: two topics both plausible, or
-files that suggest a new topic.
-
-Each topic keeps a footprint built from the same signals: its files, branches
-and a running recap. A session's match to a topic is the overlap between the
-two.
-
-**When it is still unsure**, crosstalk asks once in the likeliest session ("Is
-this about your auth work? y/n"). The answer becomes a binding and a signal for
-next time.
-
-### 3. Addressing: the topic decides
-
-"Tell marie the token format changed" goes to the topic(s) the current session
-follows. Marie's daemon delivers it to *her* sessions that follow the same
-topic. Nobody names sessions.
-
-### 4. Joining topics is automatic within trust
-
-When your api session starts an "auth" topic, Marie's session that is working
-on auth joins it with no prompt, because you have already verified each other.
-Nobody outside your verified set can be pulled into a topic by inference.
-
-### 5. What happens with no matching session
-
-**It asks you.** A question in your active session, through the usual question
-routing (decision 8):
+**A thread is one file**, `.crosstalk/threads/<name>.md`:
 
 ```
-◢ marie wrote about auth; nothing open follows it.
-  resume yesterday's auth session? [y / new / hold]
-```
-
-`y` resumes the topic's last session, `new` starts one, `hold` keeps it in the
-inbox with a statusline count until a matching session opens.
-
-### 6. Where you see which topics a session is in
-
-All three of:
-
-- **Statusline**: `◢ auth · tokens   2 peers`
-- **SessionStart banner**: one line saying which topics were joined and why
-  ("auth: you edited src/auth/*").
-- **Session name**: the session's title carries its topics, so `/resume` and the
-  session registry show them.
-
-### 7. Spawning and managing sessions
-
-All four are in scope:
-
-| Mode | What it means |
-|---|---|
-| **Adopt existing** | Discover sessions already running (`~/.claude/sessions`), give them topics, steer them through the existing inject path |
-| **Resume dormant** | A topic gets traffic, its last session is closed: wake it with `claude --resume <id>` rather than starting cold |
-| **Spawn on arrival** | Nothing fits: start a headless worker (`claude -p` / Agent SDK) in the right repo |
-| **Fan out** | "Do these three in parallel": crosstalk starts the workers, puts them in a shared topic, tracks them |
-
-**Order of shipping:** routing to the right *open* session comes first, because
-it is the bug people hit today. Resume, spawn and fan-out build on that same
-topic matching.
-
-**Autonomy:** a spawned session inherits the trust level of whatever caused it,
-and its permission mode follows from that.
-
-**Remote spawn:** a peer's message may start or resume a session on your
-machine only if that peer is at `handoff` or above. For an inbound message with
-no matching session, you are asked either way (decision 5).
-
-### 8. Surfacing questions
-
-Every surface exists. Which one a question uses depends on **whether the asker
-is blocked, and whether you are present**:
-
-| Asker | You | Surface |
-|---|---|---|
-| blocked | typing in some session | inline, in that session: `◢ api-worker asks: keep v1 endpoint? [y/n/open]` |
-| blocked | away from the terminal | phone push (Claude app / ntfy) |
-| not blocked | anywhere | batched digest at the next natural break (Stop hook, idle) |
-| any | any | statusline badge with the count, always |
-
-The answer is routed back to the session that asked.
-
-### 9. Topic lifecycle
-
-Topics **fade when quiet**: no traffic and no session following it for N days,
-and it archives. Its memory stays searchable, and any new activity revives it.
-
-Topics **combine when they turn out to be the same work**: when two footprints
-converge, they become one topic, **even if their people differ**. Everyone on
-either side then reads both histories. Because that widens who can read what,
-the notice says so plainly, to everyone, when it happens:
-
-```
-◢ auth and login tokens are now one topic: auth.
-  jo can now read what you and marie discussed in auth,
-  and marie can read login tokens.
-```
-
-### 10. Memory
-
-Both:
-
-- **Per topic**, travelling with the people: facts, tasks and decisions sync
-  between members, and a session loads the memory of every topic it follows at
-  SessionStart.
-- **Per repo**, as the durable record: the topic files (decision 12).
-
-### 11. Migration: clean break
-
-The next generation is a new protocol. Existing rooms are not converted; people
-verify each other again with four words. That is what builds the trust layer
-the topics sit on.
-
-### 12. Topics are tickets, kept in the repo
-
-Each topic is a file in the repository, a Linear-style tracker that is just a
-document. **A topic holds any number of features**, each with its own risk and,
-where it has one, its own flag.
-
-```
-.crosstalk/topics/auth.md
-
 ---
 status: active          # active · waiting · done · archived
 people: [paul, marie]
-sessions: [paul/api, marie/api]
 files: [src/auth/**, src/api/tokens.ts]
 branches: [token-v2]
 features:
   - name: v2 token format
-    risk: high
-    flag: auth-v2-tokens     # via the flag provider, at internal
+    risk: risky
+    flag: auth-v2-tokens     # provider, at internal
   - name: token expiry banner
-    risk: normal
     flag: token-expiry-ui    # built-in, at 100%
-  - name: tidy token parser
-    risk: low                # no flag, shipped on merge
+  - name: tidy token parser  # everyday, shipped on merge
 ---
 
 ## Recap
 Moving tokens to v2 format; v1 kept for one release.
 
-## Open questions
-- keep the v1 endpoint? (api-worker, blocking)
+## Questions
+- keep the v1 endpoint? (blocking)
 
 ## Decisions
 - 2026-11-01 · paul · v1 tokens accepted until 0.2
+
+## Facts
+- staging DB is shared with the demo env
+
+## Tasks
+- [ ] remove v1 parser after 0.2
 ```
 
-This is the topic registry that inference matches against (files, branches,
-recap). Agents write to it from hooks as they work: the Stop hook updates
-status, features, recap and open questions. People read it, or edit it by hand.
+Today's separate facts, tasks and decisions are sections of this file. The
+statusline, the opening banner, the session name, the digest and the PR
+description are all read from it.
 
-**Sealed unless marked public.** A topic file is committed encrypted to the
-topic's members, so git still syncs and versions it but only members can read
-it, even in a public repo. A topic marked public is committed in plain text.
+**Sealed unless marked public.** The file is committed encrypted to the
+thread's people, so it is private even in a public repo. Mark a thread public
+to commit it in plain text.
 
-**Sync: relay live, git on change.** Each update goes to the topic's members at
-once over the relay. The file is committed alongside real work only when
-status, features, decisions or questions change, not on every recap tweak. That
-keeps it fresh without touching every commit.
+**Sync: live over the relay, committed on change.** Updates reach the thread's
+people at once over the relay. The file is committed alongside real work only
+when status, features, decisions or questions change.
 
-### 13. Positioning: Entire without the forge
+**Threads find their sessions.** Nobody names a thread or binds a session.
+crosstalk matches sessions to threads by the files they touch and their repo and
+branch. When those are ambiguous, a recap of the session is written at the end
+of its turn to settle it. Still unsure means a question. A session can be in
+any number of threads.
 
-[Entire](https://entire.com/) is a hosted Git forge that keeps the *why*
-behind code: agent sessions captured as checkpoints linked to commits, Trails
-in place of pull requests, a shared memory built from sessions and a code graph,
-and search across all of it. To get any of that you move your repositories to
-them.
+**Threads find their people.** When your session starts a thread, a verified
+person's session working on the same thing joins it without a prompt. Nobody
+unverified can be pulled in.
 
-crosstalk makes the same promise without the forge. It lives in the git you
-already have, on whatever host, as files in the repository plus a sealed relay.
-Nothing to migrate, and nothing hosted that can read your code.
+**Talking is per thread.** "Tell marie the token format changed" goes to the
+threads this session is in, and reaches only Marie's sessions in those same
+threads.
 
-What we capture is **recaps, not transcripts**. Each topic file holds the recap,
-decisions and open questions, linked to the commits made under it. That is
-small, and keeps raw prompts out of the repository.
+**Threads fade and combine.** A thread nobody touches for a while archives, and
+comes back with new activity. Two threads that turn out to be the same work
+combine into one, even if their people differ, and everyone is told who can now
+read what.
 
-The three claims crosstalk should be able to back with numbers:
+You see a session's threads in the statusline (`◢ auth · tokens  2 people`),
+in one line when the session opens, and in the session's name.
 
-| Claim | How to prove it |
-|---|---|
-| **Fewer tokens** | Agents start from topic memory instead of re-reading the repo. Measure tokens-to-first-useful-edit with and without, on real sessions. |
-| **Zero migration** | One plugin command on an existing repo and host. Nothing else to set up. The install test is the proof. |
-| **No one can read it** | The relay sees only ciphertext, and topic files are sealed in the repo. A forge has to read your code to host it; crosstalk never holds it. |
+## Questions
 
-Correct routing is not on that list because it is the minimum, not a selling
-point. It still needs tests that prove it.
+**Everything crosstalk asks of a person is a question**, with options and a
+default:
 
-### 14. Fully AI-native: no human reads code
+- something is unclear about what you asked for
+- a message arrived and no open session is in its thread (`[resume / new / hold]`)
+- the author and reviewer agents disagree
+- an agent wants to lower a feature's risk
+- a risky feature has evidence ready, or its flag is ready for the next step
+- two threads are about to combine
 
-The way we work: **nobody ever reads a line of code.** People decide what should
-happen and judge whether it did. Agents write the code, and other agents review
-it.
+There is no separate approval step. Answering is approving.
 
-So the PR diff is the wrong thing to put in front of a person, and **the topic
-is the trail**: the unit of work from first idea to merge. It can exist before
-any branch, produce several PRs across several repos, and stays open until its
-questions are resolved and its flags are gone.
+**One rule decides where a question shows up:**
 
-**The PR is plumbing.** Agents open it, the checks and the reviewer agent gate
-it, and it auto-merges. People never open it. Branch protection on the host
-still applies, and is satisfied by checks and the reviewer agent rather than a
-person.
-
-#### Risk is per feature, and only ratchets up
-
-A repo file lists risky paths:
-
-```
-.crosstalk/risk
-
-high: src/auth/** src/payments/** migrations/**
-```
-
-A feature that touches any of them is high risk. The author agent may raise any
-feature's risk on its own. **Lowering it is always a question to a person**,
-since a feature wrongly marked low is the dangerous mistake.
-
-#### What a person approves, by risk
-
-| Risk | A person approves | Then |
+| The asker is | You are | It appears |
 |---|---|---|
-| **Low** | Nothing | Merges on green checks and the reviewer agent's sign-off. Shown in the digest afterwards. |
-| **Normal** | The intent up front, and the questions agents surface | Agents build against the agreed goal and decisions, and merge once the evidence passes. |
-| **High** | The intent up front, the questions, the **evidence of behaviour**, and each step of the flag ramp | As below, plus a higher evidence bar. |
+| blocked | in a session | inline, in that session |
+| blocked | away | on your phone |
+| not blocked | anywhere | in the digest at the next pause |
 
-Answering the questions agents surface counts as approval at every level.
+The statusline always shows how many are waiting. The answer goes back to
+whoever asked.
 
-**Evidence of behaviour** is a plain-language summary of what changed in
-behaviour, with proof: tests added, evals passed, before and after, a demo or
-screenshot where there is something to see. It never includes a diff.
+## Getting someone on it
 
-#### Who reviews the code
+There is one idea: **get someone on it**. Whether that means steering a session
+that is already open, resuming yesterday's, or starting a new one in the
+background is crosstalk's choice. If the choice matters, it is a question.
+Fanning out is starting several features at once.
 
-**A different agent session**, started by crosstalk in the topic with fresh
-context, so it does not share the author's reasoning. Its findings go back to
-the author agent, which fixes them, until the reviewer agrees. A person hears
-about it only when the two cannot agree, as a plain-language question: what
-they disagree on and what each option means for behaviour.
+Routing to the right open session ships first, since that is today's bug.
+Everything else builds on the same matching.
 
-For **high-risk** features, both of:
+A session crosstalk starts has the permissions of whoever caused it. A verified
+person's message can get a session on it on your machine. When nothing open
+fits, you are asked first.
 
-- **An adversarial reviewer on a different model or client** (e.g. Codex
-  reviewing Claude Code's work, which crosstalk already speaks to), plus a
-  dedicated security pass. Both must agree. A fresh session on the same model
-  can share the author's blind spots; a different model is less likely to.
-- **A higher evidence bar**: property tests or equivalent, and a flagged
-  rollout instead of a staging run (decision 15). The flag is the rollback plan.
+## Shipping
 
-#### Why this is faster
+Nobody reads code, so the PR is plumbing: agents open it, checks and a
+reviewer agent gate it, and it merges by itself. The thread, not the PR, is
+where work is followed from idea to merge. A thread can produce several PRs
+across several repos.
 
-The slow parts of shipping today are a person reading a diff and waiting for
-CI. Here the first is gone, and what is left of human attention goes earlier
-and higher:
+**Two kinds of feature:**
 
-| Gain | How |
-|---|---|
-| Wrong approaches caught before code | The approach is agreed in the topic ("v2 tokens, v1 until 0.2"). Agents produce wrong-but-complete code fast, so this is where human judgment does most. |
-| People never see work that fails | Author and reviewer agents iterate until tests, evals and review agree. |
-| One approval for a change across repos | API + client + docs is one intent, approved once. |
-| Questions don't wait for anyone to notice | A blocked agent asks inline in seconds (decision 8). |
-| Context comes with every decision | The recap explains why, for people and for the reviewer agent. Also where the token saving comes from. |
-
-**What it does not do:** CI is still compute. Checks run in the session before
-a push (only the tests the change affects) so hosted CI confirms rather than
-discovers, but a slow suite stays slow.
-
-**The claim:** a person spends their attention on intent and evidence, never
-code, measured as time from idea to merge and human minutes per merged topic.
-
-### 15. Feature flags instead of staging
-
-Today a feature ships when it works in main. Putting staging in front of that
-is too slow. Flags make "turned on" a separate step from "merged". **Merged
-means in main and off. Shipped means on. Rollback is turning the flag off, not
-a revert.**
-
-Flags are per feature, and a topic can hold any number of features.
-
-**Which features get a flag:**
-
-| Risk | Flag | Ramp |
+| | Everyday | Risky |
 |---|---|---|
-| **Low** | none | ships on merge |
-| **Normal** | optional: the author agent adds one when the change is visible to users | internal, then everyone, automatically if metrics hold |
-| **High** | required, **through a flag provider** | each step is a question to a person |
+| **What makes it so** | the default | touches a path in `.crosstalk/risk`, or an agent raised it |
+| **Review** | a fresh agent session | an adversarial reviewer on a different model or client, plus a security pass |
+| **Flag** | optional, when visible to users | yes, ideally through your flag provider |
+| **Ships** | on merge, or by flag automatically if metrics hold | each flag step is a question, with evidence attached |
 
-**Where flags live:**
+An agent may make a feature risky on its own. Making one everyday again is a
+question.
 
-- **Built in**, for normal-risk features and teams with nothing: flag
-  definitions *and state* in a repo file next to the topic files, read by the
-  app at deploy. Flipping a flag is a commit plus a deploy. No vendor, no new
-  runtime dependency, and crosstalk never becomes part of production.
-- **Adapters** for a flag provider (LaunchDarkly, PostHog, GrowthBook,
-  Statsig), required for high-risk features because their kill switch has to
-  be instant, not as fast as a deploy. crosstalk drives the flag and reads its
-  metrics.
+**Evidence** is what changed in behaviour, in plain language, with proof: tests,
+evals, before and after, a screenshot or demo. Never a diff.
 
-**What replaces staging as evidence for high-risk features**, all four:
+**Flags instead of staging.** Merged means in main and off. Shipped means on.
+Rollback is turning a flag off, which any agent may do at any time and tell you
+afterwards. A risky feature's evidence comes from a preview deploy before merge,
+a dark launch next to the old path after it, then your own accounts first, with
+agents watching to turn it off on any regression.
 
-| Step | What happens |
+Flags live in one of two places:
+
+- **Your flag provider** (LaunchDarkly, PostHog, GrowthBook, Statsig): crosstalk
+  drives it and reads its metrics. Turning a flag off is instant. Preferred for
+  risky features.
+- **A built-in flags file** for teams with nothing: `.crosstalk/flags`, read by
+  the app at deploy. Turning a flag off takes as long as a deploy.
+
+Once a flag is fully on, an agent removes it and the old path. A thread closes
+when its flags are gone and its questions answered.
+
+**What is faster:** wrong approaches are caught before code, through questions;
+people never see failing work; a change across repos is one thread; blocked
+agents ask in seconds. CI is still compute: checks run in the session before a
+push, so hosted CI confirms rather than discovers, but a slow suite stays slow.
+
+## Commands
+
+Two:
+
+- `/crosstalk:join` for the four words, which you cannot do in plain language.
+- `/crosstalk:doctor` for when something is broken.
+
+Everything else, from muting someone to asking what Marie is working on or
+linking another machine, is plain language in any session.
+
+## Against Entire
+
+[Entire](https://entire.com/) is a hosted Git forge that keeps the *why* behind
+code: agent sessions captured as checkpoints, Trails instead of pull requests,
+shared memory, search. To get it, you move your repositories to them.
+
+crosstalk is **Entire without the forge**: the same why, in the git and host
+you already have, as thread files plus a sealed relay. It keeps recaps and
+decisions, not transcripts.
+
+Three claims to back with numbers:
+
+| Claim | Proof |
 |---|---|
-| **Preview per topic** | An ephemeral deploy with the feature's flag on, where agents run end-to-end checks before merge. |
-| **Dark launch** | After merge, the new path runs in production next to the old one, invisibly, and agents compare outputs. |
-| **Internal first** | On for your own accounts or team. Real use, with agents watching logs. |
-| **Auto kill switch** | Throughout the ramp, agents watch errors and latency and turn the flag off through the provider on any regression, before a person notices. |
+| **Fewer tokens** | Agents start from the thread instead of re-reading the repo. Measure tokens to the first useful edit, with and without. |
+| **Zero migration** | One plugin command on an existing repo. The install test is the proof. |
+| **No one can read it** | The relay sees ciphertext, and thread files are sealed. A forge has to read your code to host it. |
 
-**Who turns it on:** each ramp step of a high-risk flag (internal, then a
-percentage, then everyone) is a question to a person, with the evidence from
-the previous step attached. Turning off is never a question: any agent watching
-may do it, and tells you after.
+And for the way of working: time from idea to merge, and human minutes per
+merged thread.
 
-A topic stays open while any of its flags exists. Once a flag is at 100%, an
-agent removes it and the old path from the code, so flags do not pile up. The
-topic closes when its last flag is gone and its questions are answered.
+## What this removes from today
+
+| Today | Next |
+|---|---|
+| Named rooms, and invitations to them | Threads, found automatically |
+| A five-level trust ladder | Verified, plus mute |
+| Facts, tasks, decisions as separate stores | Sections of the thread file |
+| Messages to whichever session is idle | Messages to sessions in the same thread |
+| Fourteen slash commands | Two |
+| Approvals, reviews and notices as separate things | Questions |
 
 ## Still open
 
-These are technical, with a proposed answer each. None needs a product decision
-before it is written up properly.
+Technical, each with a proposal:
 
-1. **Keys for many topics.** Every topic is its own sealed room and joining is
-   automatic, so creating one must cost no exchange. Proposal: derive each
-   topic's key from the pairwise keys its members already share, and rotate by
-   re-deriving when someone leaves. Combining two topics (decision 9) issues a
-   new key to the union of members. Needs a proper write-up in
-   `docs/security.md` before anything is built.
-2. **What the relay sees.** More topics means more topic ids, and the pattern
-   of their creation leaks how much someone multitasks. Proposal: each member
-   reaches all their topics over one connection with one id, and topic ids
-   appear only inside sealed frames.
-3. **Sealed topic files in git.** Encrypted files make useless diffs and
-   conflict badly. Proposal: one sealed blob per field (status, features,
-   decisions, questions) so concurrent edits to different fields merge, and
-   the relay's live copy settles any conflict before anything is committed.
-4. **Recaps leaving the machine.** Recaps already travel sealed to topic
-   members (decision 12). Proposal: matching runs on each member's machine
-   against the shared footprint, so nobody's raw session state leaves their
-   machine, only the recap.
+1. **Keys for many threads.** Joining is automatic, so creating a thread must
+   cost no exchange. Proposal: derive each thread's key from the pairwise keys
+   its people already share. Re-derive when someone leaves, and issue a new key
+   to everyone when two threads combine. Write up in `docs/security.md` first.
+2. **What the relay sees.** Many thread ids would leak how much someone
+   multitasks. Proposal: one connection and one id per person, with thread ids
+   only inside sealed frames.
+3. **Sealed files in git.** Encrypted files make useless diffs and conflict
+   badly. Proposal: seal each section separately so edits to different
+   sections merge, and let the relay's live copy settle the rest before
+   anything is committed.
+4. **Recaps stay local.** Matching runs on each person's machine against the
+   shared thread file, so only the recap ever leaves it, sealed.
+5. **Bots.** Whether a bot is just a verified member or something narrower.
