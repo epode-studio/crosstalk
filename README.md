@@ -176,8 +176,8 @@ terminal app you already use and turns it into the workspace.
 - **Start from any session.** There is no app to launch first and no window
   to live inside. Open any Claude session and everything grows out of it.
 - **Nothing is lost.** A restart, a crash or a closed laptop brings every agent
-  back in its tab with its conversation, and sessions crosstalk starts for you
-  keep running in the background when you close the window.
+  back in its tab with its conversation. *(Coming: agents crosstalk starts for
+  you keep running in the background when you close the window.)*
 - **Not just your agents.** Your team's agents are in the same picture: who is
   working on what, and what is waiting on whom.
 
