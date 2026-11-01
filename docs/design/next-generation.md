@@ -211,6 +211,47 @@ The three claims crosstalk should be able to back with numbers:
 Correct routing is not on that list because it is the minimum, not a selling
 point. It still needs tests that prove it.
 
+### 14. Why the topic could be the trail: fewer, earlier, smaller reviews
+
+Two ways a topic can meet code review:
+
+- **The topic rides the PR.** Nothing changes for the team. The PR body is
+  filled from the topic (recap, decisions, open questions), and review comments
+  flow back to the agents on it. Someone without crosstalk reviews as normal.
+- **The topic is the trail.** The topic is the unit of work, from first idea to
+  merge. It can exist before any branch, produce several PRs across several
+  repos, and stays open until its questions are resolved, whatever has merged.
+  Decisions are approved in the topic as well as code in the PR.
+
+Ship the first; grow into the second. The topic files exist either way, so
+moving later needs no migration.
+
+**The PR is not the bottleneck.** The slow parts are a person reading a diff
+and CI running. Neither goes away by renaming the unit of work. What a trail
+changes is *when* a person looks and *at what*:
+
+| Gain | How |
+|---|---|
+| Wrong approaches caught before code | The approach is agreed in the topic ("v2 tokens, v1 until 0.2"), so review is a check that the code matches, not an argument about direction after 800 lines. Agents make this matter more: they produce wrong-but-complete code fast. |
+| A person only sees work that passes | Agents iterate on the topic until tests and evals are green, then a person is asked. Nobody reviews a red PR. |
+| One approval for a change that spans repos | API + client + docs is one decision approved once, not three reviews. Each PR is checked against it. |
+| Questions don't wait for a PR | A blocked agent asks inline in seconds (decision 8), instead of opening a PR and waiting to be noticed. |
+| Context comes with the review | Reviewers, human or agent, read the recap instead of reverse-engineering why. Also where the token saving comes from. |
+
+**What it does not do:**
+
+- **CI is still compute.** Checks can run in the session before a push (only
+  the tests the change affects), so hosted CI confirms rather than discovers.
+  A slow suite is still slow.
+- **Skipping review is not a speed-up.** The claim is that people review intent
+  and outcomes rather than every line, which fits low-risk changes. A topic can
+  be marked as needing line-by-line review (auth, payments, migrations).
+- **Branch protection still applies.** Required reviews and status checks on
+  the host stay. Topics make satisfying them faster.
+
+**The claim:** fewer, earlier, smaller reviews, measured as time from idea to
+merge. That may be a sharper answer to Entire than push throughput.
+
 ## Open questions
 
 1. **No-match behaviour** (decision 5): hold or spawn, and whether that depends
@@ -241,12 +282,9 @@ point. It still needs tests that prove it.
 8. **Diff churn.** Agents writing on every Stop will touch files in every
    commit. Possibly keep `.crosstalk/` on its own branch or ref, or only write
    when something actually changed.
-9. **Where topics meet code review.** Two candidates. The topic *rides* the PR:
-   its recap, decisions and open questions fill the PR body, and review
-   comments flow back into the topic. Or the topic *is* the trail, the unit of
-   work from idea to merge, with the PR as one artifact attached to it. The
-   first works on GitHub today; the second is the more direct answer to
-   Entire's Trails.
+9. **When to move from riding the PR to being the trail** (decision 14).
+   Likely once a whole team is on crosstalk, since people outside it see only
+   the PRs and not the topic connecting them.
 10. **Repo-kept recaps vs "no one can read it".** A topic file committed to a
     public repo is readable by everyone, which breaks the third claim for that
     topic. Possibly: topic files are sealed to members unless the topic is
