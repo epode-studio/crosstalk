@@ -435,6 +435,28 @@ and they fill disks. crosstalk knows what each one is *for*, so it can clean up:
   from 6 finished threads?" is a question the first time, and a standing rule
   once answered. Nothing is deleted without that.
 
+## Production feeds threads
+
+When something goes wrong in production, it depends on whether the cause is
+known:
+
+- **Clear cause** (a flag killed automatically, or errors in code a thread
+  shipped recently): **the thread that shipped it reopens**, with the evidence
+  attached. Its agents already have the context, so they are fastest to fix it.
+- **Unclear cause**: **a new incident thread** starts and looks for it. Once
+  found, it links to or combines with the thread that shipped it.
+
+Either way, a person hears about it only through the usual rules: a question
+when something is risky or the agents need a decision.
+
+## Git is invisible
+
+Nobody thinks about git. Each agent works in its own worktree, so parallel
+agents never step on each other. Their work merges into main in small pieces
+many times a day, behind flags, so it rarely conflicts, and when it does the
+agents settle it between themselves. Branches, rebases, merges and cleanup
+happen out of sight. You see threads and questions.
+
 ## Commands
 
 Two:
