@@ -1,23 +1,5 @@
 #!/usr/bin/env bun
 // @bun
-import { createRequire } from "node:module";
-var __create = Object.create;
-var __getProtoOf = Object.getPrototypeOf;
-var __defProp = Object.defineProperty;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __toESM = (mod, isNodeMode, target) => {
-  target = mod != null ? __create(__getProtoOf(mod)) : {};
-  const to = isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
-  for (let key of __getOwnPropNames(mod))
-    if (!__hasOwnProp.call(to, key))
-      __defProp(to, key, {
-        get: () => mod[key],
-        enumerable: true
-      });
-  return to;
-};
-var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // src/config.ts
 import fs from "node:fs";
@@ -35,6 +17,8 @@ var P = {
   sessions: path.join(ROOT, "sessions.json"),
   outbox: path.join(ROOT, "outbox.json"),
   usage: path.join(ROOT, "usage.json"),
+  routes: path.join(ROOT, "routes.json"),
+  unrouted: path.join(ROOT, "unrouted.json"),
   daemonSock: path.join(ROOT, "daemon.sock"),
   daemonLock: path.join(ROOT, "daemon.lock"),
   log: path.join(ROOT, "daemon.log")
@@ -1158,14 +1142,14 @@ function pow(num, power, modulo) {
   if (d < _0n2)
     d += modulo;
   if (power < POW_WINDOWED_MIN) {
-    let p2 = _1n2;
+    let p = _1n2;
     while (power > _0n2) {
       if (power & _1n2)
-        p2 = p2 * d % modulo;
+        p = p * d % modulo;
       d = d * d % modulo;
       power >>= _1n2;
     }
-    return p2;
+    return p;
   }
   const digits = [];
   while (power > _0n2) {
@@ -1247,13 +1231,13 @@ function sqrt5mod8(Fp, n) {
   assertIsSquare(F, root, n);
   return root;
 }
-function sqrt9mod16(P2) {
-  const Fp_ = Field(P2);
-  const tn = tonelliShanks(P2);
+function sqrt9mod16(P) {
+  const Fp_ = Field(P);
+  const tn = tonelliShanks(P);
   const c1 = tn(Fp_, Fp_.neg(Fp_.ONE));
   const c2 = tn(Fp_, c1);
   const c3 = tn(Fp_, Fp_.neg(c1));
-  const c4 = (P2 + _7n) / _16n;
+  const c4 = (P + _7n) / _16n;
   return (Fp, n) => {
     const F = Fp;
     let tv1 = F.pow(n, c4);
@@ -1270,18 +1254,18 @@ function sqrt9mod16(P2) {
     return root;
   };
 }
-function tonelliShanks(P2) {
-  if (P2 < _3n)
+function tonelliShanks(P) {
+  if (P < _3n)
     throw new Error("sqrt is not defined for small field");
-  aoddModulus(P2, "tonelliShanks");
-  let Q = P2 - _1n2;
+  aoddModulus(P, "tonelliShanks");
+  let Q = P - _1n2;
   let S = 0;
   while (Q % _2n === _0n2) {
     Q /= _2n;
     S++;
   }
   let Z = _2n;
-  const _Fp = Field(P2);
+  const _Fp = Field(P);
   while (FpLegendre(_Fp, Z) === 1) {
     if (Z++ > 1000)
       throw new Error("Cannot find square root: probably non-prime P");
@@ -1321,15 +1305,15 @@ function tonelliShanks(P2) {
     return R;
   };
 }
-function FpSqrt(P2) {
-  aoddModulus(P2, "Fp.sqrt");
-  if (P2 % _4n === _3n)
+function FpSqrt(P) {
+  aoddModulus(P, "Fp.sqrt");
+  if (P % _4n === _3n)
     return sqrt3mod4;
-  if (P2 % _8n === _5n)
+  if (P % _8n === _5n)
     return sqrt5mod8;
-  if (P2 % _16n === _9n)
-    return sqrt9mod16(P2);
-  return tonelliShanks(P2);
+  if (P % _16n === _9n)
+    return sqrt9mod16(P);
+  return tonelliShanks(P);
 }
 var isNegativeLE = (num, modulo) => (mod(num, modulo) & _1n2) === _1n2;
 var FIELD_FIELDS = [
@@ -1585,18 +1569,18 @@ function validateTableBytes(numPoints, fpBytes) {
   if (bytes > TABLE_BYTES_MAX)
     throw new Error("invalid window size: table would need ~" + Math.ceil(bytes / 2 ** 20) + " MiB, max " + TABLE_BYTES_MAX / 2 ** 20 + " MiB");
 }
-function probeRandomBytes(randomBytes3, length) {
-  if (randomBytes3 === undefined)
+function probeRandomBytes(randomBytes, length) {
+  if (randomBytes === undefined)
     return;
-  afunction(randomBytes3, "randomBytes");
+  afunction(randomBytes, "randomBytes");
   try {
-    const probe = randomBytes3(length);
+    const probe = randomBytes(length);
     if (!isBytes2(probe) || probe.length !== length)
       return;
   } catch {
     return;
   }
-  return randomBytes3;
+  return randomBytes;
 }
 function validateMSMPoints(points, c) {
   aarray(points, "points");
@@ -1615,8 +1599,8 @@ function validateMSMScalars(scalars, field, maxScalar) {
   });
 }
 var pointWindowSizes = new WeakMap;
-function getWindowSize(P2) {
-  return pointWindowSizes.get(P2) || 1;
+function getWindowSize(P) {
+  return pointWindowSizes.get(P) || 1;
 }
 function oddMultiples(p, size) {
   const dbl = p.double();
@@ -1689,9 +1673,9 @@ class ScalarMultiplier {
   wnafPrecomputes = new WeakMap;
   baseCanBeBlinded;
   bits;
-  constructor(Point, randomBytes3) {
+  constructor(Point, randomBytes) {
     validatePointCons(Point);
-    this.randomBytes = probeRandomBytes(randomBytes3, BLIND_BYTES);
+    this.randomBytes = probeRandomBytes(randomBytes, BLIND_BYTES);
     this.Point = Point;
     this.BASE = Point.BASE;
     this.ZERO = Point.ZERO;
@@ -1909,7 +1893,7 @@ function edwards(params, extraOpts = {}) {
   if (FpLegendre(Fp, CURVE.d) !== -1)
     throw new Error("edwards: CURVE.d must be a non-square in Fp for complete addition formulas");
   validateObject(opts, {}, { uvRatio: "function", randomBytes: "function" });
-  const randomBytes3 = opts.randomBytes === undefined ? randomBytes2 : opts.randomBytes;
+  const randomBytes = opts.randomBytes === undefined ? randomBytes2 : opts.randomBytes;
   const MASK = _2n2 << BigInt(Fp.BYTES * 8) - _1n4;
   function isOdd(n) {
     if (!Fp.isOdd)
@@ -2143,7 +2127,7 @@ function edwards(params, extraOpts = {}) {
     }
   }
   const normalize = (points) => normalizeZ(Point, points);
-  const wnaf = new ScalarMultiplier(Point, randomBytes3);
+  const wnaf = new ScalarMultiplier(Point, randomBytes);
   if (wnaf.bits >= 6)
     Point.BASE.precompute(6);
   Object.freeze(Point.prototype);
@@ -2296,40 +2280,40 @@ var ed25519_CURVE = /* @__PURE__ */ (() => ({
 }))();
 function ed25519_pow_2_252_3(x) {
   const _10n = BigInt(10), _20n = BigInt(20), _40n = BigInt(40), _80n = BigInt(80);
-  const P2 = ed25519_CURVE_p;
-  const x2 = x * x % P2;
-  const b2 = x2 * x % P2;
-  const b4 = pow2(b2, _2n3, P2) * b2 % P2;
-  const b5 = pow2(b4, _1n5, P2) * x % P2;
-  const b10 = pow2(b5, _5n2, P2) * b5 % P2;
-  const b20 = pow2(b10, _10n, P2) * b10 % P2;
-  const b40 = pow2(b20, _20n, P2) * b20 % P2;
-  const b80 = pow2(b40, _40n, P2) * b40 % P2;
-  const b160 = pow2(b80, _80n, P2) * b80 % P2;
-  const b240 = pow2(b160, _80n, P2) * b80 % P2;
-  const b250 = pow2(b240, _10n, P2) * b10 % P2;
-  const pow_p_5_8 = pow2(b250, _2n3, P2) * x % P2;
+  const P = ed25519_CURVE_p;
+  const x2 = x * x % P;
+  const b2 = x2 * x % P;
+  const b4 = pow2(b2, _2n3, P) * b2 % P;
+  const b5 = pow2(b4, _1n5, P) * x % P;
+  const b10 = pow2(b5, _5n2, P) * b5 % P;
+  const b20 = pow2(b10, _10n, P) * b10 % P;
+  const b40 = pow2(b20, _20n, P) * b20 % P;
+  const b80 = pow2(b40, _40n, P) * b40 % P;
+  const b160 = pow2(b80, _80n, P) * b80 % P;
+  const b240 = pow2(b160, _80n, P) * b80 % P;
+  const b250 = pow2(b240, _10n, P) * b10 % P;
+  const pow_p_5_8 = pow2(b250, _2n3, P) * x % P;
   return { pow_p_5_8, b2 };
 }
 var ED25519_SQRT_M1 = /* @__PURE__ */ BigInt("19681161376707505956807079304988542015446066515923890162744021073123829784752");
 function uvRatio(u, v) {
-  const P2 = ed25519_CURVE_p;
-  const v3 = mod(v * v * v, P2);
-  const v7 = mod(v3 * v3 * v, P2);
-  const pow3 = ed25519_pow_2_252_3(u * v7).pow_p_5_8;
-  let x = mod(u * v3 * pow3, P2);
-  const vx2 = mod(v * x * x, P2);
+  const P = ed25519_CURVE_p;
+  const v3 = mod(v * v * v, P);
+  const v7 = mod(v3 * v3 * v, P);
+  const pow = ed25519_pow_2_252_3(u * v7).pow_p_5_8;
+  let x = mod(u * v3 * pow, P);
+  const vx2 = mod(v * x * x, P);
   const root1 = x;
-  const root2 = mod(x * ED25519_SQRT_M1, P2);
+  const root2 = mod(x * ED25519_SQRT_M1, P);
   const useRoot1 = vx2 === u;
-  const useRoot2 = vx2 === mod(-u, P2);
-  const noRoot = vx2 === mod(-u * ED25519_SQRT_M1, P2);
+  const useRoot2 = vx2 === mod(-u, P);
+  const noRoot = vx2 === mod(-u * ED25519_SQRT_M1, P);
   if (useRoot1)
     x = root1;
   if (useRoot2 || noRoot)
     x = root2;
-  if (isNegativeLE(x, P2))
-    x = mod(-x, P2);
+  if (isNegativeLE(x, P))
+    x = mod(-x, P);
   return { isValid: useRoot1 || useRoot2, value: x };
 }
 var ed25519_Point = /* @__PURE__ */ edwards(ed25519_CURVE, { uvRatio });
@@ -2604,19 +2588,19 @@ function allAddresses() {
   return out;
 }
 function machineName() {
-  const clean2 = (s) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24);
+  const clean = (s) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24);
   if (process.platform === "darwin") {
     try {
       const name = execFileSync2("scutil", ["--get", "ComputerName"], {
         encoding: "utf8",
         timeout: 2000
       });
-      const c = clean2(name).replace(/^[a-z]+-?s-/, "");
+      const c = clean(name).replace(/^[a-z]+-?s-/, "");
       if (c)
         return c;
     } catch {}
   }
-  return clean2(os2.hostname().split(".")[0]) || "machine";
+  return clean(os2.hostname().split(".")[0]) || "machine";
 }
 function userName() {
   const first = (s) => s.trim().split(/\s+/)[0]?.toLowerCase().replace(/[^a-z0-9-]/g, "");
@@ -2636,31 +2620,31 @@ function userName() {
 function expandAddress(token, port) {
   const t = token.trim().replace(/^@/, "").trim();
   const out = [];
-  const add2 = (u) => {
+  const add = (u) => {
     if (u && !out.includes(u))
       out.push(u);
   };
   if (/^https?:\/\//i.test(t)) {
-    add2(t.replace(/^http/, "ws").replace(/\/$/, ""));
+    add(t.replace(/^http/, "ws").replace(/\/$/, ""));
     return out;
   }
   if (/\./.test(t) && /[a-z]/i.test(t)) {
-    add2(t.endsWith("trycloudflare.com") ? `wss://${t}` : `ws://${t}:${port}`);
+    add(t.endsWith("trycloudflare.com") ? `wss://${t}` : `ws://${t}:${port}`);
     return out;
   }
   if (/^[a-z0-9][a-z0-9-]*$/i.test(t) && !/^\d+$/.test(t)) {
-    add2(`ws://${t}:${port}`);
-    add2(`ws://${t}.local:${port}`);
-    add2(`wss://${t}.trycloudflare.com`);
+    add(`ws://${t}:${port}`);
+    add(`ws://${t}.local:${port}`);
+    add(`wss://${t}.trycloudflare.com`);
     return out;
   }
   const mine = bestAddress().host;
   const parts = mine.split(".");
   if (/^\d{1,3}$/.test(t) && parts.length === 4)
-    add2(`ws://${parts[0]}.${parts[1]}.${parts[2]}.${t}:${port}`);
+    add(`ws://${parts[0]}.${parts[1]}.${parts[2]}.${t}:${port}`);
   if (/^\d{1,3}\.\d{1,3}$/.test(t) && parts.length === 4)
-    add2(`ws://${parts[0]}.${parts[1]}.${t}:${port}`);
-  add2(`ws://${t}:${port}`);
+    add(`ws://${parts[0]}.${parts[1]}.${t}:${port}`);
+  add(`ws://${t}:${port}`);
   return out;
 }
 
@@ -2683,6 +2667,8 @@ var P2 = {
   sessions: path2.join(ROOT2, "sessions.json"),
   outbox: path2.join(ROOT2, "outbox.json"),
   usage: path2.join(ROOT2, "usage.json"),
+  routes: path2.join(ROOT2, "routes.json"),
+  unrouted: path2.join(ROOT2, "unrouted.json"),
   daemonSock: path2.join(ROOT2, "daemon.sock"),
   daemonLock: path2.join(ROOT2, "daemon.lock"),
   log: path2.join(ROOT2, "daemon.log")
@@ -3036,9 +3022,9 @@ async function startRelay(port = Number(flag("--port", "8787"))) {
     process.env.CROSSTALK_ADDRESS = flag("--address");
   const addr = bestAddress();
   if (relayPid()) {
-    const url2 = loadRelay().url;
-    if (await relayReachable(url2))
-      return url2;
+    const url = loadRelay().url;
+    if (await relayReachable(url))
+      return url;
   }
   const out = fs6.openSync(path8.join(ROOT, "relay.log"), "a");
   const child = spawn3(shim2(ROOT_DIR), ["relay-server", "--host", "0.0.0.0", "--port", String(port)], {
@@ -3142,8 +3128,8 @@ async function startRoom(words) {
   const id = identityOrCreate();
   const joining = (words ?? positional.join(" ")).trim();
   const base = () => httpBase(loadRelay().url);
-  const put = async (slot2, part, blob) => {
-    const r = await fetch(`${base()}/invite/${slot2}?part=${part}`, {
+  const put = async (slot, part, blob) => {
+    const r = await fetch(`${base()}/invite/${slot}?part=${part}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ blob })
@@ -3151,10 +3137,10 @@ async function startRoom(words) {
     if (!r.ok)
       die(`the relay would not take part ${part} (${r.status})`);
   };
-  const get = async (slot2, part, waitMs = 0) => {
+  const get = async (slot, part, waitMs = 0) => {
     const deadline = Date.now() + waitMs;
     for (;; ) {
-      const r = await fetch(`${base()}/invite/${slot2}?part=${part}`).catch(() => null);
+      const r = await fetch(`${base()}/invite/${slot}?part=${part}`).catch(() => null);
       if (r?.ok)
         return (await r.json()).blob;
       if (Date.now() >= deadline)
@@ -3175,32 +3161,32 @@ async function startRoom(words) {
     }
     if (!await relayReachable())
       die(`cannot reach a relay at ${base()}.`);
-    const theirs2 = await get(inv.slot, "a");
-    if (!theirs2)
+    const theirs = await get(inv.slot, "a");
+    if (!theirs)
       die(`nothing is waiting on ${inv.slot}. Invites last fifteen minutes.`);
-    const mine2 = begin(inv.phrase, inv.slot);
-    const key2 = finish(mine2, theirs2, inv.slot, "crosstalk/room/v1");
-    if (!key2)
+    const mine = begin(inv.phrase, inv.slot);
+    const key = finish(mine, theirs, inv.slot, "crosstalk/room/v1");
+    if (!key)
       die("that invite could not be used. Check the words.");
-    await put(inv.slot, "b", mine2.message + "." + seal(key2, JSON.stringify(await myOffer(id))));
+    await put(inv.slot, "b", mine.message + "." + seal(key, JSON.stringify(await myOffer(id))));
     const back = await get(inv.slot, "c", 120000);
     if (!back)
       die("the other side never answered. Ask them to start again.");
-    let peer2;
+    let peer;
     try {
-      peer2 = asPeer(JSON.parse(open(key2, back)));
+      peer = asPeer(JSON.parse(open(key, back)));
     } catch {
       return die("could not read what they sent. Somebody may be interfering; start again.");
     }
-    const localName = adoptPeer(peer2);
-    peer2.label = localName;
-    if (peer2.relayPub)
-      saveRelay(loadRelay().url, peer2.relayPub);
+    const localName = adoptPeer(peer);
+    peer.label = localName;
+    if (peer.relayPub)
+      saveRelay(loadRelay().url, peer.relayPub);
     await ensureDaemon(ROOT_DIR);
     console.log(`
-Now in a room with "${peer2.label}"${peer2.isMachine ? ", a machine rather than a person" : ""}.
+Now in a room with "${peer.label}"${peer.isMachine ? ", a machine rather than a person" : ""}.
 
-  them  ${peer2.fingerprint}
+  them  ${peer.fingerprint}
   you   ${fingerprint(id.ed.pub)}
 
 Read them aloud. Your "them" should be their "you", and theirs should be
@@ -3493,17 +3479,17 @@ You are not in anything yet.
     }
     console.log();
     if (direct.length) {
-      for (const room2 of direct)
-        console.log(`  ${room2.name.padEnd(16)}just the two of you`);
+      for (const room of direct)
+        console.log(`  ${room.name.padEnd(16)}just the two of you`);
     }
-    for (const room2 of r.rooms) {
-      const who = room2.members.map((m) => m.label + (m.you ? " (you)" : "") + (m.state === "invited" ? " (invited)" : "") + (!m.direct && !m.you ? " \xB7no direct channel" : "")).join(", ");
-      if (room2.pending) {
-        console.log(`  #${room2.name}   INVITATION from ${room2.pending.invitedBy}`);
+    for (const room of r.rooms) {
+      const who = room.members.map((m) => m.label + (m.you ? " (you)" : "") + (m.state === "invited" ? " (invited)" : "") + (!m.direct && !m.you ? " \xB7no direct channel" : "")).join(", ");
+      if (room.pending) {
+        console.log(`  #${room.name}   INVITATION from ${room.pending.invitedBy}`);
         console.log(`      ${who}`);
-        console.log(`      accept:  /crosstalk:room accept ${room2.name}`);
+        console.log(`      accept:  /crosstalk:room accept ${room.name}`);
       } else {
-        console.log(`  #${room2.name}`.padEnd(18) + who);
+        console.log(`  #${room.name}`.padEnd(18) + who);
       }
     }
     console.log();
@@ -3594,24 +3580,24 @@ async function rename() {
     return;
   }
   if (!a || !b) {
-    const peers3 = loadPeers();
+    const peers = loadPeers();
     console.log(`
 usage: /crosstalk:rename <current> <new>
        /crosstalk:rename me <new>
 `);
-    console.log(`known: ${Object.keys(peers3).join(", ") || "nobody yet"}
+    console.log(`known: ${Object.keys(peers).join(", ") || "nobody yet"}
 `);
     return;
   }
-  const peers2 = loadPeers();
-  const peer = peers2[a];
+  const peers = loadPeers();
+  const peer = peers[a];
   if (!peer)
-    die(`no peer called "${a}". Known: ${Object.keys(peers2).join(", ") || "nobody"}`);
-  if (peers2[b])
-    die(`"${b}" is already someone else (${peers2[b].fingerprint})`);
-  delete peers2[a];
-  peers2[b] = { ...peer, label: b };
-  savePeers(peers2);
+    die(`no peer called "${a}". Known: ${Object.keys(peers).join(", ") || "nobody"}`);
+  if (peers[b])
+    die(`"${b}" is already someone else (${peers[b].fingerprint})`);
+  delete peers[a];
+  peers[b] = { ...peer, label: b };
+  savePeers(peers);
   const t = load2();
   if (t.people[a]) {
     t.people[b] = t.people[a];
@@ -3650,7 +3636,7 @@ async function trustCmd() {
   const t = load2();
   const level = positional.find((a) => isLevel(a));
   const who = positional.find((a) => a !== level);
-  const room2 = flag("--in");
+  const room = flag("--in");
   if (!who && !level) {
     console.log();
     console.log(`  default${" ".repeat(12)}${t.default}`);
@@ -3688,11 +3674,11 @@ async function trustCmd() {
     return console.log(`anyone in a room with you, by default: ${level}`);
   }
   const isPerson = !!loadPeers()[who];
-  if (room2) {
+  if (room) {
     t.people[who] = level;
-    t.rooms[room2] = t.rooms[room2] ?? ROOM_DEFAULT;
+    t.rooms[room] = t.rooms[room] ?? ROOM_DEFAULT;
     save(t);
-    return console.log(`${who} is "${level}" (pinned, so it applies in #${room2} too)`);
+    return console.log(`${who} is "${level}" (pinned, so it applies in #${room} too)`);
   }
   if (isPerson) {
     t.people[who] = level;
@@ -3742,22 +3728,22 @@ async function tasksCmd() {
   await ready();
   const verb = positional[0];
   if (verb === "add") {
-    const r2 = await request({
+    const r = await request({
       op: "tasks",
       write: "add",
       text: positional.slice(1).join(" "),
       for: flag("--for")
     });
-    return console.log(r2.ok ? `added ${r2.id} to #${r2.room}` : `not added: ${r2.error}`);
+    return console.log(r.ok ? `added ${r.id} to #${r.room}` : `not added: ${r.error}`);
   }
   if (verb === "claim" || verb === "done" || verb === "release" || verb === "drop") {
-    const r2 = await request({
+    const r = await request({
       op: "tasks",
       write: verb,
       id: positional[1],
       note: positional.slice(2).join(" ") || undefined
     });
-    return console.log(r2.ok ? `${verb}: ${positional[1]}` : r2.error ?? "nothing changed");
+    return console.log(r.ok ? `${verb}: ${positional[1]}` : r.error ?? "nothing changed");
   }
   const r = await request({ op: "tasks" });
   const all = Object.entries(r.tasks ?? {});
@@ -3769,11 +3755,11 @@ async function tasksCmd() {
 `);
     return;
   }
-  for (const [room2, list] of all) {
+  for (const [room, list] of all) {
     if (!list.length)
       continue;
     console.log(`
-  #${room2}`);
+  #${room}`);
     for (const t of list) {
       const who = t.state === "claimed" ? `claimed by ${t.claimedBy}` : t.for ? `for ${t.for}` : "open";
       console.log(`    ${t.id}  ${t.text}`);
@@ -3787,19 +3773,19 @@ async function factsCmd() {
   const verb = positional[0];
   if (verb === "add" || verb === "remember") {
     const text = positional.slice(1).join(" ");
-    const r2 = await request({ op: "facts", write: "add", text, tags: (flag("--in") ?? "").split(",").filter(Boolean) });
-    return console.log(r2.ok ? `remembered in #${r2.room}` : `not saved: ${r2.error}`);
+    const r = await request({ op: "facts", write: "add", text, tags: (flag("--in") ?? "").split(",").filter(Boolean) });
+    return console.log(r.ok ? `remembered in #${r.room}` : `not saved: ${r.error}`);
   }
   if (verb === "confirm" || verb === "correct" || verb === "forget") {
     const map = { confirm: "confirm", correct: "supersede", forget: "remove" };
-    const r2 = await request({
+    const r = await request({
       op: "facts",
       write: map[verb],
       id: positional[1],
       text: positional.slice(2).join(" ") || undefined,
       reason: flag("--because")
     });
-    return console.log(r2.ok ? `${verb}ed ${positional[1]}` : `nothing changed: ${r2.error ?? "no such fact"}`);
+    return console.log(r.ok ? `${verb}ed ${positional[1]}` : `nothing changed: ${r.error ?? "no such fact"}`);
   }
   const r = await request({ op: "facts", cwd: process.cwd() });
   const all = Object.entries(r.facts ?? {});
@@ -3813,11 +3799,11 @@ async function factsCmd() {
 `);
     return;
   }
-  for (const [room2, list] of all) {
+  for (const [room, list] of all) {
     if (!list.length)
       continue;
     console.log(`
-  #${room2}`);
+  #${room}`);
     for (const f of list) {
       const who = [f.by, ...f.confirmed.map((x) => x.by)];
       console.log(`    ${f.id}  ${f.text}`);
@@ -3849,46 +3835,46 @@ you are sure.`);
     if (!first.ok)
       die("no link waiting on that number. They last fifteen minutes.");
     const theirPoint = (await first.json()).blob;
-    const half2 = begin(inv.phrase, inv.slot);
-    const key2 = finish(half2, theirPoint, inv.slot, "crosstalk/link/v1");
-    if (!key2)
+    const half = begin(inv.phrase, inv.slot);
+    const key = finish(half, theirPoint, inv.slot, "crosstalk/link/v1");
+    if (!key)
       die("could not use that link. Check the words.");
     await fetch(`${httpBase()}/invite/${inv.slot}?part=b`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ blob: half2.message })
+      body: JSON.stringify({ blob: half.message })
     });
-    let bundle2;
+    let bundle;
     for (let i = 0;i < 120; i++) {
       const r = await fetch(`${httpBase()}/invite/${inv.slot}?part=c`).catch(() => null);
       if (r?.ok) {
         try {
-          const raw = JSON.parse(open(key2, (await r.json()).blob));
-          bundle2 = JSON.parse(zlib.gunzipSync(Buffer.from(raw.z, "base64")).toString("utf8"));
+          const raw = JSON.parse(open(key, (await r.json()).blob));
+          bundle = JSON.parse(zlib.gunzipSync(Buffer.from(raw.z, "base64")).toString("utf8"));
         } catch {
           return die("could not read what came back. Start again.");
         }
         break;
       }
-      await new Promise((res2) => setTimeout(res2, 1000));
+      await new Promise((res) => setTimeout(res, 1000));
     }
-    if (!bundle2)
+    if (!bundle)
       die("the other machine never sent anything. Start again.");
     fs6.mkdirSync(ROOT, { recursive: true, mode: 448 });
     const write = (name, value) => fs6.writeFileSync(path8.join(ROOT, name), JSON.stringify(value, null, 2), { mode: 384 });
-    write("identity.json", { ...bundle2.identity, machine: machineName() });
-    write("peers.json", bundle2.peers ?? {});
-    if (bundle2.rooms)
-      write("rooms.json", bundle2.rooms);
-    if (bundle2.trust)
-      write("trust.json", bundle2.trust);
-    if (bundle2.relay)
-      write("relay.json", bundle2.relay);
+    write("identity.json", { ...bundle.identity, machine: machineName() });
+    write("peers.json", bundle.peers ?? {});
+    if (bundle.rooms)
+      write("rooms.json", bundle.rooms);
+    if (bundle.trust)
+      write("trust.json", bundle.trust);
+    if (bundle.relay)
+      write("relay.json", bundle.relay);
     await ensureDaemon(ROOT_DIR);
     console.log(`
-This machine is now "${bundle2.identity.label}", the same one as your other machine.
+This machine is now "${bundle.identity.label}", the same one as your other machine.
 
-  ${fingerprint(bundle2.identity.ed.pub)}
+  ${fingerprint(bundle.identity.ed.pub)}
 
 Every room came across. In one you appear once, not twice,
 and a message reaches whichever machine you are sitting at.`);
@@ -3936,7 +3922,7 @@ Waiting\u2026`);
       key = finish(half, (await r.json()).blob, slot, "crosstalk/link/v1");
       break;
     }
-    await new Promise((res2) => setTimeout(res2, 1000));
+    await new Promise((res) => setTimeout(res, 1000));
   }
   if (!key)
     die("the other machine never answered.");
@@ -4241,24 +4227,24 @@ function registerMcp(cli, args, bin) {
 async function installPath() {
   const bin = shim2(rootFrom2(import.meta.url));
   const dir = path8.join(os4.homedir(), ".local", "bin");
-  const link2 = path8.join(dir, "crosstalk");
+  const link = path8.join(dir, "crosstalk");
   fs6.mkdirSync(dir, { recursive: true });
   let existing = "";
   try {
-    existing = fs6.readlinkSync(link2);
+    existing = fs6.readlinkSync(link);
   } catch {
-    if (fs6.existsSync(link2))
-      die(`${link2} already exists and is not a link. Move it, then run this again.`);
+    if (fs6.existsSync(link))
+      die(`${link} already exists and is not a link. Move it, then run this again.`);
   }
   if (existing && existing !== bin)
     console.log(`replacing a link to ${existing}`);
   try {
-    fs6.unlinkSync(link2);
+    fs6.unlinkSync(link);
   } catch {}
-  fs6.symlinkSync(bin, link2);
-  console.log(`linked   ${link2} -> ${bin}`);
-  const onPath2 = (process.env.PATH ?? "").split(":").includes(dir);
-  console.log(onPath2 ? `
+  fs6.symlinkSync(bin, link);
+  console.log(`linked   ${link} -> ${bin}`);
+  const onPath = (process.env.PATH ?? "").split(":").includes(dir);
+  console.log(onPath ? `
 \`crosstalk\` now works anywhere, including from a build script.` : `
 ${dir} is not on your PATH. Add this to your shell profile:
 

@@ -22,11 +22,17 @@ import {
   loadOutbox,
   saveOutbox,
   type Held,
+  loadRoutes,
+  saveRoutes,
+  loadUnrouted,
+  saveUnrouted,
+  type Unrouted,
 } from "./config.ts"
 import { channelKey, seal, open as unseal, fingerprint as fingerprintOf } from "./crypto.ts"
 import { Channel, derive, newEphemeral, signWith, transcript, verifyWith } from "./link.ts"
 import { listLocalSessions, findSession, type LocalSession } from "./registry.ts"
-import { injectNotice, injectMessage } from "./inject.ts"
+import { injectNotice, injectMessage, injectRouteQuestion, routeQuestionText } from "./inject.ts"
+import * as footprint from "./footprint.ts"
 import { triage } from "./policy.ts"
 import * as trust from "./trust.ts"
 import * as outbound from "./outbound.ts"
@@ -64,6 +70,8 @@ type Registered = {
   seenAt?: number
   /** When this session was handed the working set, so it is handed over once. */
   openedAt?: number
+  /** Repo, branch and files this session is working on, for routing by subject. */
+  footprint?: footprint.SessionFootprint
 }
 
 /**
@@ -168,6 +176,115 @@ function pickSession(preferName?: string): Registered | undefined {
   if (idle) return sessions.get(idle.sessionId)
   if (known[0]) return sessions.get(known[0].sessionId)
   return [...sessions.values()][0]
+}
+
+// --- routing by subject ---------------------------------------------------------
+
+/** What the user answered when a message matched no session. */
+const routes = loadRoutes()
+/** Messages held until the user says which session they belong to. */
+const unrouted: Unrouted[] = loadUnrouted()
+const persistUnrouted = () => saveUnrouted(unrouted)
+
+/** A session's footprint with repo and branch read fresh enough to trust. */
+function footprintOf(reg: Registered): footprint.SessionFootprint {
+  const fp = footprint.refreshGit(reg.footprint ?? { paths: {} }, reg.cwd)
+  reg.footprint = fp
+  return fp
+}
+
+/** The session your user touched last, which is where a question is put. */
+function mostRecentSession(): Registered | undefined {
+  const live = new Map(listLocalSessions().map((s) => [s.sessionId, s.updatedAt]))
+  return [...sessions.values()].sort(
+    (a, b) => (live.get(b.sessionId) ?? b.seenAt ?? 0) - (live.get(a.sessionId) ?? a.seenAt ?? 0),
+  )[0]
+}
+
+const byNameOrId = (b: { sessionId: string; name: string }) =>
+  sessions.get(b.sessionId) ?? [...sessions.values()].find((s) => s.name === b.name)
+
+type Route =
+  | { target: Registered | undefined; how: string }
+  | { ask: "none" | "tie"; tied: Registered[]; fp: footprint.Summary }
+
+/**
+ * Which local session an inbound message is for.
+ *
+ * A session the sender named wins. Otherwise the message's footprint is matched
+ * against each session's: no shared repo, no match; the branch and shared files
+ * add to it. A remembered answer for this sender, repo and branch stands in for
+ * matching. When nothing matches or two sessions match equally, the message is
+ * held and the user is asked, because a wrong guess is the bug this replaces.
+ *
+ * A peer that sends no footprint, which is every peer older than this and any
+ * session outside a git repo, is routed the old way, and so is a machine where
+ * no session is in a repo, since there is nothing to match against.
+ */
+function routeInbound(peerLabel: string, env: Envelope): Route {
+  if (env.toSession) {
+    const named = [...sessions.values()].find((s) => s.name === env.toSession)
+    if (named) return { target: named, how: "named" }
+  }
+  const fp = footprint.parseSummary(env.footprint)
+  if (!fp || !sessions.size) return { target: pickSession(), how: "no footprint" }
+  const bound = routes[footprint.bindingKey(peerLabel, fp)]
+  const boundTo = bound && byNameOrId(bound)
+  if (boundTo) return { target: boundTo, how: "remembered" }
+  const candidates = [...sessions.values()].map((s) => ({ item: s, fp: footprintOf(s) }))
+  if (!candidates.some((c) => c.fp.repo)) return { target: pickSession(), how: "no local repo" }
+  const c = footprint.choose(candidates, fp)
+  if (c.pick) return { target: c.pick, how: `footprint ${c.score}` }
+  return { ask: c.why, tied: c.tied, fp }
+}
+
+/** Hold a message nobody matched, and ask the most recent session where it goes. */
+function holdUnrouted(
+  peerLabel: string,
+  env: Envelope,
+  ctx: { room?: rooms.Room; strangerInRoom?: boolean } | undefined,
+  r: { ask: "none" | "tie"; tied: Registered[]; fp: footprint.Summary },
+) {
+  seenIds.set(env.id, Date.now())
+  if (unrouted.some((u) => u.id === env.id)) return
+  const asked = mostRecentSession()
+  const u: Unrouted = {
+    id: env.id,
+    label: peerLabel,
+    env,
+    stranger: !!ctx?.strangerInRoom,
+    roomId: ctx?.room?.id,
+    at: Date.now(),
+    why: r.ask,
+    askedSession: asked?.sessionId,
+  }
+  unrouted.push(u)
+  log(
+    `held ${env.kind} from ${peerLabel} about ${r.fp.repo}@${r.fp.branch ?? "?"}: ${r.ask === "tie" ? `tie between ${r.tied.map((t) => t.name).join(", ")}` : "no matching session"}; asking ${asked?.name ?? "nobody"}`,
+  )
+  if (asked?.socket) {
+    u.surfaced = true
+    recordNotice()
+    injectRouteQuestion(
+      { socket: asked.socket, replyTo: asked.socket, fromName: `crosstalk ◢ where does this go?` },
+      routeQuestionFor(u),
+    ).catch((e) => log(`inject failed: ${e.message}`))
+  }
+  persistUnrouted()
+}
+
+function routeQuestionFor(u: Unrouted) {
+  const env = u.env as Envelope
+  const fp = footprint.parseSummary(env.footprint)
+  return {
+    id: u.id,
+    peer: u.label,
+    peerSession: env.fromSession,
+    repo: fp?.repo,
+    branch: fp?.branch,
+    why: u.why,
+    sessions: [...sessions.values()].map((s) => s.name),
+  }
 }
 
 /** "unknown" for a client that does not publish one, which triage treats as busy. */
@@ -563,7 +680,9 @@ function onEnvelope(
     return
   }
 
-  const target = pickSession(env.toSession)
+  const route = routeInbound(peerLabel, env)
+  if ("ask" in route) return holdUnrouted(peerLabel, env, ctx, route)
+  const target = route.target
   if (!target) {
     orphaned.push({ label: peerLabel, env, stranger: !!ctx?.strangerInRoom })
     persistParked()
@@ -589,7 +708,9 @@ function onEnvelope(
   }
   seenIds.set(env.id, Date.now())
   hold(target.sessionId, h, env.slices)
-  log(`inbound ${env.kind}/${env.intent} from ${peerLabel} → ${target.name}: ${decision.action} (${decision.why})`)
+  log(
+    `inbound ${env.kind}/${env.intent} from ${peerLabel} → ${target.name} [${route.how}]: ${decision.action} (${decision.why})`,
+  )
 
   // Account for it before anything can return early, or a client that pulls
   // rather than being pushed to would never show up in the cost at all.
@@ -996,6 +1117,15 @@ type Req = Record<string, any> & { op: string; sessionId?: string; cwd?: string 
 /** A session by id, tolerating a request that carried no id at all. */
 const sessionById = (id?: string) => (id ? sessions.get(id) : undefined)
 
+/**
+ * What the sending session is working on, for the receiver to route by. Absent
+ * when the sender is outside a repo or unknown, which routes the old way.
+ */
+const senderFootprint = (req: Req): footprint.Summary | undefined => {
+  const reg = resolveSession(req)
+  return reg ? footprint.summarise(footprintOf(reg)) : undefined
+}
+
 async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
   switch (req.op) {
     case "subscribe": {
@@ -1032,6 +1162,15 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         lastStatus: before?.lastStatus ?? "idle",
         openedAt: before?.openedAt,
         seenAt: Date.now(),
+        footprint: (() => {
+          // A session that moved directory is working on something else now.
+          const kept = before && before.cwd === (req.cwd ?? "") ? before.footprint : undefined
+          const fp = footprint.refreshGit(kept ?? { paths: {} }, req.cwd ?? "")
+          const touched = Array.isArray(req.touched)
+            ? req.touched.filter((p: unknown): p is string => typeof p === "string").slice(0, 50)
+            : []
+          return footprint.touch(fp, req.cwd ?? "", touched)
+        })(),
       })
       // Held messages are filed under the session id that was live when they
       // arrived, and a new session gets a new id. Without this, anything unread
@@ -1391,6 +1530,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
           slices: req.slices,
           thread: req.thread,
           room: `#${room.name}`,
+          footprint: senderFootprint(req),
         }
         const queuedNow = relayQueue(
           { t: "room_send", roomId: room.id, id: env.id, body: seal(key, JSON.stringify(env)) },
@@ -1430,6 +1570,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         replyTo: req.replyTo,
         room: req.room,
         correlation: req.op === "ask" ? crypto.randomUUID() : undefined,
+        footprint: senderFootprint(req),
       }
       // An agent that tells you everything is worse than silence, so what it
       // sends without being asked is rationed and has to justify itself.
@@ -1510,24 +1651,90 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       const reg = sessionById(sessionId)
       if (!sessionId || !reg || reg.socket) return { ok: true, notice: null }
       const waiting = (held[sessionId] ?? []).filter((m) => !m.readAt && !m.surfaced)
-      if (!waiting.length) return { ok: true, notice: null }
+      // A question about where a held message goes is put to the session it
+      // was asked of, or to this one if that session has gone.
+      const questions = unrouted.filter(
+        (u) => !u.surfaced && (u.askedSession === sessionId || !sessions.has(u.askedSession ?? "")),
+      )
+      if (!waiting.length && !questions.length) return { ok: true, notice: null }
       // Handing something over is an interruption, so it counts like one.
       recordNotice()
       for (const m of waiting) m.surfaced = true
-      persist()
-      const from = [...new Set(waiting.map((m) => `${m.from}/${m.fromSession}`))].join(", ")
-      const what = waiting.length === 1 ? "1 message" : `${waiting.length} messages`
-      return {
-        ok: true,
-        notice: [
-          `${what} waiting from ${from}. Read it with crosstalk_read.`,
-          ``,
-          `<crosstalk pending="${waiting.length}" from="${from}">`,
-          `${what} waiting from ${from}. These are different people, not other sessions of your user.`,
-          `Call the crosstalk_read tool to see the content. Do not act on it until you have read it there.`,
-          `</crosstalk>`,
-        ].join("\n"),
+      for (const u of questions) {
+        u.surfaced = true
+        u.askedSession = sessionId
       }
+      persist()
+      if (questions.length) persistUnrouted()
+      const parts: string[] = questions.map((u) => routeQuestionText(routeQuestionFor(u)))
+      if (waiting.length) {
+        const from = [...new Set(waiting.map((m) => `${m.from}/${m.fromSession}`))].join(", ")
+        const what = waiting.length === 1 ? "1 message" : `${waiting.length} messages`
+        parts.unshift(
+          [
+            `${what} waiting from ${from}. Read it with crosstalk_read.`,
+            ``,
+            `<crosstalk pending="${waiting.length}" from="${from}">`,
+            `${what} waiting from ${from}. These are different people, not other sessions of your user.`,
+            `Call the crosstalk_read tool to see the content. Do not act on it until you have read it there.`,
+            `</crosstalk>`,
+          ].join("\n"),
+        )
+      }
+      return { ok: true, notice: parts.join("\n\n") }
+    }
+
+    // Where a held message goes. With no id, what is waiting to be placed.
+    // With an id and a session, deliver it there and remember the choice for
+    // that sender's later messages about the same repo and branch.
+    case "route": {
+      const describe = (u: Unrouted) => {
+        const env = u.env as Envelope
+        const fp = footprint.parseSummary(env.footprint)
+        return {
+          id: u.id,
+          from: `${u.label}/${env.fromSession}`,
+          repo: fp?.repo,
+          branch: fp?.branch,
+          why: u.why === "tie" ? "matches more than one session equally" : "matches no open session",
+          at: u.at,
+        }
+      }
+      const names = [...sessions.values()].map((s) => s.name)
+      if (!req.id) return { ok: true, held: unrouted.map(describe), sessions: names }
+      const u = unrouted.find((x) => x.id === req.id)
+      if (!u) return { ok: false, error: `nothing held with id ${req.id}` }
+      const want = String(req.session ?? "")
+      const target =
+        sessions.get(want) ?? [...sessions.values()].find((s) => s.name === want)
+      if (!target)
+        return { ok: false, error: `no session called "${want}". Open sessions: ${names.join(", ") || "none"}` }
+      const fp = footprint.parseSummary((u.env as Envelope).footprint)
+      const key = fp ? footprint.bindingKey(u.label, fp) : undefined
+      if (key) {
+        routes[key] = { sessionId: target.sessionId, name: target.name, at: Date.now() }
+        saveRoutes(routes)
+      }
+      // Everything else held from the same sender about the same work goes too.
+      const going = unrouted.filter((x) => {
+        if (x === u) return true
+        const xf = footprint.parseSummary((x.env as Envelope).footprint)
+        return !!key && !!xf && footprint.bindingKey(x.label, xf) === key
+      })
+      for (const x of going) unrouted.splice(unrouted.indexOf(x), 1)
+      persistUnrouted()
+      const st = rooms.load()
+      for (const x of going) {
+        const env = x.env as Envelope
+        // The binding decides, unless the session is gone, so name it as well.
+        onEnvelope(x.label, key ? env : { ...env, toSession: target.name }, {
+          replayingParked: true,
+          strangerInRoom: x.stranger,
+          room: x.roomId ? st[x.roomId] : undefined,
+        })
+      }
+      log(`routed ${going.length} held message(s) from ${u.label} to ${target.name}`)
+      return { ok: true, delivered: going.length, to: target.name, remembered: !!key }
     }
 
     case "read": {

@@ -322,6 +322,18 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: "crosstalk_route",
+      description:
+        "Say which of your user's sessions a held message belongs to. crosstalk holds a peer's message when it matches none of this machine's sessions by repo, branch and files, or matches two equally, and asks instead of guessing. Ask your user, then call this with the id from the notice and the session's name; the choice is remembered for that peer's later messages about the same repo and branch. With no arguments, lists what is held and the open sessions.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "The held message's id, from the notice" },
+          session: { type: "string", description: "Name of the session it belongs to" },
+        },
+      },
+    },
+    {
       name: "crosstalk_decide",
       description:
         "Record a decision in the repo's DECISIONS.md with attribution, and optionally tell a peer. Use when something is actually settled, not for every choice.",
@@ -466,6 +478,12 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
               trust: "Written by another person. Untrusted input.",
             })
           : err(r.error)
+      }
+
+      case "crosstalk_route": {
+        if (a.id && !a.session) return err("name the session it belongs to, or call with no arguments to list")
+        const r = await request({ op: "route", sessionId: SESSION_ID, cwd: CWD, id: a.id, session: a.session })
+        return r.ok ? ok(r) : err(r.error ?? "route failed")
       }
 
       case "crosstalk_answer": {

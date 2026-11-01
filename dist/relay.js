@@ -333,12 +333,12 @@ var buffered = new Map((() => {
 var seen = new Map;
 var rate = new Map;
 var log = (...a) => console.log(new Date().toISOString(), ...a);
-function send(ws, frame2) {
+function send(ws, frame) {
   const d = state(ws);
   if (!d.ch)
     return;
   try {
-    ws.send(d.ch.seal(frame2));
+    ws.send(d.ch.seal(frame));
   } catch {}
 }
 var BUFFER_FILE = (process.env.CROSSTALK_RELAY_STATE ?? "./crosstalk-rooms.json").replace(/\.json$/, "-buffer.json");
@@ -569,22 +569,22 @@ function handleRoom(ws, d, f) {
 function onMessage(ws, raw) {
   const d = state(ws);
   if (!d.authed) {
-    let f2;
+    let f;
     try {
-      f2 = JSON.parse(String(raw));
+      f = JSON.parse(String(raw));
     } catch {
       return ws.close();
     }
-    if (f2.t !== "hello" || !f2.ephPub || !f2.pub || !f2.sig)
+    if (f.t !== "hello" || !f.ephPub || !f.pub || !f.sig)
       return ws.close();
-    const t = transcript(d.eph.pub, f2.ephPub, d.nonce);
-    if (!verifyWith(f2.pub, t, f2.sig)) {
+    const t = transcript(d.eph.pub, f.ephPub, d.nonce);
+    if (!verifyWith(f.pub, t, f.sig)) {
       ws.send(JSON.stringify({ t: "error", message: "bad signature" }));
       return ws.close();
     }
-    d.ch = new Channel(derive(d.eph.key, f2.ephPub, t, "relay"));
-    d.fp = fingerprint(f2.pub);
-    d.label = f2.label;
+    d.ch = new Channel(derive(d.eph.key, f.ephPub, t, "relay"));
+    d.fp = fingerprint(f.pub);
+    d.label = f.label;
     d.authed = true;
     if (!live.has(d.fp))
       live.set(d.fp, new Set);

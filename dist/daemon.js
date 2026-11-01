@@ -4,7 +4,7 @@
 // src/daemon.ts
 import fs10 from "fs";
 import net2 from "net";
-import path12 from "path";
+import path13 from "path";
 import crypto7 from "crypto";
 
 // src/config.ts
@@ -23,6 +23,8 @@ var P = {
   sessions: path.join(ROOT, "sessions.json"),
   outbox: path.join(ROOT, "outbox.json"),
   usage: path.join(ROOT, "usage.json"),
+  routes: path.join(ROOT, "routes.json"),
+  unrouted: path.join(ROOT, "unrouted.json"),
   daemonSock: path.join(ROOT, "daemon.sock"),
   daemonLock: path.join(ROOT, "daemon.lock"),
   log: path.join(ROOT, "daemon.log")
@@ -96,6 +98,10 @@ var loadRegistered = () => readJson(P.sessions, {});
 var saveRegistered = (s) => writeJson(P.sessions, s);
 var loadParked = () => readJson(P.parked, []);
 var saveParked = (p) => writeJson(P.parked, p);
+var loadRoutes = () => readJson(P.routes, {});
+var saveRoutes = (r) => writeJson(P.routes, r);
+var loadUnrouted = () => readJson(P.unrouted, []);
+var saveUnrouted = (u) => writeJson(P.unrouted, u);
 
 // src/crypto.ts
 import crypto from "node:crypto";
@@ -289,6 +295,24 @@ function injectNotice(opts, n) {
   ].join(`
 `));
 }
+function injectRouteQuestion(opts, q) {
+  return send(opts, routeQuestionText(q));
+}
+function routeQuestionText(q) {
+  const where = [q.repo, q.branch].filter((v) => !!v).map(attr).join(" @ ") || "an unknown repo";
+  const reason = q.why === "tie" ? `It matches more than one of your sessions equally` : `None of your open sessions is working on it`;
+  return [
+    `A message from ${attr(q.peer)}/${attr(q.peerSession)} about ${where} is held: which session should get it?`,
+    ``,
+    `<crosstalk route="${attr(q.id)}" peer="${attr(q.peer)}" repo="${attr(q.repo ?? "")}" branch="${attr(q.branch ?? "")}">`,
+    `${reason}, so crosstalk did not guess. Nothing has been delivered.`,
+    `Ask your user which session it belongs to, then call crosstalk_route with id "${attr(q.id)}" and that session's name.`,
+    `Open sessions: ${q.sessions.map(attr).join(", ") || "none"}.`,
+    `The answer is remembered for later messages from ${attr(q.peer)} about the same repo and branch.`,
+    `</crosstalk>`
+  ].join(`
+`);
+}
 function injectMessage(opts, m) {
   const mark = crypto3.randomBytes(4).toString("hex");
   const peer = attr(m.peer);
@@ -310,33 +334,150 @@ function injectMessage(opts, m) {
 `));
 }
 
+// src/footprint.ts
+import { spawnSync } from "node:child_process";
+import path3 from "node:path";
+var MAX_PATHS = 200;
+var SUMMARY_PATHS = 12;
+var GIT_TTL_MS = 30000;
+function normaliseRemote(url) {
+  let u = url.trim();
+  if (!u)
+    return "";
+  const scp = /^(?:[^@/]+@)?([^:/]+):(?!\/)(.+)$/.exec(u);
+  if (scp && !/^[a-z]+:\/\//i.test(u))
+    u = `${scp[1]}/${scp[2]}`;
+  else
+    u = u.replace(/^[a-z+]+:\/\//i, "").replace(/^[^@/]+@/, "").replace(/^([^/:]+):\d+\//, "$1/");
+  return u.replace(/\.git\/?$/, "").replace(/\/+$/, "").toLowerCase();
+}
+function git(cwd, args) {
+  try {
+    const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 2000 });
+    return r.status === 0 ? r.stdout.trim() : "";
+  } catch {
+    return "";
+  }
+}
+function readGit(cwd) {
+  if (!cwd)
+    return {};
+  const root = git(cwd, ["rev-parse", "--show-toplevel"]);
+  if (!root)
+    return {};
+  let remote = git(cwd, ["config", "--get", "remote.origin.url"]);
+  if (!remote) {
+    const first = git(cwd, ["remote"]).split(`
+`)[0];
+    if (first)
+      remote = git(cwd, ["config", "--get", `remote.${first}.url`]);
+  }
+  const branch = git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  return {
+    repo: remote ? normaliseRemote(remote) : undefined,
+    branch: branch && branch !== "HEAD" ? branch : undefined,
+    root
+  };
+}
+function refreshGit(fp, cwd, now = Date.now()) {
+  if (fp.gitAt && now - fp.gitAt < GIT_TTL_MS)
+    return fp;
+  const g = readGit(cwd);
+  return { ...fp, repo: g.repo, branch: g.branch, root: g.root, gitAt: now };
+}
+function touch(fp, cwd, touched, now = Date.now()) {
+  if (!touched.length)
+    return fp;
+  const paths = { ...fp.paths };
+  for (const raw of touched) {
+    const abs = path3.resolve(cwd || "/", raw);
+    const base = fp.root ?? cwd;
+    const rel = base ? path3.relative(base, abs) : raw;
+    if (!rel || rel.startsWith("..") || path3.isAbsolute(rel))
+      continue;
+    paths[rel.split(path3.sep).join("/")] = now;
+  }
+  const kept = Object.entries(paths).sort((a, b) => b[1] - a[1]).slice(0, MAX_PATHS);
+  return { ...fp, paths: Object.fromEntries(kept) };
+}
+function summarise(fp, n = SUMMARY_PATHS) {
+  if (!fp?.repo)
+    return;
+  const paths = Object.entries(fp.paths).sort((a, b) => b[1] - a[1]).slice(0, n).map(([p]) => p);
+  return { repo: fp.repo, ...fp.branch ? { branch: fp.branch } : {}, ...paths.length ? { paths } : {} };
+}
+function parseSummary(v) {
+  if (!v || typeof v !== "object")
+    return;
+  const o = v;
+  if (typeof o.repo !== "string" || !o.repo)
+    return;
+  return {
+    repo: normaliseRemote(o.repo).slice(0, 200),
+    branch: typeof o.branch === "string" && o.branch ? o.branch.slice(0, 200) : undefined,
+    paths: Array.isArray(o.paths) ? o.paths.filter((p) => typeof p === "string").slice(0, SUMMARY_PATHS * 2) : undefined
+  };
+}
+var BRANCH_WEIGHT = 10;
+var PATH_WEIGHT = 1;
+var MAX_PATH_SCORE = 9;
+function score(local, msg) {
+  if (!local?.repo || !msg.repo || local.repo !== msg.repo)
+    return 0;
+  let s = 1;
+  if (msg.branch && local.branch && msg.branch === local.branch)
+    s += BRANCH_WEIGHT;
+  const mine = Object.keys(local.paths);
+  const dirs = new Set(mine.map((p) => path3.posix.dirname(p)));
+  let overlap = 0;
+  for (const p of msg.paths ?? []) {
+    if (local.paths[p] !== undefined)
+      overlap += PATH_WEIGHT;
+    else if (dirs.has(path3.posix.dirname(p)))
+      overlap += PATH_WEIGHT / 2;
+  }
+  return s + Math.min(overlap, MAX_PATH_SCORE);
+}
+function choose(candidates, msg) {
+  const scored = candidates.map((c) => ({ item: c.item, s: score(c.fp, msg) })).filter((c) => c.s > 0).sort((a, b) => b.s - a.s);
+  if (!scored.length)
+    return { why: "none", tied: [] };
+  const top = scored.filter((c) => c.s === scored[0].s);
+  if (top.length > 1)
+    return { why: "tie", tied: top.map((c) => c.item) };
+  return { pick: scored[0].item, score: scored[0].s };
+}
+var bindingKey = (sender, msg) => `${sender}\x00${msg.repo ?? ""}\x00${msg.branch ?? ""}`;
+
 // src/trust.ts
-import path4 from "node:path";
+import path5 from "node:path";
 
 // src/config.ts
 import os3 from "node:os";
-import path3 from "node:path";
-var ROOT2 = process.env.CROSSTALK_HOME ?? path3.join(os3.homedir(), ".claude", "crosstalk");
+import path4 from "node:path";
+var ROOT2 = process.env.CROSSTALK_HOME ?? path4.join(os3.homedir(), ".claude", "crosstalk");
 var P2 = {
   root: ROOT2,
-  identity: path3.join(ROOT2, "identity.json"),
-  peers: path3.join(ROOT2, "peers.json"),
-  relay: path3.join(ROOT2, "relay.json"),
-  queue: path3.join(ROOT2, "queue.json"),
-  parked: path3.join(ROOT2, "parked.json"),
-  sessions: path3.join(ROOT2, "sessions.json"),
-  outbox: path3.join(ROOT2, "outbox.json"),
-  usage: path3.join(ROOT2, "usage.json"),
-  daemonSock: path3.join(ROOT2, "daemon.sock"),
-  daemonLock: path3.join(ROOT2, "daemon.lock"),
-  log: path3.join(ROOT2, "daemon.log")
+  identity: path4.join(ROOT2, "identity.json"),
+  peers: path4.join(ROOT2, "peers.json"),
+  relay: path4.join(ROOT2, "relay.json"),
+  queue: path4.join(ROOT2, "queue.json"),
+  parked: path4.join(ROOT2, "parked.json"),
+  sessions: path4.join(ROOT2, "sessions.json"),
+  outbox: path4.join(ROOT2, "outbox.json"),
+  usage: path4.join(ROOT2, "usage.json"),
+  routes: path4.join(ROOT2, "routes.json"),
+  unrouted: path4.join(ROOT2, "unrouted.json"),
+  daemonSock: path4.join(ROOT2, "daemon.sock"),
+  daemonLock: path4.join(ROOT2, "daemon.lock"),
+  log: path4.join(ROOT2, "daemon.log")
 };
 
 // src/trust.ts
 var LEVELS = ["mute", "notify", "ask", "handoff", "deliver"];
 var rank = (l) => LEVELS.indexOf(l);
 var atLeast = (have, need) => rank(have) >= rank(need);
-var FILE = path4.join(ROOT2, "trust.json");
+var FILE = path5.join(ROOT2, "trust.json");
 
 // src/policy.ts
 var REQUIRES = {
@@ -367,13 +508,13 @@ function triage(level, intent, kind, receiverStatus, muted = false) {
 
 // src/trust.ts
 import fs3 from "node:fs";
-import path5 from "node:path";
+import path6 from "node:path";
 var LEVELS2 = ["mute", "notify", "ask", "handoff", "deliver"];
 var rank2 = (l) => LEVELS2.indexOf(l);
 var atLeast2 = (have, need) => rank2(have) >= rank2(need);
 var lower = (a, b) => rank2(a) <= rank2(b) ? a : b;
 var isLevel = (s) => LEVELS2.includes(s);
-var FILE2 = path5.join(ROOT2, "trust.json");
+var FILE2 = path6.join(ROOT2, "trust.json");
 var DEFAULT_TRUST = {
   rooms: {},
   people: {},
@@ -428,8 +569,8 @@ function isMuted(person, ctx, t = load(), now = Date.now()) {
 
 // src/outbound.ts
 import fs4 from "node:fs";
-import path6 from "node:path";
-var FILE3 = path6.join(ROOT2, "outbound.json");
+import path7 from "node:path";
+var FILE3 = path7.join(ROOT2, "outbound.json");
 var WINDOW_MS = 60 * 60000;
 var UNPROMPTED_PER_HOUR = Number(process.env.CROSSTALK_UNPROMPTED_PER_HOUR ?? 5);
 var read = () => {
@@ -458,13 +599,13 @@ function spend(peer, now = Date.now()) {
 
 // src/decisions.ts
 import fs5 from "node:fs";
-import path7 from "node:path";
+import path8 from "node:path";
 var HEADER = `# Decisions
 
 Appended by crosstalk when either side marks something settled. Newest last.
 `;
 function appendDecision(repoRoot, d, file = "DECISIONS.md") {
-  const target = path7.join(repoRoot, file);
+  const target = path8.join(repoRoot, file);
   if (!fs5.existsSync(target))
     fs5.writeFileSync(target, HEADER);
   const when = new Date(d.ts).toISOString().replace("T", " ").slice(0, 16);
@@ -480,8 +621,8 @@ function appendDecision(repoRoot, d, file = "DECISIONS.md") {
 
 // src/usage.ts
 import fs6 from "node:fs";
-import path8 from "node:path";
-var FILE4 = path8.join(ROOT2, "usage.json");
+import path9 from "node:path";
+var FILE4 = path9.join(ROOT2, "usage.json");
 var empty = () => ({
   sentMessages: 0,
   sentChars: 0,
@@ -520,7 +661,7 @@ function record(peer, direction, chars, delivered = false) {
   save2(u);
 }
 var estTokens = (chars) => Math.round(chars / 4);
-function summarise(u = load2()) {
+function summarise2(u = load2()) {
   const rows = Object.entries(u).map(([peer, p]) => ({
     peer,
     sent: p.sentMessages,
@@ -543,9 +684,9 @@ function summarise(u = load2()) {
 
 // src/rooms.ts
 import fs7 from "node:fs";
-import path9 from "node:path";
+import path10 from "node:path";
 import crypto4 from "node:crypto";
-var FILE5 = path9.join(ROOT2, "rooms.json");
+var FILE5 = path10.join(ROOT2, "rooms.json");
 var isRoomRecord = (v) => !!v && typeof v === "object" && typeof v.id === "string" && typeof v.name === "string" && typeof v.members === "object";
 var load3 = () => {
   try {
@@ -589,9 +730,9 @@ function upsert(room, state = load3()) {
 
 // src/facts.ts
 import fs8 from "node:fs";
-import path10 from "node:path";
+import path11 from "node:path";
 import crypto5 from "node:crypto";
-var FILE6 = path10.join(ROOT2, "facts.json");
+var FILE6 = path11.join(ROOT2, "facts.json");
 var newFactId = () => "f_" + crypto5.randomBytes(4).toString("hex");
 function load4() {
   try {
@@ -662,7 +803,7 @@ var age = (ms) => {
   return `${Math.floor(d / 30)}mo`;
 };
 function digest(rooms, cwd, s = load4(), maxBytes = 2000) {
-  const here = path10.basename(cwd).toLowerCase();
+  const here = path11.basename(cwd).toLowerCase();
   const picked = [];
   for (const room of rooms)
     for (const f of liveFacts(room, s))
@@ -700,9 +841,9 @@ function digest(rooms, cwd, s = load4(), maxBytes = 2000) {
 
 // src/tasks.ts
 import fs9 from "node:fs";
-import path11 from "node:path";
+import path12 from "node:path";
 import crypto6 from "node:crypto";
-var FILE7 = path11.join(ROOT2, "tasks.json");
+var FILE7 = path12.join(ROOT2, "tasks.json");
 var newTaskId = () => "t_" + crypto6.randomBytes(4).toString("hex");
 function load5() {
   try {
@@ -725,7 +866,7 @@ function save5(s) {
 var openTasks = (room, s = load5()) => (s[room] ?? []).filter((t) => t.state !== "done");
 function apply2(room, op, s = load5()) {
   const list = s[room] ??= [];
-  const find = (id) => list.find((t2) => t2.id === id);
+  const find = (id) => list.find((t) => t.id === id);
   if (op.op === "add") {
     if (find(op.task.id))
       return false;
@@ -858,9 +999,9 @@ var localPresence = () => {
 };
 function pickSession(preferName) {
   if (preferName) {
-    const byName2 = [...sessions.values()].find((s) => s.name === preferName);
-    if (byName2)
-      return byName2;
+    const byName = [...sessions.values()].find((s) => s.name === preferName);
+    if (byName)
+      return byName;
   }
   const live = listLocalSessions();
   const known = live.filter((l) => sessions.has(l.sessionId));
@@ -870,6 +1011,77 @@ function pickSession(preferName) {
   if (known[0])
     return sessions.get(known[0].sessionId);
   return [...sessions.values()][0];
+}
+var routes = loadRoutes();
+var unrouted = loadUnrouted();
+var persistUnrouted = () => saveUnrouted(unrouted);
+function footprintOf(reg) {
+  const fp = refreshGit(reg.footprint ?? { paths: {} }, reg.cwd);
+  reg.footprint = fp;
+  return fp;
+}
+function mostRecentSession() {
+  const live = new Map(listLocalSessions().map((s) => [s.sessionId, s.updatedAt]));
+  return [...sessions.values()].sort((a, b) => (live.get(b.sessionId) ?? b.seenAt ?? 0) - (live.get(a.sessionId) ?? a.seenAt ?? 0))[0];
+}
+var byNameOrId = (b) => sessions.get(b.sessionId) ?? [...sessions.values()].find((s) => s.name === b.name);
+function routeInbound(peerLabel, env) {
+  if (env.toSession) {
+    const named = [...sessions.values()].find((s) => s.name === env.toSession);
+    if (named)
+      return { target: named, how: "named" };
+  }
+  const fp = parseSummary(env.footprint);
+  if (!fp || !sessions.size)
+    return { target: pickSession(), how: "no footprint" };
+  const bound = routes[bindingKey(peerLabel, fp)];
+  const boundTo = bound && byNameOrId(bound);
+  if (boundTo)
+    return { target: boundTo, how: "remembered" };
+  const candidates = [...sessions.values()].map((s) => ({ item: s, fp: footprintOf(s) }));
+  if (!candidates.some((c) => c.fp.repo))
+    return { target: pickSession(), how: "no local repo" };
+  const c = choose(candidates, fp);
+  if (c.pick)
+    return { target: c.pick, how: `footprint ${c.score}` };
+  return { ask: c.why, tied: c.tied, fp };
+}
+function holdUnrouted(peerLabel, env, ctx, r) {
+  seenIds.set(env.id, Date.now());
+  if (unrouted.some((u) => u.id === env.id))
+    return;
+  const asked = mostRecentSession();
+  const u = {
+    id: env.id,
+    label: peerLabel,
+    env,
+    stranger: !!ctx?.strangerInRoom,
+    roomId: ctx?.room?.id,
+    at: Date.now(),
+    why: r.ask,
+    askedSession: asked?.sessionId
+  };
+  unrouted.push(u);
+  log(`held ${env.kind} from ${peerLabel} about ${r.fp.repo}@${r.fp.branch ?? "?"}: ${r.ask === "tie" ? `tie between ${r.tied.map((t) => t.name).join(", ")}` : "no matching session"}; asking ${asked?.name ?? "nobody"}`);
+  if (asked?.socket) {
+    u.surfaced = true;
+    recordNotice();
+    injectRouteQuestion({ socket: asked.socket, replyTo: asked.socket, fromName: `crosstalk \u25E2 where does this go?` }, routeQuestionFor(u)).catch((e) => log(`inject failed: ${e.message}`));
+  }
+  persistUnrouted();
+}
+function routeQuestionFor(u) {
+  const env = u.env;
+  const fp = parseSummary(env.footprint);
+  return {
+    id: u.id,
+    peer: u.label,
+    peerSession: env.fromSession,
+    repo: fp?.repo,
+    branch: fp?.branch,
+    why: u.why,
+    sessions: [...sessions.values()].map((s) => s.name)
+  };
 }
 var statusOf = (sessionId) => listLocalSessions().find((s) => s.sessionId === sessionId)?.status ?? "unknown";
 var held = loadQueue();
@@ -931,14 +1143,14 @@ function connect() {
   let pendingTranscript = null;
   sock.onmessage = (ev) => {
     if (workerMode) {
-      let f2;
+      let f;
       try {
-        f2 = JSON.parse(String(ev.data));
+        f = JSON.parse(String(ev.data));
         lastHeard = Date.now();
       } catch {
         return;
       }
-      return onFrame(f2, null);
+      return onFrame(f, null);
     }
     if (!channel) {
       let h;
@@ -972,12 +1184,12 @@ function connect() {
     }
     return onFrame(f, pendingTranscript);
   };
-  function onFrame(f, pendingTranscript2) {
+  function onFrame(f, pendingTranscript) {
     if (f.t === "ready") {
       const pinned = loadRelay().pub;
       const sig = f.sig;
       if (pinned) {
-        if (!sig || !verifyWith(pinned, pendingTranscript2, sig)) {
+        if (!sig || !verifyWith(pinned, pendingTranscript, sig)) {
           log("RELAY IDENTITY MISMATCH: refusing this link");
           channel = null;
           return sock.close();
@@ -1047,15 +1259,15 @@ function sendEnvelope(peerLabel, env) {
   const peer = loadPeers()[peerLabel];
   if (!peer)
     return { ok: false, error: `not in a room with "${peerLabel}"` };
-  const frame2 = {
+  const frame = {
     t: "send",
     to: peer.fingerprint,
     id: env.id,
     body: seal(channelKey(identity, peer), JSON.stringify(env))
   };
   if (env.kind === "presence")
-    return relaySend(frame2) ? { ok: true } : { ok: false, error: "relay not connected" };
-  const now = relayQueue(frame2, peerLabel);
+    return relaySend(frame) ? { ok: true } : { ok: false, error: "relay not connected" };
+  const now = relayQueue(frame, peerLabel);
   return now ? { ok: true } : { ok: true, queued: true, note: `${peerLabel} or the relay is unreachable; held and will go when the link is back` };
 }
 var myFingerprint = () => fingerprint(identity.ed.pub);
@@ -1135,9 +1347,9 @@ setInterval(() => {
 function onEnvelope(peerLabel, env, ctx) {
   if (!ctx?.replayingParked && seenIds.has(env.id))
     return log(`dropped replay of ${env.id} from ${peerLabel}`);
-  const age2 = Date.now() - (env.ts ?? 0);
-  if (age2 > REPLAY_WINDOW_MS || age2 < -MAX_SKEW_MS) {
-    return log(`dropped stale or future-dated ${env.kind} from ${peerLabel} (${Math.round(age2 / 1000)}s)`);
+  const age = Date.now() - (env.ts ?? 0);
+  if (age > REPLAY_WINDOW_MS || age < -MAX_SKEW_MS) {
+    return log(`dropped stale or future-dated ${env.kind} from ${peerLabel} (${Math.round(age / 1000)}s)`);
   }
   if (env.kind === "presence") {
     peerPresence.set(peerLabel, { sessions: env.presence ?? [], at: Date.now() });
@@ -1184,7 +1396,10 @@ function onEnvelope(peerLabel, env, ctx) {
       });
     return;
   }
-  const target = pickSession(env.toSession);
+  const route = routeInbound(peerLabel, env);
+  if ("ask" in route)
+    return holdUnrouted(peerLabel, env, ctx, route);
+  const target = route.target;
   if (!target) {
     orphaned.push({ label: peerLabel, env, stranger: !!ctx?.strangerInRoom });
     persistParked();
@@ -1210,7 +1425,7 @@ function onEnvelope(peerLabel, env, ctx) {
   };
   seenIds.set(env.id, Date.now());
   hold(target.sessionId, h, env.slices);
-  log(`inbound ${env.kind}/${env.intent} from ${peerLabel} \u2192 ${target.name}: ${decision.action} (${decision.why})`);
+  log(`inbound ${env.kind}/${env.intent} from ${peerLabel} \u2192 ${target.name} [${route.how}]: ${decision.action} (${decision.why})`);
   record(peerLabel, "recv", env.text.length, decision.interrupts);
   if (!target.socket) {
     log(`held for ${target.name}, which pulls rather than being pushed to`);
@@ -1311,10 +1526,10 @@ var relaySend = (o) => {
     return false;
   }
 };
-function relayQueue(frame2, describe) {
-  if (relaySend(frame2))
+function relayQueue(frame, describe) {
+  if (relaySend(frame))
     return true;
-  outbox.push({ to: describe, frame: frame2, ts: Date.now() });
+  outbox.push({ to: describe, frame, ts: Date.now() });
   const cutoff = Date.now() - OUTBOX_TTL_MS;
   while (outbox.length && outbox[0].ts < cutoff)
     outbox.shift();
@@ -1551,6 +1766,10 @@ setInterval(() => {
   }
 }, PING_MS);
 var sessionById = (id) => id ? sessions.get(id) : undefined;
+var senderFootprint = (req) => {
+  const reg = resolveSession(req);
+  return reg ? summarise(footprintOf(reg)) : undefined;
+};
 async function handle(req, sock) {
   switch (req.op) {
     case "subscribe": {
@@ -1581,7 +1800,13 @@ async function handle(req, sock) {
         transcript: req.transcript,
         lastStatus: before?.lastStatus ?? "idle",
         openedAt: before?.openedAt,
-        seenAt: Date.now()
+        seenAt: Date.now(),
+        footprint: (() => {
+          const kept = before && before.cwd === (req.cwd ?? "") ? before.footprint : undefined;
+          const fp = refreshGit(kept ?? { paths: {} }, req.cwd ?? "");
+          const touched = Array.isArray(req.touched) ? req.touched.filter((p) => typeof p === "string").slice(0, 50) : [];
+          return touch(fp, req.cwd ?? "", touched);
+        })()
       });
       const liveIds = new Set(listLocalSessions().map((s) => s.sessionId));
       let adopted = 0;
@@ -1900,14 +2125,14 @@ async function handle(req, sock) {
         if (!room)
           return {
             ok: false,
-            error: `no room called "${req.to}". You are in: ${[...Object.keys(loadPeers()), ...Object.values(load3()).map((r2) => "#" + r2.name)].join(", ") || "nothing yet"}`
+            error: `no room called "${req.to}". You are in: ${[...Object.keys(loadPeers()), ...Object.values(load3()).map((r) => "#" + r.name)].join(", ") || "nothing yet"}`
           };
         if (room.pending)
           return { ok: false, error: `you have not accepted the invitation to #${room.name} yet` };
         const key = keyFor(room);
         if (!key)
           return { ok: false, error: `no key for #${room.name}` };
-        const env2 = {
+        const env = {
           v: 1,
           id: crypto7.randomUUID(),
           ts: Date.now(),
@@ -1920,15 +2145,16 @@ async function handle(req, sock) {
           text: String(req.text ?? ""),
           slices: req.slices,
           thread: req.thread,
-          room: `#${room.name}`
+          room: `#${room.name}`,
+          footprint: senderFootprint(req)
         };
-        const queuedNow = relayQueue({ t: "room_send", roomId: room.id, id: env2.id, body: seal(key, JSON.stringify(env2)) }, `#${room.name}`);
+        const queuedNow = relayQueue({ t: "room_send", roomId: room.id, id: env.id, body: seal(key, JSON.stringify(env)) }, `#${room.name}`);
         const recipients = Object.values(room.members).filter((m) => m.state === "joined" && m.fingerprint !== myFingerprint());
         for (const m of recipients)
-          record(m.label, "sent", env2.text.length);
+          record(m.label, "sent", env.text.length);
         return {
           ok: true,
-          id: env2.id,
+          id: env.id,
           room: room.name,
           sentTo: recipients.map((m) => m.label),
           ...queuedNow ? {} : { queued: true, note: "the relay is unreachable; held and will go when the link is back" }
@@ -1953,7 +2179,8 @@ async function handle(req, sock) {
         thread: req.thread,
         replyTo: req.replyTo,
         room: req.room,
-        correlation: req.op === "ask" ? crypto7.randomUUID() : undefined
+        correlation: req.op === "ask" ? crypto7.randomUUID() : undefined,
+        footprint: senderFootprint(req)
       };
       if (req.unprompted) {
         if (!String(req.because ?? "").trim())
@@ -2021,17 +2248,24 @@ async function handle(req, sock) {
       if (!sessionId || !reg || reg.socket)
         return { ok: true, notice: null };
       const waiting = (held[sessionId] ?? []).filter((m) => !m.readAt && !m.surfaced);
-      if (!waiting.length)
+      const questions = unrouted.filter((u) => !u.surfaced && (u.askedSession === sessionId || !sessions.has(u.askedSession ?? "")));
+      if (!waiting.length && !questions.length)
         return { ok: true, notice: null };
       recordNotice();
       for (const m of waiting)
         m.surfaced = true;
+      for (const u of questions) {
+        u.surfaced = true;
+        u.askedSession = sessionId;
+      }
       persist();
-      const from = [...new Set(waiting.map((m) => `${m.from}/${m.fromSession}`))].join(", ");
-      const what = waiting.length === 1 ? "1 message" : `${waiting.length} messages`;
-      return {
-        ok: true,
-        notice: [
+      if (questions.length)
+        persistUnrouted();
+      const parts = questions.map((u) => routeQuestionText(routeQuestionFor(u)));
+      if (waiting.length) {
+        const from = [...new Set(waiting.map((m) => `${m.from}/${m.fromSession}`))].join(", ");
+        const what = waiting.length === 1 ? "1 message" : `${waiting.length} messages`;
+        parts.unshift([
           `${what} waiting from ${from}. Read it with crosstalk_read.`,
           ``,
           `<crosstalk pending="${waiting.length}" from="${from}">`,
@@ -2039,8 +2273,61 @@ async function handle(req, sock) {
           `Call the crosstalk_read tool to see the content. Do not act on it until you have read it there.`,
           `</crosstalk>`
         ].join(`
-`)
+`));
+      }
+      return { ok: true, notice: parts.join(`
+
+`) };
+    }
+    case "route": {
+      const describe = (u) => {
+        const env = u.env;
+        const fp = parseSummary(env.footprint);
+        return {
+          id: u.id,
+          from: `${u.label}/${env.fromSession}`,
+          repo: fp?.repo,
+          branch: fp?.branch,
+          why: u.why === "tie" ? "matches more than one session equally" : "matches no open session",
+          at: u.at
+        };
       };
+      const names = [...sessions.values()].map((s) => s.name);
+      if (!req.id)
+        return { ok: true, held: unrouted.map(describe), sessions: names };
+      const u = unrouted.find((x) => x.id === req.id);
+      if (!u)
+        return { ok: false, error: `nothing held with id ${req.id}` };
+      const want = String(req.session ?? "");
+      const target = sessions.get(want) ?? [...sessions.values()].find((s) => s.name === want);
+      if (!target)
+        return { ok: false, error: `no session called "${want}". Open sessions: ${names.join(", ") || "none"}` };
+      const fp = parseSummary(u.env.footprint);
+      const key = fp ? bindingKey(u.label, fp) : undefined;
+      if (key) {
+        routes[key] = { sessionId: target.sessionId, name: target.name, at: Date.now() };
+        saveRoutes(routes);
+      }
+      const going = unrouted.filter((x) => {
+        if (x === u)
+          return true;
+        const xf = parseSummary(x.env.footprint);
+        return !!key && !!xf && bindingKey(x.label, xf) === key;
+      });
+      for (const x of going)
+        unrouted.splice(unrouted.indexOf(x), 1);
+      persistUnrouted();
+      const st = load3();
+      for (const x of going) {
+        const env = x.env;
+        onEnvelope(x.label, key ? env : { ...env, toSession: target.name }, {
+          replayingParked: true,
+          strangerInRoom: x.stranger,
+          room: x.roomId ? st[x.roomId] : undefined
+        });
+      }
+      log(`routed ${going.length} held message(s) from ${u.label} to ${target.name}`);
+      return { ok: true, delivered: going.length, to: target.name, remembered: !!key };
     }
     case "read": {
       const sid = resolveSession(req)?.sessionId ?? req.sessionId;
@@ -2115,7 +2402,7 @@ ${req.rationale}` : ""}`
       return { ok: true, file };
     }
     case "usage":
-      return { ok: true, ...summarise() };
+      return { ok: true, ...summarise2() };
     case "status":
       return {
         ok: true,
@@ -2128,7 +2415,7 @@ ${req.rationale}` : ""}`
       return { ok: false, error: `unknown op "${req.op}"` };
   }
 }
-fs10.mkdirSync(path12.dirname(P.daemonSock), { recursive: true, mode: 448 });
+fs10.mkdirSync(path13.dirname(P.daemonSock), { recursive: true, mode: 448 });
 var control = net2.createServer((sock) => {
   let rest = "";
   sock.on("data", async (buf) => {

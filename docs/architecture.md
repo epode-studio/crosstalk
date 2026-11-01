@@ -25,6 +25,26 @@ to the relay and knows about every local session. The **relay** exists because b
 laptops are behind NAT and both go to sleep. It is a dumb fan-out that
 authenticates peers and copies ciphertext.
 
+## Which session a message reaches
+
+Each local session has a footprint: the repo remote and branch of its working
+directory, read from git, and the files its tool calls touched, reported by the
+`PostToolUse` hook. Every message a session sends carries a short summary of its
+own footprint inside the sealed body.
+
+On arrival the daemon delivers to the session the sender named, if there is
+one. Otherwise it scores each local session against the message's footprint: a
+different repo scores nothing, the same repo scores, the same branch outranks
+any amount of file overlap, and shared files and directories break the rest.
+The best session gets it. When none scores or two score the same, nothing is
+delivered: the message is held and the session you touched last is asked where
+it goes, with none of the sender's words in the question. The answer, given
+with `crosstalk_route`, is remembered for that sender, repo and branch.
+
+A peer that sends no footprint (an older crosstalk, or a session outside a git
+repo) is routed as before: an idle session, else any live one, else the first
+registered. So is every message on a machine where no session is in a repo.
+
 ## Two transports
 
 **Channel MCP server** is the target, and what the server already declares.
@@ -79,6 +99,7 @@ src/server.ts    the MCP tools, channel push
 src/link.ts      encrypted channel to the relay
 src/rooms.ts     rooms, invitations, room keys
 src/inject.ts    writes into a session's inbox socket
+src/footprint.ts what a session is working on, and matching a message to it
 src/policy.ts    intent plus your state decides what interrupts you
 src/crypto.ts    identities, phrase exchange, sealing
 relay/relay.ts   the relay
@@ -93,6 +114,7 @@ bun scripts/build.ts        # dist/ is committed, rebuild after editing src/
 bun relay/relay.ts          # a relay on :8787
 bun src/cli.ts doctor
 bash test/resilience.sh     # the sleep failure modes
+bun run test:routing        # messages reach the session on the same work
 bun scripts/release.ts "what changed"
 ```
 

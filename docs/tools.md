@@ -6,7 +6,7 @@ whether it reached crosstalk through the plugin or through MCP alone.
 **Generated** by `bun scripts/tools-doc.ts`, from the server itself. Edit the
 tool, not this file.
 
-17 tools.
+18 tools.
 
 ## Messages
 
@@ -59,5 +59,13 @@ What was settled, written where the code lives.
 | Tool | Arguments | What it does |
 |---|---|---|
 | `crosstalk_decide` | `text`, `rationale`?, `repo`?, `tell`? | Record a decision in the repo's DECISIONS.md with attribution, and optionally tell a peer. Use when something is actually settled, not for every choice. |
+
+## Other
+
+Not yet grouped.
+
+| Tool | Arguments | What it does |
+|---|---|---|
+| `crosstalk_route` | `id`?, `session`? | Say which of your user's sessions a held message belongs to. crosstalk holds a peer's message when it matches none of this machine's sessions by repo, branch and files, or matches two equally, and asks instead of guessing. Ask your user, then call this with the id from the notice and the session's name; the choice is remembered for that peer's later messages about the same repo and branch. With no arguments, lists what is held and the open sessions. |
 
 A `?` marks an optional argument.
