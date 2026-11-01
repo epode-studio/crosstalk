@@ -473,7 +473,7 @@ The measure is time from idea to merge, and how few of your minutes it took.
 | Restore every session after a restart or crash | **here** |
 | Messages reach the session working on the same thing | **here** |
 | Cards, pickers and status line in Claude Code | **here** (mod, 2.1.287+) |
-| Bringing in sessions you already had open | landing now |
+| Bringing in sessions you already had open | **here** |
 | Opening and restoring agents in your terminal's tabs | **here** (Terminal.app, iTerm2, kitty, WezTerm, Ghostty, tmux, Windows Terminal) |
 | Status on tabs, new agents on request, window layout | coming |
 | Threads, found automatically | coming |
