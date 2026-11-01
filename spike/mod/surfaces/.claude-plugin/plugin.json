@@ -1,0 +1,6 @@
+{
+  "name": "crosstalk-surfaces",
+  "version": "0.1.0",
+  "description": "Spike: crosstalk's question picker, message cards and thread pane, kept from the model unless handed over",
+  "types": "./types/index.d.ts"
+}
