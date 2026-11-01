@@ -38,6 +38,10 @@ nothing else.
 
 - **Native to the code CLI.** No app, no TUI, no dashboard, no tmux. Plugin,
   hooks, MCP and one daemon. You drive it in plain language from any session.
+- **Nothing to remember.** No command, prefix or syntax is ever required.
+  Every choice crosstalk needs comes with its options as buttons or Claude
+  Code's own picker; everything else you say in plain words to any agent.
+  `@` shortcuts exist for people who like them, and nothing depends on them.
 - **Nothing to start.** No app or multiplexer to launch first, no room to
   create, no command to remember. You open an ordinary session in whatever
   terminal you use, and everything grows out of it. Anything that needs a step
@@ -196,8 +200,8 @@ the session, so it survives a restart or `--resume`.
 shown while you are in firmware is for you, not for the firmware agent. It
 appears in crosstalk's **mod**, Claude Code's plugin UI (a band above the
 prompt, a status line, toasts), which you see and the model does not. You
-answer there, or by typing `@auth y`, which the mod takes before it becomes a
-prompt. The mod also takes incoming peer messages so the model never reads
+answer by picking an option or pressing a key on the card. Typing `@auth y` is
+an optional shortcut the mod takes before it becomes a prompt. The mod also takes incoming peer messages so the model never reads
 them. Where mods are unavailable, a `UserPromptSubmit` hook blocks the `@`
 prompt instead, which keeps it from the model but still leaves it in the
 transcript file.
@@ -254,7 +258,7 @@ you ask, or when you click a notification.
   hidden from its agent as above. A desktop notification names the asking
   thread, and clicking it jumps to that session's tab.
 - **A main session, when you want one.** Any session becomes main when you say
-  so ("be my crosstalk main", or `@main`). Nothing new is launched. From then
+  so ("make this my main session"). Nothing new is launched. From then
   on it only coordinates: it leaves its threads, so cross-cutting talk never
   mixes with code work, and its context is threads, people and questions. It
   gets the sidebar pane, and it is where you wrangle every session from.
@@ -371,10 +375,10 @@ Here that place is **whichever session you are in**. Any session can:
 The statusline in every session shows how many are waiting on you. There is no
 home session and no window.
 
-Steering goes the same way: `@api stop` or `@auth put two more on it` is
-handled by the hook and never reaches the current agent. Asking the current
-agent itself ("what's running?") is the one way another thread enters its
-context, and only because you asked it.
+Steering is plain language ("stop the api one", "put two more on auth") or
+buttons in the pane. Saying it to the current agent puts it in that agent's
+context, which is fine: it is your request, in your session. The optional `@`
+shortcuts (`@api stop`) go through the mod and never reach the agent.
 
 ## The terminal is the app
 
@@ -390,7 +394,7 @@ notifications. crosstalk drives them, so the terminal *becomes* the app.
 | Agent needs you | Desktop notification; clicking it focuses the tab |
 | Launch an agent | A new tab running your harness in its own git worktree |
 | Workspaces | One window per repo, one tab per thread |
-| Open in IDE | `@auth open` opens that worktree in your editor |
+| Open in IDE | "open auth in my editor", or a button in the pane |
 | Phone app | Phone push for blocking questions, plus Claude's remote control |
 | Remote machines | Your linked machines |
 | Diff viewer | Left out on purpose: nobody reads code; you get evidence instead |
@@ -406,7 +410,7 @@ asks you to move into tmux or anything else.
 **tmux, invisibly.** Sessions crosstalk starts for you run in a tmux server it
 keeps in the background. They survive closing your window, which is herdr's
 real benefit, without its launch step. You never attach unless you want to
-watch one, and `@auth open` does that for you, in a new tab of your own
+watch one, and "show me auth" does that for you, in a new tab of your own
 terminal. On a linked machine the same background server holds its sessions.
 
 **If you already live in tmux**, crosstalk uses it directly, with full layout,
@@ -506,15 +510,20 @@ many times a day, behind flags, so it rarely conflicts, and when it does the
 agents settle it between themselves. Branches, rebases, merges and cleanup
 happen out of sight. You see threads and questions.
 
-## Commands
+## No commands
 
-Two:
+Nothing has to be remembered:
 
-- `/crosstalk:join` for the four words with someone outside your repos.
-- `/crosstalk:doctor` for when something is broken.
+| Need | How |
+|---|---|
+| A choice crosstalk needs from you | Buttons or Claude Code's picker, offered when it comes up |
+| Restore after a restart | "Restore 6 sessions? [Yes] [No]", or say "restore them" |
+| Joining someone outside your repos | Say "marie gave me words: cherry horn…", and the agent does it |
+| Something broken | crosstalk notices and tells you, with the fix. "Is crosstalk OK?" works too |
+| Anything else | Plain words to any agent: "mute jo", "what's marie on?", "show me auth" |
 
-Everything else, from muting someone to asking what Marie is working on or
-linking another machine, is plain language in any session.
+Under the hood the agent calls crosstalk's tools; slash commands and the CLI
+remain for scripts and people who like them.
 
 ## Installing
 
