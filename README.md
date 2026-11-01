@@ -56,21 +56,19 @@ you broke off to explain anything.
 
 ## Contents
 
+- [A new way of working](#a-new-way-of-working)
+
+- [How it feels](#how-it-feels)
+
 - [Install](#install)
-
-- [In two sentences](#in-two-sentences)
-
-- [Your sessions](#your-sessions)
-
-- [Messages and questions](#messages-and-questions)
-
-- [People](#people)
 
 - [Threads](#threads)
 
+- [People](#people)
+
 - [Shipping without reading code](#shipping-without-reading-code)
 
-- [Nothing to remember](#nothing-to-remember)
+- [Small things that add up](#small-things-that-add-up)
 
 - [What is here today](#what-is-here-today)
 
@@ -81,6 +79,115 @@ you broke off to explain anything.
 - [Contributing](#contributing)
 
 - [Licence](#licence)
+
+<br>
+
+---
+
+<br>
+
+## In two sentences
+
+**You say what you want, and you answer questions.** Everything else is agents
+working in threads with the people you trust.
+
+<br>
+
+---
+
+<br>
+
+## A new way of working
+
+Coding agents made writing code fast. Everything around it stayed slow: telling
+each other what changed, reading diffs, babysitting a dozen sessions, untangling
+branches. crosstalk takes that part away.
+
+<br>
+
+### You stop being the messenger
+
+Today, when your agent changes something Marie's depends on, *you* notice, and
+*you* tell her, and *she* tells her agent. With crosstalk the agents tell each
+other. Two of them about to edit the same function agree on it before either
+merges. You hear about it only when a decision is yours to make.
+
+<br>
+
+### You stop reading code
+
+People decide what should happen and judge whether it did. Agents write the
+code, and other agents review it. What reaches you is a plain question with its
+evidence, "keep the v1 endpoint for one more release?", never a diff. Risky work
+ships behind a flag, and turning it on is your call, one step at a time.
+
+<br>
+
+### You stop babysitting sessions
+
+Run as many sessions as you like, in the terminal you already use. Each one
+knows what it is working on and who else is working on the same thing. A
+message for the auth work reaches the auth session, not whichever one was
+idle. Questions from all of them come to wherever you are, and none of them
+leaks into another session's conversation.
+
+<br>
+
+### You stop explaining twice
+
+What was decided and why lives in the thread, with the code, not in a chat log
+nobody reopens. A fresh session, a teammate joining next month, or an agent on
+another machine starts from what is already known. Give the same answer twice
+and crosstalk offers to make it a rule, for everyone. The questions get fewer
+every week.
+
+<br>
+
+### You stop thinking about git
+
+Branches, merges, worktrees and cleanup happen out of sight. Work lands in main
+in small pieces, behind flags, so nothing waits days to merge and nothing fills
+your disk.
+
+<br>
+
+---
+
+<br>
+
+## How it feels
+
+You open an ordinary Claude session, in whatever terminal you use. That is the
+whole setup: no app to launch, no window everything has to live inside, nothing
+to remember.
+
+```
+› tell marie the token format changed, with the diff
+```
+
+Marie is mid-task. Above her prompt:
+
+```
+╭─ ◢ paul · auth ─────────────────────────────── now ─╮
+│ Token format changed to v2. v1 accepted until 0.2   │
+│ ▸ diff  src/auth/token.ts  +42 −18                  │
+╰─────────────────────────────────────────────────────╯
+```
+
+When she stops typing, Claude Code's own picker asks what to do with it: hand
+it to her agent, reply, mute, or later. Her agent has not seen a word of it
+until she chooses.
+
+Later, one of your agents needs a call from you:
+
+```
+◢ api-worker · auth asks
+  Keep the v1 endpoint for one more release?
+  ❯ 1 Yes, until 0.2
+    2 No, remove it now
+```
+
+You press 1. That is your part.
 
 <br>
 
@@ -216,26 +323,17 @@ args:    ["server"]
 
 <br>
 
-## In two sentences
-
-**You say what you want, and you answer questions.** Everything else is agents
-working in threads with the people you trust.
-
-There is nothing to start and nothing to remember. You open an ordinary Claude
-session in whatever terminal you already use, and crosstalk grows out of it. No
-app, no window to live inside, no command to learn.
-
-Four words cover all of it:
+## Four words
 
 | | |
 |---|---|
 | **People** | everyone you trust |
-| **Threads** | a piece of work and the conversation about it |
-| **Features** | the parts of a thread that ship |
+| **Threads** | a piece of work and the conversation about it, found automatically |
+| **Features** | the parts of a thread that ship, each everyday or risky |
 | **Questions** | the only way crosstalk ever asks anything of you |
 
-Parts of this are here today and parts are coming. Each section says which,
-and [What is here today](#what-is-here-today) has the list.
+Sessions, worktrees, reviewers and flags exist, but they are machinery. You do
+not need to know about them.
 
 <br>
 
@@ -243,93 +341,23 @@ and [What is here today](#what-is-here-today) has the list.
 
 <br>
 
-## Your sessions
+## Threads
 
-### After a restart
+*(Coming.)* A thread is a piece of work and the conversation about it: what it
+is for, what was decided and why, what is waiting on whom.
 
-Your Mac restarts, or Terminal crashes. You open one Claude session and it
-asks:
+- **Threads find themselves.** Nobody names one or joins one. crosstalk sees
+  what a session is working on and puts it with the people working on the same
+  thing.
+- **Sessions are disposable.** The thread carries the work, so a session that
+  runs out of context is replaced by a fresh one that carries on.
+- **Production feeds threads.** Something breaks, and the thread that shipped
+  it reopens with the evidence attached.
+- **Nothing bloats.** Threads live on their own git ref, never in your working
+  tree or main's history.
 
-```
-◢ crosstalk  Restore 6 sessions from before the restart?
-  ❯ Restore
-    Open as windows
-    Not now
-```
-
-Each comes back in its own tab, in the same windows and order, with its whole
-conversation. No pasting. Saying "restore them" works too.
-
-The first time, macOS asks whether Terminal may control System Events, and
-crosstalk opens System Settings at the right page if it also needs
-Accessibility. Flip the switch and the tabs open by themselves.
-[More](docs/restore.md).
-
-<br>
-
-### Sessions you already have open
-
-Installed crosstalk with ten sessions already running? It sees them, covers
-them if anything crashes, and offers once to bring them in:
-
-```
-◢ crosstalk  4 Claude sessions started before crosstalk. Bring them in?
-```
-
-Idle ones restart in their own tab with their conversation. Busy ones follow
-when they finish.
-
-<br>
-
-### The right session, not the idle one
-
-A message from Marie about auth reaches your session working on auth, not
-whichever one happened to be idle. crosstalk matches by repository, branch and
-the files each session has touched. When nothing matches, it asks you where
-the message goes, once, and remembers.
-
-<br>
-
-### One place to see them all, without a window
-
-Any session can tell you what every other one is doing, and steer them: "what's
-running?", "stop the api one", "put two more on auth". *(Coming: a main
-session that takes every cross-cutting question, so working sessions only ever
-ask about their own work.)*
-
-<br>
-
----
-
-<br>
-
-## Messages and questions
-
-Nothing from someone else reaches your agent until you hand it over.
-
-**A message is a card** above your prompt:
-
-```
-╭─ ◢ marie · auth ─────────────────────────────── 2m ─╮
-│ Token format changed to v2. v1 accepted until 0.2   │
-│ ▸ diff  src/auth/token.ts  +42 −18                  │
-╰─────────────────────────────────────────────────────╯
-```
-
-When you stop typing, Claude Code's own picker offers what to do with it:
-**hand it to the agent**, **reply**, **mute**, or **later**. Handing it over
-gives your agent the message and its attachments, as data, and it starts work
-on it. Until then your agent has not seen a word of it.
-
-**A question** comes the same way, with its options numbered on screen. Whether
-something was answered, handed over or muted is remembered, so nothing comes
-back twice after a restart.
-
-**The status line** shows what is waiting: `◢ auth · 1 waiting`.
-
-This runs as a Claude Code mod (2.1.287 or later). On older versions, under
-`claude -p`, or in other agents, crosstalk falls back to a notice in the
-conversation.
+It is [Entire](https://entire.com/) without the forge: the why behind the code,
+kept in the git you already have, sealed so no host can read it.
 
 <br>
 
@@ -347,48 +375,14 @@ Today you trust someone by reading them four words, once:
     3644-cherry-horn-cataract-redwing
 ```
 
-Say them aloud, on a call, anywhere except through crosstalk. She runs
-`/crosstalk:room join` with the same words, you each read a fingerprint aloud,
-and that is permanent. A room for a team is `/crosstalk:room create platform`.
-Messages are end to end encrypted and travel through a relay that cannot open
-them.
+Say them aloud, anywhere except through crosstalk. She joins with
+`/crosstalk:room join` and the same words, you each read a fingerprint aloud,
+and that is permanent. Messages are end to end encrypted and travel through a
+relay that cannot open them.
 
 *(Coming: no words at all for people you already work with. Collaborators on a
-repository are trusted automatically through the keys they publish on GitHub,
-and the four words are only for people outside your repositories. Your own
-machines link themselves the same way.)*
-
-There is one level of trust: someone is trusted or not, and you can mute a
-person or a thread.
-
-<br>
-
----
-
-<br>
-
-## Threads
-
-*(Coming.)* A thread is a piece of work and the conversation about it: what it
-is for, what was decided and why, what is waiting on whom.
-
-- **Threads find themselves.** Nobody names one or joins one. crosstalk notices
-  what a session is working on and puts it in the right thread, with the
-  people working on the same thing.
-- **Agents talk without being told.** When one agent changes something another
-  thread depends on, that thread's agent hears about it. Two threads editing
-  the same function agree on it before either merges.
-- **Sessions are disposable.** The thread carries the work, so a session that
-  runs out of context is replaced by a fresh one that picks up where it left
-  off.
-- **Answers become rules.** Give the same answer twice and crosstalk offers to
-  make it a rule, for the whole team. Questions get fewer every week.
-- **Nothing bloats.** Threads live on their own git ref, never in your working
-  tree or main's history, with a short `THREADS.md` for public ones. Worktrees
-  and Claude Code's leftovers are cleaned up when their thread is done.
-
-It is [Entire](https://entire.com/) without the forge: the why behind the code,
-kept in the git you already have, sealed so no host can read it.
+repository are trusted through the keys they publish on GitHub, and the four
+words are only for people outside your repositories.)*
 
 <br>
 
@@ -398,19 +392,16 @@ kept in the git you already have, sealed so no host can read it.
 
 ## Shipping without reading code
 
-*(Coming.)* Nobody reads a line of code. People decide what should happen and
-judge whether it did; agents write the code and other agents review it.
+*(Coming.)*
 
 - **Everyday work** merges on green checks and a review by a separate agent.
 - **Risky work** (auth, payments, migrations, whatever you list) gets an
-  adversarial reviewer on a different model, ships behind a feature flag, and
-  each step of turning it on is a question to you, with evidence of what it
-  does. Never a diff.
-- **Flags instead of staging.** Merged means off. Shipped means on. Rolling back
+  adversarial reviewer on a different model and ships behind a flag. Each step
+  of turning it on is a question, with evidence of what it does.
+- **Flags instead of staging.** Merged means off; shipped means on. Rolling back
   is turning a flag off, which any agent may do the moment something regresses.
-- **Production feeds threads.** Something breaks, and the thread that shipped it
-  reopens with the evidence attached.
-- **Git is invisible.** Branches, merges and cleanup happen out of sight.
+
+The measure is time from idea to merge, and how few of your minutes it took.
 
 <br>
 
@@ -418,25 +409,17 @@ judge whether it did; agents write the code and other agents review it.
 
 <br>
 
-## Nothing to remember
+## Small things that add up
 
-There are no commands to learn. When crosstalk needs a choice from you, it
-offers the options. Everything else, you say to any agent:
-
-```
-› tell marie the migration landed and rebasing is safe
-› ask marie's api session what /api/devices returns now
-› what's marie working on?
-› restore my sessions
-```
-
-Attach the thing rather than describing it: "send marie the diff". The other
-side sees a label and a size, and only fetches it if it needs it.
-
-Today a few things still need a slash command: making and joining rooms
-(`/crosstalk:room`), muting (`/crosstalk:mute`, `/crosstalk:trust`) and
-diagnosis (`/crosstalk:doctor`). Each is on its way to plain words, or to
-crosstalk noticing by itself. `/crosstalk:` and Tab lists them all.
+- **After a restart**, your first session offers to bring every other one back,
+  in its tab, with its conversation. [How](docs/restore.md).
+- **Sessions you already had open** when you installed crosstalk are brought in
+  once you say yes.
+- **Attach the thing, not a description of it.** "Send marie the diff": she sees
+  a label and a size, and fetches it only if she needs it.
+- **No commands to learn.** Today a few things still need one: rooms
+  (`/crosstalk:room`), muting (`/crosstalk:mute`) and diagnosis
+  (`/crosstalk:doctor`). Each is on its way to plain words.
 
 <br>
 
