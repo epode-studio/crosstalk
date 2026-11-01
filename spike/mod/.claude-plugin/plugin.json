@@ -1,0 +1,6 @@
+{
+  "name": "crosstalk-spike",
+  "version": "0.1.0",
+  "description": "Spike: crosstalk questions in a status line and a band, answers and peer messages kept from the model",
+  "types": "./types/index.d.ts"
+}
