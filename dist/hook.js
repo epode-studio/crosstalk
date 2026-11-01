@@ -2,9 +2,9 @@
 // @bun
 
 // src/hook.ts
-import path7 from "path";
-import os4 from "os";
-import fs5 from "fs";
+import path9 from "path";
+import os6 from "os";
+import fs7 from "fs";
 
 // src/client.ts
 import net from "node:net";
@@ -240,7 +240,7 @@ function removeRec(id) {
 }
 function prune(now = Date.now()) {
   for (const r of readAll())
-    if (r.endedAt && now - r.endedAt > DAY || now - r.seenAt > 7 * DAY)
+    if (r.endedAt && now - r.endedAt > DAY || !r.endedAt && now - r.seenAt > 7 * DAY && !recAlive(r))
       removeRec(r.sessionId);
 }
 var stateFile = () => path5.join(P.root, "restore-state.json");
@@ -862,7 +862,8 @@ function parseShortcut(prompt) {
 }
 function note(o) {
   const now = Date.now();
-  const before = readOne(o.sessionId);
+  const read = readOne(o.sessionId);
+  const before = read?.adopted ? null : read;
   if (/^SessionEnd$/i.test(o.event)) {
     if (before)
       writeRec({ ...before, endedAt: now, endReason: o.reason ?? "other", seenAt: now });
@@ -885,7 +886,7 @@ function note(o) {
     pid,
     pidStart: start || !before ? ps(pid, "lstart") ?? undefined : before.pidStart,
     interactive: start || !before ? !/(^|\s)(-p|--print)(\s|$)/.test(args) : before.interactive,
-    startedAt: before?.startedAt ?? now,
+    startedAt: read?.startedAt ?? now,
     seenAt: now,
     terminal: captureTerminal(o.env, pid, true)
   };
@@ -990,6 +991,29 @@ function restoreSurface(sessionId, offer) {
     return { systemMessage: offer.text };
   }
 }
+var gatherId = (sessionId) => `gather:${sessionId}`;
+var GATHER_OPTIONS = ["Bring them in", "Not now"];
+function gatherSurface(sessionId, offer, mod = modActive(sessionId)) {
+  if (!offer)
+    return {};
+  if (!mod)
+    return { systemMessage: offer.text };
+  try {
+    return {
+      item: withStore((items, now) => upsert(items, {
+        id: gatherId(sessionId),
+        kind: "gather",
+        sessionId,
+        count: offer.count,
+        names: offer.names,
+        question: offer.question,
+        options: GATHER_OPTIONS
+      }, now))
+    };
+  } catch {
+    return { systemMessage: offer.text };
+  }
+}
 function storeRestore(sessionId, offer, n, when) {
   return withStore((items, now) => upsert(items, {
     id: restoreId(sessionId),
@@ -1000,6 +1024,420 @@ function storeRestore(sessionId, offer, n, when) {
     question: `Restore ${n} session${n === 1 ? "" : "s"} ${when}? (${offer.names.join(", ")})`,
     options: ["Restore", "Open as windows", "Not now"]
   }, now));
+}
+
+// src/gather.ts
+import fs6 from "node:fs";
+import os5 from "node:os";
+import path8 from "node:path";
+import { spawn as spawn4, spawnSync as spawnSync3 } from "node:child_process";
+
+// src/restore.ts
+import fs5 from "node:fs";
+import os4 from "node:os";
+import path7 from "node:path";
+import { spawn as spawn3, spawnSync as spawnSync2 } from "node:child_process";
+var dir2 = () => path7.join(P.root, "open");
+var safe3 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
+var fileOf2 = (id) => path7.join(dir2(), `${safe3(id)}.json`);
+function readAll2() {
+  let names;
+  try {
+    names = fs5.readdirSync(dir2()).filter((f) => f.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const f of names) {
+    try {
+      const r = JSON.parse(fs5.readFileSync(path7.join(dir2(), f), "utf8"));
+      if (r && typeof r.sessionId === "string")
+        out.push(r);
+    } catch {}
+  }
+  return out;
+}
+function writeRec2(r) {
+  fs5.mkdirSync(dir2(), { recursive: true, mode: 448 });
+  const tmp = `${fileOf2(r.sessionId)}.${process.pid}.tmp`;
+  fs5.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 384 });
+  fs5.renameSync(tmp, fileOf2(r.sessionId));
+}
+var DAY2 = 24 * 60 * 60 * 1000;
+var SHUTDOWN_MS2 = 10 * 60 * 1000;
+var BURST_MS2 = 10 * 1000;
+function bootTime2(env = process.env, now = Date.now()) {
+  const forced = Number(env.CROSSTALK_BOOT_TIME);
+  if (forced > 0)
+    return forced;
+  return now - os4.uptime() * 1000;
+}
+function ps2(pid, field) {
+  if (!pid || pid < 1)
+    return null;
+  try {
+    const r = spawnSync2("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    if (r.status !== 0)
+      return null;
+    return r.stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+function pidAlive2(pid, pidStart) {
+  if (!pid || pid < 1)
+    return false;
+  try {
+    process.kill(pid, 0);
+  } catch (e) {
+    if (e?.code !== "EPERM")
+      return false;
+  }
+  if (!pidStart)
+    return true;
+  const now = ps2(pid, "lstart");
+  return now === null ? true : now === pidStart;
+}
+var recAlive2 = (r) => pidAlive2(r.pid, r.pidStart);
+var appleLocateScript2 = (tty) => [
+  `tell application "Terminal"`,
+  `	repeat with w in windows`,
+  `		set n to 0`,
+  `		repeat with t in tabs of w`,
+  `			set n to n + 1`,
+  `			if (tty of t) is ${asq2(tty)} then return ((id of w) as text) & " " & (n as text)`,
+  `		end repeat`,
+  `	end repeat`,
+  `end tell`,
+  `return ""`
+].join(`
+`);
+var asq2 = (s) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
+var REOPEN_SETTINGS_MS2 = 2 * 60 * 1000;
+
+// src/gather.ts
+var registryDir = () => path8.join(os5.homedir(), ".claude", "sessions");
+function readRegistry(dir = registryDir(), alive = (p) => pidAlive2(p)) {
+  let files;
+  try {
+    files = fs6.readdirSync(dir).filter((f) => /^\d+\.json$/.test(f));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const f of files) {
+    try {
+      const e = JSON.parse(fs6.readFileSync(path8.join(dir, f), "utf8"));
+      const pid = Number(e.pid ?? f.slice(0, -5));
+      if (!pid || typeof e.sessionId !== "string" || !e.sessionId)
+        continue;
+      if (!alive(pid))
+        continue;
+      out.push({
+        pid,
+        sessionId: e.sessionId,
+        cwd: e.cwd ?? "",
+        status: e.status ?? "unknown",
+        name: e.name,
+        startedAt: typeof e.startedAt === "number" ? e.startedAt : undefined,
+        kind: e.kind
+      });
+    } catch {}
+  }
+  return out;
+}
+function registryPids(dir = registryDir()) {
+  try {
+    return new Set(fs6.readdirSync(dir).filter((f) => /^\d+\.json$/.test(f)).map((f) => Number(f.slice(0, -5))));
+  } catch {
+    return new Set;
+  }
+}
+function ps3(pid, field) {
+  if (!pid || pid < 1)
+    return null;
+  try {
+    const r = spawnSync3("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    if (r.status !== 0)
+      return null;
+    return r.stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+var ENV_KEYS = ["TERM_PROGRAM", "TERM_SESSION_ID", "TMUX", "TMUX_PANE", "KITTY_WINDOW_ID", "KITTY_LISTEN_ON", "WEZTERM_PANE", "ITERM_SESSION_ID", "WT_SESSION"];
+function parseEnv(text, sep) {
+  const out = {};
+  for (const part of text.split(sep)) {
+    const i = part.indexOf("=");
+    if (i < 1)
+      continue;
+    const k = part.slice(0, i);
+    if (ENV_KEYS.includes(k))
+      out[k] = part.slice(i + 1);
+  }
+  return out;
+}
+function procEnv(pid) {
+  try {
+    return parseEnv(fs6.readFileSync(`/proc/${pid}/environ`, "utf8"), /\0/);
+  } catch {}
+  if (process.platform !== "darwin")
+    return null;
+  try {
+    const r = spawnSync3("ps", ["-wwE", "-o", "command=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    if (r.status !== 0)
+      return null;
+    return parseEnv(r.stdout.trim(), /\s+/);
+  } catch {
+    return null;
+  }
+}
+function tmuxPanes() {
+  const r = spawnSync3("tmux", ["list-panes", "-a", "-F", "#{pane_tty}\t#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{socket_path}"], { encoding: "utf8", timeout: 2000 });
+  if (r.status !== 0)
+    return [];
+  return r.stdout.trim().split(`
+`).filter(Boolean).map((l) => {
+    const [tty, pane, session, w, p, socket] = l.split("\t");
+    return { tty, pane, session, window: Number(w), paneIndex: Number(p), socket };
+  });
+}
+var appleLocateIfRunning = (tty) => [`if application "Terminal" is running then`, ...appleLocateScript2(tty).split(`
+`).slice(0, -1).map((l) => `	${l}`), `end if`, `return ""`].join(`
+`);
+function liveSys() {
+  return {
+    platform: process.platform,
+    now: Date.now,
+    ps: ps3,
+    alive: pidAlive2,
+    env: procEnv,
+    tmuxPanes,
+    appleLocate: (tty) => {
+      if (process.platform !== "darwin")
+        return null;
+      const r = spawnSync3("osascript", ["-"], { input: appleLocateIfRunning(tty), encoding: "utf8", timeout: 2500 });
+      const [w, n] = (r.stdout ?? "").trim().split(" ").map(Number);
+      return r.status === 0 && w && n ? { window: w, tab: n } : null;
+    },
+    kill: (pid, sig) => process.kill(pid, sig),
+    run: (s) => {
+      const r = spawnSync3(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 30000 });
+      return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
+    },
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms))
+  };
+}
+function terminalOf(tty, env, sys, panes) {
+  const t = {};
+  if (env.TERM_PROGRAM)
+    t.program = env.TERM_PROGRAM;
+  if (tty)
+    t.tty = tty;
+  const pane = tty ? (panes ?? sys.tmuxPanes)().find((p) => p.tty === tty) : undefined;
+  if (pane)
+    t.tmux = { pane: pane.pane, socket: pane.socket, session: pane.session, window: pane.window, paneIndex: pane.paneIndex };
+  else if (env.TMUX && env.TMUX_PANE)
+    t.tmux = { pane: env.TMUX_PANE, socket: env.TMUX.split(",")[0] };
+  if (env.KITTY_WINDOW_ID || env.KITTY_LISTEN_ON)
+    t.kitty = { window: env.KITTY_WINDOW_ID, listenOn: env.KITTY_LISTEN_ON };
+  if (env.WEZTERM_PANE)
+    t.wezterm = { pane: env.WEZTERM_PANE };
+  if (env.ITERM_SESSION_ID) {
+    const m = /^w(\d+)t(\d+)p(\d+)/.exec(env.ITERM_SESSION_ID);
+    t.iterm = { id: env.ITERM_SESSION_ID, ...m ? { window: Number(m[1]), tab: Number(m[2]) } : {} };
+  }
+  if (env.WT_SESSION)
+    t.wt = { session: env.WT_SESSION };
+  const appleMaybe = env.TERM_PROGRAM === "Apple_Terminal" || !env.TERM_PROGRAM && !t.iterm && !t.kitty && !t.wezterm;
+  if (tty && !t.tmux && appleMaybe && sys.platform === "darwin") {
+    const at = sys.appleLocate(tty);
+    if (at) {
+      t.program = "Apple_Terminal";
+      t.apple = { sessionId: env.TERM_SESSION_ID, window: at.window, tab: at.tab };
+    } else if (env.TERM_PROGRAM === "Apple_Terminal")
+      t.apple = { sessionId: env.TERM_SESSION_ID };
+  }
+  return t;
+}
+var RECHECK_MS = 10 * 60 * 1000;
+function snapshot(o) {
+  const { sys } = o;
+  const now = sys.now();
+  const byId = new Map(o.records.map((r) => [r.sessionId, r]));
+  const out = [];
+  let panes;
+  const lazyPanes = () => panes ??= sys.tmuxPanes();
+  const live = new Set;
+  for (const e of o.registry) {
+    live.add(e.sessionId);
+    if (e.sessionId === o.self)
+      continue;
+    const before = byId.get(e.sessionId);
+    if (before && !before.adopted)
+      continue;
+    if (before?.endedAt && before.pid === e.pid)
+      continue;
+    const pidStart = sys.ps(e.pid, "lstart") ?? undefined;
+    if (!sys.alive(e.pid, pidStart))
+      continue;
+    const rawTty = sys.ps(e.pid, "tty");
+    const tty = rawTty && !/^\?+$/.test(rawTty) ? rawTty.startsWith("/dev/") ? rawTty : `/dev/${rawTty}` : undefined;
+    const same = before && before.pid === e.pid && before.pidStart === pidStart && before.terminal.tty === tty;
+    const fresh = same && now - (before.watchedAt ?? 0) < RECHECK_MS;
+    out.push({
+      ...before ?? {},
+      sessionId: e.sessionId,
+      cwd: e.cwd || before?.cwd || "",
+      client: "claude",
+      name: e.name ?? before?.name,
+      pid: e.pid,
+      pidStart,
+      interactive: !!tty,
+      startedAt: before?.startedAt ?? e.startedAt ?? now,
+      seenAt: now,
+      watchedAt: fresh ? before.watchedAt : now,
+      terminal: fresh ? before.terminal : terminalOf(tty, sys.env(e.pid) ?? {}, sys, lazyPanes),
+      adopted: "watched"
+    });
+  }
+  for (const r of o.records) {
+    if (r.adopted !== "watched" || r.endedAt || live.has(r.sessionId))
+      continue;
+    if (r.seenAt < o.boot || o.registryPids.has(r.pid))
+      continue;
+    if (sys.alive(r.pid, r.pidStart))
+      continue;
+    out.push({ ...r, endedAt: now, endReason: "exit" });
+  }
+  return out;
+}
+function watch(self, sys = liveSys()) {
+  const recs = snapshot({
+    self,
+    registry: readRegistry(registryDir(), (p) => sys.alive(p)),
+    records: readAll2(),
+    registryPids: registryPids(),
+    boot: bootTime2(process.env, sys.now()),
+    sys
+  });
+  for (const r of recs)
+    writeRec2(r);
+  return recs;
+}
+var WATCH_EVERY_MS = () => Number(process.env.CROSSTALK_WATCH_EVERY_MS ?? 60000);
+var stampFile = () => path8.join(P.root, "watch-stamp");
+function watchThrottled(self, now = Date.now()) {
+  try {
+    if (now - fs6.statSync(stampFile()).mtimeMs < WATCH_EVERY_MS())
+      return false;
+  } catch {}
+  try {
+    fs6.mkdirSync(P.root, { recursive: true, mode: 448 });
+    fs6.writeFileSync(stampFile(), String(now), { mode: 384 });
+    watch(self);
+    return true;
+  } catch {
+    return false;
+  }
+}
+var stateFile2 = () => path8.join(P.root, "gather-state.json");
+function loadState2() {
+  try {
+    return JSON.parse(fs6.readFileSync(stateFile2(), "utf8"));
+  } catch {
+    return {};
+  }
+}
+function saveState2(s) {
+  fs6.mkdirSync(P.root, { recursive: true, mode: 448 });
+  const tmp = `${stateFile2()}.${process.pid}.tmp`;
+  fs6.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs6.renameSync(tmp, stateFile2());
+}
+var sleepSync2 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function locked(fn) {
+  const lock = path8.join(P.root, "gather.lock");
+  fs6.mkdirSync(P.root, { recursive: true, mode: 448 });
+  let held = false;
+  for (let i = 0;i < 100 && !held; i++) {
+    try {
+      fs6.mkdirSync(lock);
+      held = true;
+    } catch {
+      try {
+        if (Date.now() - fs6.statSync(lock).mtimeMs > 1e4)
+          fs6.rmdirSync(lock);
+      } catch {}
+      sleepSync2(10);
+    }
+  }
+  if (!held)
+    return null;
+  try {
+    return fn();
+  } finally {
+    try {
+      fs6.rmdirSync(lock);
+    } catch {}
+  }
+}
+function ancestors(pid = process.pid, sys = { ps: ps3 }) {
+  const out = [];
+  let p = pid;
+  for (let i = 0;i < 12 && p > 1; i++) {
+    out.push(p);
+    const up = Number(sys.ps(p, "ppid"));
+    if (!up || up === p)
+      break;
+    p = up;
+  }
+  return out;
+}
+function candidates(recs, o) {
+  return recs.filter((r) => r.adopted === "watched" && !r.endedAt && r.interactive !== false && r.sessionId !== o.self && !(o.selfPids ?? []).includes(r.pid) && r.gather?.state !== "done" && o.alive(r)).sort((a, b) => a.startedAt - b.startedAt);
+}
+var offerQuestion = (n) => `${n} Claude session${n === 1 ? "" : "s"} started before crosstalk. Bring ${n === 1 ? "it" : "them"} in? Idle ones restart in their tab with their conversation.`;
+function offerFor(cands, state) {
+  const asked = new Set(state.offered?.ids ?? []);
+  if (!cands.length || cands.every((r) => asked.has(r.sessionId)))
+    return null;
+  const n = cands.length;
+  const names = cands.slice(0, 4).map(label2).concat(n > 4 ? ["\u2026"] : []);
+  return {
+    count: n,
+    names,
+    question: offerQuestion(n),
+    text: `\u25e2 crosstalk: ${offerQuestion(n)} (${names.join(", ")}) Say "bring them in" to do it.`
+  };
+}
+var label2 = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path8.basename(r.cwd) || r.sessionId.slice(0, 8);
+function offerOnce(self) {
+  const cands = candidates(readAll2(), { self, selfPids: ancestors(), alive: recAlive2 });
+  if (!offerFor(cands, loadState2()))
+    return null;
+  return locked(() => {
+    const s = loadState2();
+    const offer = offerFor(cands, s);
+    if (!offer)
+      return null;
+    saveState2({ ...s, offered: { at: Date.now(), by: self, ids: [...new Set([...s.offered?.ids ?? [], ...cands.map((r) => r.sessionId)])] } });
+    return offer;
+  });
+}
+function takeNote(session, id) {
+  if (!loadState2().notes?.some((n) => (!session || !n.session || n.session === session) && (!id || n.id === id)))
+    return null;
+  return locked(() => {
+    const s = loadState2();
+    const i = (s.notes ?? []).findIndex((n) => (!session || !n.session || n.session === session) && (!id || n.id === id));
+    if (i === -1)
+      return null;
+    const [n] = s.notes.splice(i, 1);
+    saveState2(s);
+    return { id: n.id, text: n.text };
+  });
 }
 
 // src/hook.ts
@@ -1038,8 +1476,8 @@ function agyCwd() {
   if (Array.isArray(ws) && typeof ws[0] === "string" && ws[0])
     return ws[0];
   const here = process.cwd();
-  if (AGENT_DIRS.has(path7.basename(here)))
-    return path7.dirname(here);
+  if (AGENT_DIRS.has(path9.basename(here)))
+    return path9.dirname(here);
   return here;
 }
 var cwd = hook.cwd ?? hook.working_dir ?? hook.workspace_roots?.[0] ?? (isAgy ? agyCwd() : process.cwd());
@@ -1075,6 +1513,29 @@ if (restoreClient && sessionId && !process.env.CROSSTALK_NO_RESTORE) {
       systemMessage = restoreSurface(sessionId, askOnceOffer(sessionId, captureTerminal(process.env, process.pid, false))).systemMessage;
   } catch {}
 }
+if (restoreClient === "claude" && sessionId && !process.env.CROSSTALK_NO_RESTORE && !process.env.CROSSTALK_NO_GATHER) {
+  try {
+    const fresh = isSessionStart && !/^(clear|compact)$/.test(String(hook.source ?? ""));
+    if (fresh)
+      watch(sessionId);
+    else
+      watchThrottled(sessionId);
+    const say = systemMessage ? [systemMessage] : [];
+    if (fresh) {
+      const m = gatherSurface(sessionId, offerOnce(sessionId)).systemMessage;
+      if (m)
+        say.push(m);
+    }
+    if (/^(SessionStart|UserPromptSubmit|Stop)$/.test(eventName) && !modActive(sessionId)) {
+      const n = takeNote(sessionId);
+      if (n)
+        say.push(n.text);
+    }
+    if (say.length)
+      systemMessage = say.join(`
+`);
+  } catch {}
+}
 if (!loadIdentity() || !sessionId) {
   process.stdout.write(JSON.stringify(isGoose ? { decision: "allow" } : isAgy || isHermes || isKimi || isCursor ? {} : { continue: true, ...systemMessage ? { systemMessage } : {} }));
   process.exit(0);
@@ -1087,11 +1548,11 @@ async function registerSession() {
   let name = `session-${process.ppid}`;
   if (socket) {
     try {
-      const dir = path7.join(os4.homedir(), ".claude", "sessions");
-      for (const f of fs5.readdirSync(dir)) {
+      const dir = path9.join(os6.homedir(), ".claude", "sessions");
+      for (const f of fs7.readdirSync(dir)) {
         if (!f.endsWith(".json"))
           continue;
-        const e = JSON.parse(fs5.readFileSync(path7.join(dir, f), "utf8"));
+        const e = JSON.parse(fs7.readFileSync(path9.join(dir, f), "utf8"));
         if (e.sessionId === sessionId) {
           name = e.name ?? name;
           break;
@@ -1099,7 +1560,7 @@ async function registerSession() {
       }
     } catch {}
   } else {
-    name = hook.thread_name ?? (path7.basename(cwd) || name);
+    name = hook.thread_name ?? (path9.basename(cwd) || name);
   }
   await request({
     op: "register",

@@ -22,6 +22,7 @@ import { rootFrom } from "./paths.ts"
 import { pathsFromToolInput } from "./footprint.ts"
 import * as restore from "./restore.ts"
 import * as ui from "./uistate.ts"
+import * as gather from "./gather.ts"
 
 const input = await new Promise<string>((resolve) => {
   let raw = ""
@@ -224,6 +225,31 @@ if (restoreClient && sessionId && !process.env.CROSSTALK_NO_RESTORE) {
         sessionId,
         restore.askOnceOffer(sessionId, restore.captureTerminal(process.env, process.pid, false)),
       ).systemMessage
+  } catch {}
+}
+
+/**
+ * Sessions started before crosstalk. Every hook keeps their records current
+ * (at most once a minute, a single stat otherwise), so a crash brings them back
+ * too. The first session opened offers once to bring them in; with the mod it
+ * is the mod's picker, without it this systemMessage, answered in plain words
+ * through crosstalk_gather. The receipt comes back the same way.
+ */
+if (restoreClient === "claude" && sessionId && !process.env.CROSSTALK_NO_RESTORE && !process.env.CROSSTALK_NO_GATHER) {
+  try {
+    const fresh = isSessionStart && !/^(clear|compact)$/.test(String(hook.source ?? ""))
+    if (fresh) gather.watch(sessionId)
+    else gather.watchThrottled(sessionId)
+    const say: string[] = systemMessage ? [systemMessage] : []
+    if (fresh) {
+      const m = ui.gatherSurface(sessionId, gather.offerOnce(sessionId)).systemMessage
+      if (m) say.push(m)
+    }
+    if (/^(SessionStart|UserPromptSubmit|Stop)$/.test(eventName) && !ui.modActive(sessionId)) {
+      const n = gather.takeNote(sessionId)
+      if (n) say.push(n.text)
+    }
+    if (say.length) systemMessage = say.join("\n")
   } catch {}
 }
 

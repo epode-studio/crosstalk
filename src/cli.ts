@@ -14,6 +14,7 @@
 //   crosstalk relay [status|start|stop]  the relay, not the server itself
 //   crosstalk peers | status | cost | attention | doctor
 //   crosstalk restore [--yes|--dry-run|no]  sessions lost to a restart
+//   crosstalk gather [--yes]             sessions started before crosstalk
 //   crosstalk post "…" [--intent] [--source]
 //   crosstalk mute [peer] [minutes]
 //   crosstalk relay start|stop|status
@@ -49,6 +50,7 @@ import * as trust from "./trust.ts"
 import * as facts from "./facts.ts"
 import { rootFrom, shim } from "./paths.ts"
 import * as restore from "./restore.ts"
+import * as gather from "./gather.ts"
 import { uiCmd } from "./uicli.ts"
 import fs from "node:fs"
 import path from "node:path"
@@ -1649,6 +1651,23 @@ async function restoreCmd() {
   if (d.lost.length && !has("--dry-run")) console.log(`\n  crosstalk restore --yes     reopen them\n  crosstalk restore --dry-run show exactly what would run`)
 }
 
+/**
+ * Sessions started before crosstalk was installed. In a session, saying "bring
+ * my other sessions into crosstalk" does the same through crosstalk_gather.
+ *
+ *   crosstalk gather            list them
+ *   crosstalk gather --yes      restart each in its tab once idle, with its conversation
+ *   crosstalk gather --finish   the detached waiter that does it (not for people)
+ */
+async function gatherCmd() {
+  const self = process.env.CLAUDE_CODE_SESSION_ID || undefined
+  if (has("--finish")) return void console.log(await gather.finish())
+  if (has("--yes") || has("-y") || positional[0] === "yes") return void console.log(gather.start({ self, root: ROOT_DIR }).text)
+  const d = gather.describe(self)
+  console.log(d.text)
+  if (d.sessions.length) console.log(`\n  crosstalk gather --yes   bring them in`)
+}
+
 /** Everything a client needs, per client. */
 async function install() {
   const who = (positional[0] ?? "").toLowerCase()
@@ -1689,6 +1708,7 @@ const commands: Record<string, () => Promise<void>> = {
   relay,
   install,
   restore: restoreCmd,
+  gather: gatherCmd,
   // For crosstalk's mod, not for people: see src/uicli.ts.
   ui: () => uiCmd(argv, ROOT_DIR),
 }

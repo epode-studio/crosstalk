@@ -176,7 +176,59 @@ crosstalk restore no          # forget them
 In a session, `@restore`, `@restore windows` and `@restore no` do the same before the prompt
 reaches the model. They are shortcuts, and you don't need them.
 
+## Sessions started before crosstalk
+
+Sessions that were already running when you installed crosstalk don't have its hooks. crosstalk
+still knows about them, because Claude Code lists every running session in
+`~/.claude/sessions/`. At most once a minute, whenever a crosstalk hook or the mod runs, each of
+those sessions gets a record marked `adopted: "watched"`. The record holds its id, folder, pid
+and start time, tty, Terminal.app window and tab (found by tty), and tmux pane. So a crash
+restores them too.
+
+The first session you open afterwards asks once:
+
+```
+ ☐ Gather
+4 Claude sessions started before crosstalk. Bring them in? Idle ones restart in their tab with their conversation.
+❯ 1. Bring them in
+  2. Not now
+```
+
+Without the mod, the same question is a systemMessage. You answer it in plain words ("bring my
+other sessions into crosstalk"), which reaches `crosstalk_gather`.
+
+After yes, each session restarts only once Claude Code's registry says it is **idle**. A busy
+session waits until it next goes idle. A detached `crosstalk gather --finish` checks every 2
+seconds, for up to 2 hours. For each session, crosstalk:
+
+1. checks that the pid is still the same claude process (same start time),
+2. sends it SIGTERM and waits for it to exit. If it hasn't exited, SIGINT follows, twice at most,
+   and never SIGKILL. A session that still runs after that is left alone,
+3. types `cd <folder> && claude --resume <id>` into the same tab, where the shell prompt is back.
+   Terminal.app gets `do script … in tab N of window id W`, tmux gets `send-keys`, and iTerm2,
+   kitty and WezTerm get their own send-text. Any other terminal, or a claude that wasn't started
+   from a shell, reopens in a new tab through the restore adapters, and the receipt says so.
+
+These exits are recorded as intended, so restore never offers them back. The session you're
+asking from is never restarted. When everything is done, you see "4 sessions are now in
+crosstalk": the mod shows it as a toast, and without the mod it appears on your next prompt.
+
+```sh
+crosstalk gather          # list them
+crosstalk gather --yes    # bring them in
+```
+
 ## Limits
+
+- A watched session has no SessionEnd hook. A watched session that is gone and whose registry
+  file Claude Code removed (a normal exit) counts as ended. One that is gone with its registry
+  file left behind, or one that was open before a restart, counts as lost.
+- Reading another process's terminal variables (`TERM_PROGRAM`, `TMUX_PANE`, kitty, WezTerm,
+  iTerm2) uses `/proc/<pid>/environ` on Linux and `ps -wwE` on macOS. Where neither can read
+  them, the tab is found by its tty alone: tmux panes and Terminal.app tabs (asked only when
+  Terminal is already running).
+- A session restarted this way comes back as `claude --resume <id>`, without whatever flags it
+  was first started with.
 
 - Terminal's window ids are recorded when a session starts and at the end of each turn. A tab
   dragged to another window since its last turn comes back in the old window.

@@ -15,6 +15,7 @@
 import { daemonRunning, request } from "./client.ts"
 import * as restore from "./restore.ts"
 import * as ui from "./uistate.ts"
+import * as gather from "./gather.ts"
 
 type Out = Record<string, unknown>
 
@@ -45,6 +46,26 @@ function settleRestore(session: string) {
   ui.withStore((items, now) => ui.settle(items, id, "answered", now))
 }
 
+/**
+ * Sessions started before crosstalk: keep watching them (throttled across the
+ * machine), offer once to bring them in, and let the offer go once nothing is
+ * left to bring.
+ */
+function tendGather(session: string) {
+  if (process.env.CROSSTALK_NO_GATHER) return
+  gather.watchThrottled(session)
+  const id = ui.gatherId(session)
+  const it = ui.snapshot()[id]
+  if (!it) {
+    ui.gatherSurface(session, gather.offerOnce(session), true)
+    return
+  }
+  if (ui.FINAL.has(it.state)) return
+  const left = gather.candidates(restore.readAll(), { self: session, selfPids: gather.ancestors(), alive: restore.recAlive })
+  if (!left.some((r) => r.gather?.state !== "queued" && r.gather?.state !== "restarting"))
+    ui.withStore((items, now) => ui.settle(items, id, "answered", now))
+}
+
 async function watch(session: string, interval: number) {
   let last = ""
   let lastRestoreCheck = 0
@@ -61,8 +82,11 @@ async function watch(session: string, interval: number) {
       try {
         settleRestore(session)
       } catch {}
+      try {
+        tendGather(session)
+      } catch {}
     }
-    const w = await waiting(session, true)
+    const w = { ...(await waiting(session, true)), note: gather.peekNote(session) ?? undefined }
     const line = JSON.stringify(w)
     if (line !== last) {
       last = line
@@ -84,6 +108,17 @@ function restoreAct(session: string, id: string, action: string, value: string |
   return { ok: out.ok, item: claim.item, text: out.text, restored: out.restored.length }
 }
 
+function gatherAct(session: string, id: string, action: string, value: string | undefined, root: string): Out {
+  if (action === "raised" || action === "later") return ui.withStore((items, now) => ui.act(items, id, action, now))
+  const v = (value ?? "").trim()
+  const no = action === "mute" || /^(not now|no|never|later)\b/i.test(v)
+  const claim = ui.withStore((items, now) => ui.act(items, id, "answer", now, v || (no ? "Not now" : "Bring them in")))
+  if (!claim.ok) return claim
+  if (no) return { ok: true, item: claim.item, text: `Left them as they are. Say "bring my other sessions into crosstalk" any time.` }
+  const out = gather.start({ self: session, root })
+  return { ok: out.ok, item: claim.item, text: out.text, count: out.sessions.length }
+}
+
 export async function uiCmd(argv: string[], root: string): Promise<void> {
   const sub = argv[1]
   const session = arg(argv, "--session") ?? process.env.CLAUDE_CODE_SESSION_ID ?? ""
@@ -102,6 +137,11 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
       const action = arg(argv, "--action") ?? ""
       const value = arg(argv, "--value")
       if (id.startsWith("restore:")) return print(restoreAct(session, id, action, value, root))
+      if (id.startsWith("gather:")) return print(gatherAct(session, id, action, value, root))
+      if (id.startsWith("gather-note:")) {
+        const n = gather.takeNote(session, id)
+        return print(n ? { ok: true, text: n.text } : { ok: false, error: "already shown" })
+      }
       if (!daemonRunning()) return print({ ok: false, error: "the crosstalk daemon is not running" })
       try {
         return print(await request({ op: "ui_act", sessionId: session, id, action, value }, 30_000))

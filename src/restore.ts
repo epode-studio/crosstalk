@@ -59,6 +59,15 @@ export type Rec = {
   endReason?: string
   /** When the question about this session was put, so it is put once. */
   askedAt?: number
+  /**
+   * "watched": a session that started before crosstalk, recorded by
+   * src/gather.ts from Claude Code's registry, not by its own hooks.
+   */
+  adopted?: "watched"
+  /** When the watch last looked up its tab. */
+  watchedAt?: number
+  /** Being brought into crosstalk: queued until idle, restarting, done or failed. */
+  gather?: { state: "queued" | "restarting" | "done" | "failed"; at: number }
 }
 
 const dir = () => path.join(P.root, "open")
@@ -106,7 +115,7 @@ export function removeRec(id: string) {
 /** Records nobody will ever ask about again: ended or seen over a week ago. */
 export function prune(now = Date.now()) {
   for (const r of readAll())
-    if ((r.endedAt && now - r.endedAt > DAY) || now - r.seenAt > 7 * DAY) removeRec(r.sessionId)
+    if ((r.endedAt && now - r.endedAt > DAY) || (!r.endedAt && now - r.seenAt > 7 * DAY && !recAlive(r))) removeRec(r.sessionId)
 }
 
 // --- small state ---------------------------------------------------------------
@@ -227,7 +236,7 @@ export function pidAlive(pid: number, pidStart?: string): boolean {
 
 export const recAlive = (r: Rec) => pidAlive(r.pid, r.pidStart)
 
-const SHELL = /^-?(sh|bash|zsh|dash|fish|ksh|tcsh|csh)$/
+export const SHELL = /^-?(sh|bash|zsh|dash|fish|ksh|tcsh|csh)$/
 
 /**
  * The client's own process. Claude Code lists it in its session registry; for
@@ -1006,7 +1015,9 @@ export function note(o: {
   reason?: string
 }) {
   const now = Date.now()
-  const before = readOne(o.sessionId)
+  const read = readOne(o.sessionId)
+  // A record the watch wrote is replaced whole by the session's own hooks.
+  const before = read?.adopted ? null : read
   if (/^SessionEnd$/i.test(o.event)) {
     if (before) writeRec({ ...before, endedAt: now, endReason: o.reason ?? "other", seenAt: now })
     return
@@ -1029,7 +1040,7 @@ export function note(o: {
     pidStart: start || !before ? ps(pid, "lstart") ?? undefined : before.pidStart,
     interactive: start || !before ? !/(^|\s)(-p|--print)(\s|$)/.test(args) : before.interactive,
     // A resumed session keeps its id, and is the same piece of work.
-    startedAt: before?.startedAt ?? now,
+    startedAt: read?.startedAt ?? now,
     seenAt: now,
     terminal: captureTerminal(o.env, pid, true),
   }

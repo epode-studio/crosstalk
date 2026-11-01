@@ -15831,9 +15831,9 @@ var ServerResultSchema2 = union([
 
 // src/server.ts
 import net2 from "net";
-import fs5 from "fs";
-import os4 from "os";
-import path7 from "path";
+import fs8 from "fs";
+import os6 from "os";
+import path10 from "path";
 
 // src/config.ts
 import fs from "node:fs";
@@ -16669,11 +16669,504 @@ function startWaiter(root) {
   } catch {}
 }
 
-// src/paths.ts
+// src/gather.ts
+import fs6 from "node:fs";
+import os5 from "node:os";
+import path7 from "node:path";
+import { spawn as spawn4, spawnSync as spawnSync3 } from "node:child_process";
+
+// src/restore.ts
+import fs5 from "node:fs";
+import os4 from "node:os";
 import path6 from "node:path";
+import { spawn as spawn3, spawnSync as spawnSync2 } from "node:child_process";
+var dir2 = () => path6.join(P2.root, "open");
+var safe2 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
+var fileOf2 = (id) => path6.join(dir2(), `${safe2(id)}.json`);
+function readAll2() {
+  let names;
+  try {
+    names = fs5.readdirSync(dir2()).filter((f) => f.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const f of names) {
+    try {
+      const r = JSON.parse(fs5.readFileSync(path6.join(dir2(), f), "utf8"));
+      if (r && typeof r.sessionId === "string")
+        out.push(r);
+    } catch {}
+  }
+  return out;
+}
+function writeRec2(r) {
+  fs5.mkdirSync(dir2(), { recursive: true, mode: 448 });
+  const tmp = `${fileOf2(r.sessionId)}.${process.pid}.tmp`;
+  fs5.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 384 });
+  fs5.renameSync(tmp, fileOf2(r.sessionId));
+}
+var DAY2 = 24 * 60 * 60 * 1000;
+var SHUTDOWN_MS2 = 10 * 60 * 1000;
+var BURST_MS2 = 10 * 1000;
+function bootTime2(env = process.env, now = Date.now()) {
+  const forced = Number(env.CROSSTALK_BOOT_TIME);
+  if (forced > 0)
+    return forced;
+  return now - os4.uptime() * 1000;
+}
+function ps2(pid, field) {
+  if (!pid || pid < 1)
+    return null;
+  try {
+    const r = spawnSync2("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    if (r.status !== 0)
+      return null;
+    return r.stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+function pidAlive2(pid, pidStart) {
+  if (!pid || pid < 1)
+    return false;
+  try {
+    process.kill(pid, 0);
+  } catch (e) {
+    if (e?.code !== "EPERM")
+      return false;
+  }
+  if (!pidStart)
+    return true;
+  const now = ps2(pid, "lstart");
+  return now === null ? true : now === pidStart;
+}
+var recAlive2 = (r) => pidAlive2(r.pid, r.pidStart);
+var appleLocateScript2 = (tty) => [
+  `tell application "Terminal"`,
+  `	repeat with w in windows`,
+  `		set n to 0`,
+  `		repeat with t in tabs of w`,
+  `			set n to n + 1`,
+  `			if (tty of t) is ${asq2(tty)} then return ((id of w) as text) & " " & (n as text)`,
+  `		end repeat`,
+  `	end repeat`,
+  `end tell`,
+  `return ""`
+].join(`
+`);
+var asq2 = (s) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
+var REOPEN_SETTINGS_MS2 = 2 * 60 * 1000;
+
+// src/gather.ts
+var registryDir = () => path7.join(os5.homedir(), ".claude", "sessions");
+function readRegistry(dir = registryDir(), alive = (p) => pidAlive2(p)) {
+  let files;
+  try {
+    files = fs6.readdirSync(dir).filter((f) => /^\d+\.json$/.test(f));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const f of files) {
+    try {
+      const e = JSON.parse(fs6.readFileSync(path7.join(dir, f), "utf8"));
+      const pid = Number(e.pid ?? f.slice(0, -5));
+      if (!pid || typeof e.sessionId !== "string" || !e.sessionId)
+        continue;
+      if (!alive(pid))
+        continue;
+      out.push({
+        pid,
+        sessionId: e.sessionId,
+        cwd: e.cwd ?? "",
+        status: e.status ?? "unknown",
+        name: e.name,
+        startedAt: typeof e.startedAt === "number" ? e.startedAt : undefined,
+        kind: e.kind
+      });
+    } catch {}
+  }
+  return out;
+}
+function registryPids(dir = registryDir()) {
+  try {
+    return new Set(fs6.readdirSync(dir).filter((f) => /^\d+\.json$/.test(f)).map((f) => Number(f.slice(0, -5))));
+  } catch {
+    return new Set;
+  }
+}
+function ps3(pid, field) {
+  if (!pid || pid < 1)
+    return null;
+  try {
+    const r = spawnSync3("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    if (r.status !== 0)
+      return null;
+    return r.stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+var ENV_KEYS = ["TERM_PROGRAM", "TERM_SESSION_ID", "TMUX", "TMUX_PANE", "KITTY_WINDOW_ID", "KITTY_LISTEN_ON", "WEZTERM_PANE", "ITERM_SESSION_ID", "WT_SESSION"];
+function parseEnv(text, sep) {
+  const out = {};
+  for (const part of text.split(sep)) {
+    const i = part.indexOf("=");
+    if (i < 1)
+      continue;
+    const k = part.slice(0, i);
+    if (ENV_KEYS.includes(k))
+      out[k] = part.slice(i + 1);
+  }
+  return out;
+}
+function procEnv(pid) {
+  try {
+    return parseEnv(fs6.readFileSync(`/proc/${pid}/environ`, "utf8"), /\0/);
+  } catch {}
+  if (process.platform !== "darwin")
+    return null;
+  try {
+    const r = spawnSync3("ps", ["-wwE", "-o", "command=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    if (r.status !== 0)
+      return null;
+    return parseEnv(r.stdout.trim(), /\s+/);
+  } catch {
+    return null;
+  }
+}
+function tmuxPanes() {
+  const r = spawnSync3("tmux", ["list-panes", "-a", "-F", "#{pane_tty}\t#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{socket_path}"], { encoding: "utf8", timeout: 2000 });
+  if (r.status !== 0)
+    return [];
+  return r.stdout.trim().split(`
+`).filter(Boolean).map((l) => {
+    const [tty, pane, session, w, p, socket] = l.split("\t");
+    return { tty, pane, session, window: Number(w), paneIndex: Number(p), socket };
+  });
+}
+var appleLocateIfRunning = (tty) => [`if application "Terminal" is running then`, ...appleLocateScript2(tty).split(`
+`).slice(0, -1).map((l) => `	${l}`), `end if`, `return ""`].join(`
+`);
+function liveSys() {
+  return {
+    platform: process.platform,
+    now: Date.now,
+    ps: ps3,
+    alive: pidAlive2,
+    env: procEnv,
+    tmuxPanes,
+    appleLocate: (tty) => {
+      if (process.platform !== "darwin")
+        return null;
+      const r = spawnSync3("osascript", ["-"], { input: appleLocateIfRunning(tty), encoding: "utf8", timeout: 2500 });
+      const [w, n] = (r.stdout ?? "").trim().split(" ").map(Number);
+      return r.status === 0 && w && n ? { window: w, tab: n } : null;
+    },
+    kill: (pid, sig) => process.kill(pid, sig),
+    run: (s) => {
+      const r = spawnSync3(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 30000 });
+      return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
+    },
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms))
+  };
+}
+function terminalOf(tty, env, sys, panes) {
+  const t = {};
+  if (env.TERM_PROGRAM)
+    t.program = env.TERM_PROGRAM;
+  if (tty)
+    t.tty = tty;
+  const pane = tty ? (panes ?? sys.tmuxPanes)().find((p) => p.tty === tty) : undefined;
+  if (pane)
+    t.tmux = { pane: pane.pane, socket: pane.socket, session: pane.session, window: pane.window, paneIndex: pane.paneIndex };
+  else if (env.TMUX && env.TMUX_PANE)
+    t.tmux = { pane: env.TMUX_PANE, socket: env.TMUX.split(",")[0] };
+  if (env.KITTY_WINDOW_ID || env.KITTY_LISTEN_ON)
+    t.kitty = { window: env.KITTY_WINDOW_ID, listenOn: env.KITTY_LISTEN_ON };
+  if (env.WEZTERM_PANE)
+    t.wezterm = { pane: env.WEZTERM_PANE };
+  if (env.ITERM_SESSION_ID) {
+    const m = /^w(\d+)t(\d+)p(\d+)/.exec(env.ITERM_SESSION_ID);
+    t.iterm = { id: env.ITERM_SESSION_ID, ...m ? { window: Number(m[1]), tab: Number(m[2]) } : {} };
+  }
+  if (env.WT_SESSION)
+    t.wt = { session: env.WT_SESSION };
+  const appleMaybe = env.TERM_PROGRAM === "Apple_Terminal" || !env.TERM_PROGRAM && !t.iterm && !t.kitty && !t.wezterm;
+  if (tty && !t.tmux && appleMaybe && sys.platform === "darwin") {
+    const at = sys.appleLocate(tty);
+    if (at) {
+      t.program = "Apple_Terminal";
+      t.apple = { sessionId: env.TERM_SESSION_ID, window: at.window, tab: at.tab };
+    } else if (env.TERM_PROGRAM === "Apple_Terminal")
+      t.apple = { sessionId: env.TERM_SESSION_ID };
+  }
+  return t;
+}
+var RECHECK_MS = 10 * 60 * 1000;
+function snapshot(o) {
+  const { sys } = o;
+  const now = sys.now();
+  const byId = new Map(o.records.map((r) => [r.sessionId, r]));
+  const out = [];
+  let panes;
+  const lazyPanes = () => panes ??= sys.tmuxPanes();
+  const live = new Set;
+  for (const e of o.registry) {
+    live.add(e.sessionId);
+    if (e.sessionId === o.self)
+      continue;
+    const before = byId.get(e.sessionId);
+    if (before && !before.adopted)
+      continue;
+    if (before?.endedAt && before.pid === e.pid)
+      continue;
+    const pidStart = sys.ps(e.pid, "lstart") ?? undefined;
+    if (!sys.alive(e.pid, pidStart))
+      continue;
+    const rawTty = sys.ps(e.pid, "tty");
+    const tty = rawTty && !/^\?+$/.test(rawTty) ? rawTty.startsWith("/dev/") ? rawTty : `/dev/${rawTty}` : undefined;
+    const same = before && before.pid === e.pid && before.pidStart === pidStart && before.terminal.tty === tty;
+    const fresh = same && now - (before.watchedAt ?? 0) < RECHECK_MS;
+    out.push({
+      ...before ?? {},
+      sessionId: e.sessionId,
+      cwd: e.cwd || before?.cwd || "",
+      client: "claude",
+      name: e.name ?? before?.name,
+      pid: e.pid,
+      pidStart,
+      interactive: !!tty,
+      startedAt: before?.startedAt ?? e.startedAt ?? now,
+      seenAt: now,
+      watchedAt: fresh ? before.watchedAt : now,
+      terminal: fresh ? before.terminal : terminalOf(tty, sys.env(e.pid) ?? {}, sys, lazyPanes),
+      adopted: "watched"
+    });
+  }
+  for (const r of o.records) {
+    if (r.adopted !== "watched" || r.endedAt || live.has(r.sessionId))
+      continue;
+    if (r.seenAt < o.boot || o.registryPids.has(r.pid))
+      continue;
+    if (sys.alive(r.pid, r.pidStart))
+      continue;
+    out.push({ ...r, endedAt: now, endReason: "exit" });
+  }
+  return out;
+}
+function watch(self, sys = liveSys()) {
+  const recs = snapshot({
+    self,
+    registry: readRegistry(registryDir(), (p) => sys.alive(p)),
+    records: readAll2(),
+    registryPids: registryPids(),
+    boot: bootTime2(process.env, sys.now()),
+    sys
+  });
+  for (const r of recs)
+    writeRec2(r);
+  return recs;
+}
+var stateFile2 = () => path7.join(P2.root, "gather-state.json");
+function loadState2() {
+  try {
+    return JSON.parse(fs6.readFileSync(stateFile2(), "utf8"));
+  } catch {
+    return {};
+  }
+}
+function saveState2(s) {
+  fs6.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  const tmp = `${stateFile2()}.${process.pid}.tmp`;
+  fs6.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs6.renameSync(tmp, stateFile2());
+}
+var sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function locked(fn) {
+  const lock = path7.join(P2.root, "gather.lock");
+  fs6.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  let held = false;
+  for (let i = 0;i < 100 && !held; i++) {
+    try {
+      fs6.mkdirSync(lock);
+      held = true;
+    } catch {
+      try {
+        if (Date.now() - fs6.statSync(lock).mtimeMs > 1e4)
+          fs6.rmdirSync(lock);
+      } catch {}
+      sleepSync(10);
+    }
+  }
+  if (!held)
+    return null;
+  try {
+    return fn();
+  } finally {
+    try {
+      fs6.rmdirSync(lock);
+    } catch {}
+  }
+}
+function ancestors(pid = process.pid, sys = { ps: ps3 }) {
+  const out = [];
+  let p = pid;
+  for (let i = 0;i < 12 && p > 1; i++) {
+    out.push(p);
+    const up = Number(sys.ps(p, "ppid"));
+    if (!up || up === p)
+      break;
+    p = up;
+  }
+  return out;
+}
+function candidates(recs, o) {
+  return recs.filter((r) => r.adopted === "watched" && !r.endedAt && r.interactive !== false && r.sessionId !== o.self && !(o.selfPids ?? []).includes(r.pid) && r.gather?.state !== "done" && o.alive(r)).sort((a, b) => a.startedAt - b.startedAt);
+}
+var label2 = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path7.basename(r.cwd) || r.sessionId.slice(0, 8);
+var job = () => path7.join(P2.root, "gather-job.json");
+function loadJob() {
+  try {
+    return JSON.parse(fs6.readFileSync(job(), "utf8"));
+  } catch {
+    return null;
+  }
+}
+function saveJob(j) {
+  fs6.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  const tmp = `${job()}.${process.pid}.tmp`;
+  fs6.writeFileSync(tmp, JSON.stringify(j, null, 2), { mode: 384 });
+  fs6.renameSync(tmp, job());
+}
+var UNTIL_MS = () => Number(process.env.CROSSTALK_GATHER_UNTIL_MS ?? 2 * 60 * 60 * 1000);
+function startWaiter2(root) {
+  if (process.env.CROSSTALK_NO_WAITER)
+    return;
+  try {
+    const child = spawn4(shim(root ?? rootFrom(import.meta.url)), ["gather", "--finish"], { detached: true, stdio: "ignore" });
+    child.unref();
+  } catch {}
+}
+function describe3(self) {
+  watch(self);
+  const cands = candidates(readAll2(), { self, selfPids: ancestors(), alive: recAlive2 });
+  if (!cands.length)
+    return { ok: true, text: "\u25e2 crosstalk: every running Claude session already has crosstalk.", sessions: [] };
+  const reg = new Map(readRegistry().map((e) => [e.sessionId, e]));
+  const lines = [`\u25e2 crosstalk: ${cands.length} Claude session${cands.length === 1 ? "" : "s"} started before crosstalk:`];
+  for (const r of cands)
+    lines.push(`  ${label2(r).padEnd(16)} ${r.cwd}  (${reg.get(r.sessionId)?.status ?? "unknown"})`);
+  lines.push(`Bringing them in restarts each one in its own tab with its conversation, once it is idle.`);
+  return { ok: true, text: lines.join(`
+`), sessions: cands };
+}
+function start(o) {
+  watch(o.self);
+  const selfPids = ancestors();
+  const cands = candidates(readAll2(), { self: o.self, selfPids, alive: recAlive2 });
+  if (!cands.length)
+    return { ok: true, text: "\u25e2 crosstalk: every running Claude session already has crosstalk.", sessions: [] };
+  const before = loadJob();
+  const pending = [...new Set([...before && before.until > Date.now() ? before.pending : [], ...cands.map((r) => r.sessionId)])];
+  saveJob({
+    by: o.self,
+    selfPids: [...new Set([...selfPids, ...before?.selfPids ?? []])],
+    pending,
+    until: Date.now() + UNTIL_MS(),
+    done: before?.until && before.until > Date.now() ? before.done : [],
+    newTab: before?.until && before.until > Date.now() ? before.newTab : [],
+    failed: []
+  });
+  for (const r of cands)
+    writeRec2({ ...r, gather: { state: "queued", at: Date.now() } });
+  locked(() => {
+    const s = loadState2();
+    saveState2({ ...s, offered: { at: Date.now(), by: o.self, ids: [...new Set([...s.offered?.ids ?? [], ...pending])] } });
+  });
+  startWaiter2(o.root);
+  const reg = new Map(readRegistry().map((e) => [e.sessionId, e]));
+  const busy = cands.filter((r) => reg.get(r.sessionId)?.status !== "idle");
+  const n = cands.length;
+  const idle = n - busy.length;
+  const parts = [`\u25e2 crosstalk: bringing ${n} session${n === 1 ? "" : "s"} into crosstalk (${names2(cands)}).`];
+  if (idle)
+    parts.push(`${idle === n ? n === 1 ? "It is" : "They are" : `${idle} ${idle === 1 ? "is" : "are"}`} idle and restart${idle === 1 ? "s" : ""} in ${idle === 1 ? "its" : "their"} tab now, with ${idle === 1 ? "its" : "their"} conversation.`);
+  if (busy.length)
+    parts.push(`${busy.length === n ? n === 1 ? "It is" : "They are" : `${busy.length} ${busy.length === 1 ? "is" : "are"}`} busy (${names2(busy)}) and restart${busy.length === 1 ? "s" : ""} when ${busy.length === 1 ? "it goes" : "they go"} idle.`);
+  return { ok: true, text: parts.join(" "), sessions: cands };
+}
+var names2 = (rs, max = 4) => rs.slice(0, max).map(label2).join(", ") + (rs.length > max ? ", \u2026" : "");
+
+// src/uistate.ts
+import fs7 from "node:fs";
+import path8 from "node:path";
+var FINAL = new Set(["answered", "handed", "muted"]);
+var file = () => path8.join(P2.root, "ui.json");
+var lockDir = () => path8.join(P2.root, "ui.lock");
+var WEEK = 7 * 24 * 60 * 60 * 1000;
+function read() {
+  try {
+    const f = JSON.parse(fs7.readFileSync(file(), "utf8"));
+    if (f && f.v === 1 && f.items && typeof f.items === "object")
+      return f;
+  } catch {}
+  return { v: 1, items: {} };
+}
+function write(f) {
+  fs7.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  const tmp = `${file()}.${process.pid}.tmp`;
+  fs7.writeFileSync(tmp, JSON.stringify(f, null, 2), { mode: 384 });
+  fs7.renameSync(tmp, file());
+}
+var sleepSync2 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function withStore(fn) {
+  fs7.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  let held = false;
+  for (let i = 0;i < 200 && !held; i++) {
+    try {
+      fs7.mkdirSync(lockDir());
+      held = true;
+    } catch {
+      try {
+        if (Date.now() - fs7.statSync(lockDir()).mtimeMs > 1e4)
+          fs7.rmdirSync(lockDir());
+      } catch {}
+      sleepSync2(10);
+    }
+  }
+  try {
+    const f = read();
+    const was = JSON.stringify(f);
+    const now = Date.now();
+    const out = fn(f.items, now);
+    for (const [id, it] of Object.entries(f.items))
+      if (FINAL.has(it.state) && now - it.updatedAt > WEEK || now - it.updatedAt > 4 * WEEK)
+        delete f.items[id];
+    if (JSON.stringify(f) !== was)
+      write(f);
+    return out;
+  } finally {
+    if (held)
+      try {
+        fs7.rmdirSync(lockDir());
+      } catch {}
+  }
+}
+function settle(items, id, state, now) {
+  const it = items[id];
+  if (it && !FINAL.has(it.state))
+    items[id] = { ...it, state, updatedAt: now };
+}
+var MARKER_MS = 10 * 60 * 1000;
+var gatherId = (sessionId) => `gather:${sessionId}`;
+
+// src/paths.ts
+import path9 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
-var dirOf2 = (metaUrl) => path6.dirname(fileURLToPath2(metaUrl));
-var rootFrom2 = (metaUrl) => path6.join(dirOf2(metaUrl), "..");
+var dirOf2 = (metaUrl) => path9.dirname(fileURLToPath2(metaUrl));
+var rootFrom2 = (metaUrl) => path9.join(dirOf2(metaUrl), "..");
 
 // src/server.ts
 var SESSION_ID = process.env.CLAUDE_CODE_SESSION_ID ?? "";
@@ -16964,6 +17457,16 @@ mcp.setRequestHandler(ListToolsRequestSchema2, async () => ({
       }
     },
     {
+      name: "crosstalk_gather",
+      description: `Bring the user's other Claude Code sessions, the ones started before crosstalk was installed, into crosstalk: each idle one is ended gracefully and restarts in its own terminal tab with its conversation (claude --resume); busy ones follow once they go idle. This session is never restarted. Call this whenever the user asks to bring in, gather, adopt, connect or restart their other or older sessions, e.g. "bring my other sessions into crosstalk" or "bring them in". Without confirm it only lists them; call it with confirm: true when the user has asked for it, and relay the result text to them as it is.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          confirm: { type: "boolean", description: "true restarts them into crosstalk; false or absent only lists them" }
+        }
+      }
+    },
+    {
       name: "crosstalk_decide",
       description: "Record a decision in the repo's DECISIONS.md with attribution, and optionally tell a peer. Use when something is actually settled, not for every choice.",
       inputSchema: {
@@ -17117,6 +17620,13 @@ mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
         const out = a.confirm ? restore({ self, userAction: true, root: rootFrom2(import.meta.url) }) : describe2(self);
         return { content: [{ type: "text", text: out.text }], ...out.ok ? {} : { isError: true } };
       }
+      case "crosstalk_gather": {
+        const self = SESSION_ID || undefined;
+        const out = a.confirm ? start({ self, root: rootFrom2(import.meta.url) }) : describe3(self);
+        if (a.confirm && self)
+          withStore((items, now) => settle(items, gatherId(self), "answered", now));
+        return { content: [{ type: "text", text: out.text }], ...out.ok ? {} : { isError: true } };
+      }
       case "crosstalk_decide": {
         const r = await request({
           op: "decide",
@@ -17139,11 +17649,11 @@ mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
 });
 function selfRegistration() {
   try {
-    const dir = path7.join(os4.homedir(), ".claude", "sessions");
-    for (const f of fs5.readdirSync(dir)) {
+    const dir = path10.join(os6.homedir(), ".claude", "sessions");
+    for (const f of fs8.readdirSync(dir)) {
       if (!f.endsWith(".json"))
         continue;
-      const e = JSON.parse(fs5.readFileSync(path7.join(dir, f), "utf8"));
+      const e = JSON.parse(fs8.readFileSync(path10.join(dir, f), "utf8"));
       if (e.sessionId !== SESSION_ID)
         continue;
       return {

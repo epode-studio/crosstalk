@@ -23,6 +23,8 @@ import { ensureDaemon, request } from "./client.ts"
 import { diffSlice, fileSlice, turnsSlice, textSlice, SliceRefused } from "./slices.ts"
 import type { Slice } from "./protocol.ts"
 import * as restore from "./restore.ts"
+import * as gather from "./gather.ts"
+import * as ui from "./uistate.ts"
 import { rootFrom } from "./paths.ts"
 
 /**
@@ -347,6 +349,17 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: "crosstalk_gather",
+      description:
+        "Bring the user's other Claude Code sessions, the ones started before crosstalk was installed, into crosstalk: each idle one is ended gracefully and restarts in its own terminal tab with its conversation (claude --resume); busy ones follow once they go idle. This session is never restarted. Call this whenever the user asks to bring in, gather, adopt, connect or restart their other or older sessions, e.g. \"bring my other sessions into crosstalk\" or \"bring them in\". Without confirm it only lists them; call it with confirm: true when the user has asked for it, and relay the result text to them as it is.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          confirm: { type: "boolean", description: "true restarts them into crosstalk; false or absent only lists them" },
+        },
+      },
+    },
+    {
       name: "crosstalk_decide",
       description:
         "Record a decision in the repo's DECISIONS.md with attribution, and optionally tell a peer. Use when something is actually settled, not for every choice.",
@@ -528,6 +541,14 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         const out = a.confirm
           ? restore.restore({ self, userAction: true, root: rootFrom(import.meta.url) })
           : restore.describe(self)
+        return { content: [{ type: "text" as const, text: out.text }], ...(out.ok ? {} : { isError: true }) }
+      }
+
+      case "crosstalk_gather": {
+        // Needs no room and no daemon, like restore.
+        const self = SESSION_ID || undefined
+        const out = a.confirm ? gather.start({ self, root: rootFrom(import.meta.url) }) : gather.describe(self)
+        if (a.confirm && self) ui.withStore((items, now) => ui.settle(items, ui.gatherId(self), "answered", now))
         return { content: [{ type: "text" as const, text: out.text }], ...(out.ok ? {} : { isError: true }) }
       }
 

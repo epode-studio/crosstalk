@@ -30,7 +30,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { P } from "./config.ts"
 
-export type UiKind = "restore" | "message" | "ask" | "route"
+export type UiKind = "restore" | "message" | "ask" | "route" | "gather"
 export type UiState = "pending" | "answered" | "handed" | "muted" | "later"
 export type UiAction = "hand" | "answer" | "mute" | "later" | "raised"
 
@@ -278,6 +278,46 @@ export function restoreSurface(
   // The offer is claimed already: if the store cannot take it, the systemMessage must.
   try {
     return { item: storeRestore(sessionId, offer, n, when) }
+  } catch {
+    return { systemMessage: offer.text }
+  }
+}
+
+// --- gather --------------------------------------------------------------------
+
+export const gatherId = (sessionId: string) => `gather:${sessionId}`
+export const GATHER_OPTIONS = ["Bring them in", "Not now"]
+
+/**
+ * Where the offer to bring in sessions started before crosstalk goes: the
+ * mod's picker when the mod is in this session, else the systemMessage.
+ * Exactly one, never both, as for restore.
+ */
+export function gatherSurface(
+  sessionId: string,
+  offer: { text: string; question: string; count: number; names: string[] } | null,
+  mod = modActive(sessionId),
+): { systemMessage?: string; item?: UiItem } {
+  if (!offer) return {}
+  if (!mod) return { systemMessage: offer.text }
+  try {
+    return {
+      item: withStore((items, now) =>
+        upsert(
+          items,
+          {
+            id: gatherId(sessionId),
+            kind: "gather",
+            sessionId,
+            count: offer.count,
+            names: offer.names,
+            question: offer.question,
+            options: GATHER_OPTIONS,
+          },
+          now,
+        ),
+      ),
+    }
   } catch {
     return { systemMessage: offer.text }
   }
