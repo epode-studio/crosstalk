@@ -1,0 +1,161 @@
+# Restore after a restart
+
+When your computer restarts unexpectedly, or your terminal crashes or is force-quit, the first
+Claude Code session you open afterwards says:
+
+```
+◢ crosstalk: 6 sessions were open before the restart (api, firmware, docs, web, …). Say "restore them" to bring them back.
+```
+
+**Just say "restore them".** Each session comes back in its own tab of your terminal, in the
+same order, in its folder, as `claude --resume <id>`. The conversation comes back with it, so
+you don't need to paste anything.
+
+You don't have to remember anything. The question only appears in your session, and the
+model never sees it. If you'd rather not restore them, ignore the question. After a day, the sessions are no longer offered.
+
+## What it does
+
+- **It remembers every open session**: its id, folder, client (Claude Code or Codex), process,
+  and terminal tab. Each session has a small file under `~/.claude/crosstalk/open/`, which the
+  crosstalk hook writes. You don't need a room or the daemon for this.
+- **A session that ends normally says so.** When you leave at the prompt, `/clear` or log out,
+  the `SessionEnd` hook records that the session ended, and it won't be offered again.
+- **A session whose process is gone without that was lost.** That covers two cases. One is a
+  restart: the session was last seen before the machine booted. The other is a terminal that
+  died under it: the process is gone and there was no normal end, even within the same boot. Several sessions that
+  end in the same few seconds also count, because they went down with their terminal. Closing a
+  single tab doesn't count. Only sessions seen within the last 24 hours count.
+- **The first session opened afterwards asks once.** Later sessions don't ask again. The
+  sessions stay restorable from any session until you answer.
+- **The session that asks is never reopened**, because it is already open.
+
+### Which terminal it uses
+
+Each session goes back to the terminal it was in. If that terminal can't be used now, the
+session goes to the terminal you are asking from:
+
+| Terminal | How | Layout |
+|---|---|---|
+| **Terminal.app** | AppleScript (`do script`), new tabs by Cmd-T through System Events | one window per old window, oldest first, tabs in their old order |
+| tmux | `tmux new-window -d -t <session>: -c <folder>`, and the tmux session is recreated if it is gone | windows in their old index order |
+| iTerm2 | AppleScript, `create tab` | one window per old window, tabs in order |
+| Ghostty | AppleScript keystrokes (Cmd-N, Cmd-T, typing the command) | tabs in one window |
+| kitty | `kitten @ launch --type=tab` (needs `allow_remote_control`) | tabs |
+| WezTerm | `wezterm cli spawn` | tabs |
+| Windows Terminal | `wt -w 0 nt -d <folder>` | tabs |
+| anything else | the exact commands, shown to you and written to `~/.claude/crosstalk/restore-commands.sh` | paste each into a tab |
+
+Codex sessions come back as `codex resume <id>`. Clients that can't resume a session by id are
+skipped, and the result says so.
+
+## Permissions on a Mac
+
+macOS can't open a tab in Terminal.app from a script directly. The only way is to press Cmd-T,
+and for that Terminal needs two permissions:
+
+1. **Automation, Terminal → System Events.** This lets crosstalk tell System Events to press
+   the key. macOS asks for it once, the first time sessions are restored as tabs. Choose
+   **Allow**.
+2. **Accessibility, Terminal.** This lets System Events actually type the key. macOS never
+   grants it by itself.
+
+The app named here is **Terminal** because that is the app crosstalk runs inside. In iTerm2 or
+Ghostty, the permission is for that app instead.
+
+Without either permission, nothing breaks: each session opens in **a window of its own**
+instead of as a tab.
+
+### What happens when one is missing
+
+When you ask for a restore and Accessibility is off:
+
+- crosstalk opens **System Settings → Privacy & Security → Accessibility** for you, and says:
+  "Opened System Settings. Turn on Terminal under Accessibility; crosstalk will finish
+  restoring by itself."
+- A small background process checks every 2 seconds whether the permission is on. It only
+  reads the setting and never prompts. As soon as the permission is on, it opens the sessions
+  as tabs and posts a notification.
+- If the permission is not turned on within 2 minutes, nothing opens. A window appearing
+  minutes later would be more surprising than useful. You get a notification instead, the
+  sessions stay listed, and saying "restore them" again picks up where it left off.
+- crosstalk only opens System Settings because you just asked for a restore, never on its
+  own, and never twice within 2 minutes. macOS may also show its own prompt with an "Open
+  System Settings" button, and either one works.
+
+If Automation was refused, the sessions still open, as separate windows. crosstalk opens
+**Privacy & Security → Automation** so that next time they open as tabs. There, under
+Terminal, turn on System Events.
+
+To turn the permissions on yourself:
+
+```sh
+open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"   # turn on Terminal
+open "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"      # Terminal → System Events
+```
+
+`/crosstalk:doctor` shows whether both permissions are on, and what is waiting to be
+restored. Both checks are read-only: Accessibility through `AXIsProcessTrusted`, Automation
+through `AEDeterminePermissionToAutomateTarget` with "ask the user" off.
+
+## Try it without restarting your Mac
+
+1. Install crosstalk from this branch:
+
+   ```sh
+   git clone -b claude/laughing-goldberg-dw38w3 https://github.com/epode-studio/crosstalk ~/crosstalk-restore
+   ```
+
+   Then, in Claude Code:
+
+   ```
+   /plugin marketplace add ~/crosstalk-restore
+   /plugin install crosstalk@epode
+   ```
+
+   (`epode` is the marketplace's name in `.claude-plugin/marketplace.json`.) Restart Claude Code
+   so the hooks load.
+
+2. Open two or three Terminal tabs, ideally across two windows, each in a different folder, and
+   run `claude` in each. Say anything in each one, so each session has a conversation to come
+   back to.
+3. **Force-quit Terminal**: press Cmd-Option-Esc, choose Terminal, and click Force Quit.
+4. Reopen Terminal. If macOS restores its windows, you can close them. Then `cd` anywhere and
+   run `claude`.
+5. The question appears. Say **"restore them"**.
+
+The first time, macOS asks whether Terminal may control System Events. Allow it. If
+Accessibility is off, System Settings opens. Turn on Terminal, and the tabs open by
+themselves.
+
+To see what would happen without opening anything, run this from any terminal:
+
+```sh
+~/crosstalk-restore/bin/crosstalk restore --dry-run
+```
+
+It prints each command and the exact AppleScript that would run.
+
+## For scripts
+
+```sh
+crosstalk restore             # list what was lost
+crosstalk restore --dry-run   # and exactly what would run
+crosstalk restore --yes       # reopen them (--windows: one window each, no Accessibility)
+crosstalk restore no          # forget them
+```
+
+In a session, `@restore`, `@restore windows` and `@restore no` do the same before the prompt
+reaches the model. They are shortcuts, and you don't need them.
+
+## Limits
+
+- Terminal's window ids are recorded when a session starts and at the end of each turn. A tab
+  dragged to another window since its last turn comes back in the old window.
+- If macOS reopens Terminal's windows after a restart ("Reopen windows when logging back in"),
+  restored sessions open next to those windows, not inside them.
+- A restored tab runs `claude --resume` in your shell, so the tab stays open after Claude
+  exits. tmux, kitty, WezTerm and Windows Terminal start `claude` directly, so their tab closes
+  when Claude exits.
+- Codex has no `SessionEnd`, so a Codex session is only offered back after a restart, never
+  after its terminal is closed.

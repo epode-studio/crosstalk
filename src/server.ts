@@ -22,6 +22,8 @@ import { P, loadIdentity } from "./config.ts"
 import { ensureDaemon, request } from "./client.ts"
 import { diffSlice, fileSlice, turnsSlice, textSlice, SliceRefused } from "./slices.ts"
 import type { Slice } from "./protocol.ts"
+import * as restore from "./restore.ts"
+import { rootFrom } from "./paths.ts"
 
 /**
  * Claude Code and Codex name the session in the environment of everything they
@@ -334,6 +336,17 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: "crosstalk_restore",
+      description:
+        "Reopen the user's own sessions that were open before a restart, crash, or force-quit of their terminal: each comes back in its own terminal tab, in its folder, with its conversation (claude --resume). Call this whenever the user asks to restore, reopen, resume or bring back their sessions, tabs or terminals, e.g. \"restore them\". Without confirm it only lists what would be reopened; call it with confirm: true when the user has asked for the restore, and relay the result text to them as it is. If it says a macOS permission is needed, System Settings has been opened and crosstalk finishes by itself once it is turned on; nothing else is needed.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          confirm: { type: "boolean", description: "true reopens them; false or absent only lists them" },
+        },
+      },
+    },
+    {
       name: "crosstalk_decide",
       description:
         "Record a decision in the repo's DECISIONS.md with attribution, and optionally tell a peer. Use when something is actually settled, not for every choice.",
@@ -507,6 +520,15 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           slices: await buildSlices(a.slices),
         })
         return r.ok ? ok({ sent: true, id: r.id }) : err(r.error)
+      }
+
+      case "crosstalk_restore": {
+        // Needs no room and no daemon: the records are files the hook keeps.
+        const self = SESSION_ID || undefined
+        const out = a.confirm
+          ? restore.restore({ self, userAction: true, root: rootFrom(import.meta.url) })
+          : restore.describe(self)
+        return { content: [{ type: "text" as const, text: out.text }], ...(out.ok ? {} : { isError: true }) }
       }
 
       case "crosstalk_decide": {

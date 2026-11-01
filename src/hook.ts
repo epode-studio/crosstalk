@@ -20,6 +20,7 @@ import { ensureDaemon, request } from "./client.ts"
 import { loadIdentity } from "./config.ts"
 import { rootFrom } from "./paths.ts"
 import { pathsFromToolInput } from "./footprint.ts"
+import * as restore from "./restore.ts"
 
 const input = await new Promise<string>((resolve) => {
   let raw = ""
@@ -162,6 +163,64 @@ const DELIVERS = isGoose
       ? /^(sessionStart|beforeSubmitPrompt|preToolUse|postToolUse|postToolUseFailure)$/
       : /^(SessionStart|UserPromptSubmit|PreToolUse|PostToolUse|PreInvocation|pre_llm_call)$/i
 
+/**
+ * Restore after a restart. This runs before anything that needs a room: a
+ * person who never set one up still gets their sessions back.
+ *
+ * Every event keeps this session's record current, so a session whose process
+ * disappears without a SessionEnd is known to have been lost. The first session
+ * opened afterwards puts the question once, as a systemMessage, which the
+ * person sees and the model never does. They answer in words ("restore them"),
+ * which reaches crosstalk_restore; `@restore` is a shortcut taken here, before
+ * it can become a prompt.
+ *
+ * Only Claude Code and Codex can resume a session by id, so only they are
+ * recorded. Claude Code is the one that asks: it is the one known to show a
+ * systemMessage.
+ */
+const restoreClient: "claude" | "codex" | null =
+  isAgy || isHermes || isGoose || isCursor || isKimi
+    ? null
+    : hook.thread_id || /[\\/]\.codex[\\/]/.test(String(hook.transcript_path ?? ""))
+      ? "codex"
+      : "claude"
+let systemMessage: string | undefined
+if (restoreClient && sessionId && !process.env.CROSSTALK_NO_RESTORE) {
+  try {
+    if (/^UserPromptSubmit$/.test(eventName)) {
+      const want = restore.parseShortcut(String(hook.prompt ?? ""))
+      if (want) {
+        const out =
+          want === "no"
+            ? restore.forget(sessionId)
+            : restore.restore({
+                self: sessionId,
+                tabs: want !== "windows",
+                userAction: true,
+                root: rootFrom(import.meta.url),
+              })
+        // Blocked: the prompt never reaches the model, and the reason is shown
+        // to the person alone.
+        process.stdout.write(JSON.stringify({ decision: "block", reason: out.text }))
+        process.exit(0)
+      }
+    }
+    if (!/^(PostToolUse|PreToolUse)$/i.test(eventName))
+      restore.note({
+        event: eventName,
+        sessionId,
+        cwd,
+        client: restoreClient,
+        env: process.env,
+        source: hook.source,
+        reason: hook.reason,
+      })
+    if (isSessionStart && restoreClient === "claude" && !/^(clear|compact)$/.test(String(hook.source ?? "")))
+      systemMessage =
+        restore.askOnce(sessionId, restore.captureTerminal(process.env, process.pid, false)) ?? undefined
+  } catch {}
+}
+
 /** Nothing to do until there is a room. */
 if (!loadIdentity() || !sessionId) {
   process.stdout.write(
@@ -170,7 +229,7 @@ if (!loadIdentity() || !sessionId) {
         ? { decision: "allow" }
         : isAgy || isHermes || isKimi || isCursor
           ? {}
-          : { continue: true },
+          : { continue: true, ...(systemMessage ? { systemMessage } : {}) },
     ),
   )
   process.exit(0)
@@ -277,6 +336,7 @@ const say = (extra?: string) => {
     process.exit(0)
   }
   const out: any = { continue: true }
+  if (systemMessage) out.systemMessage = systemMessage
   if (extra) out.hookSpecificOutput = { hookEventName: eventName, additionalContext: extra }
   process.stdout.write(JSON.stringify(out))
   process.exit(0)
