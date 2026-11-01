@@ -99,6 +99,7 @@ function header(it: Item): string {
   if (it.kind === 'restore') return 'Restore'
   if (it.kind === 'route') return 'Route'
   if (it.kind === 'gather') return 'Gather'
+  if (it.kind === 'team') return 'Team'
   return cut(it.thread ? `${it.from} · ${it.thread}` : it.from ?? 'crosstalk', 12)
 }
 
@@ -204,6 +205,8 @@ async function raise($: EngineInterface, it: Item) {
       answer = await $.ui.ask(it.question ?? 'Bring your other Claude sessions into crosstalk?', { options: it.options ?? ['Bring them in', 'Not now'], header: header(it) })
     else if (it.kind === 'route')
       answer = await $.ui.ask(it.question ?? 'Which session should get this message?', { options: it.options ?? ['Hold it'], header: header(it) })
+    else if (it.kind === 'team')
+      answer = await $.ui.ask(it.question ?? `${it.from}'s key changed. Trust the new key?`, { options: it.options ?? ['Trust it', "Don't trust it"], header: header(it) })
     else {
       const what = it.kind === 'ask' ? 'asks' : 'says'
       const options = it.kind === 'ask' ? ['Answer', 'Hand to agent', 'Later', 'Mute'] : ['Hand to agent', 'Reply', 'Mute', 'Later']
@@ -235,6 +238,11 @@ async function answered($: EngineInterface, it: Item, answer: string) {
   if (it.kind === 'gather') {
     const r = await step($, it, 'answer', answer)
     $.ui.toast((r.text ?? r.error ?? 'crosstalk: gather did not answer').replace(/^◢ crosstalk: /, '').replace(/\s+/g, ' '))
+    return
+  }
+  if (it.kind === 'team') {
+    const r = await step($, it, 'answer', answer)
+    $.ui.toast(r.text ?? r.error ?? 'crosstalk: the key question did not answer')
     return
   }
   if (it.kind === 'route') {
@@ -423,6 +431,16 @@ export const register: Register = on => {
                 <Text dimColor>
                   {' '}
                   · {it.count ?? 0} session{it.count === 1 ? '' : 's'} without crosstalk · or say "bring them in"{later(it)}
+                </Text>
+              </Text>
+            )
+          if (it.kind === 'team')
+            return (
+              <Text key={it.id} wrap="truncate">
+                <Text color={THREAD} bold>◢ team</Text>
+                <Text dimColor>
+                  {' '}
+                  · {it.from}'s key changed and is not trusted yet{later(it)}
                 </Text>
               </Text>
             )

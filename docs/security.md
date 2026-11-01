@@ -94,3 +94,82 @@ you trust, and never through the relay.
 
 Both sides print a fingerprint once the room exists. Read them to each other. If they
 match, nobody is in the middle.
+
+## Trust through the repository
+
+Inside a repository with a GitHub remote, collaborators are trusted with no
+words (`src/repotrust/`). This is what it rests on, and what it costs.
+
+**The chain.** Each machine keeps its own crosstalk identity. The daemon signs a
+statement, `{crosstalk fingerprint and public keys, GitHub login, machine name,
+date}`, with the SSH key you already push with, using `ssh-keygen -Y sign` in a
+namespace of its own (`crosstalk-identity`), and pushes it to
+`refs/crosstalk/keys/<login>/<machine>`. A reader fetches those refs, fetches
+`github.com/<login>.keys`, and checks each statement with `ssh-keygen -Y verify`
+against an allowed-signers file holding only that login's keys, only for that
+namespace. The statement must be in its one canonical encoding, name the login
+and machine of the ref it was found under, and carry a fingerprint that is its
+own key's. What verifies becomes a peer, with the same direct channel and the
+same default level as someone verified with four words; their words still only
+ever arrive as data.
+
+**Private keys are never read.** crosstalk hands ssh-keygen a path, or a public
+key whose private half is in ssh-agent. A key that needs a passphrase and is not
+in the agent is not used; nothing is prompted for. With no usable key, or no
+known GitHub login, this machine is not published and says so, and the four
+words still work. The namespace means a statement signature can never pass as a
+git commit signature, nor a commit signature as a statement.
+
+**What someone who controls GitHub's key list can do.** For a person you have
+never seen before, everything: add a key of their own to marie's account, push a
+statement signed with it, and you will trust their crosstalk key as marie's.
+That is the cost the design accepts, the same one SSH accepts on first
+connection, and it applies once per person per installation. After the first
+sight, a person's SSH keys and crosstalk fingerprints are pinned, and nothing
+changes silently:
+
+- a new crosstalk key for a machine already known is a question; the old key
+  stays trusted until you answer;
+- a new machine vouched for by an SSH key that is not pinned is a question;
+- a fingerprint that was revoked and comes back is a question;
+- a statement older than the one trusted is ignored, so a rollback is not an
+  update;
+- removing a pinned key from GitHub revokes everything it signed, which an
+  attacker can use to make you stop trusting someone, not to start.
+
+It cannot read anything sealed to an identity you already trust, cannot sign
+with anyone's SSH key, and cannot touch a peer you verified with words. Your own
+machines are held to the same pins: a key added to your own account that
+vouches for a new machine is a question to you.
+
+**What push access means.** Statements only reach the ref by push, so the
+collaborator set is whoever can push. When `gh` is signed in, the repo's
+collaborator list is a second opinion, never the gate. Push access lets someone
+publish their own statement, and delete or roll back anyone else's, which revokes
+that person here: a denial of service, not an impersonation, because only a
+statement signed by a key on the named person's account verifies. Someone with
+push access who also holds a *retired* crosstalk private key of yours (an old
+laptop) can re-publish that machine's old statement while the SSH key that
+signed it is still on your account; anyone who had already seen the newer one
+ignores it, a fresh installation would accept it. Removing the SSH key from your
+GitHub account is what retires everything it ever signed.
+
+**Who gets to message you.** Rooms grow only along links that already exist.
+This adds one more way in, on purpose: anyone who can push to a repository you
+work in, and whose GitHub keys sign their statement, can reach you directly. You
+can mute them like anyone else, and `CROSSTALK_NO_REPOTRUST=1` turns all of this
+off.
+
+**What leaks.** Anyone who can read the repository can read its statements: each
+member's login, machine names and crosstalk public keys. On a public repository
+that is everyone. GitHub, and any proxy on the way, sees which logins' keys your
+daemon fetches. The relay sees what it always saw.
+
+**No network surprises.** Only the daemon fetches from GitHub, rate limited,
+with an ETag, through the proxy the environment configures, and from cache when
+offline. Being offline never revokes anyone: revocation needs a fresh answer
+from GitHub or a fetch from the remote that succeeded. The daemon pushes only
+its own ref, with your usual git credentials and without running your git hooks,
+uses plumbing only (the working tree, index, HEAD and branches are never
+touched), and adds the fetch refspec to `.git/config` so an ordinary fetch keeps
+the statements current.

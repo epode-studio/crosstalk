@@ -2,10 +2,10 @@
 // @bun
 
 // src/daemon.ts
-import fs11 from "fs";
+import fs16 from "fs";
 import net2 from "net";
-import path14 from "path";
-import crypto7 from "crypto";
+import path19 from "path";
+import crypto9 from "crypto";
 
 // src/config.ts
 import fs from "node:fs";
@@ -469,12 +469,14 @@ function choose(candidates, msg) {
 var bindingKey = (sender, msg) => `${sender}\x00${msg.repo ?? ""}\x00${msg.branch ?? ""}`;
 
 // src/uistate.ts
-import fs3 from "node:fs";
+import fs4 from "node:fs";
 import path5 from "node:path";
 
 // src/config.ts
+import fs3 from "node:fs";
 import os3 from "node:os";
 import path4 from "node:path";
+import { execFileSync as execFileSync2 } from "node:child_process";
 var ROOT2 = process.env.CROSSTALK_HOME ?? path4.join(os3.homedir(), ".claude", "crosstalk");
 var P2 = {
   root: ROOT2,
@@ -492,38 +494,99 @@ var P2 = {
   daemonLock: path4.join(ROOT2, "daemon.lock"),
   log: path4.join(ROOT2, "daemon.log")
 };
+function ensureRoot2() {
+  fs3.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+}
+function readJson2(file, fallback) {
+  try {
+    return JSON.parse(fs3.readFileSync(file, "utf8"));
+  } catch {
+    return fallback;
+  }
+}
+function writeJson2(file, value) {
+  ensureRoot2();
+  const tmp = `${file}.tmp`;
+  fs3.writeFileSync(tmp, JSON.stringify(value, null, 2), { mode: 384 });
+  fs3.renameSync(tmp, file);
+}
+var KEYCHAIN_SERVICE2 = "crosstalk-identity";
+var keychain2 = {
+  available: () => process.platform === "darwin",
+  read() {
+    try {
+      const out = execFileSync2("security", ["find-generic-password", "-a", "crosstalk", "-s", KEYCHAIN_SERVICE2, "-w"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      return out ? JSON.parse(Buffer.from(out, "base64").toString("utf8")) : null;
+    } catch {
+      return null;
+    }
+  },
+  write(id) {
+    execFileSync2("security", [
+      "add-generic-password",
+      "-a",
+      "crosstalk",
+      "-s",
+      KEYCHAIN_SERVICE2,
+      "-w",
+      Buffer.from(JSON.stringify(id), "utf8").toString("base64"),
+      "-U"
+    ], { stdio: ["ignore", "ignore", "ignore"] });
+  },
+  clear() {
+    try {
+      execFileSync2("security", ["delete-generic-password", "-a", "crosstalk", "-s", KEYCHAIN_SERVICE2], {
+        stdio: "ignore"
+      });
+    } catch {}
+  }
+};
+var loadIdentity2 = () => {
+  const onDisk = readJson2(P2.identity, null);
+  if (onDisk?.storage === "keychain") {
+    const full = keychain2.read();
+    if (full)
+      return full;
+    return null;
+  }
+  return onDisk;
+};
+var loadPeers2 = () => readJson2(P2.peers, {});
+var savePeers = (peers) => writeJson2(P2.peers, peers);
 
 // src/uistate.ts
 var FINAL = new Set(["answered", "handed", "muted"]);
 var file = () => path5.join(P2.root, "ui.json");
 var lockDir = () => path5.join(P2.root, "ui.lock");
+var markers = () => path5.join(P2.root, "ui-mod");
+var safe = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
 var WEEK = 7 * 24 * 60 * 60 * 1000;
 function read() {
   try {
-    const f = JSON.parse(fs3.readFileSync(file(), "utf8"));
+    const f = JSON.parse(fs4.readFileSync(file(), "utf8"));
     if (f && f.v === 1 && f.items && typeof f.items === "object")
       return f;
   } catch {}
   return { v: 1, items: {} };
 }
 function write(f) {
-  fs3.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  fs4.mkdirSync(P2.root, { recursive: true, mode: 448 });
   const tmp = `${file()}.${process.pid}.tmp`;
-  fs3.writeFileSync(tmp, JSON.stringify(f, null, 2), { mode: 384 });
-  fs3.renameSync(tmp, file());
+  fs4.writeFileSync(tmp, JSON.stringify(f, null, 2), { mode: 384 });
+  fs4.renameSync(tmp, file());
 }
 var sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 function withStore(fn) {
-  fs3.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  fs4.mkdirSync(P2.root, { recursive: true, mode: 448 });
   let held = false;
   for (let i = 0;i < 200 && !held; i++) {
     try {
-      fs3.mkdirSync(lockDir());
+      fs4.mkdirSync(lockDir());
       held = true;
     } catch {
       try {
-        if (Date.now() - fs3.statSync(lockDir()).mtimeMs > 1e4)
-          fs3.rmdirSync(lockDir());
+        if (Date.now() - fs4.statSync(lockDir()).mtimeMs > 1e4)
+          fs4.rmdirSync(lockDir());
       } catch {}
       sleepSync(10);
     }
@@ -542,7 +605,7 @@ function withStore(fn) {
   } finally {
     if (held)
       try {
-        fs3.rmdirSync(lockDir());
+        fs4.rmdirSync(lockDir());
       } catch {}
   }
 }
@@ -614,6 +677,13 @@ function openFor(items, sessionId) {
   return Object.values(items).filter((i) => i.sessionId === sessionId && !FINAL.has(i.state)).sort((a, b) => a.createdAt - b.createdAt);
 }
 var MARKER_MS = 10 * 60 * 1000;
+function modActive(sessionId, now = Date.now()) {
+  try {
+    return now - fs4.statSync(path5.join(markers(), safe(sessionId))).mtimeMs < MARKER_MS;
+  } catch {
+    return false;
+  }
+}
 
 // src/trust.ts
 import path6 from "node:path";
@@ -650,7 +720,7 @@ function triage(level, intent, kind, receiverStatus, muted = false) {
 }
 
 // src/trust.ts
-import fs4 from "node:fs";
+import fs5 from "node:fs";
 import path7 from "node:path";
 var LEVELS2 = ["mute", "notify", "ask", "handoff", "deliver"];
 var rank2 = (l) => LEVELS2.indexOf(l);
@@ -667,7 +737,7 @@ var DEFAULT_TRUST = {
 var ROOM_DEFAULT = "notify";
 function load() {
   try {
-    const raw = JSON.parse(fs4.readFileSync(FILE2, "utf8"));
+    const raw = JSON.parse(fs5.readFileSync(FILE2, "utf8"));
     return {
       rooms: raw.rooms ?? {},
       people: raw.people ?? {},
@@ -679,10 +749,10 @@ function load() {
   }
 }
 function save(t) {
-  fs4.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+  fs5.mkdirSync(ROOT2, { recursive: true, mode: 448 });
   const tmp = `${FILE2}.tmp`;
-  fs4.writeFileSync(tmp, JSON.stringify(t, null, 2), { mode: 384 });
-  fs4.renameSync(tmp, FILE2);
+  fs5.writeFileSync(tmp, JSON.stringify(t, null, 2), { mode: 384 });
+  fs5.renameSync(tmp, FILE2);
 }
 function levelFor(person, ctx, t = load()) {
   const pinned = t.people[person];
@@ -711,22 +781,22 @@ function isMuted(person, ctx, t = load(), now = Date.now()) {
 }
 
 // src/outbound.ts
-import fs5 from "node:fs";
+import fs6 from "node:fs";
 import path8 from "node:path";
 var FILE3 = path8.join(ROOT2, "outbound.json");
 var WINDOW_MS = 60 * 60000;
 var UNPROMPTED_PER_HOUR = Number(process.env.CROSSTALK_UNPROMPTED_PER_HOUR ?? 5);
 var read2 = () => {
   try {
-    return JSON.parse(fs5.readFileSync(FILE3, "utf8"));
+    return JSON.parse(fs6.readFileSync(FILE3, "utf8"));
   } catch {
     return {};
   }
 };
 var write2 = (l) => {
   try {
-    fs5.mkdirSync(ROOT2, { recursive: true, mode: 448 });
-    fs5.writeFileSync(FILE3, JSON.stringify(l), { mode: 384 });
+    fs6.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+    fs6.writeFileSync(FILE3, JSON.stringify(l), { mode: 384 });
   } catch {}
 };
 function spend(peer, now = Date.now()) {
@@ -741,7 +811,7 @@ function spend(peer, now = Date.now()) {
 }
 
 // src/decisions.ts
-import fs6 from "node:fs";
+import fs7 from "node:fs";
 import path9 from "node:path";
 var HEADER = `# Decisions
 
@@ -749,21 +819,21 @@ Appended by crosstalk when either side marks something settled. Newest last.
 `;
 function appendDecision(repoRoot, d, file = "DECISIONS.md") {
   const target = path9.join(repoRoot, file);
-  if (!fs6.existsSync(target))
-    fs6.writeFileSync(target, HEADER);
+  if (!fs7.existsSync(target))
+    fs7.writeFileSync(target, HEADER);
   const when = new Date(d.ts).toISOString().replace("T", " ").slice(0, 16);
   const who = d.session ? `${d.by}/${d.session}` : d.by;
   const lines = [``, `## ${d.text}`, ``, `- ${when} \u00b7 ${who}`];
   if (d.rationale)
     lines.push(`- ${d.rationale}`);
-  fs6.appendFileSync(target, lines.join(`
+  fs7.appendFileSync(target, lines.join(`
 `) + `
 `);
   return target;
 }
 
 // src/usage.ts
-import fs7 from "node:fs";
+import fs8 from "node:fs";
 import path10 from "node:path";
 var FILE4 = path10.join(ROOT2, "usage.json");
 var empty = () => ({
@@ -777,15 +847,15 @@ var empty = () => ({
 });
 function load2() {
   try {
-    return JSON.parse(fs7.readFileSync(FILE4, "utf8"));
+    return JSON.parse(fs8.readFileSync(FILE4, "utf8"));
   } catch {
     return {};
   }
 }
 function save2(u) {
   try {
-    fs7.mkdirSync(ROOT2, { recursive: true, mode: 448 });
-    fs7.writeFileSync(FILE4, JSON.stringify(u, null, 2), { mode: 384 });
+    fs8.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+    fs8.writeFileSync(FILE4, JSON.stringify(u, null, 2), { mode: 384 });
   } catch {}
 }
 function record(peer, direction, chars, delivered = false) {
@@ -826,14 +896,14 @@ function summarise2(u = load2()) {
 }
 
 // src/rooms.ts
-import fs8 from "node:fs";
+import fs9 from "node:fs";
 import path11 from "node:path";
 import crypto4 from "node:crypto";
 var FILE5 = path11.join(ROOT2, "rooms.json");
 var isRoomRecord = (v) => !!v && typeof v === "object" && typeof v.id === "string" && typeof v.name === "string" && typeof v.members === "object";
 var load3 = () => {
   try {
-    const raw = JSON.parse(fs8.readFileSync(FILE5, "utf8"));
+    const raw = JSON.parse(fs9.readFileSync(FILE5, "utf8"));
     const out = {};
     for (const [k, v] of Object.entries(raw))
       if (isRoomRecord(v))
@@ -844,10 +914,10 @@ var load3 = () => {
   }
 };
 function save3(r) {
-  fs8.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+  fs9.mkdirSync(ROOT2, { recursive: true, mode: 448 });
   const tmp = `${FILE5}.tmp`;
-  fs8.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 384 });
-  fs8.renameSync(tmp, FILE5);
+  fs9.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 384 });
+  fs9.renameSync(tmp, FILE5);
 }
 var newRoomId = () => crypto4.randomBytes(8).toString("hex");
 var newRoomKey = () => crypto4.randomBytes(32).toString("base64");
@@ -872,14 +942,14 @@ function upsert2(room, state = load3()) {
 }
 
 // src/facts.ts
-import fs9 from "node:fs";
+import fs10 from "node:fs";
 import path12 from "node:path";
 import crypto5 from "node:crypto";
 var FILE6 = path12.join(ROOT2, "facts.json");
 var newFactId = () => "f_" + crypto5.randomBytes(4).toString("hex");
 function load4() {
   try {
-    const raw = JSON.parse(fs9.readFileSync(FILE6, "utf8"));
+    const raw = JSON.parse(fs10.readFileSync(FILE6, "utf8"));
     const out = {};
     for (const [room, facts] of Object.entries(raw))
       if (Array.isArray(facts))
@@ -890,10 +960,10 @@ function load4() {
   }
 }
 function save4(s) {
-  fs9.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+  fs10.mkdirSync(ROOT2, { recursive: true, mode: 448 });
   const tmp = `${FILE6}.tmp`;
-  fs9.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
-  fs9.renameSync(tmp, FILE6);
+  fs10.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs10.renameSync(tmp, FILE6);
 }
 var liveFacts = (room, s = load4()) => (s[room] ?? []).filter((f) => !f.supersededBy);
 var lastAffirmed = (f) => Math.max(f.at, ...f.confirmed.map((c) => c.at), 0);
@@ -983,14 +1053,14 @@ function digest(rooms, cwd, s = load4(), maxBytes = 2000) {
 }
 
 // src/tasks.ts
-import fs10 from "node:fs";
+import fs11 from "node:fs";
 import path13 from "node:path";
 import crypto6 from "node:crypto";
 var FILE7 = path13.join(ROOT2, "tasks.json");
 var newTaskId = () => "t_" + crypto6.randomBytes(4).toString("hex");
 function load5() {
   try {
-    const raw = JSON.parse(fs10.readFileSync(FILE7, "utf8"));
+    const raw = JSON.parse(fs11.readFileSync(FILE7, "utf8"));
     const out = {};
     for (const [room, list] of Object.entries(raw))
       if (Array.isArray(list))
@@ -1001,10 +1071,10 @@ function load5() {
   }
 }
 function save5(s) {
-  fs10.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+  fs11.mkdirSync(ROOT2, { recursive: true, mode: 448 });
   const tmp = `${FILE7}.tmp`;
-  fs10.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
-  fs10.renameSync(tmp, FILE7);
+  fs11.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs11.renameSync(tmp, FILE7);
 }
 var openTasks = (room, s = load5()) => (s[room] ?? []).filter((t) => t.state !== "done");
 function apply2(room, op, s = load5()) {
@@ -1086,6 +1156,1120 @@ function digest2(who, rooms, s = load5()) {
     `</crosstalk-tasks>`
   ].join(`
 `);
+}
+
+// src/repotrust/index.ts
+import fs15 from "node:fs";
+import path18 from "node:path";
+
+// src/crypto.ts
+import crypto7 from "node:crypto";
+var un643 = (s) => Buffer.from(s, "base64");
+function fingerprint2(edPubB64) {
+  const h = crypto7.createHash("sha256").update(un643(edPubB64)).digest("hex");
+  return h.slice(0, 16).match(/.{4}/g).join("-");
+}
+var SCRYPT2 = { N: 32768, r: 8, p: 1, maxmem: 256 * 1024 * 1024 };
+
+// src/net.ts
+import os4 from "node:os";
+import { execFileSync as execFileSync3 } from "node:child_process";
+function machineName() {
+  const clean = (s) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24);
+  if (process.platform === "darwin") {
+    try {
+      const name = execFileSync3("scutil", ["--get", "ComputerName"], {
+        encoding: "utf8",
+        timeout: 2000
+      });
+      const c = clean(name).replace(/^[a-z]+-?s-/, "");
+      if (c)
+        return c;
+    } catch {}
+  }
+  return clean(os4.hostname().split(".")[0]) || "machine";
+}
+
+// src/uistate.ts
+import fs12 from "node:fs";
+import path14 from "node:path";
+var FINAL2 = new Set(["answered", "handed", "muted"]);
+var file2 = () => path14.join(P2.root, "ui.json");
+var lockDir2 = () => path14.join(P2.root, "ui.lock");
+var WEEK2 = 7 * 24 * 60 * 60 * 1000;
+function read3() {
+  try {
+    const f = JSON.parse(fs12.readFileSync(file2(), "utf8"));
+    if (f && f.v === 1 && f.items && typeof f.items === "object")
+      return f;
+  } catch {}
+  return { v: 1, items: {} };
+}
+function write3(f) {
+  fs12.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  const tmp = `${file2()}.${process.pid}.tmp`;
+  fs12.writeFileSync(tmp, JSON.stringify(f, null, 2), { mode: 384 });
+  fs12.renameSync(tmp, file2());
+}
+var sleepSync2 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function withStore2(fn) {
+  fs12.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  let held = false;
+  for (let i = 0;i < 200 && !held; i++) {
+    try {
+      fs12.mkdirSync(lockDir2());
+      held = true;
+    } catch {
+      try {
+        if (Date.now() - fs12.statSync(lockDir2()).mtimeMs > 1e4)
+          fs12.rmdirSync(lockDir2());
+      } catch {}
+      sleepSync2(10);
+    }
+  }
+  try {
+    const f = read3();
+    const was = JSON.stringify(f);
+    const now = Date.now();
+    const out = fn(f.items, now);
+    for (const [id, it] of Object.entries(f.items))
+      if (FINAL2.has(it.state) && now - it.updatedAt > WEEK2 || now - it.updatedAt > 4 * WEEK2)
+        delete f.items[id];
+    if (JSON.stringify(f) !== was)
+      write3(f);
+    return out;
+  } finally {
+    if (held)
+      try {
+        fs12.rmdirSync(lockDir2());
+      } catch {}
+  }
+}
+function upsert3(items, it, now) {
+  const before = items[it.id];
+  if (!before)
+    return items[it.id] = { ...it, state: "pending", createdAt: now, updatedAt: now };
+  if (FINAL2.has(before.state))
+    return before;
+  const moved = before.sessionId !== it.sessionId;
+  items[it.id] = {
+    ...before,
+    ...it,
+    state: before.state,
+    raisedAt: moved ? undefined : before.raisedAt,
+    createdAt: before.createdAt,
+    updatedAt: moved ? now : before.updatedAt
+  };
+  return items[it.id];
+}
+function settle2(items, id, state, now) {
+  const it = items[id];
+  if (it && !FINAL2.has(it.state))
+    items[id] = { ...it, state, updatedAt: now };
+}
+var MARKER_MS2 = 10 * 60 * 1000;
+
+// src/repotrust/decide.ts
+var questionId = (login, machine, fp) => `team:${login}/${machine}/${fp}`;
+var memberKey = (login, machine) => `${login}/${machine}`;
+var clone = (v) => JSON.parse(JSON.stringify(v));
+var asMachine = (s, signer) => ({
+  fingerprint: s.fingerprint,
+  edPub: s.edPub,
+  xPub: s.xPub,
+  created: s.created,
+  signer
+});
+var asMember = (login, machine, m) => ({
+  login,
+  machine,
+  fingerprint: m.fingerprint,
+  edPub: m.edPub,
+  xPub: m.xPub
+});
+function decide(input) {
+  const pins = clone(input.pins);
+  const members = {};
+  const questions = [];
+  const revoked = [];
+  const ignored = [];
+  const firstSight = [];
+  const elsewhere = input.elsewhere ?? new Set;
+  const logins = new Set([...input.seen.map((s) => s.login), ...Object.values(input.members).map((m) => m.login)]);
+  for (const login of logins) {
+    const ki = input.keys[login];
+    const prevMembers = Object.values(input.members).filter((m) => m.login === login);
+    if (!ki) {
+      for (const m of prevMembers)
+        members[memberKey(login, m.machine)] = m;
+      continue;
+    }
+    let pin = pins[login];
+    const first = !pin;
+    if (!pin) {
+      pin = pins[login] = { keys: [...ki.keys], machines: {}, revoked: [], rejected: [] };
+      firstSight.push(login);
+    }
+    pin.revoked ??= [];
+    pin.rejected ??= [];
+    if (ki.fresh) {
+      const now = new Set(ki.keys);
+      pin.keys = pin.keys.filter((k) => now.has(k));
+      for (const [machine, m] of Object.entries(pin.machines))
+        if (!now.has(m.signer)) {
+          delete pin.machines[machine];
+          if (!pin.revoked.includes(m.fingerprint))
+            pin.revoked.push(m.fingerprint);
+          revoked.push({ login, machine, fingerprint: m.fingerprint, why: "the SSH key that vouched for it was removed from their GitHub account" });
+        }
+    }
+    const keepOld = new Set;
+    const present = new Set;
+    const seen = input.seen.filter((s) => s.login === login).sort((a, b) => b.statement.created - a.statement.created);
+    for (const s of seen) {
+      const { machine, statement: st, signer } = s;
+      if (present.has(machine))
+        continue;
+      const pinned = pin.machines[machine];
+      if (pinned && pinned.fingerprint === st.fingerprint) {
+        if (st.created >= pinned.created)
+          pin.machines[machine] = asMachine(st, signer);
+        members[memberKey(login, machine)] = asMember(login, machine, pin.machines[machine]);
+        present.add(machine);
+        continue;
+      }
+      if (pinned && st.created < pinned.created) {
+        ignored.push({ login, machine, why: "older than the statement already trusted" });
+        continue;
+      }
+      if (pin.rejected.includes(st.fingerprint)) {
+        ignored.push({ login, machine, why: "you said not to trust this key" });
+        if (pinned)
+          keepOld.add(machine);
+        continue;
+      }
+      if (first) {
+        pin.machines[machine] = asMachine(st, signer);
+        members[memberKey(login, machine)] = asMember(login, machine, st);
+        present.add(machine);
+        continue;
+      }
+      const id = questionId(login, machine, st.fingerprint);
+      if (pinned) {
+        questions.push({ id, kind: "changed", login, machine, statement: st, signer, was: pinned.fingerprint });
+        keepOld.add(machine);
+        continue;
+      }
+      if (pin.revoked.includes(st.fingerprint)) {
+        questions.push({ id, kind: "returned", login, machine, statement: st, signer });
+        continue;
+      }
+      if (pin.keys.includes(signer)) {
+        pin.machines[machine] = asMachine(st, signer);
+        members[memberKey(login, machine)] = asMember(login, machine, st);
+        present.add(machine);
+        continue;
+      }
+      questions.push({ id, kind: "new-key", login, machine, statement: st, signer });
+    }
+    for (const machine of keepOld) {
+      const m = pin.machines[machine];
+      if (m) {
+        members[memberKey(login, machine)] = asMember(login, machine, m);
+        present.add(machine);
+      }
+    }
+    for (const m of prevMembers) {
+      if (present.has(m.machine))
+        continue;
+      const pinned = pin.machines[m.machine];
+      if (!input.fetchOk) {
+        if (pinned && pinned.fingerprint === m.fingerprint)
+          members[memberKey(login, m.machine)] = m;
+        continue;
+      }
+      if (revoked.some((r) => r.login === login && r.machine === m.machine))
+        continue;
+      if (pinned && pinned.fingerprint === m.fingerprint && !elsewhere.has(`${login}/${m.machine}/${m.fingerprint}`)) {
+        delete pin.machines[m.machine];
+        if (!pin.revoked.includes(m.fingerprint))
+          pin.revoked.push(m.fingerprint);
+      }
+      revoked.push({ login, machine: m.machine, fingerprint: m.fingerprint, why: "its statement was removed from the repository" });
+    }
+  }
+  return { pins, members, questions, revoked, ignored, firstSight };
+}
+function answer(pins, q, trust) {
+  const out = clone(pins);
+  const pin = out[q.login] ??= { keys: [], machines: {}, revoked: [], rejected: [] };
+  pin.revoked ??= [];
+  pin.rejected ??= [];
+  if (trust) {
+    pin.machines[q.machine] = asMachine(q.statement, q.signer);
+    if (!pin.keys.includes(q.signer))
+      pin.keys.push(q.signer);
+    pin.revoked = pin.revoked.filter((f) => f !== q.statement.fingerprint);
+    pin.rejected = pin.rejected.filter((f) => f !== q.statement.fingerprint);
+  } else if (!pin.rejected.includes(q.statement.fingerprint))
+    pin.rejected.push(q.statement.fingerprint);
+  return out;
+}
+
+// src/repotrust/github.ts
+import fs14 from "node:fs";
+import os6 from "node:os";
+import path16 from "node:path";
+
+// src/repotrust/statement.ts
+import crypto8 from "node:crypto";
+import fs13 from "node:fs";
+import os5 from "node:os";
+import path15 from "node:path";
+import { execFile } from "node:child_process";
+var NAMESPACE = "crosstalk-identity";
+var KIND = "crosstalk-identity";
+var isLogin = (s) => typeof s === "string" && /^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,38}$/.test(s);
+var isMachine = (s) => typeof s === "string" && /^[a-z0-9](?:[a-z0-9-]{0,62})$/.test(s);
+var cleanMachine = (s) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63) || "machine";
+function canonical(s) {
+  return JSON.stringify({
+    v: s.v,
+    kind: s.kind,
+    login: s.login,
+    machine: s.machine,
+    fingerprint: s.fingerprint,
+    edPub: s.edPub,
+    xPub: s.xPub,
+    created: s.created
+  });
+}
+var isKey = (b64, type) => {
+  try {
+    return crypto8.createPublicKey({ key: Buffer.from(b64, "base64"), type: "spki", format: "der" }).asymmetricKeyType === type;
+  } catch {
+    return false;
+  }
+};
+function makeStatement(o) {
+  const s = {
+    v: 1,
+    kind: KIND,
+    login: o.login.toLowerCase(),
+    machine: cleanMachine(o.machine),
+    fingerprint: fingerprint2(o.edPub),
+    edPub: o.edPub,
+    xPub: o.xPub,
+    created: o.created ?? Date.now()
+  };
+  const bad = problem(s);
+  if (bad)
+    throw new Error(`cannot make that statement: ${bad}`);
+  return s;
+}
+function problem(s, now = Date.now()) {
+  if (s.v !== 1 || s.kind !== KIND)
+    return "not a crosstalk identity statement";
+  if (!isLogin(s.login))
+    return "the login is not a GitHub login";
+  if (!isMachine(s.machine))
+    return "the machine name is not usable";
+  if (typeof s.edPub !== "string" || !isKey(s.edPub, "ed25519"))
+    return "the identity key is not an Ed25519 key";
+  if (typeof s.xPub !== "string" || !isKey(s.xPub, "x25519"))
+    return "the encryption key is not an X25519 key";
+  if (s.fingerprint !== fingerprint2(s.edPub))
+    return "the fingerprint does not match the key";
+  if (!Number.isSafeInteger(s.created) || s.created <= 0)
+    return "no signing date";
+  if (s.created > now + 24 * 60 * 60 * 1000)
+    return "signed in the future";
+  return null;
+}
+function parse(text) {
+  let s;
+  try {
+    s = JSON.parse(text);
+  } catch {
+    return { ok: false, reason: "not JSON" };
+  }
+  if (!s || typeof s !== "object")
+    return { ok: false, reason: "not an object" };
+  const bad = problem(s);
+  if (bad)
+    return { ok: false, reason: bad };
+  if (canonical(s) !== text)
+    return { ok: false, reason: "not in canonical form" };
+  return { ok: true, statement: s };
+}
+var KEY_TYPES = /^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)$/;
+function normaliseKey(line) {
+  const parts = line.trim().split(/\s+/);
+  if (parts.length < 2)
+    return null;
+  const [type, b64] = parts;
+  if (!KEY_TYPES.test(type) || !/^[A-Za-z0-9+/]+={0,2}$/.test(b64))
+    return null;
+  try {
+    const blob = Buffer.from(b64, "base64");
+    const n = blob.readUInt32BE(0);
+    if (blob.subarray(4, 4 + n).toString("latin1") !== type)
+      return null;
+  } catch {
+    return null;
+  }
+  return `${type} ${b64}`;
+}
+function parseKeys(body) {
+  const out = [];
+  for (const l of body.split(/\r?\n/)) {
+    const k = normaliseKey(l);
+    if (k && !out.includes(k))
+      out.push(k);
+  }
+  return out;
+}
+function allowedSigners(login, keys) {
+  if (!isLogin(login))
+    throw new Error("not a GitHub login");
+  return keys.map(normaliseKey).filter((k) => !!k).map((k) => `${login} namespaces="${NAMESPACE}" ${k}
+`).join("");
+}
+function signerOf(armored) {
+  const m = armored.match(/-----BEGIN SSH SIGNATURE-----([\s\S]*?)-----END SSH SIGNATURE-----/);
+  if (!m)
+    return null;
+  try {
+    const raw = Buffer.from(m[1].replace(/\s+/g, ""), "base64");
+    if (raw.subarray(0, 6).toString("latin1") !== "SSHSIG")
+      return null;
+    let at = 6 + 4;
+    const n = raw.readUInt32BE(at);
+    const blob = raw.subarray(at + 4, at + 4 + n);
+    if (blob.length !== n)
+      return null;
+    const tn = blob.readUInt32BE(0);
+    const type = blob.subarray(4, 4 + tn).toString("latin1");
+    return normaliseKey(`${type} ${blob.toString("base64")}`);
+  } catch {
+    return null;
+  }
+}
+function sshKeygen() {
+  const bin = process.env.CROSSTALK_SSH_KEYGEN ?? "ssh-keygen";
+  if (bin.includes("/"))
+    return fs13.existsSync(bin) ? bin : null;
+  for (const dir of (process.env.PATH ?? "").split(path15.delimiter)) {
+    const p = path15.join(dir, bin);
+    try {
+      fs13.accessSync(p, fs13.constants.X_OK);
+      return p;
+    } catch {}
+  }
+  return null;
+}
+function quietEnv() {
+  const env = { ...process.env, SSH_ASKPASS_REQUIRE: "never", GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" };
+  delete env.SSH_ASKPASS;
+  delete env.DISPLAY;
+  return env;
+}
+function run(file, args, o = {}) {
+  return new Promise((resolve) => {
+    const child = execFile(file, args, { cwd: o.cwd, env: o.env ?? quietEnv(), timeout: o.timeoutMs ?? 15000, maxBuffer: 4 << 20, encoding: "utf8" }, (err, stdout, stderr) => {
+      const code = err ? typeof err.code === "number" ? err.code : 1 : 0;
+      resolve({ code, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
+    });
+    child.stdin?.end(o.input ?? "");
+  });
+}
+var tmpDir = () => fs13.mkdtempSync(path15.join(os5.tmpdir(), "crosstalk-sig-"));
+async function sign(s, key) {
+  const bin = sshKeygen();
+  if (!bin)
+    return { ok: false, reason: "ssh-keygen is not installed" };
+  const r = await run(bin, ["-Y", "sign", "-n", NAMESPACE, "-f", key.path], { input: canonical(s) });
+  if (r.code !== 0 || !r.stdout.includes("BEGIN SSH SIGNATURE"))
+    return { ok: false, reason: `ssh-keygen could not sign: ${r.stderr.trim().split(`
+`).pop() || `exit ${r.code}`}` };
+  return { ok: true, sig: r.stdout };
+}
+async function verify(o) {
+  const p = parse(o.text);
+  if (!p.ok)
+    return p;
+  const s = p.statement;
+  if (s.login !== o.login)
+    return { ok: false, reason: `signed for ${s.login}, found under ${o.login}` };
+  if (s.machine !== o.machine)
+    return { ok: false, reason: `names machine ${s.machine}, found under ${o.machine}` };
+  const bad = problem(s, o.now);
+  if (bad)
+    return { ok: false, reason: bad };
+  const signers = allowedSigners(o.login, o.keys);
+  if (!signers)
+    return { ok: false, reason: `${o.login} lists no SSH keys on GitHub` };
+  const signer = signerOf(o.sig);
+  if (!signer)
+    return { ok: false, reason: "not an SSH signature" };
+  const bin = sshKeygen();
+  if (!bin)
+    return { ok: false, reason: "ssh-keygen is not installed" };
+  const dir = tmpDir();
+  try {
+    const allowed = path15.join(dir, "allowed_signers");
+    const sigFile = path15.join(dir, "statement.sig");
+    fs13.writeFileSync(allowed, signers, { mode: 384 });
+    fs13.writeFileSync(sigFile, o.sig, { mode: 384 });
+    const r = await run(bin, ["-Y", "verify", "-f", allowed, "-I", o.login, "-n", NAMESPACE, "-s", sigFile], {
+      input: o.text
+    });
+    if (r.code !== 0)
+      return { ok: false, reason: "the signature is not from a key on their GitHub account" };
+    if (!o.keys.map(normaliseKey).includes(signer))
+      return { ok: false, reason: "signed by a key that is not on their account" };
+    return { ok: true, statement: s, signer };
+  } finally {
+    fs13.rmSync(dir, { recursive: true, force: true });
+  }
+}
+var keyHint = (k) => {
+  const [type, b64] = k.split(" ");
+  const fp = crypto8.createHash("sha256").update(Buffer.from(b64 ?? "", "base64")).digest("base64").replace(/=+$/, "");
+  return `${type?.replace(/^ssh-/, "")} SHA256:${fp.slice(0, 12)}\u2026`;
+};
+
+// src/repotrust/github.ts
+var githubBase = () => (process.env.CROSSTALK_GITHUB_URL ?? "https://github.com").replace(/\/+$/, "");
+var dir = () => path16.join(ROOT2, "repotrust", "keys");
+var freshMs = () => Number(process.env.CROSSTALK_KEYS_MIN_MS ?? 10 * 60 * 1000);
+var BUCKET = { max: 30, perMs: 10 * 60 * 1000 };
+var recent = [];
+function allowFetch(now) {
+  while (recent.length && now - recent[0] > BUCKET.perMs)
+    recent.shift();
+  if (recent.length >= BUCKET.max)
+    return false;
+  recent.push(now);
+  return true;
+}
+function cached(login) {
+  try {
+    const k = JSON.parse(fs14.readFileSync(path16.join(dir(), `${login}.json`), "utf8"));
+    return k && k.login === login && Array.isArray(k.keys) ? { ...k, keys: k.keys.map(normaliseKey).filter((x) => !!x) } : null;
+  } catch {
+    return null;
+  }
+}
+function store(k) {
+  fs14.mkdirSync(dir(), { recursive: true, mode: 448 });
+  const f = path16.join(dir(), `${k.login}.json`);
+  fs14.writeFileSync(`${f}.tmp`, JSON.stringify(k, null, 2), { mode: 384 });
+  fs14.renameSync(`${f}.tmp`, f);
+}
+async function keysFor(login, o = {}) {
+  if (!isLogin(login))
+    return { set: null, fresh: false, error: "not a GitHub login" };
+  const now = o.now ?? Date.now();
+  const prev = cached(login);
+  if (prev && !o.force && now - prev.fetchedAt < freshMs())
+    return { set: prev, fresh: true };
+  if (prev && now - prev.triedAt < Math.min(freshMs(), 60000) && !o.force)
+    return { set: prev, fresh: false, error: "asked too recently" };
+  if (!allowFetch(now))
+    return { set: prev, fresh: false, error: "rate limited" };
+  const tried = prev ? { ...prev, triedAt: now } : { login, keys: [], fetchedAt: 0, triedAt: now };
+  try {
+    const res = await fetch(`${githubBase()}/${login}.keys`, {
+      headers: { ...prev?.etag ? { "if-none-match": prev.etag } : {}, "user-agent": "crosstalk" },
+      signal: AbortSignal.timeout(1e4),
+      redirect: "follow"
+    });
+    if (res.status === 304 && prev) {
+      const k = { ...prev, fetchedAt: now, triedAt: now };
+      store(k);
+      return { set: k, fresh: true };
+    }
+    if (res.status === 404) {
+      const k = { login, keys: [], fetchedAt: now, triedAt: now, missing: true };
+      store(k);
+      return { set: k, fresh: true };
+    }
+    if (!res.ok) {
+      store(tried);
+      return { set: prev, fresh: false, error: `GitHub answered ${res.status}` };
+    }
+    const body = await res.text();
+    if (body.length > 256 * 1024)
+      throw new Error("key list too large");
+    const k = { login, keys: parseKeys(body), etag: res.headers.get("etag") ?? undefined, fetchedAt: now, triedAt: now };
+    store(k);
+    return { set: k, fresh: true };
+  } catch (e) {
+    store(tried);
+    return { set: prev, fresh: false, error: `could not reach GitHub: ${e.message}` };
+  }
+}
+var loginMemo = null;
+async function ownLogin(cwd) {
+  const env = process.env.CROSSTALK_GITHUB_LOGIN?.trim().toLowerCase();
+  if (env)
+    return isLogin(env) ? env : null;
+  if (loginMemo && Date.now() - loginMemo.at < 60 * 60 * 1000)
+    return loginMemo.login;
+  let found = null;
+  for (const keyName of ["crosstalk.login", "github.user"]) {
+    const r = await run("git", ["config", "--get", keyName], { cwd, timeoutMs: 3000 });
+    const v = r.stdout.trim().toLowerCase();
+    if (r.code === 0 && isLogin(v)) {
+      found = v;
+      break;
+    }
+  }
+  if (!found) {
+    const r = await run("gh", ["api", "user", "--jq", ".login"], { cwd, timeoutMs: 8000 });
+    const v = r.stdout.trim().toLowerCase();
+    if (r.code === 0 && isLogin(v))
+      found = v;
+  }
+  loginMemo = { login: found, at: Date.now() };
+  return found;
+}
+async function collaborators(slug, cwd) {
+  if (process.env.CROSSTALK_GITHUB_URL || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(slug))
+    return null;
+  const r = await run("gh", ["api", "--paginate", `repos/${slug}/collaborators?per_page=100`, "--jq", ".[] | select(.permissions.push) | .login"], {
+    cwd,
+    timeoutMs: 15000
+  });
+  if (r.code !== 0)
+    return null;
+  return new Set(r.stdout.split(`
+`).map((l) => l.trim().toLowerCase()).filter(isLogin));
+}
+async function signingKey(accountKeys, scratch) {
+  const bin = sshKeygen();
+  if (!bin)
+    return { key: null, why: "ssh-keygen is not installed" };
+  if (!accountKeys.length)
+    return { key: null, why: "your GitHub account lists no SSH keys" };
+  const onAccount = new Set(accountKeys);
+  if (process.env.SSH_AUTH_SOCK) {
+    const r = await run("ssh-add", ["-L"], { timeoutMs: 5000 });
+    if (r.code === 0)
+      for (const line of r.stdout.split(`
+`)) {
+        const k = normaliseKey(line);
+        if (!k || !onAccount.has(k))
+          continue;
+        fs14.mkdirSync(scratch, { recursive: true, mode: 448 });
+        const pub = path16.join(scratch, "agent-key.pub");
+        fs14.writeFileSync(pub, k + `
+`, { mode: 384 });
+        return { key: { path: pub, publicKey: k, agent: true } };
+      }
+  }
+  const candidates = [
+    process.env.CROSSTALK_SSH_KEY,
+    ...["id_ed25519", "id_ecdsa", "id_rsa", "id_ed25519_sk", "id_ecdsa_sk"].map((n) => path16.join(os6.homedir(), ".ssh", n))
+  ].filter((p) => !!p);
+  let sawOne = false;
+  for (const priv of candidates) {
+    let k = null;
+    try {
+      k = normaliseKey(fs14.readFileSync(`${priv}.pub`, "utf8"));
+    } catch {
+      continue;
+    }
+    if (!k || !fs14.existsSync(priv))
+      continue;
+    if (!onAccount.has(k))
+      continue;
+    sawOne = true;
+    const probe = await run(bin, ["-y", "-P", "", "-f", priv], { timeoutMs: 5000 });
+    if (probe.code === 0)
+      return { key: { path: priv, publicKey: k, agent: false } };
+  }
+  return {
+    key: null,
+    why: sawOne ? "your SSH key needs a passphrase and is not in ssh-agent (ssh-add it)" : "none of your SSH keys here is on your GitHub account"
+  };
+}
+
+// src/repotrust/gitref.ts
+import path17 from "node:path";
+var LOCAL_PREFIX = "refs/crosstalk/keys/";
+var FETCHED_PREFIX = "refs/crosstalk/remote/keys/";
+var REFSPEC = `+${LOCAL_PREFIX}*:${FETCHED_PREFIX}*`;
+var MAX_BLOB = 16 * 1024;
+var git2 = (cwd, args, o = {}) => run("git", args, { cwd, input: o.input, env: o.env ?? quietEnv(), timeoutMs: o.timeoutMs ?? 15000 });
+function githubSlug(url) {
+  const m = url.match(/^(?:ssh:\/\/)?git@github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i) ?? url.match(/^(?:https?|git):\/\/(?:[^@/]+@)?github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i);
+  return m ? `${m[1]}/${m[2]}`.toLowerCase() : null;
+}
+async function findRepo(cwd) {
+  if (!cwd)
+    return null;
+  const top = await git2(cwd, ["rev-parse", "--show-toplevel"], { timeoutMs: 5000 });
+  if (top.code !== 0)
+    return null;
+  const dir = top.stdout.trim();
+  const list = await git2(dir, ["remote"], { timeoutMs: 5000 });
+  const remotes = list.stdout.split(`
+`).map((s) => s.trim()).filter(Boolean);
+  remotes.sort((a, b) => a === "origin" ? -1 : b === "origin" ? 1 : 0);
+  for (const remote of remotes) {
+    const u = await git2(dir, ["remote", "get-url", remote], { timeoutMs: 5000 });
+    const url = u.stdout.trim();
+    if (u.code !== 0 || !url)
+      continue;
+    const slug = githubSlug(url) ?? (process.env.CROSSTALK_REPOTRUST_ANY_REMOTE === "1" ? `local/${path17.basename(url).replace(/\.git$/, "").toLowerCase()}` : null);
+    if (slug)
+      return { top: dir, remote, url, slug };
+  }
+  return null;
+}
+async function ensureRefspec(r) {
+  const have = await git2(r.top, ["config", "--get-all", `remote.${r.remote}.fetch`], { timeoutMs: 5000 });
+  if (have.stdout.split(`
+`).some((l) => l.trim() === REFSPEC))
+    return;
+  await git2(r.top, ["config", "--add", `remote.${r.remote}.fetch`, REFSPEC], { timeoutMs: 5000 });
+}
+async function fetchStatements(r) {
+  const f = await git2(r.top, ["fetch", "--quiet", "--no-tags", "--prune", "--no-write-fetch-head", "--no-recurse-submodules", r.remote, REFSPEC], { timeoutMs: 30000 });
+  return f.code === 0 ? { ok: true } : { ok: false, error: f.stderr.trim().split(`
+`).pop() || `git fetch exited ${f.code}` };
+}
+async function listStatements(r, prefix = FETCHED_PREFIX) {
+  const out = await git2(r.top, ["for-each-ref", "--format=%(refname) %(objectname) %(objecttype)", prefix], { timeoutMs: 1e4 });
+  const found = [];
+  const skipped = [];
+  for (const line of out.stdout.split(`
+`)) {
+    const [ref, oid, type] = line.trim().split(" ");
+    if (!ref)
+      continue;
+    const rest = ref.slice(prefix.length).split("/");
+    const [login, machine] = rest;
+    if (rest.length !== 2 || !isLogin(login) || !isMachine(machine) || type !== "commit") {
+      skipped.push(ref);
+      continue;
+    }
+    const read = async (name) => {
+      const sz = await git2(r.top, ["cat-file", "-s", `${oid}:${name}`], { timeoutMs: 5000 });
+      if (sz.code !== 0 || Number(sz.stdout.trim()) > MAX_BLOB)
+        return null;
+      const b = await git2(r.top, ["cat-file", "blob", `${oid}:${name}`], { timeoutMs: 5000 });
+      return b.code === 0 ? b.stdout : null;
+    };
+    const text = await read("statement.json");
+    const sig = await read("statement.sig");
+    if (text === null || sig === null) {
+      skipped.push(ref);
+      continue;
+    }
+    found.push({ login, machine, text, sig, oid });
+  }
+  return { found, skipped };
+}
+var PLUMBING_ENV = () => ({
+  ...quietEnv(),
+  GIT_AUTHOR_NAME: "crosstalk",
+  GIT_AUTHOR_EMAIL: "crosstalk@localhost",
+  GIT_COMMITTER_NAME: "crosstalk",
+  GIT_COMMITTER_EMAIL: "crosstalk@localhost"
+});
+async function publish(r, login, machine, text, sig) {
+  if (!isLogin(login) || !isMachine(machine))
+    return { ok: false, error: "bad ref name" };
+  const blob = async (s) => (await git2(r.top, ["hash-object", "-w", "--stdin"], { input: s })).stdout.trim();
+  const a = await blob(text);
+  const b = await blob(sig);
+  if (!/^[0-9a-f]{40,64}$/.test(a) || !/^[0-9a-f]{40,64}$/.test(b))
+    return { ok: false, error: "git would not store the statement" };
+  const tree = (await git2(r.top, ["mktree"], { input: `100644 blob ${a}	statement.json
+100644 blob ${b}	statement.sig
+` })).stdout.trim();
+  const commit = await git2(r.top, ["commit-tree", tree, "-m", `crosstalk identity for ${login} on ${machine}`], { env: PLUMBING_ENV() });
+  const oid = commit.stdout.trim();
+  if (commit.code !== 0 || !/^[0-9a-f]{40,64}$/.test(oid))
+    return { ok: false, error: "git would not make the commit" };
+  const ref = `${LOCAL_PREFIX}${login}/${machine}`;
+  await git2(r.top, ["update-ref", ref, oid]);
+  const push = await git2(r.top, ["push", "--quiet", "--no-verify", "--force", r.remote, `${oid}:${ref}`], { timeoutMs: 30000 });
+  if (push.code !== 0)
+    return { ok: false, error: push.stderr.trim().split(`
+`).pop() || `git push exited ${push.code}` };
+  await git2(r.top, ["update-ref", `${FETCHED_PREFIX}${login}/${machine}`, oid]);
+  return { ok: true };
+}
+
+// src/repotrust/index.ts
+var DIR = () => path18.join(ROOT2, "repotrust");
+var FILE8 = () => path18.join(DIR(), "state.json");
+var empty2 = () => ({ v: 1, pins: {}, repos: {}, questions: {}, events: [] });
+function load6() {
+  try {
+    const s = JSON.parse(fs15.readFileSync(FILE8(), "utf8"));
+    if (s && s.v === 1)
+      return { ...empty2(), ...s };
+  } catch {}
+  return empty2();
+}
+function save6(s) {
+  fs15.mkdirSync(DIR(), { recursive: true, mode: 448 });
+  s.events = s.events.slice(-50);
+  const tmp = `${FILE8()}.${process.pid}.tmp`;
+  fs15.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs15.renameSync(tmp, FILE8());
+}
+var event = (s, text) => s.events.push({ at: Date.now(), text });
+var thisMachine = (id) => cleanMachine(process.env.CROSSTALK_MACHINE ?? id.machine ?? machineName());
+var minMs = () => Number(process.env.CROSSTALK_REPOTRUST_MIN_MS ?? 10 * 60 * 1000);
+function applyPeers(s, id, myLogin) {
+  const me = fingerprint2(id.ed.pub);
+  const desired = new Map;
+  for (const r of Object.values(s.repos))
+    for (const m of Object.values(r.members)) {
+      if (m.fingerprint === me)
+        continue;
+      const d = desired.get(m.fingerprint);
+      if (d)
+        d.repos.push(r.slug);
+      else
+        desired.set(m.fingerprint, { m, repos: [r.slug] });
+    }
+  const peers = loadPeers2();
+  const before = JSON.stringify(peers);
+  const added = [];
+  const removed = [];
+  for (const [label, p] of Object.entries(peers)) {
+    if (p.via !== "repo")
+      continue;
+    const d = desired.get(p.fingerprint);
+    if (!d) {
+      delete peers[label];
+      removed.push(label);
+      continue;
+    }
+    peers[label] = { ...p, edPub: d.m.edPub, xPub: d.m.xPub, repos: d.repos.sort() };
+  }
+  const byFp = new Set(Object.values(peers).map((p) => p.fingerprint));
+  const taken = (name) => !!peers[name];
+  const since = (m) => s.pins[m.login]?.machines[m.machine]?.created ?? Number.MAX_SAFE_INTEGER;
+  const order = [...desired].sort(([, a], [, b]) => since(a.m) - since(b.m) || a.m.machine.localeCompare(b.m.machine));
+  for (const [fp, { m, repos }] of order) {
+    if (byFp.has(fp))
+      continue;
+    const own = !!myLogin && m.login === myLogin;
+    let label = own ? `${m.login}-${m.machine}` : m.login;
+    if (taken(label))
+      label = `${m.login}-${m.machine}`;
+    if (taken(label)) {
+      let i = 2;
+      while (taken(`${m.login}-${m.machine}-${i}`))
+        i++;
+      label = `${m.login}-${m.machine}-${i}`;
+    }
+    const p = {
+      label,
+      edPub: m.edPub,
+      xPub: m.xPub,
+      fingerprint: fp,
+      joinedAt: Date.now(),
+      machine: m.machine,
+      via: "repo",
+      person: m.login,
+      repos: repos.sort(),
+      ...own ? { own: true } : {}
+    };
+    peers[label] = p;
+    byFp.add(fp);
+    added.push(label);
+  }
+  if (JSON.stringify(peers) !== before)
+    savePeers(peers);
+  return { added, removed };
+}
+function siblings(label, peers = loadPeers2()) {
+  const p = peers[label];
+  if (!p || p.via !== "repo" || !p.person)
+    return [];
+  return Object.values(peers).filter((o) => o.via === "repo" && o.person === p.person && o.fingerprint !== p.fingerprint).map((o) => o.label);
+}
+var chain = Promise.resolve();
+function sync(cwd, o = {}) {
+  const next = chain.then(() => syncNow(cwd, o)).catch((e) => ({ ok: false, error: e.message }));
+  chain = next;
+  return next;
+}
+async function syncNow(cwd, o) {
+  const log = o.log ?? (() => {});
+  const id = loadIdentity2();
+  if (!id)
+    return { ok: false, skipped: "no crosstalk identity on this machine yet" };
+  const repo = await findRepo(cwd);
+  if (!repo)
+    return { ok: false, skipped: "not in a git repository with a GitHub remote" };
+  let s = load6();
+  const prev = s.repos[repo.slug];
+  if (!o.force && prev?.lastSync && Date.now() - prev.lastSync < minMs())
+    return { ok: true, repo: repo.slug, skipped: "synced recently" };
+  const rs = { slug: repo.slug, top: repo.top, remote: repo.remote, members: prev?.members ?? {} };
+  const me = fingerprint2(id.ed.pub);
+  const machine = thisMachine(id);
+  const login = await ownLogin(repo.top);
+  await ensureRefspec(repo);
+  const fetched = await fetchStatements(repo);
+  if (!fetched.ok) {
+    rs.lastError = `could not fetch from ${repo.remote}: ${fetched.error}`;
+    log(`repotrust ${repo.slug}: ${rs.lastError}`);
+  }
+  const { found, skipped } = await listStatements(repo);
+  const logins = new Set([...found.map((f) => f.login), ...Object.values(rs.members).map((m) => m.login)]);
+  if (login)
+    logins.add(login);
+  const keys = {};
+  for (const l of logins) {
+    const k = await keysFor(l);
+    if (k.set && (k.set.fetchedAt > 0 || k.fresh))
+      keys[l] = { keys: k.set.keys, fresh: k.fresh };
+    if (k.error && !k.fresh)
+      log(`repotrust: keys for ${l}: ${k.error}`);
+  }
+  let signedHere;
+  if (!login)
+    rs.own = "no GitHub login known here, so this machine is not published; the four words still work";
+  else {
+    const mine = keys[login]?.keys ?? [];
+    let signed = s.signed && s.signed.fingerprint === me && s.signed.login === login && s.signed.machine === machine ? s.signed : undefined;
+    if (signed && !(await verify({ login, machine, text: signed.text, sig: signed.sig, keys: mine })).ok)
+      signed = undefined;
+    if (!signed) {
+      const k = await signingKey(mine, path18.join(DIR(), "tmp"));
+      if (!k.key)
+        rs.own = `not published: ${k.why}; the four words still work`;
+      else {
+        const st = makeStatement({ login, machine, edPub: id.ed.pub, xPub: id.x.pub });
+        const r = await sign(st, k.key);
+        if (!r.ok)
+          rs.own = `not published: ${r.reason}; the four words still work`;
+        else
+          signed = { login, machine, fingerprint: me, text: canonical(st), sig: r.sig };
+      }
+    }
+    if (signed) {
+      signedHere = signed;
+      const there = found.find((f) => f.login === login && f.machine === machine);
+      if (there && there.text === signed.text && there.sig === signed.sig) {
+        rs.own = `published as ${login} on ${machine}`;
+        rs.ownPublished = true;
+      } else if (!fetched.ok)
+        rs.own = `signed as ${login} on ${machine}, waiting to reach ${repo.remote}`;
+      else {
+        const p = await publish(repo, login, machine, signed.text, signed.sig);
+        rs.own = p.ok ? `published as ${login} on ${machine}` : `signed, but could not push it: ${p.error}`;
+        rs.ownPublished = p.ok;
+        if (p.ok)
+          log(`repotrust ${repo.slug}: published this machine as ${login}/${machine}`);
+      }
+    }
+  }
+  const seen = [];
+  const invalid = skipped.map((ref) => ({ ref, why: "not a well formed statement" }));
+  for (const f of found) {
+    const ref = `${f.login}/${f.machine}`;
+    const parsed = parse(f.text);
+    if (parsed.ok && parsed.statement.fingerprint === me)
+      continue;
+    if (login && f.login === login && f.machine === machine)
+      continue;
+    const k = keys[f.login];
+    if (!k) {
+      invalid.push({ ref, why: "GitHub's keys for them are not known yet" });
+      continue;
+    }
+    const v = await verify({ login: f.login, machine: f.machine, text: f.text, sig: f.sig, keys: k.keys });
+    if (!v.ok) {
+      invalid.push({ ref, why: v.reason });
+      continue;
+    }
+    seen.push({ login: f.login, machine: f.machine, statement: v.statement, signer: v.signer });
+  }
+  const collab = await collaborators(repo.slug, repo.top);
+  const vetted = collab ? seen.filter((x) => collab.has(x.login) || x.login === login) : seen;
+  for (const x of seen)
+    if (!vetted.includes(x))
+      invalid.push({ ref: `${x.login}/${x.machine}`, why: "GitHub does not list them as a collaborator" });
+  s = load6();
+  if (signedHere)
+    s.signed = signedHere;
+  const elsewhere = new Set;
+  for (const [slug, r] of Object.entries(s.repos))
+    if (slug !== repo.slug)
+      for (const m of Object.values(r.members))
+        elsewhere.add(`${m.login}/${m.machine}/${m.fingerprint}`);
+  const out = decide({ pins: s.pins, members: rs.members, seen: vetted, keys, fetchOk: fetched.ok, elsewhere });
+  s.pins = out.pins;
+  rs.members = out.members;
+  rs.invalid = invalid;
+  rs.lastSync = Date.now();
+  if (fetched.ok)
+    rs.lastError = undefined;
+  s.repos[repo.slug] = rs;
+  const raised = new Set(out.questions.map((q) => q.id));
+  for (const q of out.questions)
+    if (!s.questions[q.id]) {
+      s.questions[q.id] = { ...q, repo: repo.slug, at: Date.now() };
+      event(s, questionText(q));
+      log(`repotrust ${repo.slug}: question ${q.id}`);
+    }
+  for (const [qid, q] of Object.entries(s.questions))
+    if (q.repo === repo.slug && !raised.has(qid) && fetched.ok)
+      delete s.questions[qid];
+  for (const l of out.firstSight)
+    if (l !== login)
+      event(s, `${l} is trusted through ${repo.slug}`);
+  for (const r of out.revoked)
+    event(s, `${r.login} on ${r.machine} is no longer trusted: ${r.why}`);
+  save6(s);
+  const peers = applyPeers(s, id, login);
+  if (peers.added.length)
+    log(`repotrust ${repo.slug}: trusted ${peers.added.join(", ")}`);
+  if (peers.removed.length)
+    log(`repotrust ${repo.slug}: no longer trusted ${peers.removed.join(", ")}`);
+  return {
+    ok: true,
+    repo: repo.slug,
+    trusted: Object.keys(rs.members),
+    questions: out.questions.map((q) => q.id),
+    revoked: out.revoked.map((r) => `${r.login}/${r.machine}`),
+    own: rs.own
+  };
+}
+function questionText(q) {
+  const fp = q.statement.fingerprint;
+  if (q.kind === "changed")
+    return `${q.login}'s crosstalk key on ${q.machine} changed (was ${q.was}, now ${fp}). Until you say so, the old key stays trusted and the new one is not.`;
+  if (q.kind === "returned")
+    return `${q.login}'s crosstalk key on ${q.machine} (${fp}) was revoked earlier and has been published again.`;
+  return `${q.login} has a new machine, ${q.machine} (${fp}), vouched for by an SSH key that is new on their GitHub account (${keyHint(q.signer)}).`;
+}
+var TRUST = "Trust it";
+var DONT = "Don't trust it";
+var openQuestions = (s = load6()) => Object.values(s.questions).sort((a, b) => a.at - b.at);
+function findQuestion(s, ref) {
+  if (s.questions[ref])
+    return s.questions[ref];
+  const r = ref.trim().toLowerCase().replace(/^@/, "");
+  const hits = openQuestions(s).filter((q) => q.login === r || `${q.login}/${q.machine}` === r);
+  if (hits.length === 1)
+    return hits[0];
+  if (!hits.length)
+    return { error: `no open question about ${ref}` };
+  return { error: `more than one question about ${ref}; use one of: ${hits.map((q) => q.id).join(", ")}` };
+}
+function answerQuestion(ref, trust) {
+  const id = loadIdentity2();
+  if (!id)
+    return { ok: false, error: "no crosstalk identity on this machine" };
+  const s = load6();
+  const q = findQuestion(s, ref);
+  if ("error" in q)
+    return { ok: false, error: q.error };
+  s.pins = answer(s.pins, q, trust);
+  delete s.questions[q.id];
+  const rs = s.repos[q.repo];
+  if (trust && rs)
+    rs.members[memberKey(q.login, q.machine)] = {
+      login: q.login,
+      machine: q.machine,
+      fingerprint: q.statement.fingerprint,
+      edPub: q.statement.edPub,
+      xPub: q.statement.xPub
+    };
+  event(s, `you ${trust ? "trusted" : "did not trust"} ${q.login}'s key on ${q.machine} (${q.statement.fingerprint})`);
+  save6(s);
+  try {
+    withStore2((items, now) => settle2(items, q.id, "answered", now));
+  } catch {}
+  applyPeers(s, id, s.signed?.login ?? null);
+  return {
+    ok: true,
+    text: trust ? `${q.login}'s key on ${q.machine} is trusted now.` : `${q.login}'s new key on ${q.machine} is not trusted, and you will not be asked about it again.`
+  };
+}
+function syncUi(items, sessionId, now, s = load6()) {
+  const open = new Set(Object.keys(s.questions));
+  for (const q of openQuestions(s))
+    upsert3(items, {
+      id: q.id,
+      kind: "team",
+      sessionId,
+      from: q.login,
+      thread: q.repo,
+      question: `${questionText(q)} Trust the new key?`,
+      options: [TRUST, DONT],
+      ts: q.at
+    }, now);
+  for (const it of Object.values(items))
+    if (it.kind === "team" && !open.has(it.id))
+      settle2(items, it.id, "answered", now);
+}
+function takeSystemMessage() {
+  const s = load6();
+  const fresh = openQuestions(s).filter((q) => !q.announced);
+  if (!fresh.length)
+    return;
+  for (const q of fresh)
+    s.questions[q.id].announced = true;
+  save6(s);
+  return fresh.map((q) => `\u25e2 crosstalk: ${questionText(q)} Say "trust ${q.login}'s new key" or "don't trust it".`).join(`
+`);
+}
+async function status(cwd) {
+  const s = load6();
+  const repo = cwd ? await findRepo(cwd).catch(() => null) : null;
+  const rs = repo ? s.repos[repo.slug] : undefined;
+  const peers = Object.values(loadPeers2()).filter((p) => p.via === "repo");
+  const inRepo = (p) => !repo || (p.repos ?? []).includes(repo.slug);
+  return {
+    repo: repo?.slug,
+    you: rs?.own,
+    trusted: peers.filter(inRepo).map((p) => ({
+      who: p.label,
+      login: p.person ?? p.label,
+      machine: p.machine ?? "",
+      fingerprint: p.fingerprint,
+      yours: !!p.own,
+      repos: p.repos ?? []
+    })),
+    pending: openQuestions(s).filter((q) => !repo || q.repo === repo.slug).map((q) => ({ id: q.id, login: q.login, machine: q.machine, question: questionText(q) })),
+    changed: s.events.slice(-10).map((e) => `${new Date(e.at).toISOString().slice(0, 16).replace("T", " ")} ${e.text}`),
+    notTrusted: rs?.invalid ?? [],
+    lastSync: rs?.lastSync ? new Date(rs.lastSync).toISOString() : undefined,
+    error: rs?.lastError,
+    note: repo ? undefined : cwd ? "this directory is not in a git repository with a GitHub remote" : undefined
+  };
+}
+var watched = new Map;
+var timer = null;
+function noteSession(cwd, log = () => {}) {
+  if (!cwd || process.env.CROSSTALK_NO_REPOTRUST === "1")
+    return;
+  const last = watched.get(cwd) ?? 0;
+  if (Date.now() - last < Math.min(minMs(), 60000))
+    return;
+  watched.set(cwd, Date.now());
+  sync(cwd, { log }).catch(() => {});
+  if (!timer) {
+    timer = setInterval(() => {
+      for (const c of watched.keys())
+        sync(c, { log }).catch(() => {});
+    }, Math.max(minMs(), 60000));
+    timer.unref?.();
+  }
 }
 
 // src/daemon.ts
@@ -1337,6 +2521,7 @@ function uiSync(sid) {
     for (const it of Object.values(items))
       if (it.kind === "route" && it.sessionId === sid && !waiting.has(it.id))
         settle(items, it.id, "answered", now);
+    syncUi(items, sid, now);
     return openFor(items, sid);
   });
 }
@@ -1479,6 +2664,7 @@ function connect() {
   };
   sock.onerror = () => {};
 }
+var FAN_OUT = new Set(["message", "handoff", "ask", "answer", "decision"]);
 function sendEnvelope(peerLabel, env) {
   const peer = loadPeers()[peerLabel];
   if (!peer)
@@ -1492,6 +2678,12 @@ function sendEnvelope(peerLabel, env) {
   if (env.kind === "presence")
     return relaySend(frame) ? { ok: true } : { ok: false, error: "relay not connected" };
   const now = relayQueue(frame, peerLabel);
+  if (FAN_OUT.has(env.kind))
+    for (const sib of siblings(peerLabel)) {
+      const p = loadPeers()[sib];
+      if (p)
+        relayQueue({ t: "send", to: p.fingerprint, id: `${env.id}.${p.fingerprint}`, body: seal(channelKey(identity, p), JSON.stringify(env)) }, sib);
+    }
   return now ? { ok: true } : { ok: true, queued: true, note: `${peerLabel} or the relay is unreachable; held and will go when the link is back` };
 }
 var myFingerprint = () => fingerprint(identity.ed.pub);
@@ -1608,7 +2800,7 @@ function onEnvelope(peerLabel, env, ctx) {
     if (env.correlation)
       sendEnvelope(peerLabel, {
         v: 1,
-        id: crypto7.randomUUID(),
+        id: crypto9.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: "-",
@@ -1724,7 +2916,7 @@ function acceptRoomKey(peerLabel, env) {
 function sendRoomKey(peerLabel, room) {
   return sendEnvelope(peerLabel, {
     v: 1,
-    id: crypto7.randomUUID(),
+    id: crypto9.randomUUID(),
     ts: Date.now(),
     from: identity.label,
     fromSession: "-",
@@ -1819,7 +3011,7 @@ function acceptTasks(peerLabel, env) {
     if (all.length)
       sendEnvelope(peerLabel, {
         v: 1,
-        id: crypto7.randomUUID(),
+        id: crypto9.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: "-",
@@ -1840,7 +3032,7 @@ function broadcastTask(room, op) {
       continue;
     sendEnvelope(label, {
       v: 1,
-      id: crypto7.randomUUID(),
+      id: crypto9.randomUUID(),
       ts: Date.now(),
       from: identity.label,
       fromSession: "-",
@@ -1861,7 +3053,7 @@ function broadcastFact(room, op) {
       continue;
     sendEnvelope(label, {
       v: 1,
-      id: crypto7.randomUUID(),
+      id: crypto9.randomUUID(),
       ts: Date.now(),
       from: identity.label,
       fromSession: "-",
@@ -1880,7 +3072,7 @@ function shareFacts(peerLabel, room) {
     return;
   sendEnvelope(peerLabel, {
     v: 1,
-    id: crypto7.randomUUID(),
+    id: crypto9.randomUUID(),
     ts: Date.now(),
     from: identity.label,
     fromSession: "-",
@@ -1901,7 +3093,7 @@ function requestFactSync() {
     for (const label of Object.keys(loadPeers()))
       sendEnvelope(label, {
         v: 1,
-        id: crypto7.randomUUID(),
+        id: crypto9.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: "-",
@@ -1916,7 +3108,7 @@ function requestFactSync() {
     for (const label of Object.keys(loadPeers()))
       sendEnvelope(label, {
         v: 1,
-        id: crypto7.randomUUID(),
+        id: crypto9.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: "-",
@@ -1962,7 +3154,7 @@ function publishPresence() {
   for (const label of Object.keys(loadPeers())) {
     sendEnvelope(label, {
       v: 1,
-      id: crypto7.randomUUID(),
+      id: crypto9.randomUUID(),
       ts: Date.now(),
       from: identity.label,
       fromSession: "-",
@@ -2077,7 +3269,9 @@ async function handle(req, sock) {
         for (const o of replay)
           onEnvelope(o.label, o.env, { replayingParked: true, strangerInRoom: o.stranger });
       }
-      return { ok: true, label: identity.label };
+      noteSession(req.cwd ?? "", log);
+      const teamSay = modLive(sessions.get(sessionId)) || modActive(sessionId) ? undefined : takeSystemMessage();
+      return { ok: true, label: identity.label, ...teamSay ? { systemMessage: teamSay } : {} };
     }
     case "post": {
       const target = pickSession();
@@ -2090,7 +3284,7 @@ async function handle(req, sock) {
       const intent = req.intent ?? "fyi";
       const decision = triage("notify", intent, "message", statusOf(target.sessionId));
       const h = {
-        id: crypto7.randomUUID(),
+        id: crypto9.randomUUID(),
         from: source,
         fromSession: "-",
         intent,
@@ -2364,7 +3558,7 @@ async function handle(req, sock) {
           return { ok: false, error: `no key for #${room.name}` };
         const env = {
           v: 1,
-          id: crypto7.randomUUID(),
+          id: crypto9.randomUUID(),
           ts: Date.now(),
           from: identity.label,
           fromSession: sessionById(req.sessionId)?.name ?? "-",
@@ -2393,7 +3587,7 @@ async function handle(req, sock) {
       const [label, session] = String(req.to).split("/");
       const env = {
         v: 1,
-        id: crypto7.randomUUID(),
+        id: crypto9.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: sessionById(req.sessionId)?.name ?? "-",
@@ -2409,7 +3603,7 @@ async function handle(req, sock) {
         thread: req.thread,
         replyTo: req.replyTo,
         room: req.room,
-        correlation: req.op === "ask" ? crypto7.randomUUID() : undefined,
+        correlation: req.op === "ask" ? crypto9.randomUUID() : undefined,
         footprint: senderFootprint(req)
       };
       if (req.unprompted) {
@@ -2451,7 +3645,7 @@ async function handle(req, sock) {
       const [label] = String(req.to).split("/");
       const env = {
         v: 1,
-        id: crypto7.randomUUID(),
+        id: crypto9.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: sessionById(req.sessionId)?.name ?? "-",
@@ -2584,6 +3778,12 @@ async function handle(req, sock) {
           markHeld(id, settledHeld);
         return r;
       }
+      if (before.kind === "team") {
+        if (action !== "answer" || !value)
+          return { ok: false, error: "a key question is answered with Trust it or Don't trust it" };
+        const r = answerQuestion(id, value === TRUST);
+        return { ...r, item: snapshot()[id] };
+      }
       if (before.kind === "route") {
         if (action !== "answer" || !value)
           return { ok: false, error: "a route question is answered with a session" };
@@ -2685,7 +3885,7 @@ async function handle(req, sock) {
         const [label] = String(req.tell).split("/");
         sendEnvelope(label, {
           v: 1,
-          id: crypto7.randomUUID(),
+          id: crypto9.randomUUID(),
           ts: Date.now(),
           from: identity.label,
           fromSession: sessionById(req.sessionId)?.name ?? "-",
@@ -2709,11 +3909,21 @@ ${req.rationale}` : ""}`
         sessions: [...sessions.values()].map((s) => ({ name: s.name, cwd: s.cwd })),
         held: Object.fromEntries(Object.entries(held).map(([k, v]) => [k, v.filter((m) => !m.readAt).length]))
       };
+    case "team": {
+      const cwd = String(req.cwd ?? resolveSession(req)?.cwd ?? "");
+      const synced = req.refresh && cwd ? await sync(cwd, { force: true, log }) : undefined;
+      return { ok: true, ...await status(cwd || undefined), ...synced ? { synced } : {} };
+    }
+    case "team_answer": {
+      if (typeof req.trust !== "boolean")
+        return { ok: false, error: "say whether to trust it" };
+      return answerQuestion(String(req.id ?? ""), req.trust);
+    }
     default:
       return { ok: false, error: `unknown op "${req.op}"` };
   }
 }
-fs11.mkdirSync(path14.dirname(P.daemonSock), { recursive: true, mode: 448 });
+fs16.mkdirSync(path19.dirname(P.daemonSock), { recursive: true, mode: 448 });
 var control = net2.createServer((sock) => {
   let rest = "";
   sock.on("data", async (buf) => {
@@ -2739,7 +3949,7 @@ var control = net2.createServer((sock) => {
   sock.on("error", () => {});
 });
 var alreadyRunning = () => new Promise((resolve) => {
-  if (!fs11.existsSync(P.daemonSock))
+  if (!fs16.existsSync(P.daemonSock))
     return resolve(false);
   const probe = net2.createConnection(P.daemonSock);
   const done = (answer) => {
@@ -2753,31 +3963,31 @@ var alreadyRunning = () => new Promise((resolve) => {
 if (await alreadyRunning()) {
   let who = "";
   try {
-    who = ` as pid ${Number(fs11.readFileSync(P.daemonLock, "utf8"))}`;
+    who = ` as pid ${Number(fs16.readFileSync(P.daemonLock, "utf8"))}`;
   } catch {}
   console.error(`crosstalk: a daemon is already running${who}`);
   process.exit(0);
 }
 try {
-  fs11.unlinkSync(P.daemonSock);
+  fs16.unlinkSync(P.daemonSock);
 } catch {}
 control.listen(P.daemonSock, () => {
-  fs11.chmodSync(P.daemonSock, 384);
-  fs11.writeFileSync(P.daemonLock, String(process.pid), { mode: 384 });
+  fs16.chmodSync(P.daemonSock, 384);
+  fs16.writeFileSync(P.daemonLock, String(process.pid), { mode: 384 });
   log(`daemon up as "${identity.label}" on ${P.daemonSock}`);
   connect();
 });
 var bye = () => {
   let mine = false;
   try {
-    mine = Number(fs11.readFileSync(P.daemonLock, "utf8")) === process.pid;
+    mine = Number(fs16.readFileSync(P.daemonLock, "utf8")) === process.pid;
   } catch {}
   if (mine) {
     try {
-      fs11.unlinkSync(P.daemonSock);
+      fs16.unlinkSync(P.daemonSock);
     } catch {}
     try {
-      fs11.unlinkSync(P.daemonLock);
+      fs16.unlinkSync(P.daemonLock);
     } catch {}
   }
   process.exit(0);

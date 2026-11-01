@@ -42,6 +42,7 @@ import * as usage from "./usage.ts"
 import * as rooms from "./rooms.ts"
 import * as facts from "./facts.ts"
 import * as tasks from "./tasks.ts"
+import * as repotrust from "./repotrust/index.ts"
 import type { Envelope, Frame, Intent, Kind, SessionPresence, Slice } from "./protocol.ts"
 
 const identity = loadIdentity()
@@ -446,6 +447,7 @@ function uiSync(sid: string): ui.UiItem[] {
     }
     for (const it of Object.values(items))
       if (it.kind === "route" && it.sessionId === sid && !waiting.has(it.id)) ui.settle(items, it.id, "answered", now)
+    repotrust.syncUi(items, sid, now)
     return ui.openFor(items, sid)
   })
 }
@@ -619,6 +621,8 @@ function connect() {
   sock.onerror = () => {}
 }
 
+const FAN_OUT = new Set<Kind>(["message", "handoff", "ask", "answer", "decision"])
+
 function sendEnvelope(
   peerLabel: string,
   env: Envelope,
@@ -634,6 +638,13 @@ function sendEnvelope(
   // Presence describes a moment, so a stale one is worse than none.
   if (env.kind === "presence") return relaySend(frame) ? { ok: true } : { ok: false, error: "relay not connected" }
   const now = relayQueue(frame, peerLabel)
+  // A person trusted through a repository has one identity per machine; a
+  // message for them goes to each, so it reaches whichever one they are at.
+  if (FAN_OUT.has(env.kind))
+    for (const sib of repotrust.siblings(peerLabel)) {
+      const p = loadPeers()[sib]
+      if (p) relayQueue({ t: "send", to: p.fingerprint, id: `${env.id}.${p.fingerprint}`, body: seal(channelKey(identity!, p), JSON.stringify(env)) }, sib)
+    }
   return now
     ? { ok: true }
     : { ok: true, queued: true, note: `${peerLabel} or the relay is unreachable; held and will go when the link is back` }
@@ -1341,7 +1352,12 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         for (const o of replay)
           onEnvelope(o.label, o.env, { replayingParked: true, strangerInRoom: o.stranger })
       }
-      return { ok: true, label: identity!.label }
+      // Trust through the repository this session is in, in the background.
+      repotrust.noteSession(req.cwd ?? "", log)
+      // A key-change question goes to the mod's picker when the mod is here,
+      // and otherwise once as a systemMessage the hook passes on.
+      const teamSay = modLive(sessions.get(sessionId)) || ui.modActive(sessionId) ? undefined : repotrust.takeSystemMessage()
+      return { ok: true, label: identity!.label, ...(teamSay ? { systemMessage: teamSay } : {}) }
     }
 
     // Anything running on this machine can put a line on the screen. It is you
@@ -1891,6 +1907,12 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         return r
       }
 
+      if (before.kind === "team") {
+        if (action !== "answer" || !value) return { ok: false, error: "a key question is answered with Trust it or Don't trust it" }
+        const r = repotrust.answerQuestion(id, value === repotrust.TRUST)
+        return { ...r, item: ui.snapshot()[id] }
+      }
+
       if (before.kind === "route") {
         if (action !== "answer" || !value) return { ok: false, error: "a route question is answered with a session" }
         const claim = ui.withStore((items, now) => ui.act(items, id, "answer", now, value))
@@ -2021,6 +2043,19 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
           Object.entries(held).map(([k, v]) => [k, v.filter((m) => !m.readAt).length]),
         ),
       }
+
+    // Who is trusted through the repository, who is waiting on a question, and
+    // what changed. `refresh` syncs first instead of waiting for the next one.
+    case "team": {
+      const cwd = String(req.cwd ?? resolveSession(req)?.cwd ?? "")
+      const synced = req.refresh && cwd ? await repotrust.sync(cwd, { force: true, log }) : undefined
+      return { ok: true, ...(await repotrust.status(cwd || undefined)), ...(synced ? { synced } : {}) }
+    }
+
+    case "team_answer": {
+      if (typeof req.trust !== "boolean") return { ok: false, error: "say whether to trust it" }
+      return repotrust.answerQuestion(String(req.id ?? ""), req.trust)
+    }
 
     default:
       return { ok: false, error: `unknown op "${req.op}"` }

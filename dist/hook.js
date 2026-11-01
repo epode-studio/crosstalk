@@ -1562,7 +1562,7 @@ async function registerSession() {
   } else {
     name = hook.thread_name ?? (path9.basename(cwd) || name);
   }
-  await request({
+  const registered = await request({
     op: "register",
     sessionId,
     pid: process.ppid,
@@ -1571,7 +1571,10 @@ async function registerSession() {
     socket: socket ?? "",
     transcript: hook.transcript_path ?? hook.transcriptPath,
     .../^post_?tool_?use$/i.test(eventName) ? { touched: pathsFromToolInput(hook.tool_input ?? hook.toolInput ?? hook.tool_args) } : {}
-  }).catch(() => {});
+  }).catch(() => null);
+  if (registered?.systemMessage && restoreClient === "claude")
+    systemMessage = [systemMessage, String(registered.systemMessage)].filter(Boolean).join(`
+`);
 }
 async function pendingNotice() {
   try {

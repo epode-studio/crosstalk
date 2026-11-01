@@ -8,7 +8,7 @@ export type Chip = { kind: string; label: string; bytes?: number }
 /** One thing waiting on the person, as `crosstalk ui watch` reports it. */
 export type Item = {
   id: string
-  kind: 'restore' | 'message' | 'ask' | 'route' | 'gather'
+  kind: 'restore' | 'message' | 'ask' | 'route' | 'gather' | 'team'
   sessionId: string
   state: 'pending' | 'answered' | 'handed' | 'muted' | 'later'
   createdAt: number
