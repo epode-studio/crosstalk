@@ -7,10 +7,11 @@
 <br>
 <br>
 
-Your teammate's agent just changed something. Yours is still working from
-yesterday.
+Twelve agents running. Three of them waiting on you. Your teammate's just
+changed something yours depends on.
 
-**Put everyone's coding agents in one room.**
+**Run every agent, yours and your team's, from the terminal you already
+have.**
 
 <br>
 
@@ -57,6 +58,8 @@ you broke off to explain anything.
 ## Contents
 
 - [A new way of working](#a-new-way-of-working)
+
+- [Your terminal is the workspace](#your-terminal-is-the-workspace)
 
 - [How it feels](#how-it-feels)
 
@@ -148,6 +151,37 @@ every week.
 Branches, merges, worktrees and cleanup happen out of sight. Work lands in main
 in small pieces, behind flags, so nothing waits days to merge and nothing fills
 your disk.
+
+<br>
+
+---
+
+<br>
+
+## Your terminal is the workspace
+
+Running many agents usually means a separate app: launch it first, keep every
+terminal inside it, learn its window. crosstalk has none. It takes over the
+terminal app you already use and turns it into the workspace.
+
+- **Your tabs are the list of agents.** One per session, opened, arranged and
+  brought back by crosstalk. *(Opening and restoring tabs: here. Arranging a
+  window per repository and a tab per thread: coming.)*
+- **Status at a glance.** Each tab shows whether its agent is working,
+  finished, or waiting on you, and a notification takes you straight to the one
+  that needs you. *(Coming.)*
+- **New agents on request.** "Put two more on auth" opens two tabs, each with
+  its own agent in its own private copy of the code, already knowing what the
+  thread is about. *(Coming.)*
+- **Start from any session.** There is no app to launch first and no window
+  to live inside. Open any Claude session and everything grows out of it.
+- **Nothing is lost.** A restart, a crash or a closed laptop brings every agent
+  back in its tab with its conversation, and sessions crosstalk starts for you
+  keep running in the background when you close the window.
+- **Not just your agents.** Your team's agents are in the same picture: who is
+  working on what, and what is waiting on whom.
+
+Terminal.app first, then iTerm2, kitty, WezTerm, Ghostty and tmux.
 
 <br>
 
@@ -356,8 +390,8 @@ is for, what was decided and why, what is waiting on whom.
 - **Nothing bloats.** Threads live on their own git ref, never in your working
   tree or main's history.
 
-It is [Entire](https://entire.com/) without the forge: the why behind the code,
-kept in the git you already have, sealed so no host can read it.
+The why behind the code, kept in the git you already have, on any host, sealed
+so no host can read it. No new forge to move to.
 
 <br>
 
@@ -438,6 +472,8 @@ The measure is time from idea to merge, and how few of your minutes it took.
 | Messages reach the session working on the same thing | **here** |
 | Cards, pickers and status line in Claude Code | **here** (mod, 2.1.287+) |
 | Bringing in sessions you already had open | landing now |
+| Opening and restoring agents in your terminal's tabs | **here** (Terminal.app, iTerm2, kitty, WezTerm, Ghostty, tmux, Windows Terminal) |
+| Status on tabs, new agents on request, window layout | coming |
 | Threads, found automatically | coming |
 | Trust through repository access, no words | coming |
 | Main session, answers become rules, agents warning each other | coming |
