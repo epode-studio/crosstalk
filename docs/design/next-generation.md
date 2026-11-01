@@ -572,7 +572,7 @@ merged thread.
 | A five-level trust ladder | Verified, plus mute |
 | Facts, tasks, decisions as separate stores | Sections of the thread file |
 | Messages to whichever session is idle | Messages to sessions in the same thread |
-| Fourteen slash commands | Two |
+| Fourteen slash commands | None to remember |
 | Approvals, reviews and notices as separate things | Questions |
 
 ## Still open
