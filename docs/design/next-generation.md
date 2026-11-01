@@ -173,6 +173,18 @@ A session crosstalk starts has the permissions of whoever caused it. A verified
 person's message can get a session on it on your machine. When nothing open
 fits, you are asked first.
 
+## Wrangling every session
+
+What herdr and Superset give you is one place to see and steer every session.
+Here that place is **whichever session you are in**. Any session can:
+
+- list every session, its threads, and whether it is working, done or waiting on you
+- steer one ("tell the api one to stop"), or get more on a thread ("put two more on auth")
+- receive questions from all of them, by the question rule
+
+The statusline in every session shows how many are waiting on you. There is no
+home session and no window.
+
 ## Shipping
 
 Nobody reads code, so the PR is plumbing: agents open it, checks and a
