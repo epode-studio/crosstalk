@@ -265,6 +265,49 @@ from other threads, unmatched messages, threads about to combine, a key that
 changed. A working session's band shows only what its own agents are waiting
 on. Closing main sends everything back to focus-aware.
 
+## Messages are UI
+
+Through the mod, everything crosstalk shows is UI you act on, not text in the
+chat.
+
+**A message is a card** in the band above your prompt:
+
+```
+╭─ ◢ marie · auth ─────────────────────────────── 2m ─╮
+│ Token format changed to v2. v1 accepted until 0.2   │
+│ ▸ diff  src/auth/token.ts  +42 −18                  │
+│ [↵ hand to agent]  [r reply]  [o open thread]  [m mute] │
+╰─────────────────────────────────────────────────────╯
+```
+
+Your agent reads nothing until you press ↵, which hands it the message and
+its attachments as data. A message about this session's own thread goes to
+the agent automatically, and the card says so. Attachments (a diff, a file, a
+few turns) are chips with a label and size, fetched only when opened.
+
+**A question is Claude Code's own picker**, so it feels native:
+
+```
+◢ api-worker · auth asks
+  Keep the v1 endpoint for one more release?
+  ❯ Yes, until 0.2
+    No, remove it now
+    Open the thread
+```
+
+**The status line** is one glance: `◢ auth · tokens   marie ●  jo ○   2 waiting`.
+
+**The pane** shows a thread (on a wide terminal, or the main session): status,
+people, what is waiting, the latest decision, recent messages.
+
+**Toasts** carry what needs no action: "jo joined auth", "rule applied".
+
+Outside Claude Code, the tab's colour shows something is waiting, and a desktop
+notification takes you there.
+
+Still to prove: that `$.ui.ask` answers stay out of the transcript, that the
+band renders boxes and colour, and the pane.
+
 ## Answers become rules
 
 The second time you give the same answer to the same kind of question,
