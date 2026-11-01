@@ -87,7 +87,7 @@ cannot start sessions on your machine.
 
 ## Threads
 
-**A thread is one file**, `.crosstalk/threads/<name>.md`:
+**A thread is one file**, `<name>.md` on the thread ref (below):
 
 ```
 ---
@@ -128,9 +128,21 @@ description are all read from it.
 thread's people, so it is private even in a public repo. Mark a thread public
 to commit it in plain text.
 
+**Threads live on their own git ref, `refs/crosstalk/threads`,** never checked
+out. Git syncs and versions them, but they never appear in your working tree,
+main's history or a PR, so the repo does not bloat. crosstalk adds the refspec
+so a fetch brings them. When a thread closes, it is squashed to its decisions,
+and old revisions are left for git to collect.
+
+**A readable summary for public threads.** `THREADS.md` in the tree lists each
+public thread in a line or two: status, people, open questions, latest
+decision. It is rewritten only when a public thread's status changes, so people
+browsing the repo, and agents without crosstalk, can see what is going on.
+Sealed threads never appear in it.
+
 **Sync: live over the relay, committed on change.** Updates reach the thread's
-people at once over the relay. The file is committed alongside real work only
-when status, features, decisions or questions change.
+people at once over the relay. The thread ref gets a commit only when status,
+features, decisions or questions change.
 
 **Threads find their sessions.** Nobody names a thread or binds a session.
 crosstalk matches sessions to threads by the files they touch and their repo and
@@ -177,7 +189,8 @@ There is no separate approval step. Answering is approving.
 | not blocked | anywhere | in the digest at the next pause |
 
 The statusline always shows how many are waiting. The answer goes back to
-whoever asked.
+whoever asked. Whether a question has been answered is kept by the daemon, not
+the session, so it survives a restart or `--resume`.
 
 **A question never enters another thread's context.** A question from auth
 shown while you are in firmware is for you, not for the firmware agent. It
@@ -187,7 +200,19 @@ answer there, or by typing `@auth y`, which the mod takes before it becomes a
 prompt. The mod also takes incoming peer messages so the model never reads
 them. Where mods are unavailable, a `UserPromptSubmit` hook blocks the `@`
 prompt instead, which keeps it from the model but still leaves it in the
-transcript file. Otherwise the fix for
+transcript file.
+
+**Proven by the spike** (`spike/mod/README.md`, Claude Code 2.1.316): the mod's
+status line, band, toasts, typed `@thread` answers, band buttons and consumed
+peer messages reach neither the model, the transcript file, prompt history nor
+a resumed session. Three rules follow from what did leak:
+
+- Answers go through the band or a typed `@thread`, never a slash command,
+  whose typed line lands in prompt history.
+- `$.ui.log` is written to the transcript file, so it never carries question or
+  message text.
+- The fallback prefix must not be one Claude Code already claims: `!` runs as a
+  shell command and puts the text in the model's context. Otherwise the fix for
 cross-talk would bring it straight back.
 
 **"In a session" means the one you are looking at.** The last session you
@@ -356,6 +381,23 @@ people never see failing work; a change across repos is one thread; blocked
 agents ask in seconds. CI is still compute: checks run in the session before a
 push, so hosted CI confirms rather than discovers, but a slow suite stays slow.
 
+## Disk
+
+Claude Code leaves worktrees, session data and duplicated dependencies behind,
+and they fill disks. crosstalk knows what each one is *for*, so it can clean up:
+
+- **A worktree belongs to a thread.** When the thread merges or goes quiet,
+  crosstalk removes the worktree and prunes it. The thread file holds what is
+  needed to start again, so a worktree is always disposable.
+- **Dependencies are shared, not copied.** Worktrees reuse the main checkout's
+  `node_modules`, venv or build cache through hardlinks or the package
+  manager's global store.
+- **Claude Code's own leftovers.** Stale Claude Code worktrees and session data
+  for threads long done are pruned too.
+- **A disk budget.** "Worktrees and old sessions are using 18 GB; free 14 GB
+  from 6 finished threads?" is a question the first time, and a standing rule
+  once answered. Nothing is deleted without that.
+
 ## Commands
 
 Two:
@@ -365,6 +407,21 @@ Two:
 
 Everything else, from muting someone to asking what Marie is working on or
 linking another machine, is plain language in any session.
+
+## Installing
+
+**Teammates install nothing.** The repo's `.claude/settings.json` enables
+crosstalk, so it is there the moment they clone, and collaborators are trusted
+automatically. Joining a team is `git clone`.
+
+**A stranger on the website gets one sentence:**
+
+> Paste this into your coding agent: "Install crosstalk from
+> github.com/epode-studio/crosstalk"
+
+The agent works out which harness it is running in and runs the right install,
+which the README documents per harness. The commands for each harness stay
+below that line for people who want them.
 
 The full research behind the terminal and Claude Code sections is in
 [`reports/Terminal as agent workspace.md`](../../reports/Terminal%20as%20agent%20workspace.md).
