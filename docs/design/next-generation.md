@@ -280,12 +280,29 @@ chat.
 ╭─ ◢ marie · auth ─────────────────────────────── 2m ─╮
 │ Token format changed to v2. v1 accepted until 0.2   │
 │ ▸ diff  src/auth/token.ts  +42 −18                  │
-│ [↵ hand to agent]  [r reply]  [o open thread]  [m mute] │
 ╰─────────────────────────────────────────────────────╯
 ```
 
-Your agent reads nothing until you press ↵, which hands it the message and
-its attachments as data. A message about this session's own thread goes to
+**The card shows; the picker acts.** Keys on the band only work after
+ctrl+x tab focuses it, and that is something to remember, so the card carries
+no keys. Instead, when your prompt is empty and the session idle, the card's
+actions come up as Claude Code's picker, numbered on screen:
+
+```
+◢ marie · auth
+  ❯ 1 Hand to agent
+    2 Reply
+    3 Open thread
+    4 Mute
+    5 Later
+```
+
+If you are busy, the card waits in the band and the picker comes when you
+stop. Saying "hand marie's message to the agent" works too. Handing it over
+gives the agent the message and its attachments as data and starts a turn, so
+you see it act on it.
+
+Your agent reads nothing until you hand it over. A message about this session's own thread goes to
 the agent automatically, and the card says so. Attachments (a diff, a file, a
 few turns) are chips with a label and size, fetched only when opened.
 
@@ -299,18 +316,33 @@ few turns) are chips with a label and size, fetched only when opened.
     Open the thread
 ```
 
-**The status line** is one glance: `◢ auth · tokens   marie ●  jo ○   2 waiting`.
+**The status line** is one glance, in plain text, since the status line takes
+no colour or links: `auth · tokens · marie, jo · 2 waiting`. Colour and links
+live in the band and the pane.
 
-**The pane** shows a thread (on a wide terminal, or the main session): status,
-people, what is waiting, the latest decision, recent messages.
+**The pane** shows a thread: status, people, what is waiting, the latest
+decision, recent messages. It opens as a sidebar by itself on terminals 144
+columns or wider. Narrower, it opens when you ask ("show me auth"), docked from
+110 columns, above the prompt below that.
 
 **Toasts** carry what needs no action: "jo joined auth", "rule applied".
 
 Outside Claude Code, the tab's colour shows something is waiting, and a desktop
 notification takes you there.
 
-Still to prove: that `$.ui.ask` answers stay out of the transcript, that the
-band renders boxes and colour, and the pane.
+**Proven** (`spike/mod/README.md`, M2): picker questions and answers, cards
+that are shown or muted, and the pane reach neither the model, the transcript,
+history nor a resumed session. A card reaches the model only once handed over.
+
+Rules from the spike:
+
+- A picker takes over the keyboard, so it only comes up when the prompt is
+  empty and the session idle, and is never raised again by itself after a
+  restart.
+- The picker's header holds 12 characters, so "api-worker · auth asks" goes in
+  the question text.
+- Whether a card was handed over, muted or answered is kept by the daemon, so
+  nothing comes back twice after a restart.
 
 ## Answers become rules
 
