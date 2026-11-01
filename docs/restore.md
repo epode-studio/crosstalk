@@ -100,6 +100,19 @@ through `AEDeterminePermissionToAutomateTarget` with "ask the user" off.
 
 ## Try it without restarting your Mac
 
+**The quick way:** from a clone of this branch, run
+
+```sh
+bash scripts/try-restore-mac.sh
+```
+
+It opens three test sessions with crosstalk loaded only for them, kills exactly
+those three as a crash would, and opens a new session that restores them.
+Nothing is installed and your other sessions are not touched. Afterwards,
+`bash scripts/try-restore-mac.sh --clean` removes the test folders.
+
+**By hand:**
+
 1. Install crosstalk from this branch:
 
    ```sh
