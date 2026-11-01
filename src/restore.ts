@@ -22,6 +22,7 @@ import path from "node:path"
 import { spawn, spawnSync } from "node:child_process"
 import { P } from "./config.ts"
 import { rootFrom, shim } from "./paths.ts"
+import { repoKey } from "./terminal/repo.ts"
 
 // --- records -------------------------------------------------------------------
 
@@ -390,9 +391,103 @@ export type Env = {
   has: (bin: string) => boolean
   /** Absolute path of a binary, so terminals that exec directly need no PATH. */
   which: (bin: string) => string | undefined
-  tmuxHasSession: (name: string) => boolean
+  /** Whether a tmux session exists; `socket` names crosstalk's own server (`-L crosstalk`). */
+  tmuxHasSession: (name: string, socket?: string) => boolean
   /** False to open one window per session instead of tabs (no Accessibility). */
   tabs: boolean
+  /**
+   * The repository a folder belongs to (every worktree of it the same one).
+   * With it, restored tabs are grouped one window per repository, in their
+   * original order; without it, one window per old window.
+   */
+  repoOf?: (cwd: string) => string
+  /** A live tab already in that repository's window, to open the restored ones beside. */
+  anchorFor?: (repo: string) => Term | null
+}
+
+/** crosstalk's own tmux server, for agents it runs in the background (src/spawn.ts). */
+export const CROSSTALK_TMUX = "crosstalk"
+const isCrosstalkSocket = (s?: string) => !!s && path.basename(s) === CROSSTALK_TMUX
+
+/**
+ * The tab whose window holds a repository's sessions: the asking session when
+ * it is in the repo, else the most recently seen live session in it.
+ */
+export function anchorFor(
+  repo: string,
+  o: { recs: Rec[]; keyOf: (cwd: string) => string; asking?: { cwd: string; terminal: Term }; alive: (r: Rec) => boolean },
+): Term | null {
+  if (o.asking && kindOf(o.asking.terminal) && o.keyOf(o.asking.cwd) === repo) return o.asking.terminal
+  const live = o.recs
+    .filter((r) => !r.endedAt && r.interactive !== false && kindOf(r.terminal) && !isCrosstalkSocket(r.terminal.tmux?.socket) && o.keyOf(r.cwd) === repo && o.alive(r))
+    .sort((a, b) => b.seenAt - a.seenAt)
+  return live[0]?.terminal ?? null
+}
+
+/**
+ * Terminal.app, into a window by its AppleScript id: brought to the front, then
+ * a tab per command. Terminal cannot move a tab between windows, so this only
+ * places new ones. Falls back to a window each if System Events refuses.
+ */
+export function appleIntoWindowScript(cmds: string[], window: number, tabs: boolean): string {
+  const L = [
+    `set crosstalkFallback to ""`,
+    `tell application "Terminal"`,
+    `\tif not (exists window id ${window}) then`,
+    `\t\tset crosstalkFallback to "gone"`,
+    `\telse`,
+    `\t\tset index of window id ${window} to 1`,
+    `\t\tactivate`,
+    `\tend if`,
+    `end tell`,
+  ]
+  for (const c of cmds)
+    L.push(
+      `if crosstalkFallback is "" and ${tabs ? "true" : "false"} then`,
+      `\ttry`,
+      `\t\tdelay 0.3`,
+      `\t\ttell application "System Events" to keystroke "t" using command down`,
+      `\t\tdelay 0.6`,
+      `\t\ttell application "Terminal" to do script ${asq(c)} in selected tab of front window`,
+      `\ton error errMsg number errNum`,
+      `\t\tset crosstalkFallback to (errNum as text)`,
+      `\t\ttell application "Terminal" to do script ${asq(c)}`,
+      `\tend try`,
+      `else`,
+      `\ttell application "Terminal" to do script ${asq(c)}`,
+      `end if`,
+    )
+  L.push(`if crosstalkFallback is "gone" then set crosstalkFallback to ""`, `return "done " & crosstalkFallback`)
+  return L.join("\n")
+}
+
+/** iTerm2: tabs in the window showing that tty, else a new window. */
+export function itermIntoWindowScript(cmds: string[], tty: string | undefined): string {
+  const L = [`tell application "iTerm2"`, `\tset w to missing value`]
+  if (tty)
+    L.push(
+      `\trepeat with aw in windows`,
+      `\t\trepeat with t in tabs of aw`,
+      `\t\t\trepeat with s in sessions of t`,
+      `\t\t\t\tif (tty of s) is ${asq(tty)} then set w to aw`,
+      `\t\t\tend repeat`,
+      `\t\tend repeat`,
+      `\tend repeat`,
+    )
+  L.push(
+    `\tif w is missing value then`,
+    `\t\tset w to (create window with default profile)`,
+    `\t\ttell current session of w to write text ${asq(cmds[0])}`,
+    `\telse`,
+    `\t\ttell w`,
+    `\t\t\tset t to (create tab with default profile)`,
+    `\t\t\ttell current session of t to write text ${asq(cmds[0])}`,
+    `\t\tend tell`,
+    `\tend if`,
+  )
+  for (const c of cmds.slice(1)) L.push(`\ttell w`, `\t\tset t to (create tab with default profile)`, `\t\ttell current session of t to write text ${asq(c)}`, `\tend tell`)
+  L.push(`end tell`, `return "done "`)
+  return L.join("\n")
 }
 
 function usable(k: Kind, e: Env, t: Term | undefined): boolean {
@@ -499,66 +594,94 @@ export function plan(recs: Rec[], e: Env): { plans: Plan[]; skipped: Rec[] } {
   const plans: Plan[] = []
   const exec = (r: Rec) => resumeArgv(r, e.which(r.client === "codex" ? "codex" : "claude"))!
 
+  // One window per repository, repositories in the order their first session
+  // was opened, tabs in their old order. Without repoOf, one window per old window.
+  const repoOf = e.repoOf
+  const repoFirst = new Map<string, number>()
+  if (repoOf) for (const r of ok) if (!repoFirst.has(repoOf(r.cwd))) repoFirst.set(repoOf(r.cwd), r.startedAt)
+  const byRepo = <T extends Rec>(rs: T[], oldWindow: (r: T) => string) => {
+    const groups = groupBy(rs, (r) => (repoOf ? repoOf(r.cwd) : oldWindow(r)))
+    const keys = [...groups.keys()].sort((a, b) => (repoOf ? repoFirst.get(a)! - repoFirst.get(b)! : num(Number(a)) - num(Number(b))))
+    return keys.map((k) => ({ key: k, recs: groups.get(k)!, anchor: repoOf ? (e.anchorFor?.(k) ?? null) : null }))
+  }
+  const inRepoOrder = (rs: Rec[]) => byRepo(rs, () => "").flatMap((x) => x.recs)
+
   for (const [kind, rs] of byKind) {
     if (kind === "tmux") {
-      // One group per tmux session, windows in their old order.
-      const groups = groupBy(rs, (r) => r.terminal.tmux?.session ?? e.current.tmux?.session ?? "crosstalk")
-      for (const [name, g] of groups) {
+      // One group per tmux session, windows in their old order. Agents crosstalk
+      // ran in its own server go back there, each in its tmux session.
+      const groups = groupBy(rs, (r) => `${isCrosstalkSocket(r.terminal.tmux?.socket) ? "L" : ""}\t${r.terminal.tmux?.session ?? e.current.tmux?.session ?? "crosstalk"}`)
+      for (const [key, g] of groups) {
+        const [own, name] = key.split("\t")
+        const S = own ? ["-L", CROSSTALK_TMUX] : []
         const sorted = [...g].sort(
           (a, b) =>
             num(a.terminal.tmux?.window) - num(b.terminal.tmux?.window) ||
             num(a.terminal.tmux?.paneIndex) - num(b.terminal.tmux?.paneIndex) ||
             a.startedAt - b.startedAt,
         )
-        let exists = e.tmuxHasSession(name)
+        let exists = own ? e.tmuxHasSession(name, CROSSTALK_TMUX) : e.tmuxHasSession(name)
         const steps: Step[] = sorted.map((r) => {
           const cmd = exec(r).map(shq).join(" ")
           if (!exists) {
             exists = true
-            return { cmd: "tmux", args: ["new-session", "-d", "-s", name, "-c", r.cwd, cmd] }
+            return { cmd: "tmux", args: [...S, "new-session", "-d", "-s", name, "-c", r.cwd, cmd] }
           }
-          return { cmd: "tmux", args: ["new-window", "-d", "-t", `=${name}:`, "-c", r.cwd, cmd] }
+          return { cmd: "tmux", args: [...S, "new-window", "-d", "-t", `=${name}:`, "-c", r.cwd, cmd] }
         })
         plans.push({ kind: "tmux", sessions: sorted, steps })
       }
     } else if (kind === "apple") {
-      // One window per old window, oldest window first, tabs in their old order.
-      const groups = groupBy(rs, (r) => String(r.terminal.apple?.window ?? "?"))
-      const keys = [...groups.keys()].sort((a, b) => num(Number(a)) - num(Number(b)))
-      for (const k of keys) {
-        const g = [...groups.get(k)!].sort(
-          (a, b) => num(a.terminal.apple?.tab) - num(b.terminal.apple?.tab) || a.startedAt - b.startedAt,
+      for (const { recs, anchor } of byRepo(rs, (r) => String(r.terminal.apple?.window ?? "?"))) {
+        const g = [...recs].sort(
+          (a, b) =>
+            (repoOf ? num(a.terminal.apple?.window) - num(b.terminal.apple?.window) : 0) ||
+            num(a.terminal.apple?.tab) - num(b.terminal.apple?.tab) ||
+            a.startedAt - b.startedAt,
         )
-        const tabs = e.tabs && g.length > 1
+        const into = anchor?.apple?.window
+        const tabs = e.tabs && (g.length > 1 || !!into)
         plans.push({
           kind: "apple",
           sessions: g,
           needsAccessibility: tabs,
-          steps: [{ cmd: "osascript", args: ["-"], input: appleTerminalScript(g.map(typed), tabs) }],
+          steps: [{ cmd: "osascript", args: ["-"], input: into ? appleIntoWindowScript(g.map(typed), into, e.tabs) : appleTerminalScript(g.map(typed), tabs) }],
         })
       }
     } else if (kind === "iterm") {
-      const groups = groupBy(rs, (r) => String(r.terminal.iterm?.window ?? "?"))
-      for (const k of [...groups.keys()].sort((a, b) => num(Number(a)) - num(Number(b)))) {
-        const g = [...groups.get(k)!].sort((a, b) => num(a.terminal.iterm?.tab) - num(b.terminal.iterm?.tab) || a.startedAt - b.startedAt)
-        plans.push({ kind: "iterm", sessions: g, steps: [{ cmd: "osascript", args: ["-"], input: itermScript(g.map(typed)) }] })
+      for (const { recs, anchor } of byRepo(rs, (r) => String(r.terminal.iterm?.window ?? "?"))) {
+        const g = [...recs].sort(
+          (a, b) =>
+            (repoOf ? num(a.terminal.iterm?.window) - num(b.terminal.iterm?.window) : 0) ||
+            num(a.terminal.iterm?.tab) - num(b.terminal.iterm?.tab) ||
+            a.startedAt - b.startedAt,
+        )
+        const input = anchor?.tty ? itermIntoWindowScript(g.map(typed), anchor.tty) : itermScript(g.map(typed))
+        plans.push({ kind: "iterm", sessions: g, steps: [{ cmd: "osascript", args: ["-"], input }] })
       }
     } else if (kind === "ghostty") {
-      if (e.tabs) plans.push({ kind: "ghostty", sessions: rs, needsAccessibility: true, steps: [{ cmd: "osascript", args: ["-"], input: ghosttyScript(rs.map(typed)) }] })
-      else plans.push({ kind: "manual", sessions: rs, steps: [] })
+      const g = inRepoOrder(rs)
+      if (e.tabs) plans.push({ kind: "ghostty", sessions: g, needsAccessibility: true, steps: [{ cmd: "osascript", args: ["-"], input: ghosttyScript(g.map(typed)) }] })
+      else plans.push({ kind: "manual", sessions: g, steps: [] })
     } else if (kind === "kitty") {
       const to = e.current.kitty?.listenOn ?? rs[0].terminal.kitty?.listenOn!
-      plans.push({
-        kind: "kitty",
-        sessions: rs,
-        steps: rs.map((r) => ({ cmd: "kitten", args: ["@", "--to", to, "launch", "--type=tab", "--cwd", r.cwd, ...exec(r)] })),
-      })
+      for (const { recs, anchor } of byRepo(rs, () => "")) {
+        const match = anchor?.kitty?.window ? ["--match", `window_id:${anchor.kitty.window}`] : []
+        plans.push({
+          kind: "kitty",
+          sessions: recs,
+          steps: recs.map((r) => ({ cmd: "kitten", args: ["@", "--to", to, "launch", "--type=tab", ...match, "--cwd", r.cwd, ...exec(r)] })),
+        })
+      }
     } else if (kind === "wezterm") {
-      plans.push({
-        kind: "wezterm",
-        sessions: rs,
-        steps: rs.map((r) => ({ cmd: "wezterm", args: ["cli", "spawn", "--cwd", r.cwd, "--", ...exec(r)] })),
-      })
+      for (const { recs, anchor } of byRepo(rs, () => "")) {
+        const at = anchor?.wezterm?.pane ? ["--pane-id", anchor.wezterm.pane] : []
+        plans.push({
+          kind: "wezterm",
+          sessions: recs,
+          steps: recs.map((r) => ({ cmd: "wezterm", args: ["cli", "spawn", ...at, "--cwd", r.cwd, "--", ...exec(r)] })),
+        })
+      }
     } else if (kind === "wt") {
       plans.push({
         kind: "wt",
@@ -674,8 +797,11 @@ export function liveEnv(env: NodeJS.ProcessEnv, tabs: boolean): Env {
     current: captureTerminal(env, process.pid, true),
     has: (b) => !!which(b),
     which,
-    tmuxHasSession: (name) => spawnSync("tmux", ["has-session", "-t", `=${name}`], { stdio: "ignore", timeout: 2000 }).status === 0,
+    tmuxHasSession: (name, socket) =>
+      spawnSync("tmux", [...(socket ? ["-L", socket] : []), "has-session", "-t", `=${name}`], { stdio: "ignore", timeout: 2000, env: socket ? { ...env, TMUX: "" } : env }).status === 0,
     tabs,
+    repoOf: (cwd) => repoKey(cwd),
+    anchorFor: (repo) => anchorFor(repo, { recs: readAll(), keyOf: (cwd) => repoKey(cwd), alive: recAlive }),
   }
 }
 

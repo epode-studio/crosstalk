@@ -8,7 +8,11 @@
 //   restore        "Restore 6 sessions?": Restore / Open as windows / Not now
 //   gather         "4 Claude sessions started before crosstalk. Bring them in?":
 //                  Bring them in / Not now, and a toast once they are in
+//   cleanup        "2 agent worktrees are done with. Remove them?":
+//                  Remove them / Not now
 //   status line    ◢ <threads or repo> · <n> waiting
+//   tab status     working / waiting on you / done on this session's own tab,
+//                  through `crosstalk term status` (src/terminal/status.ts)
 //
 // The mod keeps nothing that matters. What is waiting, and what became of it,
 // is crosstalk's (src/uistate.ts, through `crosstalk ui …`), so after a
@@ -99,6 +103,7 @@ function header(it: Item): string {
   if (it.kind === 'restore') return 'Restore'
   if (it.kind === 'route') return 'Route'
   if (it.kind === 'gather') return 'Gather'
+  if (it.kind === 'cleanup') return 'Clean up'
   return cut(it.thread ? `${it.from} · ${it.thread}` : it.from ?? 'crosstalk', 12)
 }
 
@@ -109,6 +114,18 @@ async function showStatus($: EngineInterface, open: Item[]) {
   const text = open.length || label ? `◢ ${where || 'crosstalk'} · ${open.length} waiting` : undefined
   if (text !== lastStatus) $.ui.status(text)
   lastStatus = text
+}
+
+let lastOpen = -1
+
+/**
+ * This session's state on its own tab. Never awaited: the CLI writes what is
+ * wanted and leaves the terminal to a detached applier, and a slow terminal
+ * must never hold a turn up.
+ */
+function tabStatus($: EngineInterface, event: string) {
+  if (!interactive || !bin || !session) return
+  void $.process.run([bin, 'term', 'status', '--session', session, '--event', event], { timeoutMs: 10_000 }).catch(() => undefined)
 }
 
 async function received($: EngineInterface, line: string) {
@@ -123,6 +140,11 @@ async function received($: EngineInterface, line: string) {
   const open = (w.items ?? []).filter(i => !FINAL.has(i.state) && !settled.has(i.id))
   await update($, items, () => open)
   await showStatus($, open)
+  // Something came in, or was settled, while no turn runs: the tab says so.
+  if (open.length !== lastOpen) {
+    if (lastOpen !== -1 && !busy) tabStatus($, 'refresh')
+    lastOpen = open.length
+  }
   if (w.note && !toasted.has(w.note.id)) {
     toasted.add(w.note.id)
     void tookNote($, w.note)
@@ -202,6 +224,8 @@ async function raise($: EngineInterface, it: Item) {
       answer = await $.ui.ask(it.question ?? 'Restore your sessions?', { options: it.options ?? ['Restore', 'Open as windows', 'Not now'], header: header(it) })
     else if (it.kind === 'gather')
       answer = await $.ui.ask(it.question ?? 'Bring your other Claude sessions into crosstalk?', { options: it.options ?? ['Bring them in', 'Not now'], header: header(it) })
+    else if (it.kind === 'cleanup')
+      answer = await $.ui.ask(it.question ?? 'Remove the agent worktrees that are done with?', { options: it.options ?? ['Remove them', 'Not now'], header: header(it) })
     else if (it.kind === 'route')
       answer = await $.ui.ask(it.question ?? 'Which session should get this message?', { options: it.options ?? ['Hold it'], header: header(it) })
     else {
@@ -235,6 +259,11 @@ async function answered($: EngineInterface, it: Item, answer: string) {
   if (it.kind === 'gather') {
     const r = await step($, it, 'answer', answer)
     $.ui.toast((r.text ?? r.error ?? 'crosstalk: gather did not answer').replace(/^◢ crosstalk: /, '').replace(/\s+/g, ' '))
+    return
+  }
+  if (it.kind === 'cleanup') {
+    const r = await step($, it, 'answer', answer)
+    await receipt($, `cleanup-${it.id}`, r.text ?? r.error ?? 'crosstalk: cleanup did not answer')
     return
   }
   if (it.kind === 'route') {
@@ -333,6 +362,7 @@ export const register: Register = on => {
     if (e.agentId === undefined) {
       busy = true
       turns.add(e.turnId)
+      tabStatus($, 'UserPromptSubmit')
     }
     return next(e)
   })
@@ -343,6 +373,7 @@ export const register: Register = on => {
     if (e.agentId === undefined) {
       busy = false
       if (turns.delete(e.turnId)) lastTurnEnd = await $.clock.now()
+      tabStatus($, 'Stop')
       $.clock.after(300, () => maybeRaise($))
     }
     return out
@@ -423,6 +454,16 @@ export const register: Register = on => {
                 <Text dimColor>
                   {' '}
                   · {it.count ?? 0} session{it.count === 1 ? '' : 's'} without crosstalk · or say "bring them in"{later(it)}
+                </Text>
+              </Text>
+            )
+          if (it.kind === 'cleanup')
+            return (
+              <Text key={it.id} wrap="truncate">
+                <Text color={THREAD} bold>◢ clean up</Text>
+                <Text dimColor>
+                  {' '}
+                  · {it.count ?? 0} finished worktree{it.count === 1 ? '' : 's'} · or say "clean up the worktrees"{later(it)}
                 </Text>
               </Text>
             )

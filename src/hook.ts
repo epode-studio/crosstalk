@@ -23,6 +23,7 @@ import { pathsFromToolInput } from "./footprint.ts"
 import * as restore from "./restore.ts"
 import * as ui from "./uistate.ts"
 import * as gather from "./gather.ts"
+import * as termHook from "./terminal/hook.ts"
 
 const input = await new Promise<string>((resolve) => {
   let raw = ""
@@ -253,6 +254,28 @@ if (restoreClient === "claude" && sessionId && !process.env.CROSSTALK_NO_RESTORE
   } catch {}
 }
 
+/**
+ * The terminal workspace (src/terminal/hook.ts): this session's state on its
+ * tab, a spawned agent's name through sessionTitle, and the offer to remove
+ * finished worktrees. Claude Code only: these fields are its own, and Codex
+ * throws away an answer with a key it does not know.
+ */
+let chrome: termHook.Chrome = {}
+if (restoreClient === "claude" && sessionId) {
+  try {
+    chrome = termHook.fromHook({ event: eventName, sessionId, cwd, hook, env: process.env, root: rootFrom(import.meta.url), isSessionStart })
+    if (chrome.systemMessage) systemMessage = systemMessage ? `${systemMessage}\n${chrome.systemMessage}` : chrome.systemMessage
+  } catch {}
+}
+/** What Claude Code reads beside the answer: the tab's progress sequence and the session's name. */
+const chromeOut = (hookSpecific?: Record<string, unknown>) => {
+  const out: Record<string, unknown> = {}
+  if (chrome.terminalSequence) out.terminalSequence = chrome.terminalSequence
+  const title = chrome.sessionTitle && /^(SessionStart|UserPromptSubmit)$/.test(eventName) ? { sessionTitle: chrome.sessionTitle } : {}
+  if (hookSpecific || Object.keys(title).length) out.hookSpecificOutput = { hookEventName: eventName, ...(hookSpecific ?? {}), ...title }
+  return out
+}
+
 /** Nothing to do until there is a room. */
 if (!loadIdentity() || !sessionId) {
   process.stdout.write(
@@ -261,7 +284,7 @@ if (!loadIdentity() || !sessionId) {
         ? { decision: "allow" }
         : isAgy || isHermes || isKimi || isCursor
           ? {}
-          : { continue: true, ...(systemMessage ? { systemMessage } : {}) },
+          : { continue: true, ...(systemMessage ? { systemMessage } : {}), ...chromeOut() },
     ),
   )
   process.exit(0)
@@ -367,9 +390,8 @@ const say = (extra?: string) => {
     process.stdout.write(JSON.stringify(fits ? { additional_context: fits } : {}))
     process.exit(0)
   }
-  const out: any = { continue: true }
+  const out: any = { continue: true, ...chromeOut(extra ? { additionalContext: extra } : undefined) }
   if (systemMessage) out.systemMessage = systemMessage
-  if (extra) out.hookSpecificOutput = { hookEventName: eventName, additionalContext: extra }
   process.stdout.write(JSON.stringify(out))
   process.exit(0)
 }
