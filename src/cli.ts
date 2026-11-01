@@ -49,6 +49,7 @@ import * as trust from "./trust.ts"
 import * as facts from "./facts.ts"
 import { rootFrom, shim } from "./paths.ts"
 import * as restore from "./restore.ts"
+import { uiCmd } from "./uicli.ts"
 import fs from "node:fs"
 import path from "node:path"
 import os from "node:os"
@@ -1688,5 +1689,7 @@ const commands: Record<string, () => Promise<void>> = {
   relay,
   install,
   restore: restoreCmd,
+  // For crosstalk's mod, not for people: see src/uicli.ts.
+  ui: () => uiCmd(argv, ROOT_DIR),
 }
 await (commands[cmd] ?? (async () => die(`unknown command "${cmd}"`)))()

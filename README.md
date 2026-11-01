@@ -684,6 +684,8 @@ What each one actually covers:
 | `resilience.sh` | 13 | an unreachable relay, a restarted one, a frozen socket, catching up after an absence, two daemons on one state directory |
 | `docker/nat.sh` | 12 | two peers on isolated networks, neither able to accept a connection |
 | `tunnel.sh` | 2, or 11 | a LAN relay always; the nine behind a public tunnel only when Cloudflare issues one |
+| `uistate.test.ts`, `ui.sh` | 23, 36 | what the mod shows: each card, route question and restore offer settled once and kept settled across restarts, exactly one restore surface, the classic notice back when the mod stops |
+| `canary/drive.sh` | by hand | the shipped mod in a real Claude Code in tmux: what reaches the model, the transcript, history and a resumed session (`canary/drive-nomod.sh`: the same with mods off) |
 
 `e2e.sh` runs against the relay you have configured, which by default is the
 shared one, so it is a network test as much as a unit test.

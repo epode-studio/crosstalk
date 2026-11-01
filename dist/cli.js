@@ -3272,10 +3272,10 @@ function shouldOpenSettings(o) {
 }
 function permissionSteps(pane, app) {
   return pane === "accessibility" ? [
-    `System Settings → Privacy & Security → Accessibility → turn on ${app}`,
+    `System Settings \u2192 Privacy & Security \u2192 Accessibility \u2192 turn on ${app}`,
     `open "${SETTINGS_URL.accessibility}"`
   ] : [
-    `System Settings → Privacy & Security → Automation → ${app} → turn on System Events`,
+    `System Settings \u2192 Privacy & Security \u2192 Automation \u2192 ${app} \u2192 turn on System Events`,
     `open "${SETTINGS_URL.automation}"`
   ];
 }
@@ -3341,7 +3341,7 @@ function liveEnv(env, tabs) {
   };
 }
 var label = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path8.basename(r.cwd) || r.sessionId.slice(0, 8);
-var names = (rs, max = 4) => rs.slice(0, max).map(label).join(", ") + (rs.length > max ? ", …" : "");
+var names = (rs, max = 4) => rs.slice(0, max).map(label).join(", ") + (rs.length > max ? ", \u2026" : "");
 var commandsFile = () => path8.join(P2.root, "restore-commands.sh");
 function ctxNow() {
   const now = Date.now();
@@ -3350,8 +3350,8 @@ function ctxNow() {
 function describe(self, env = process.env, dry = false) {
   const lost = lostSessions(ctxNow(), self);
   if (!lost.length)
-    return { ok: true, text: "◢ crosstalk: nothing to restore.", lost, restored: [] };
-  const lines = [`◢ crosstalk: ${lost.length} session${lost.length === 1 ? "" : "s"} to restore:`];
+    return { ok: true, text: "\u25e2 crosstalk: nothing to restore.", lost, restored: [] };
+  const lines = [`\u25e2 crosstalk: ${lost.length} session${lost.length === 1 ? "" : "s"} to restore:`];
   for (const r of lost)
     lines.push(`  ${label(r).padEnd(16)} ${r.cwd}  (${r.client}${resumeArgv(r) ? "" : ", cannot resume"})`);
   if (dry) {
@@ -3378,7 +3378,7 @@ function forget(self) {
     removeRec(r.sessionId);
   return {
     ok: true,
-    text: lost.length ? `◢ crosstalk: left ${lost.length} session${lost.length === 1 ? "" : "s"} closed.` : "◢ crosstalk: nothing to restore.",
+    text: lost.length ? `\u25e2 crosstalk: left ${lost.length} session${lost.length === 1 ? "" : "s"} closed.` : "\u25e2 crosstalk: nothing to restore.",
     lost,
     restored: []
   };
@@ -3409,7 +3409,7 @@ function restore(o, only) {
   const env = o.env ?? process.env;
   const lost = only ?? lostSessions(ctxNow(), o.self);
   if (!lost.length)
-    return { ok: true, text: "◢ crosstalk: nothing to restore.", lost, restored: [] };
+    return { ok: true, text: "\u25e2 crosstalk: nothing to restore.", lost, restored: [] };
   claimPending();
   const e = liveEnv(env, o.tabs ?? true);
   let { plans, skipped } = plan(lost, e);
@@ -3430,7 +3430,7 @@ function restore(o, only) {
     return {
       ok: true,
       text: [
-        `◢ crosstalk needs permission to open tabs in ${app}.`,
+        `\u25e2 crosstalk needs permission to open tabs in ${app}.`,
         opened ? `  Opened System Settings. Turn on ${app} under Accessibility; crosstalk will finish restoring by itself.` : `  ${steps}`,
         ...opened ? [] : [`  ${cmd}`, `  crosstalk will finish restoring by itself once it is on.`]
       ].join(`
@@ -3503,7 +3503,7 @@ ${lines.join(`
     const [steps, cmd] = permissionSteps(missing, app);
     notes.push(opened ? `Opened System Settings, so next time they open as tabs: ${steps}` : `For tabs next time: ${steps}`, `  ${cmd}`);
   }
-  const head = restored.length ? `◢ crosstalk: reopened ${restored.length} session${restored.length === 1 ? "" : "s"} (${names(restored)}).` : `◢ crosstalk: reopened nothing.`;
+  const head = restored.length ? `\u25e2 crosstalk: reopened ${restored.length} session${restored.length === 1 ? "" : "s"} (${names(restored)}).` : `\u25e2 crosstalk: reopened nothing.`;
   return { ok: !failed.length, text: [head, ...notes.map((n) => `  ${n}`)].join(`
 `), lost, restored };
 }
@@ -3556,11 +3556,829 @@ function termEnv(t) {
   return e;
 }
 
+// src/client.ts
+import net2 from "node:net";
+import fs7 from "node:fs";
+function request2(req, timeoutMs = 130000) {
+  return new Promise((resolve, reject) => {
+    const sock = net2.createConnection(P2.daemonSock);
+    let rest = "";
+    const t = setTimeout(() => {
+      sock.destroy();
+      reject(new Error("daemon did not answer"));
+    }, timeoutMs);
+    sock.on("connect", () => sock.write(JSON.stringify(req) + `
+`));
+    sock.on("data", (b) => {
+      rest += b.toString("utf8");
+      const i = rest.indexOf(`
+`);
+      if (i === -1)
+        return;
+      clearTimeout(t);
+      const line = rest.slice(0, i);
+      sock.end();
+      try {
+        resolve(JSON.parse(line));
+      } catch (e) {
+        reject(e);
+      }
+    });
+    sock.on("error", (e) => {
+      clearTimeout(t);
+      reject(e);
+    });
+  });
+}
+function daemonRunning2() {
+  try {
+    const pid = Number(fs7.readFileSync(P2.daemonLock, "utf8"));
+    process.kill(pid, 0);
+    return fs7.existsSync(P2.daemonSock);
+  } catch {
+    return false;
+  }
+}
+
+// src/restore.ts
+import fs8 from "node:fs";
+import os5 from "node:os";
+import path9 from "node:path";
+import { spawn as spawn4, spawnSync as spawnSync2 } from "node:child_process";
+var dir2 = () => path9.join(P2.root, "open");
+var safe2 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
+var fileOf2 = (id) => path9.join(dir2(), `${safe2(id)}.json`);
+function readAll2() {
+  let names;
+  try {
+    names = fs8.readdirSync(dir2()).filter((f) => f.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const f of names) {
+    try {
+      const r = JSON.parse(fs8.readFileSync(path9.join(dir2(), f), "utf8"));
+      if (r && typeof r.sessionId === "string")
+        out.push(r);
+    } catch {}
+  }
+  return out;
+}
+function writeRec2(r) {
+  fs8.mkdirSync(dir2(), { recursive: true, mode: 448 });
+  const tmp = `${fileOf2(r.sessionId)}.${process.pid}.tmp`;
+  fs8.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 384 });
+  fs8.renameSync(tmp, fileOf2(r.sessionId));
+}
+function removeRec2(id) {
+  try {
+    fs8.unlinkSync(fileOf2(id));
+  } catch {}
+}
+var stateFile2 = () => path9.join(P2.root, "restore-state.json");
+function loadState2() {
+  try {
+    return JSON.parse(fs8.readFileSync(stateFile2(), "utf8"));
+  } catch {
+    return {};
+  }
+}
+function saveState2(s) {
+  fs8.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  fs8.writeFileSync(stateFile2(), JSON.stringify(s, null, 2), { mode: 384 });
+}
+var DAY2 = 24 * 60 * 60 * 1000;
+var WINDOW_MS2 = DAY2;
+var SHUTDOWN_MS2 = 10 * 60 * 1000;
+var BURST_MS2 = 10 * 1000;
+function bootTime2(env = process.env, now = Date.now()) {
+  const forced = Number(env.CROSSTALK_BOOT_TIME);
+  if (forced > 0)
+    return forced;
+  return now - os5.uptime() * 1000;
+}
+function endedNormally2(r, all, boot) {
+  if (!r.endedAt)
+    return false;
+  if (r.endReason !== "other")
+    return true;
+  if (r.endedAt < boot && boot - r.endedAt <= SHUTDOWN_MS2)
+    return false;
+  const burst = all.some((o) => o.sessionId !== r.sessionId && o.endReason === "other" && !!o.endedAt && Math.abs(o.endedAt - r.endedAt) <= BURST_MS2);
+  return !burst;
+}
+function isLost2(r, c) {
+  if (r.interactive === false)
+    return false;
+  if (endedNormally2(r, c.all, c.boot))
+    return false;
+  const before = r.seenAt < c.boot;
+  const ref = before ? c.boot : c.now;
+  if (ref - r.seenAt > WINDOW_MS2)
+    return false;
+  if (!before && r.client !== "claude")
+    return false;
+  return !c.alive(r);
+}
+function lostSessions2(c, self) {
+  return order2(c.all.filter((r) => r.sessionId !== self && isLost2(r, c)));
+}
+var order2 = (rs) => [...rs].sort((a, b) => a.startedAt - b.startedAt);
+function ps2(pid, field) {
+  if (!pid || pid < 1)
+    return null;
+  try {
+    const r = spawnSync2("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    if (r.status !== 0)
+      return null;
+    return r.stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+function pidAlive2(pid, pidStart) {
+  if (!pid || pid < 1)
+    return false;
+  try {
+    process.kill(pid, 0);
+  } catch (e) {
+    if (e?.code !== "EPERM")
+      return false;
+  }
+  if (!pidStart)
+    return true;
+  const now = ps2(pid, "lstart");
+  return now === null ? true : now === pidStart;
+}
+var recAlive2 = (r) => pidAlive2(r.pid, r.pidStart);
+var appleLocateScript2 = (tty) => [
+  `tell application "Terminal"`,
+  `	repeat with w in windows`,
+  `		set n to 0`,
+  `		repeat with t in tabs of w`,
+  `			set n to n + 1`,
+  `			if (tty of t) is ${asq2(tty)} then return ((id of w) as text) & " " & (n as text)`,
+  `		end repeat`,
+  `	end repeat`,
+  `end tell`,
+  `return ""`
+].join(`
+`);
+function captureTerminal2(env, pid, probe) {
+  const t = {};
+  if (env.TERM_PROGRAM)
+    t.program = env.TERM_PROGRAM;
+  const tty = ps2(pid, "tty");
+  if (tty && !/^\?+$/.test(tty))
+    t.tty = tty.startsWith("/dev/") ? tty : `/dev/${tty}`;
+  if (env.TMUX && env.TMUX_PANE) {
+    t.tmux = { pane: env.TMUX_PANE, socket: env.TMUX.split(",")[0] };
+    if (probe) {
+      const r = spawnSync2("tmux", ["display", "-p", "-t", env.TMUX_PANE, "#{session_name}\t#{window_index}\t#{pane_index}"], { encoding: "utf8", timeout: 2000, env });
+      const [s, w, p] = (r.stdout ?? "").trim().split("\t");
+      if (r.status === 0 && s)
+        Object.assign(t.tmux, { session: s, window: Number(w), paneIndex: Number(p) });
+    }
+  }
+  if (env.KITTY_WINDOW_ID || env.KITTY_LISTEN_ON)
+    t.kitty = { window: env.KITTY_WINDOW_ID, listenOn: env.KITTY_LISTEN_ON };
+  if (env.WEZTERM_PANE)
+    t.wezterm = { pane: env.WEZTERM_PANE };
+  if (env.ITERM_SESSION_ID) {
+    const m = /^w(\d+)t(\d+)p(\d+)/.exec(env.ITERM_SESSION_ID);
+    t.iterm = { id: env.ITERM_SESSION_ID, ...m ? { window: Number(m[1]), tab: Number(m[2]) } : {} };
+  }
+  if (env.WT_SESSION)
+    t.wt = { session: env.WT_SESSION };
+  if (env.TERM_PROGRAM === "Apple_Terminal" || env.TERM_SESSION_ID && !t.iterm) {
+    t.apple = { sessionId: env.TERM_SESSION_ID };
+    if (probe && t.tty && process.platform === "darwin" && env.TERM_PROGRAM === "Apple_Terminal") {
+      const r = spawnSync2("osascript", ["-"], { input: appleLocateScript2(t.tty), encoding: "utf8", timeout: 2500 });
+      const [w, n] = (r.stdout ?? "").trim().split(" ").map(Number);
+      if (r.status === 0 && w && n)
+        Object.assign(t.apple, { window: w, tab: n });
+    }
+    if (env.TERM_PROGRAM !== "Apple_Terminal" && !t.apple.window)
+      delete t.apple;
+  }
+  return t;
+}
+var shq2 = (s) => /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
+var asq2 = (s) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
+function resumeArgv2(r, bin) {
+  if (r.client === "claude")
+    return [bin ?? "claude", "--resume", r.sessionId];
+  if (r.client === "codex")
+    return [bin ?? "codex", "resume", r.sessionId];
+  return null;
+}
+var typed2 = (r) => `cd ${shq2(r.cwd)} && ${resumeArgv2(r).map(shq2).join(" ")}`;
+function kindOf2(t) {
+  if (!t)
+    return null;
+  if (t.tmux)
+    return "tmux";
+  if (t.program === "Apple_Terminal")
+    return "apple";
+  if (t.program === "iTerm.app" || t.iterm)
+    return "iterm";
+  if (t.program === "ghostty")
+    return "ghostty";
+  if (t.kitty)
+    return "kitty";
+  if (t.wezterm || t.program === "WezTerm")
+    return "wezterm";
+  if (t.wt)
+    return "wt";
+  if (t.apple)
+    return "apple";
+  return null;
+}
+function appName2(t) {
+  switch (t?.program) {
+    case "Apple_Terminal":
+      return "Terminal";
+    case "iTerm.app":
+      return "iTerm";
+    case "ghostty":
+      return "Ghostty";
+    case "WezTerm":
+      return "WezTerm";
+    case "vscode":
+      return "Visual Studio Code";
+    default:
+      return "the app crosstalk runs in";
+  }
+}
+function usable2(k, e, t) {
+  switch (k) {
+    case "tmux":
+      return e.has("tmux");
+    case "apple":
+    case "iterm":
+    case "ghostty":
+      return e.platform === "darwin" && e.has("osascript");
+    case "kitty":
+      return e.has("kitten") && !!(e.current.kitty?.listenOn ?? t?.kitty?.listenOn);
+    case "wezterm":
+      return e.has("wezterm");
+    case "wt":
+      return e.platform === "win32" && e.has("wt");
+  }
+}
+function adapterFor2(r, e) {
+  if (/[\n\r\0]/.test(r.cwd) || !r.cwd)
+    return "manual";
+  const own = kindOf2(r.terminal);
+  if (own && usable2(own, e, r.terminal))
+    return own;
+  const cur = kindOf2(e.current);
+  if (cur && usable2(cur, e, e.current))
+    return cur;
+  return "manual";
+}
+var groupBy2 = (xs, key) => {
+  const m = new Map;
+  for (const x of xs)
+    m.set(key(x), [...m.get(key(x)) ?? [], x]);
+  return m;
+};
+var num2 = (n) => n === undefined || Number.isNaN(n) ? Infinity : n;
+function appleTerminalScript2(cmds, tabs) {
+  const L = [`set crosstalkFallback to ""`, `tell application "Terminal"`, `	activate`, `	do script ${asq2(cmds[0])}`, `end tell`];
+  for (const c of cmds.slice(1)) {
+    if (!tabs) {
+      L.push(`tell application "Terminal" to do script ${asq2(c)}`);
+      continue;
+    }
+    L.push(`if crosstalkFallback is "" then`, `	try`, `		delay 0.3`, `		tell application "System Events" to keystroke "t" using command down`, `		delay 0.6`, `		tell application "Terminal" to do script ${asq2(c)} in selected tab of front window`, `	on error errMsg number errNum`, `		set crosstalkFallback to (errNum as text)`, `		tell application "Terminal" to do script ${asq2(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq2(c)}`, `end if`);
+  }
+  L.push(`return "done " & crosstalkFallback`);
+  return L.join(`
+`);
+}
+function itermScript2(cmds) {
+  const L = [`tell application "iTerm2"`, `	activate`, `	set w to (create window with default profile)`, `	tell current session of w to write text ${asq2(cmds[0])}`];
+  for (const c of cmds.slice(1))
+    L.push(`	tell w`, `		set t to (create tab with default profile)`, `		tell current session of t to write text ${asq2(c)}`, `	end tell`);
+  L.push(`end tell`, `return "done "`);
+  return L.join(`
+`);
+}
+function ghosttyScript2(cmds) {
+  const L = [`set crosstalkFallback to ""`, `tell application "Ghostty" to activate`, `delay 0.5`, `try`];
+  cmds.forEach((c, i) => {
+    L.push(`	tell application "System Events"`, `		keystroke ${i === 0 ? `"n"` : `"t"`} using command down`, `		delay 0.8`, `		keystroke ${asq2(c)}`, `		key code 36`, `	end tell`);
+  });
+  L.push(`on error errMsg number errNum`, `	set crosstalkFallback to (errNum as text)`, `end try`, `return "done " & crosstalkFallback`);
+  return L.join(`
+`);
+}
+var wtArg2 = (s) => s.replace(/;/g, "\\;");
+function plan2(recs, e) {
+  const skipped = recs.filter((r) => !resumeArgv2(r));
+  const ok = order2(recs.filter((r) => resumeArgv2(r)));
+  const byKind = groupBy2(ok, (r) => adapterFor2(r, e));
+  const plans = [];
+  const exec = (r) => resumeArgv2(r, e.which(r.client === "codex" ? "codex" : "claude"));
+  for (const [kind, rs] of byKind) {
+    if (kind === "tmux") {
+      const groups = groupBy2(rs, (r) => r.terminal.tmux?.session ?? e.current.tmux?.session ?? "crosstalk");
+      for (const [name, g] of groups) {
+        const sorted = [...g].sort((a, b) => num2(a.terminal.tmux?.window) - num2(b.terminal.tmux?.window) || num2(a.terminal.tmux?.paneIndex) - num2(b.terminal.tmux?.paneIndex) || a.startedAt - b.startedAt);
+        let exists = e.tmuxHasSession(name);
+        const steps = sorted.map((r) => {
+          const cmd = exec(r).map(shq2).join(" ");
+          if (!exists) {
+            exists = true;
+            return { cmd: "tmux", args: ["new-session", "-d", "-s", name, "-c", r.cwd, cmd] };
+          }
+          return { cmd: "tmux", args: ["new-window", "-d", "-t", `=${name}:`, "-c", r.cwd, cmd] };
+        });
+        plans.push({ kind: "tmux", sessions: sorted, steps });
+      }
+    } else if (kind === "apple") {
+      const groups = groupBy2(rs, (r) => String(r.terminal.apple?.window ?? "?"));
+      const keys = [...groups.keys()].sort((a, b) => num2(Number(a)) - num2(Number(b)));
+      for (const k of keys) {
+        const g = [...groups.get(k)].sort((a, b) => num2(a.terminal.apple?.tab) - num2(b.terminal.apple?.tab) || a.startedAt - b.startedAt);
+        const tabs = e.tabs && g.length > 1;
+        plans.push({
+          kind: "apple",
+          sessions: g,
+          needsAccessibility: tabs,
+          steps: [{ cmd: "osascript", args: ["-"], input: appleTerminalScript2(g.map(typed2), tabs) }]
+        });
+      }
+    } else if (kind === "iterm") {
+      const groups = groupBy2(rs, (r) => String(r.terminal.iterm?.window ?? "?"));
+      for (const k of [...groups.keys()].sort((a, b) => num2(Number(a)) - num2(Number(b)))) {
+        const g = [...groups.get(k)].sort((a, b) => num2(a.terminal.iterm?.tab) - num2(b.terminal.iterm?.tab) || a.startedAt - b.startedAt);
+        plans.push({ kind: "iterm", sessions: g, steps: [{ cmd: "osascript", args: ["-"], input: itermScript2(g.map(typed2)) }] });
+      }
+    } else if (kind === "ghostty") {
+      if (e.tabs)
+        plans.push({ kind: "ghostty", sessions: rs, needsAccessibility: true, steps: [{ cmd: "osascript", args: ["-"], input: ghosttyScript2(rs.map(typed2)) }] });
+      else
+        plans.push({ kind: "manual", sessions: rs, steps: [] });
+    } else if (kind === "kitty") {
+      const to = e.current.kitty?.listenOn ?? rs[0].terminal.kitty?.listenOn;
+      plans.push({
+        kind: "kitty",
+        sessions: rs,
+        steps: rs.map((r) => ({ cmd: "kitten", args: ["@", "--to", to, "launch", "--type=tab", "--cwd", r.cwd, ...exec(r)] }))
+      });
+    } else if (kind === "wezterm") {
+      plans.push({
+        kind: "wezterm",
+        sessions: rs,
+        steps: rs.map((r) => ({ cmd: "wezterm", args: ["cli", "spawn", "--cwd", r.cwd, "--", ...exec(r)] }))
+      });
+    } else if (kind === "wt") {
+      plans.push({
+        kind: "wt",
+        sessions: rs,
+        steps: rs.map((r) => ({ cmd: "wt", args: ["-w", "0", "nt", "-d", wtArg2(r.cwd), ...exec(r).map(wtArg2)] }))
+      });
+    } else {
+      plans.push({ kind: "manual", sessions: rs, steps: [] });
+    }
+  }
+  return { plans, skipped };
+}
+var SETTINGS_URL2 = {
+  accessibility: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+  automation: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"
+};
+function classifyOsaError2(text) {
+  if (/-1743\b|not authori[sz]ed to send apple events/i.test(text))
+    return "automation";
+  if (/-25211\b|-1719\b|^1002$|\(1002\)|assistive access|not allowed to send keystrokes|accessibility/i.test(text.trim()))
+    return "accessibility";
+  return null;
+}
+var REOPEN_SETTINGS_MS2 = 2 * 60 * 1000;
+function shouldOpenSettings2(o) {
+  if (!o.userAction)
+    return false;
+  const last = o.state.settingsOpened?.[o.pane];
+  return !(last && o.now - last < REOPEN_SETTINGS_MS2);
+}
+function permissionSteps2(pane, app) {
+  return pane === "accessibility" ? [
+    `System Settings \u2192 Privacy & Security \u2192 Accessibility \u2192 turn on ${app}`,
+    `open "${SETTINGS_URL2.accessibility}"`
+  ] : [
+    `System Settings \u2192 Privacy & Security \u2192 Automation \u2192 ${app} \u2192 turn on System Events`,
+    `open "${SETTINGS_URL2.automation}"`
+  ];
+}
+var JXA_AX2 = `ObjC.import("ApplicationServices"); var f; try { f = $.AXIsProcessTrusted() } catch (e) { ObjC.bindFunction("AXIsProcessTrusted", ["bool", []]); f = $.AXIsProcessTrusted() } f ? "yes" : "no"`;
+function accessibilityGranted2() {
+  if (process.platform !== "darwin")
+    return null;
+  const forced = process.env.CROSSTALK_FAKE_ACCESSIBILITY;
+  if (forced)
+    return forced === "yes";
+  const r = spawnSync2("osascript", ["-l", "JavaScript", "-e", JXA_AX2], { encoding: "utf8", timeout: 3000 });
+  const out = (r.stdout ?? "").trim();
+  return out === "yes" ? true : out === "no" ? false : null;
+}
+function openSettings2(pane) {
+  if (process.env.CROSSTALK_NO_OPEN)
+    return;
+  spawnSync2("open", [SETTINGS_URL2[pane]], { timeout: 5000 });
+}
+function which2(bin) {
+  for (const d of (process.env.PATH ?? "").split(path9.delimiter)) {
+    if (!d)
+      continue;
+    const p = path9.join(d, bin);
+    try {
+      fs8.accessSync(p, fs8.constants.X_OK);
+      return p;
+    } catch {}
+  }
+  return;
+}
+function liveEnv2(env, tabs) {
+  return {
+    platform: process.platform,
+    current: captureTerminal2(env, process.pid, true),
+    has: (b) => !!which2(b),
+    which: which2,
+    tmuxHasSession: (name) => spawnSync2("tmux", ["has-session", "-t", `=${name}`], { stdio: "ignore", timeout: 2000 }).status === 0,
+    tabs
+  };
+}
+var label2 = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path9.basename(r.cwd) || r.sessionId.slice(0, 8);
+var names2 = (rs, max = 4) => rs.slice(0, max).map(label2).join(", ") + (rs.length > max ? ", \u2026" : "");
+var commandsFile2 = () => path9.join(P2.root, "restore-commands.sh");
+function ctxNow2() {
+  const now = Date.now();
+  return { now, boot: bootTime2(process.env, now), all: readAll2(), alive: recAlive2 };
+}
+var pendingFile2 = () => path9.join(P2.root, "restore-pending.json");
+function claimPending2() {
+  const mine = `${pendingFile2()}.${process.pid}`;
+  try {
+    fs8.renameSync(pendingFile2(), mine);
+  } catch {
+    return null;
+  }
+  try {
+    return JSON.parse(fs8.readFileSync(mine, "utf8"));
+  } catch {
+    return null;
+  } finally {
+    try {
+      fs8.unlinkSync(mine);
+    } catch {}
+  }
+}
+function runStep2(s) {
+  const r = spawnSync2(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 60000 });
+  return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
+}
+function restore2(o, only) {
+  const env = o.env ?? process.env;
+  const lost = only ?? lostSessions2(ctxNow2(), o.self);
+  if (!lost.length)
+    return { ok: true, text: "\u25e2 crosstalk: nothing to restore.", lost, restored: [] };
+  claimPending2();
+  const e = liveEnv2(env, o.tabs ?? true);
+  let { plans, skipped } = plan2(lost, e);
+  const app = appName2(e.current);
+  const notes = [];
+  const state = loadState2();
+  if (plans.some((p) => p.needsAccessibility) && accessibilityGranted2() === false) {
+    const opened = shouldOpenSettings2({ pane: "accessibility", userAction: o.userAction, state, now: Date.now() });
+    if (opened) {
+      openSettings2("accessibility");
+      saveState2({ ...state, settingsOpened: { ...state.settingsOpened, accessibility: Date.now() } });
+    }
+    const p = { ids: lost.map((r) => r.sessionId), current: e.current, until: Date.now() + WAIT_MS2(), self: o.self };
+    fs8.mkdirSync(P2.root, { recursive: true, mode: 448 });
+    fs8.writeFileSync(pendingFile2(), JSON.stringify(p), { mode: 384 });
+    startWaiter2(o.root);
+    const [steps, cmd] = permissionSteps2("accessibility", app);
+    return {
+      ok: true,
+      text: [
+        `\u25e2 crosstalk needs permission to open tabs in ${app}.`,
+        opened ? `  Opened System Settings. Turn on ${app} under Accessibility; crosstalk will finish restoring by itself.` : `  ${steps}`,
+        ...opened ? [] : [`  ${cmd}`, `  crosstalk will finish restoring by itself once it is on.`]
+      ].join(`
+`),
+      lost,
+      restored: []
+    };
+  }
+  for (const r of lost)
+    removeRec2(r.sessionId);
+  const restored = [];
+  const failed = [];
+  const manual = [];
+  let missing = null;
+  for (const p of plans) {
+    if (p.kind === "manual") {
+      manual.push(...p.sessions);
+      continue;
+    }
+    let ok = true;
+    let out = "";
+    for (const s of p.steps) {
+      const r = runStep2(s);
+      out += r.out + `
+`;
+      if (!r.ok) {
+        ok = false;
+        break;
+      }
+    }
+    const fellBack = /done (-?\d+)/.exec(out);
+    if (ok && fellBack) {
+      missing = classifyOsaError2(fellBack[1]) ?? "automation";
+      notes.push(`Opened ${p.sessions.length} in ${app} as separate windows: ${app} ${missing === "accessibility" ? "may not type keys (Accessibility)" : "may not control System Events (Automation)"}.`);
+    } else if (ok && p.needsAccessibility)
+      saveState2({ ...loadState2(), tabsWorked: Date.now() });
+    if (ok)
+      restored.push(...p.sessions);
+    else {
+      missing ??= classifyOsaError2(out);
+      failed.push(...p.sessions);
+      notes.push(`${p.kind} could not open ${names2(p.sessions)}: ${out.trim().split(`
+`).pop()}`);
+    }
+  }
+  const rest = [...manual, ...failed];
+  for (const r of failed)
+    writeRec2(r);
+  if (rest.length) {
+    const lines = rest.map(typed2);
+    fs8.mkdirSync(P2.root, { recursive: true, mode: 448 });
+    fs8.writeFileSync(commandsFile2(), `#!/bin/sh
+# Sessions crosstalk could not reopen by itself. Each line is one tab.
+${lines.join(`
+`)}
+`, { mode: 448 });
+    notes.push(`Paste each line into its own tab (also in ${commandsFile2()}):`, ...lines.map((l) => `  ${l}`));
+  }
+  if (skipped.length)
+    notes.push(`Skipped ${names2(skipped)}: ${[...new Set(skipped.map((r) => r.client))].join(", ")} cannot resume a session.`);
+  for (const r of skipped)
+    removeRec2(r.sessionId);
+  if (missing && process.platform === "darwin") {
+    const opened = shouldOpenSettings2({ pane: missing, userAction: o.userAction, state: loadState2(), now: Date.now() });
+    if (opened) {
+      openSettings2(missing);
+      const s = loadState2();
+      saveState2({ ...s, settingsOpened: { ...s.settingsOpened, [missing]: Date.now() } });
+    }
+    const [steps, cmd] = permissionSteps2(missing, app);
+    notes.push(opened ? `Opened System Settings, so next time they open as tabs: ${steps}` : `For tabs next time: ${steps}`, `  ${cmd}`);
+  }
+  const head = restored.length ? `\u25e2 crosstalk: reopened ${restored.length} session${restored.length === 1 ? "" : "s"} (${names2(restored)}).` : `\u25e2 crosstalk: reopened nothing.`;
+  return { ok: !failed.length, text: [head, ...notes.map((n) => `  ${n}`)].join(`
+`), lost, restored };
+}
+var WAIT_MS2 = () => Number(process.env.CROSSTALK_RESTORE_WAIT_MS ?? 2 * 60 * 1000);
+function startWaiter2(root) {
+  if (process.env.CROSSTALK_NO_WAITER)
+    return;
+  try {
+    const child = spawn4(shim(root ?? rootFrom(import.meta.url)), ["restore", "--finish"], {
+      detached: true,
+      stdio: "ignore"
+    });
+    child.unref();
+  } catch {}
+}
+
+// src/uistate.ts
+import fs9 from "node:fs";
+import path10 from "node:path";
+var FINAL = new Set(["answered", "handed", "muted"]);
+var file = () => path10.join(P2.root, "ui.json");
+var lockDir = () => path10.join(P2.root, "ui.lock");
+var markers = () => path10.join(P2.root, "ui-mod");
+var safe3 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
+var WEEK = 7 * 24 * 60 * 60 * 1000;
+function read() {
+  try {
+    const f = JSON.parse(fs9.readFileSync(file(), "utf8"));
+    if (f && f.v === 1 && f.items && typeof f.items === "object")
+      return f;
+  } catch {}
+  return { v: 1, items: {} };
+}
+function write(f) {
+  fs9.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  const tmp = `${file()}.${process.pid}.tmp`;
+  fs9.writeFileSync(tmp, JSON.stringify(f, null, 2), { mode: 384 });
+  fs9.renameSync(tmp, file());
+}
+var sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function withStore(fn) {
+  fs9.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  let held = false;
+  for (let i = 0;i < 200 && !held; i++) {
+    try {
+      fs9.mkdirSync(lockDir());
+      held = true;
+    } catch {
+      try {
+        if (Date.now() - fs9.statSync(lockDir()).mtimeMs > 1e4)
+          fs9.rmdirSync(lockDir());
+      } catch {}
+      sleepSync(10);
+    }
+  }
+  try {
+    const f = read();
+    const was = JSON.stringify(f);
+    const now = Date.now();
+    const out = fn(f.items, now);
+    for (const [id, it] of Object.entries(f.items))
+      if (FINAL.has(it.state) && now - it.updatedAt > WEEK || now - it.updatedAt > 4 * WEEK)
+        delete f.items[id];
+    if (JSON.stringify(f) !== was)
+      write(f);
+    return out;
+  } finally {
+    if (held)
+      try {
+        fs9.rmdirSync(lockDir());
+      } catch {}
+  }
+}
+function snapshot() {
+  return read().items;
+}
+function act(items, id, action, now, answer) {
+  const it = items[id];
+  if (!it)
+    return { ok: false, error: `nothing waiting with id ${id}` };
+  if (FINAL.has(it.state))
+    return { ok: false, error: `already ${it.state}`, item: it };
+  const next = { ...it, updatedAt: now };
+  switch (action) {
+    case "raised":
+      next.raisedAt = now;
+      break;
+    case "later":
+      next.state = "later";
+      next.raisedAt = now;
+      break;
+    case "hand":
+      if (it.kind !== "message" && it.kind !== "ask")
+        return { ok: false, error: `a ${it.kind} cannot be handed over`, item: it };
+      next.state = "handed";
+      break;
+    case "mute":
+      next.state = "muted";
+      break;
+    case "answer":
+      next.state = "answered";
+      if (answer !== undefined)
+        next.answer = answer;
+      break;
+    default:
+      return { ok: false, error: `unknown action ${action}`, item: it };
+  }
+  items[id] = next;
+  return { ok: true, item: next };
+}
+function settle(items, id, state, now) {
+  const it = items[id];
+  if (it && !FINAL.has(it.state))
+    items[id] = { ...it, state, updatedAt: now };
+}
+function openFor(items, sessionId) {
+  return Object.values(items).filter((i) => i.sessionId === sessionId && !FINAL.has(i.state)).sort((a, b) => a.createdAt - b.createdAt);
+}
+var MARKER_MS = 10 * 60 * 1000;
+function markModActive(sessionId) {
+  fs9.mkdirSync(markers(), { recursive: true, mode: 448 });
+  fs9.writeFileSync(path10.join(markers(), safe3(sessionId)), String(Date.now()), { mode: 384 });
+}
+function pruneMarkers(now = Date.now()) {
+  try {
+    for (const f of fs9.readdirSync(markers())) {
+      const p = path10.join(markers(), f);
+      try {
+        if (now - fs9.statSync(p).mtimeMs > WEEK)
+          fs9.unlinkSync(p);
+      } catch {}
+    }
+  } catch {}
+}
+var restoreId = (sessionId) => `restore:${sessionId}`;
+
+// src/uicli.ts
+function arg(argv, f) {
+  const i = argv.indexOf(f);
+  return i === -1 ? undefined : argv[i + 1];
+}
+var print = (o) => void process.stdout.write(JSON.stringify(o) + `
+`);
+async function waiting(session, mod) {
+  if (daemonRunning2()) {
+    try {
+      const r = await request2({ op: "ui", sessionId: session, mod }, 3000);
+      if (r?.ok)
+        return { items: r.items, daemon: true, label: r.label };
+    } catch {}
+  }
+  return { items: openFor(snapshot(), session), daemon: false };
+}
+function settleRestore(session) {
+  const id = restoreId(session);
+  const it = snapshot()[id];
+  if (!it || FINAL.has(it.state))
+    return;
+  if (lostSessions2(ctxNow2(), session).length)
+    return;
+  withStore((items, now) => settle(items, id, "answered", now));
+}
+async function watch(session, interval) {
+  let last = "";
+  let lastRestoreCheck = 0;
+  const parent = process.ppid;
+  for (;; ) {
+    try {
+      process.kill(parent, 0);
+    } catch {
+      return;
+    }
+    if (Date.now() - lastRestoreCheck > 1e4) {
+      lastRestoreCheck = Date.now();
+      try {
+        settleRestore(session);
+      } catch {}
+    }
+    const w = await waiting(session, true);
+    const line = JSON.stringify(w);
+    if (line !== last) {
+      last = line;
+      process.stdout.write(line + `
+`);
+    }
+    await new Promise((r) => setTimeout(r, interval));
+  }
+}
+function restoreAct(session, id, action, value, root) {
+  if (action === "raised" || action === "later")
+    return withStore((items, now) => act(items, id, action, now));
+  const v = (value ?? "").trim();
+  const want = action === "mute" || /^(not now|no|never|later)\b/i.test(v) ? "no" : /window/i.test(v) ? "windows" : "yes";
+  const claim = withStore((items, now) => act(items, id, "answer", now, v || want));
+  if (!claim.ok)
+    return claim;
+  if (want === "no")
+    return { ok: true, item: claim.item, text: `Left them closed for now. Say "restore them" any time.` };
+  const out = restore2({ self: session, tabs: want !== "windows", userAction: true, root });
+  return { ok: out.ok, item: claim.item, text: out.text, restored: out.restored.length };
+}
+async function uiCmd(argv, root) {
+  const sub = argv[1];
+  const session = arg(argv, "--session") ?? process.env.CLAUDE_CODE_SESSION_ID ?? "";
+  if (!session)
+    return print({ ok: false, error: "--session is needed" });
+  switch (sub) {
+    case "hello":
+      markModActive(session);
+      pruneMarkers();
+      return print({ ok: true });
+    case "list":
+      return print({ ok: true, ...await waiting(session, false) });
+    case "watch":
+      return watch(session, Math.max(250, Number(arg(argv, "--interval") ?? 1000)));
+    case "act": {
+      const id = arg(argv, "--id") ?? "";
+      const action = arg(argv, "--action") ?? "";
+      const value = arg(argv, "--value");
+      if (id.startsWith("restore:"))
+        return print(restoreAct(session, id, action, value, root));
+      if (!daemonRunning2())
+        return print({ ok: false, error: "the crosstalk daemon is not running" });
+      try {
+        return print(await request2({ op: "ui_act", sessionId: session, id, action, value }, 30000));
+      } catch (e) {
+        return print({ ok: false, error: e.message });
+      }
+    }
+    default:
+      return print({ ok: false, error: `unknown: crosstalk ui ${sub ?? ""}` });
+  }
+}
+
 // src/cli.ts
-import fs7 from "fs";
-import path9 from "path";
-import os5 from "os";
-import { spawn as spawn4, execFileSync as execFileSync4 } from "child_process";
+import fs10 from "fs";
+import path11 from "path";
+import os6 from "os";
+import { spawn as spawn5, execFileSync as execFileSync4 } from "child_process";
 var argv = process.argv.slice(2);
 var cmd = argv[0] ?? "status";
 var VALUE_FLAGS = new Set([
@@ -3618,8 +4436,8 @@ var positional = (() => {
   return out;
 })();
 var ROOT_DIR = rootFrom2(import.meta.url);
-var RELAY_PID = path9.join(ROOT, "relay.pid");
-var TUNNEL_PID = path9.join(ROOT, "tunnel.pid");
+var RELAY_PID = path11.join(ROOT, "relay.pid");
+var TUNNEL_PID = path11.join(ROOT, "tunnel.pid");
 var httpBase = (ws = loadRelay().url) => ws.replace(/^ws/, "http").replace(/\/ws$/, "");
 var die = (m) => {
   console.error(m);
@@ -3649,7 +4467,7 @@ function identityOrCreate() {
 }
 var relayPid = () => {
   try {
-    const pid = Number(fs7.readFileSync(RELAY_PID, "utf8"));
+    const pid = Number(fs10.readFileSync(RELAY_PID, "utf8"));
     process.kill(pid, 0);
     return pid;
   } catch {
@@ -3684,14 +4502,14 @@ async function startRelay(port = Number(flag("--port", "8787"))) {
     if (await relayReachable(url))
       return url;
   }
-  const out = fs7.openSync(path9.join(ROOT, "relay.log"), "a");
-  const child = spawn4(shim2(ROOT_DIR), ["relay-server", "--host", "0.0.0.0", "--port", String(port)], {
+  const out = fs10.openSync(path11.join(ROOT, "relay.log"), "a");
+  const child = spawn5(shim2(ROOT_DIR), ["relay-server", "--host", "0.0.0.0", "--port", String(port)], {
     detached: true,
     stdio: ["ignore", out, out]
   });
   child.unref();
-  fs7.mkdirSync(ROOT, { recursive: true, mode: 448 });
-  fs7.writeFileSync(RELAY_PID, String(child.pid), { mode: 384 });
+  fs10.mkdirSync(ROOT, { recursive: true, mode: 448 });
+  fs10.writeFileSync(RELAY_PID, String(child.pid), { mode: 384 });
   const url = `ws://${addr.host}:${port}`;
   saveRelay(url);
   for (let i = 0;i < 40; i++) {
@@ -3710,14 +4528,14 @@ Or drop --public and use --host, which runs the relay on this machine for
 anyone on the same network.`);
     console.log("opening a public tunnel, this takes a few seconds");
     try {
-      const t = await openTunnel(bin, port, path9.join(ROOT, "tunnel.log"));
-      fs7.writeFileSync(TUNNEL_PID, String(t.pid), { mode: 384 });
+      const t = await openTunnel(bin, port, path11.join(ROOT, "tunnel.log"));
+      fs10.writeFileSync(TUNNEL_PID, String(t.pid), { mode: 384 });
       saveRelay(`wss://${t.host}`);
       console.log(`relay reachable at ${t.url}`);
       return `wss://${t.host}`;
     } catch (e) {
       die(`the tunnel did not come up: ${e.message}
-See ${path9.join(ROOT, "tunnel.log")}`);
+See ${path11.join(ROOT, "tunnel.log")}`);
     }
   }
   console.log(`relay running on ${url}   (${addr.kind}, ${addr.note})`);
@@ -3734,10 +4552,10 @@ async function relay() {
     if (!pid)
       return console.log("no relay started by crosstalk is running");
     process.kill(pid, "SIGTERM");
-    fs7.rmSync(RELAY_PID, { force: true });
+    fs10.rmSync(RELAY_PID, { force: true });
     try {
-      process.kill(Number(fs7.readFileSync(TUNNEL_PID, "utf8")), "SIGTERM");
-      fs7.rmSync(TUNNEL_PID, { force: true });
+      process.kill(Number(fs10.readFileSync(TUNNEL_PID, "utf8")), "SIGTERM");
+      fs10.rmSync(TUNNEL_PID, { force: true });
       console.log("tunnel closed");
     } catch {}
     return console.log("relay stopped");
@@ -3988,7 +4806,7 @@ async function doctor() {
   const rows = [];
   const id = loadIdentity();
   const socket = process.env.CLAUDE_CODE_MESSAGING_SOCKET;
-  rows.push(["runtime", true, `${path9.basename(process.execPath)} ${process.version ?? ""}`.trim()]);
+  rows.push(["runtime", true, `${path11.basename(process.execPath)} ${process.version ?? ""}`.trim()]);
   rows.push([
     "identity",
     !!id,
@@ -4001,7 +4819,7 @@ async function doctor() {
   ]);
   rows.push([
     "inbox socket",
-    socket ? fs7.existsSync(socket) : null,
+    socket ? fs10.existsSync(socket) : null,
     socket ?? "not provided; sessions without a Claude Code socket receive notices through hooks"
   ]);
   rows.push([
@@ -4009,10 +4827,10 @@ async function doctor() {
     socket ? !!process.env.CLAUDE_CODE_MESSAGING_TOKEN : null,
     process.env.CLAUDE_CODE_MESSAGING_TOKEN ? "present" : socket ? "missing, messages arrive as anonymous peers" : "only used with a Claude Code inbox socket"
   ]);
-  const sessionsDir = path9.join(process.env.HOME ?? "", ".claude", "sessions");
+  const sessionsDir = path11.join(process.env.HOME ?? "", ".claude", "sessions");
   let visible = 0;
   try {
-    visible = fs7.readdirSync(sessionsDir).filter((f) => f.endsWith(".json")).length;
+    visible = fs10.readdirSync(sessionsDir).filter((f) => f.endsWith(".json")).length;
   } catch {}
   rows.push(["session registry", visible > 0 ? true : null, `${visible} Claude Code entries in ${sessionsDir}`]);
   {
@@ -4129,7 +4947,7 @@ async function daemon() {
   const sub = positional[0] ?? "start";
   if (sub === "stop" || sub === "restart") {
     try {
-      process.kill(Number(fs7.readFileSync(P.daemonLock, "utf8")), "SIGTERM");
+      process.kill(Number(fs10.readFileSync(P.daemonLock, "utf8")), "SIGTERM");
       console.log("daemon stopped");
     } catch {
       console.log("daemon was not running");
@@ -4296,24 +5114,24 @@ usage: /crosstalk:rename <current> <new>
   }
   save(t);
   try {
-    const uPath = path9.join(ROOT, "usage.json");
-    const u = JSON.parse(fs7.readFileSync(uPath, "utf8"));
+    const uPath = path11.join(ROOT, "usage.json");
+    const u = JSON.parse(fs10.readFileSync(uPath, "utf8"));
     if (u[a]) {
       u[b] = u[a];
       delete u[a];
-      fs7.writeFileSync(uPath, JSON.stringify(u, null, 2), { mode: 384 });
+      fs10.writeFileSync(uPath, JSON.stringify(u, null, 2), { mode: 384 });
     }
   } catch {}
   try {
-    const qPath = path9.join(ROOT, "queue.json");
-    const q = JSON.parse(fs7.readFileSync(qPath, "utf8"));
+    const qPath = path11.join(ROOT, "queue.json");
+    const q = JSON.parse(fs10.readFileSync(qPath, "utf8"));
     let touched = 0;
     for (const msgs of Object.values(q))
       for (const m of msgs)
         if (m.from === a)
           m.from = b, touched++;
     if (touched)
-      fs7.writeFileSync(qPath, JSON.stringify(q, null, 2), { mode: 384 });
+      fs10.writeFileSync(qPath, JSON.stringify(q, null, 2), { mode: 384 });
   } catch {}
   console.log(`"${a}" is "${b}" now, still ${peer.fingerprint}.`);
   if (daemonRunning())
@@ -4547,8 +5365,8 @@ you are sure.`);
     }
     if (!bundle)
       die("the other machine never sent anything. Start again.");
-    fs7.mkdirSync(ROOT, { recursive: true, mode: 448 });
-    const write = (name, value) => fs7.writeFileSync(path9.join(ROOT, name), JSON.stringify(value, null, 2), { mode: 384 });
+    fs10.mkdirSync(ROOT, { recursive: true, mode: 448 });
+    const write = (name, value) => fs10.writeFileSync(path11.join(ROOT, name), JSON.stringify(value, null, 2), { mode: 384 });
     write("identity.json", { ...bundle.identity, machine: machineName() });
     write("peers.json", bundle.peers ?? {});
     if (bundle.rooms)
@@ -4581,7 +5399,7 @@ and a message reaches whichever machine you are sitting at.`);
     peers: loadPeers(),
     rooms: (() => {
       try {
-        return JSON.parse(fs7.readFileSync(path9.join(ROOT, "rooms.json"), "utf8"));
+        return JSON.parse(fs10.readFileSync(path11.join(ROOT, "rooms.json"), "utf8"));
       } catch {
         return {};
       }
@@ -4631,13 +5449,13 @@ two machines and nowhere else.`);
 async function installAgy() {
   const root = rootFrom2(import.meta.url);
   const bin = shim2(root);
-  const dir = path9.join(os5.homedir(), ".gemini", "config");
-  const file = path9.join(dir, "hooks.json");
-  fs7.mkdirSync(dir, { recursive: true });
+  const dir = path11.join(os6.homedir(), ".gemini", "config");
+  const file = path11.join(dir, "hooks.json");
+  fs10.mkdirSync(dir, { recursive: true });
   let all = {};
-  if (fs7.existsSync(file)) {
+  if (fs10.existsSync(file)) {
     try {
-      all = JSON.parse(fs7.readFileSync(file, "utf8"));
+      all = JSON.parse(fs10.readFileSync(file, "utf8"));
     } catch {
       die(`${file} is not valid JSON. Fix or move it, then run this again.`);
     }
@@ -4647,7 +5465,7 @@ async function installAgy() {
       { type: "command", command: `"${bin}" hook PreInvocation`, timeout: 20 }
     ]
   };
-  fs7.writeFileSync(file, JSON.stringify(all, null, 2) + `
+  fs10.writeFileSync(file, JSON.stringify(all, null, 2) + `
 `);
   console.log(`hooks    ${file}`);
   try {
@@ -4670,13 +5488,13 @@ If \`crosstalk facts\` looks unscoped, launch agy with --add-dir "$PWD".`);
 }
 async function installQwen() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path9.join(os5.homedir(), ".qwen");
-  const file = path9.join(dir, "settings.json");
-  fs7.mkdirSync(dir, { recursive: true });
+  const dir = path11.join(os6.homedir(), ".qwen");
+  const file = path11.join(dir, "settings.json");
+  fs10.mkdirSync(dir, { recursive: true });
   let cfg = {};
-  if (fs7.existsSync(file)) {
+  if (fs10.existsSync(file)) {
     try {
-      cfg = JSON.parse(fs7.readFileSync(file, "utf8"));
+      cfg = JSON.parse(fs10.readFileSync(file, "utf8"));
     } catch {
       die(`${file} is not valid JSON. Fix or move it, then run this again.`);
     }
@@ -4687,17 +5505,17 @@ async function installQwen() {
     const others = (cfg.hooks[event] ?? []).filter((g) => !JSON.stringify(g).includes("crosstalk"));
     cfg.hooks[event] = [...others, entry];
   }
-  fs7.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
+  fs10.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
 `);
   console.log(`hooks    ${file}`);
   registerMcp("qwen", ["mcp", "add", "crosstalk", bin, "server"], bin);
 }
 async function installKimi() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path9.join(os5.homedir(), ".kimi-code");
-  const file = path9.join(dir, "config.toml");
-  fs7.mkdirSync(dir, { recursive: true });
-  const existing = fs7.existsSync(file) ? fs7.readFileSync(file, "utf8") : "";
+  const dir = path11.join(os6.homedir(), ".kimi-code");
+  const file = path11.join(dir, "config.toml");
+  fs10.mkdirSync(dir, { recursive: true });
+  const existing = fs10.existsSync(file) ? fs10.readFileSync(file, "utf8") : "";
   const kept = existing.replace(/\n*# crosstalk\n(?:\[\[hooks\]\][^[]*)+/g, `
 `);
   const blocks = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"].map((event) => `[[hooks]]
@@ -4706,20 +5524,20 @@ command = "${bin} hook --client kimi"
 timeout = 20
 `).join(`
 `);
-  fs7.writeFileSync(file, `${kept.trimEnd()}
+  fs10.writeFileSync(file, `${kept.trimEnd()}
 
 # crosstalk
 ${blocks}`);
   console.log(`hooks    ${file}`);
-  console.log(`tools    add the MCP server in ${path9.join(dir, "mcp.json")}`);
+  console.log(`tools    add the MCP server in ${path11.join(dir, "mcp.json")}`);
 }
 async function installHermes() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path9.join(os5.homedir(), ".hermes");
-  const file = path9.join(dir, "config.yaml");
-  if (!fs7.existsSync(file))
+  const dir = path11.join(os6.homedir(), ".hermes");
+  const file = path11.join(dir, "config.yaml");
+  if (!fs10.existsSync(file))
     die(`no ${file}. Run hermes once first, then run this again.`);
-  const existing = fs7.readFileSync(file, "utf8");
+  const existing = fs10.readFileSync(file, "utf8");
   if (existing.includes("crosstalk hook"))
     die(`${file} already has crosstalk hooks. Remove them by hand to reinstall.`);
   if (/^hooks:/m.test(existing))
@@ -4732,7 +5550,7 @@ hooks:
   pre_llm_call:
     - command: "${bin} hook pre_llm_call"
       timeout: 20`);
-  fs7.writeFileSync(file, `${existing.trimEnd()}
+  fs10.writeFileSync(file, `${existing.trimEnd()}
 
 # crosstalk
 hooks:
@@ -4752,19 +5570,19 @@ terminal and answer yes twice, or run it with --accept-hooks. Check with:
 }
 async function installGoose() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path9.join(os5.homedir(), ".agents", "plugins", "crosstalk");
-  fs7.mkdirSync(path9.join(dir, "hooks"), { recursive: true });
-  fs7.writeFileSync(path9.join(dir, "plugin.json"), JSON.stringify({
+  const dir = path11.join(os6.homedir(), ".agents", "plugins", "crosstalk");
+  fs10.mkdirSync(path11.join(dir, "hooks"), { recursive: true });
+  fs10.writeFileSync(path11.join(dir, "plugin.json"), JSON.stringify({
     name: "crosstalk",
     version: "0.1.0",
     description: "Messages from other people's coding agents, delivered into this session."
   }, null, 2) + `
 `);
   const group = (command) => ({ hooks: [{ type: "command", command }] });
-  fs7.writeFileSync(path9.join(dir, "hooks", "hooks.json"), JSON.stringify({ hooks: { SessionStart: [group(`"${bin}" hook`)], Stop: [group(`"${bin}" hook`)] } }, null, 2) + `
+  fs10.writeFileSync(path11.join(dir, "hooks", "hooks.json"), JSON.stringify({ hooks: { SessionStart: [group(`"${bin}" hook`)], Stop: [group(`"${bin}" hook`)] } }, null, 2) + `
 `);
-  console.log(`hooks    ${path9.join(dir, "hooks", "hooks.json")}`);
-  const gooseConf = path9.join(os5.homedir(), ".config", "goose", "config.yaml");
+  console.log(`hooks    ${path11.join(dir, "hooks", "hooks.json")}`);
+  const gooseConf = path11.join(os6.homedir(), ".config", "goose", "config.yaml");
   const entry = [
     `  crosstalk:`,
     `    enabled: true`,
@@ -4778,12 +5596,12 @@ async function installGoose() {
 `);
   let conf = "";
   try {
-    conf = fs7.readFileSync(gooseConf, "utf8");
+    conf = fs10.readFileSync(gooseConf, "utf8");
   } catch {}
   if (conf.includes(`cmd: ${bin}`)) {
     console.log(`tools    already in ${gooseConf}`);
   } else if (/^extensions:\n/m.test(conf)) {
-    fs7.writeFileSync(gooseConf, conf.replace(/^extensions:\n/m, `extensions:
+    fs10.writeFileSync(gooseConf, conf.replace(/^extensions:\n/m, `extensions:
 ${entry}
 `));
     console.log(`tools    ${gooseConf}`);
@@ -4793,8 +5611,8 @@ ${entry}
 ${entry}
 `);
   } else {
-    fs7.mkdirSync(path9.dirname(gooseConf), { recursive: true });
-    fs7.writeFileSync(gooseConf, `${conf.trimEnd()}
+    fs10.mkdirSync(path11.dirname(gooseConf), { recursive: true });
+    fs10.writeFileSync(gooseConf, `${conf.trimEnd()}
 
 extensions:
 ${entry}
@@ -4809,13 +5627,13 @@ set of facts on start.`);
 }
 async function installCursor() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path9.join(os5.homedir(), ".cursor");
-  const file = path9.join(dir, "hooks.json");
-  fs7.mkdirSync(dir, { recursive: true });
+  const dir = path11.join(os6.homedir(), ".cursor");
+  const file = path11.join(dir, "hooks.json");
+  fs10.mkdirSync(dir, { recursive: true });
   let cfg = { version: 1, hooks: {} };
-  if (fs7.existsSync(file)) {
+  if (fs10.existsSync(file)) {
     try {
-      cfg = JSON.parse(fs7.readFileSync(file, "utf8"));
+      cfg = JSON.parse(fs10.readFileSync(file, "utf8"));
     } catch {
       die(`${file} is not valid JSON. Fix or move it, then run this again.`);
     }
@@ -4826,10 +5644,10 @@ async function installCursor() {
     const others = (cfg.hooks[step] ?? []).filter((h) => !String(h?.command ?? "").includes("crosstalk"));
     cfg.hooks[step] = [...others, { type: "command", command: `"${bin}" hook` }];
   }
-  fs7.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
+  fs10.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
 `);
   console.log(`hooks    ${file}`);
-  console.log(`tools    add the MCP server in ${path9.join(dir, "mcp.json")}`);
+  console.log(`tools    add the MCP server in ${path11.join(dir, "mcp.json")}`);
   console.log(`
 Cursor drops any injected text over 10,000 characters rather than shortening
 it, so crosstalk trims to fit and says so where it cut.`);
@@ -4842,19 +5660,19 @@ var CODEX_EVENT_KEY = {
   Stop: "stop"
 };
 function codexHooksNeedingTrust() {
-  const file = path9.join(os5.homedir(), ".codex", "hooks.json");
-  const conf = path9.join(os5.homedir(), ".codex", "config.toml");
-  if (!fs7.existsSync(file))
+  const file = path11.join(os6.homedir(), ".codex", "hooks.json");
+  const conf = path11.join(os6.homedir(), ".codex", "config.toml");
+  if (!fs10.existsSync(file))
     return [];
   let hooks;
   try {
-    hooks = JSON.parse(fs7.readFileSync(file, "utf8")).hooks ?? {};
+    hooks = JSON.parse(fs10.readFileSync(file, "utf8")).hooks ?? {};
   } catch {
     return [];
   }
   let toml = "";
   try {
-    toml = fs7.readFileSync(conf, "utf8");
+    toml = fs10.readFileSync(conf, "utf8");
   } catch {}
   const untrusted = [];
   for (const [event, groups] of Object.entries(hooks)) {
@@ -4875,13 +5693,13 @@ function codexHooksNeedingTrust() {
 }
 async function installCodex() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path9.join(os5.homedir(), ".codex");
-  const file = path9.join(dir, "hooks.json");
-  fs7.mkdirSync(dir, { recursive: true });
+  const dir = path11.join(os6.homedir(), ".codex");
+  const file = path11.join(dir, "hooks.json");
+  fs10.mkdirSync(dir, { recursive: true });
   let cfg = {};
-  if (fs7.existsSync(file)) {
+  if (fs10.existsSync(file)) {
     try {
-      cfg = JSON.parse(fs7.readFileSync(file, "utf8"));
+      cfg = JSON.parse(fs10.readFileSync(file, "utf8"));
     } catch {
       die(`${file} is not valid JSON. Fix or move it, then run this again.`);
     }
@@ -4891,7 +5709,7 @@ async function installCodex() {
     const others = (cfg.hooks[event] ?? []).filter((g) => !JSON.stringify(g).includes("crosstalk"));
     cfg.hooks[event] = [...others, { hooks: [{ type: "command", command: `"${bin}" hook` }] }];
   }
-  fs7.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
+  fs10.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
 `);
   console.log(`hooks    ${file}`);
   console.log(`
@@ -4913,22 +5731,22 @@ function registerMcp(cli, args, bin) {
 }
 async function installPath() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path9.join(os5.homedir(), ".local", "bin");
-  const link = path9.join(dir, "crosstalk");
-  fs7.mkdirSync(dir, { recursive: true });
+  const dir = path11.join(os6.homedir(), ".local", "bin");
+  const link = path11.join(dir, "crosstalk");
+  fs10.mkdirSync(dir, { recursive: true });
   let existing = "";
   try {
-    existing = fs7.readlinkSync(link);
+    existing = fs10.readlinkSync(link);
   } catch {
-    if (fs7.existsSync(link))
+    if (fs10.existsSync(link))
       die(`${link} already exists and is not a link. Move it, then run this again.`);
   }
   if (existing && existing !== bin)
     console.log(`replacing a link to ${existing}`);
   try {
-    fs7.unlinkSync(link);
+    fs10.unlinkSync(link);
   } catch {}
-  fs7.symlinkSync(bin, link);
+  fs10.symlinkSync(bin, link);
   console.log(`linked   ${link} -> ${bin}`);
   const onPath = (process.env.PATH ?? "").split(":").includes(dir);
   console.log(onPath ? `
@@ -5004,6 +5822,7 @@ var commands = {
   daemon,
   relay,
   install,
-  restore: restoreCmd
+  restore: restoreCmd,
+  ui: () => uiCmd(argv, ROOT_DIR)
 };
 await (commands[cmd] ?? (async () => die(`unknown command "${cmd}"`)))();

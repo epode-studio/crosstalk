@@ -31,8 +31,9 @@ import {
 import { channelKey, seal, open as unseal, fingerprint as fingerprintOf } from "./crypto.ts"
 import { Channel, derive, newEphemeral, signWith, transcript, verifyWith } from "./link.ts"
 import { listLocalSessions, findSession, type LocalSession } from "./registry.ts"
-import { injectNotice, injectMessage, injectRouteQuestion, routeQuestionText } from "./inject.ts"
+import { injectNotice, injectMessage, injectRouteQuestion, routeQuestionText, handedMessage } from "./inject.ts"
 import * as footprint from "./footprint.ts"
+import * as ui from "./uistate.ts"
 import { triage } from "./policy.ts"
 import * as trust from "./trust.ts"
 import * as outbound from "./outbound.ts"
@@ -72,7 +73,17 @@ type Registered = {
   openedAt?: number
   /** Repo, branch and files this session is working on, for routing by subject. */
   footprint?: footprint.SessionFootprint
+  /** When crosstalk's mod in this session last asked what to show. Not persisted: a new daemon waits to hear again. */
+  modSeenAt?: number
 }
+
+/**
+ * How long a session counts as drawing its own UI after the mod last polled.
+ * The mod polls every second; while it does, nothing is injected into that
+ * session, and the moment it stops, the classic notices take over again.
+ */
+const MOD_FRESH_MS = Number(process.env.CROSSTALK_MOD_FRESH_MS ?? 15_000)
+const modLive = (s: Registered | undefined) => !!s?.modSeenAt && Date.now() - s.modSeenAt < MOD_FRESH_MS
 
 /**
  * How long a session with no inbox socket stays on the roster after its last
@@ -262,7 +273,10 @@ function holdUnrouted(
   log(
     `held ${env.kind} from ${peerLabel} about ${r.fp.repo}@${r.fp.branch ?? "?"}: ${r.ask === "tie" ? `tie between ${r.tied.map((t) => t.name).join(", ")}` : "no matching session"}; asking ${asked?.name ?? "nobody"}`,
   )
-  if (asked?.socket) {
+  if (modLive(asked)) {
+    // The mod asks with a picker of sessions; nothing goes into the transcript.
+    log(`route question for ${asked!.name} left to its mod`)
+  } else if (asked?.socket) {
     u.surfaced = true
     recordNotice()
     injectRouteQuestion(
@@ -337,6 +351,103 @@ function hold(sessionId: string, h: Held, slices?: Slice[]) {
   ;(held[sessionId] ??= []).push(h)
   if (slices?.length) slicesById.set(h.id, slices)
   persist()
+}
+
+// --- what the mod shows ---------------------------------------------------------
+
+const msgId = (m: Held) => `msg:${m.id}`
+const routeId = (u: Unrouted) => `route:${u.id}`
+
+function findHeld(itemId: string): Held | undefined {
+  for (const msgs of Object.values(held)) for (const m of msgs) if (msgId(m) === itemId) return m
+}
+
+/** Handed over, muted or replied to: out of the queue for good. */
+const settledHeld = (m: Held) => {
+  m.readAt ??= Date.now()
+  m.surfaced = true
+}
+
+function markHeld(itemId: string, fn: (m: Held) => void) {
+  const m = findHeld(itemId)
+  if (!m) return
+  fn(m)
+  persist()
+}
+
+/** The sessions a route question offers, best first: those tied, then the most recently used. Three fit beside "Hold it". */
+function routeCandidates(u: Unrouted): Registered[] {
+  const live = new Map(listLocalSessions().map((s) => [s.sessionId, s.updatedAt]))
+  const all = [...sessions.values()].sort(
+    (a, b) => (live.get(b.sessionId) ?? b.seenAt ?? 0) - (live.get(a.sessionId) ?? a.seenAt ?? 0),
+  )
+  const env = u.env as Envelope
+  const fp = footprint.parseSummary(env.footprint)
+  const c = u.why === "tie" && fp ? footprint.choose(all.map((s) => ({ item: s, fp: footprintOf(s) })), fp) : undefined
+  const tied = c && !c.pick ? c.tied : []
+  const out: Registered[] = []
+  for (const s of [...tied, ...all]) if (!out.some((o) => o.name === s.name)) out.push(s)
+  return out.slice(0, 3)
+}
+
+/**
+ * Bring the store up to date with what is held for one session, and return
+ * what is still waiting on the person there. Nothing settled ever comes back:
+ * an item keeps its state however often this runs.
+ */
+function uiSync(sid: string): ui.UiItem[] {
+  return ui.withStore((items, now) => {
+    for (const m of held[sid] ?? []) {
+      // Read by the agent with crosstalk_read: the card has done its job.
+      if (m.readAt) {
+        ui.settle(items, msgId(m), "handed", now)
+        continue
+      }
+      ui.upsert(
+        items,
+        {
+          id: msgId(m),
+          kind: m.kind === "ask" && m.correlation ? "ask" : "message",
+          sessionId: sid,
+          from: m.from,
+          thread: m.thread ?? m.room ?? (m.fromSession !== "-" ? m.fromSession : undefined),
+          text: m.text,
+          chips: m.slices.map((s) => ({ kind: s.kind, label: s.label, bytes: s.bytes })),
+          ts: m.ts,
+        },
+        now,
+      )
+    }
+    const waiting = new Set(unrouted.map(routeId))
+    for (const u of unrouted) {
+      if (u.askedSession !== sid && sessions.has(u.askedSession ?? "")) continue
+      const q = routeQuestionFor(u)
+      const where = [q.repo, q.branch].filter(Boolean).join(" @ ") || "an unknown repo"
+      const cands = routeCandidates(u)
+      // Every label ever offered keeps naming its session: a picker raised a
+      // while ago answers with the label it showed.
+      const targets = { ...items[routeId(u)]?.targets, ...Object.fromEntries(cands.map((s) => [s.name, s.sessionId])) }
+      ui.upsert(
+        items,
+        {
+          id: routeId(u),
+          kind: "route",
+          sessionId: sid,
+          from: u.label,
+          thread: q.repo,
+          question: `A message from ${q.peer}/${q.peerSession} about ${where} ${q.why === "tie" ? "matches more than one session" : "matches none of your sessions"}. Which session should get it?`,
+          options: [...cands.map((s) => s.name), "Hold it"],
+          names: q.sessions,
+          targets,
+          ts: u.at,
+        },
+        now,
+      )
+    }
+    for (const it of Object.values(items))
+      if (it.kind === "route" && it.sessionId === sid && !waiting.has(it.id)) ui.settle(items, it.id, "answered", now)
+    return ui.openFor(items, sid)
+  })
 }
 
 // --- peer presence cache -------------------------------------------------------
@@ -723,6 +834,14 @@ function onEnvelope(
     return
   }
 
+  // The session's mod shows it as a card and nothing reaches the model until
+  // the person hands it over. Left unsurfaced, so if the mod goes away the
+  // idle watcher still announces it the classic way.
+  if (modLive(target)) {
+    log(`held for ${target.name}, shown as a card by its mod`)
+    return
+  }
+
   const opts = {
     socket: target.socket,
     replyTo: target.socket,
@@ -1038,10 +1157,14 @@ setInterval(() => {
     const reg = sessions.get(s.sessionId)
     if (!reg) continue
     lastStatus.set(s.sessionId, s.status)
-    if (s.status !== "idle") continue
+    if (s.status !== "idle" || modLive(reg)) continue
     // Anything unread and never announced, whether it arrived during a busy
-    // stretch or while the session was already sitting idle.
-    const pending = (held[s.sessionId] ?? []).filter((m) => !m.readAt && !m.surfaced)
+    // stretch or while the session was already sitting idle. Not counted: what
+    // the person already has as a card (a mod that went away left it there).
+    const shown = ui.snapshot()
+    const pending = (held[s.sessionId] ?? []).filter(
+      (m) => !m.readAt && !m.surfaced && !ui.FINAL.has(shown[`msg:${m.id}`]?.state ?? "pending"),
+    )
     if (!pending.length) continue
     for (const m of pending) m.surfaced = true
     persist()
@@ -1161,6 +1284,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         transcript: req.transcript,
         lastStatus: before?.lastStatus ?? "idle",
         openedAt: before?.openedAt,
+        modSeenAt: before?.modSeenAt,
         seenAt: Date.now(),
         footprint: (() => {
           // A session that moved directory is working on something else now.
@@ -1735,6 +1859,76 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       }
       log(`routed ${going.length} held message(s) from ${u.label} to ${target.name}`)
       return { ok: true, delivered: going.length, to: target.name, remembered: !!key }
+    }
+
+    // What crosstalk's mod shows in one session: its held messages as cards,
+    // route questions put to it, and the restore offer the hook left. Polled
+    // once a second, which is also how the daemon knows the mod is there.
+    case "ui": {
+      const sid = String(req.sessionId ?? "")
+      if (!sid) return { ok: false, error: "ui needs a sessionId" }
+      const reg = sessions.get(sid)
+      if (reg && req.mod) reg.modSeenAt = Date.now()
+      return { ok: true, items: uiSync(sid), label: identity!.label }
+    }
+
+    // The person acted on something the mod showed. The state is recorded
+    // first, under the store's lock, so a second press, a second session or a
+    // resumed one finds it settled and does nothing.
+    case "ui_act": {
+      const sid = String(req.sessionId ?? "")
+      const id = String(req.id ?? "")
+      const action = String(req.action ?? "") as ui.UiAction
+      const value = req.value === undefined ? undefined : String(req.value)
+      const before = ui.snapshot()[id]
+      if (!before) return { ok: false, error: `nothing waiting with id ${id}` }
+      if (before.kind === "restore") return { ok: false, error: "the restore offer is answered by crosstalk ui act, not the daemon" }
+
+      if (action === "raised" || action === "later" || action === "mute") {
+        const r = ui.withStore((items, now) => ui.act(items, id, action, now))
+        // Muted is done with: read, so neither a notice nor a card brings it back.
+        if (r.ok && action === "mute" && before.kind !== "route") markHeld(id, settledHeld)
+        return r
+      }
+
+      if (before.kind === "route") {
+        if (action !== "answer" || !value) return { ok: false, error: "a route question is answered with a session" }
+        const claim = ui.withStore((items, now) => ui.act(items, id, "answer", now, value))
+        if (!claim.ok) return claim
+        const r: any = await handle({ op: "route", id: id.slice("route:".length), session: before.targets?.[value] ?? value })
+        if (!r?.ok) ui.withStore((items, now) => ui.reopen(items, id, now))
+        return { ...r, item: claim.item }
+      }
+
+      const m = findHeld(id)
+      if (!m) {
+        ui.withStore((items, now) => ui.settle(items, id, "handed", now))
+        return { ok: false, error: "that message is no longer held here" }
+      }
+      if (action === "hand") {
+        const claim = ui.withStore((items, now) => ui.act(items, id, "hand", now))
+        if (!claim.ok) return claim
+        markHeld(id, settledHeld)
+        return {
+          ok: true,
+          item: claim.item,
+          text: handedMessage({ id: m.id, peer: m.from, peerSession: m.fromSession, thread: m.thread, text: m.text, slices: m.slices }),
+        }
+      }
+      if (action === "answer") {
+        if (!value?.trim()) return { ok: false, error: "a reply needs text" }
+        const claim = ui.withStore((items, now) => ui.act(items, id, "answer", now, value))
+        if (!claim.ok) return claim
+        const to = m.fromSession && m.fromSession !== "-" ? `${m.from}/${m.fromSession}` : m.from
+        const r: any =
+          m.kind === "ask" && m.correlation
+            ? await handle({ op: "answer", sessionId: sid, to, correlation: m.correlation, text: value, replyTo: m.id })
+            : await handle({ op: "send", sessionId: sid, to, text: value, replyTo: m.id, thread: m.thread, intent: "fyi" })
+        if (r?.ok) markHeld(id, settledHeld)
+        else ui.withStore((items, now) => ui.reopen(items, id, now))
+        return { ...r, item: claim.item, to: m.from }
+      }
+      return { ok: false, error: `unknown action ${action}` }
     }
 
     case "read": {
