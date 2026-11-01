@@ -442,9 +442,13 @@ Say them aloud, anywhere except through crosstalk. She joins with
 and that is permanent. Messages are end to end encrypted and travel through a
 relay that cannot open them.
 
-*(Coming: no words at all for people you already work with. Collaborators on a
-repository are trusted through the keys they publish on GitHub, and the four
-words are only for people outside your repositories.)*
+**People you already work with need no words.** Collaborators on a repository
+are trusted through the SSH keys they publish on GitHub: each machine's
+crosstalk identity is signed with the key you already use for git and published
+on a hidden ref in the repo, and your teammates check it against your GitHub
+keys. Your own machines find each other the same way. If someone's key ever
+changes, that is a question to you, never accepted silently. The four words are
+only for people outside your repositories. [How it holds up](docs/security.md).
 
 <br>
 
@@ -501,9 +505,9 @@ The measure is time from idea to merge, and how few of your minutes it took.
 | Cards, pickers and status line in Claude Code | **here** (mod, 2.1.287+) |
 | Bringing in sessions you already had open | **here** |
 | Opening and restoring agents in your terminal's tabs | **here** (Terminal.app, iTerm2, kitty, WezTerm, Ghostty, tmux, Windows Terminal) |
-| Status on tabs, new agents on request, window layout | coming |
-| Threads, found automatically | coming |
-| Trust through repository access, no words | coming |
+| Status on tabs, new agents on request, one window per repository | **here** |
+| Threads, found automatically, synced and kept on a hidden git ref | **here**, first version |
+| Trust through repository access, no words | **here** |
 | Main session, answers become rules, agents warning each other | coming |
 | Shipping: reviewer agents, flags, production feeding threads | coming |
 
