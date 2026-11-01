@@ -183,6 +183,34 @@ recap), and it is readable by any human or agent with no crosstalk installed.
 Agents write to it from hooks as they work: the Stop hook updates status,
 recap and open questions. People read it, or edit it by hand.
 
+### 13. Positioning: Entire without the forge
+
+[Entire](https://entire.com/) is a hosted Git forge that keeps the *why*
+behind code: agent sessions captured as checkpoints linked to commits, Trails
+in place of pull requests, a shared memory built from sessions and a code graph,
+and search across all of it. To get any of that you move your repositories to
+them.
+
+crosstalk makes the same promise without the forge. It lives in the git you
+already have, on whatever host, as files in the repository plus a sealed relay.
+Nothing to migrate, and nothing hosted that can read your code.
+
+What we capture is **recaps, not transcripts**. Each topic file holds the recap,
+decisions and open questions, linked to the commits made under it (in
+`.crosstalk/` or git notes). That is small enough to review in a diff and
+keeps raw prompts out of the repository.
+
+The three claims crosstalk should be able to back with numbers:
+
+| Claim | How to prove it |
+|---|---|
+| **Fewer tokens** | Agents start from topic memory instead of re-reading the repo. Measure tokens-to-first-useful-edit with and without, on real sessions. |
+| **Zero migration** | One plugin command on an existing repo and host. Nothing else to set up. The install test is the proof. |
+| **No one can read it** | The relay sees only ciphertext. A forge has to read your code to host it; crosstalk never holds it. |
+
+Correct routing is not on that list because it is the minimum, not a selling
+point. It still needs tests that prove it.
+
 ## Open questions
 
 1. **No-match behaviour** (decision 5): hold or spawn, and whether that depends
@@ -213,4 +241,15 @@ recap and open questions. People read it, or edit it by hand.
 8. **Diff churn.** Agents writing on every Stop will touch files in every
    commit. Possibly keep `.crosstalk/` on its own branch or ref, or only write
    when something actually changed.
+9. **Where topics meet code review.** Two candidates. The topic *rides* the PR:
+   its recap, decisions and open questions fill the PR body, and review
+   comments flow back into the topic. Or the topic *is* the trail, the unit of
+   work from idea to merge, with the PR as one artifact attached to it. The
+   first works on GitHub today; the second is the more direct answer to
+   Entire's Trails.
+10. **Repo-kept recaps vs "no one can read it".** A topic file committed to a
+    public repo is readable by everyone, which breaks the third claim for that
+    topic. Possibly: topic files are sealed to members unless the topic is
+    marked public, or the repo copy keeps only decisions and the recap stays on
+    the relay.
 
