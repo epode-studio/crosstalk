@@ -14,6 +14,7 @@ export type Kind =
   | "fact_sync"
   | "task"
   | "task_sync"
+  | "thread"
 
 export type Slice = {
   kind: "diff" | "file" | "turns" | "text"
@@ -58,6 +59,14 @@ export type Envelope = {
    * ignores it and routes the old way.
    */
   footprint?: FootprintSummary
+  /**
+   * Thread ids the sending session is in, or the threads a message with no
+   * named recipient was sent to. The receiver delivers to its own sessions in
+   * those threads first. Sealed like everything else here.
+   */
+  threads?: string[]
+  /** A thread's state and content key, on kind "thread" (src/threads/service.ts). */
+  threadSync?: unknown
 }
 
 export type FootprintSummary = { repo?: string; branch?: string; paths?: string[] }
@@ -67,6 +76,10 @@ export type SessionPresence = {
   cwd: string
   status: string
   lastSeen: number
+  /** What the session is working on, so a peer's thread can find it. Absent outside a repo. */
+  footprint?: FootprintSummary
+  /** Its thread ids. Present (maybe empty) only from a daemon that knows threads. */
+  threads?: string[]
 }
 
 /** What the relay routes. `body` is a sealed Envelope. */

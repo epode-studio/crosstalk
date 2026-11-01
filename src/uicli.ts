@@ -28,11 +28,11 @@ function arg(argv: string[], f: string): string | undefined {
 const print = (o: Out): void => void process.stdout.write(JSON.stringify(o) + "\n")
 
 /** What is waiting in one session: from the daemon when it runs (it syncs its queue first), else the store. */
-async function waiting(session: string, mod: boolean): Promise<{ items: ui.UiItem[]; daemon: boolean; label?: string }> {
+async function waiting(session: string, mod: boolean): Promise<{ items: ui.UiItem[]; daemon: boolean; label?: string; threads?: string[]; threadNotes?: { id: string; text: string }[] }> {
   if (daemonRunning()) {
     try {
       const r = await request({ op: "ui", sessionId: session, mod }, 3000)
-      if (r?.ok) return { items: r.items, daemon: true, label: r.label }
+      if (r?.ok) return { items: r.items, daemon: true, label: r.label, threads: r.threads, ...(r.threadNotes?.length ? { threadNotes: r.threadNotes } : {}) }
     } catch {}
   }
   return { items: ui.openFor(ui.snapshot(), session), daemon: false }

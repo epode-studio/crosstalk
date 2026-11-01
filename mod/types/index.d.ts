@@ -8,7 +8,7 @@ export type Chip = { kind: string; label: string; bytes?: number }
 /** One thing waiting on the person, as `crosstalk ui watch` reports it. */
 export type Item = {
   id: string
-  kind: 'restore' | 'message' | 'ask' | 'route' | 'gather' | 'team' | 'cleanup'
+  kind: 'restore' | 'message' | 'ask' | 'route' | 'gather' | 'team' | 'cleanup' | 'thread'
   sessionId: string
   state: 'pending' | 'answered' | 'handed' | 'muted' | 'later'
   createdAt: number
@@ -23,6 +23,8 @@ export type Item = {
   count?: number
   names?: string[]
   ts?: number
+  /** A message about this session's own thread: handed to the agent without a picker. */
+  auto?: boolean
 }
 
 /** A row the mod placed in the transcript for the person alone. */

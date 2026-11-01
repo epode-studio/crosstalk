@@ -16,6 +16,7 @@
 
 set -u
 export CROSSTALK_NO_GATHER=1  # sessions started before crosstalk: test/gather.sh, with a registry of its own
+export CROSSTALK_THREADS_NO_PUSH=1  # the remotes here are made up: threads are committed locally, never pushed
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 PORT=${PORT:-8898}

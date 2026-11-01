@@ -6128,7 +6128,7 @@ async function waiting(session, mod) {
     try {
       const r = await request2({ op: "ui", sessionId: session, mod }, 3000);
       if (r?.ok)
-        return { items: r.items, daemon: true, label: r.label };
+        return { items: r.items, daemon: true, label: r.label, threads: r.threads, ...r.threadNotes?.length ? { threadNotes: r.threadNotes } : {} };
     } catch {}
   }
   return { items: openFor(snapshot2(), session), daemon: false };

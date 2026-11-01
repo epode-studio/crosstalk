@@ -170,6 +170,24 @@ read what.
 You see a session's threads in the statusline (`◢ auth · tokens  2 people`),
 in one line when the session opens, and in the session's name.
 
+**First build** (`src/threads/`). Where it settled something this section left
+open:
+
+- *The default branch is not a thread.* "Same repo and branch, same thread"
+  holds on work branches; on main the files decide, and three new files in one
+  folder start a thread named after it.
+- *Merging.* Sections merge on their own: meta and recap last-writer-wins on a
+  Lamport clock, every list as a set of items with last-writer-wins per item
+  and tombstones. Two people appending a decision at once both keep theirs.
+- *Keys.* One random key per thread, each section sealed with it separately;
+  the key is wrapped per person under the pairwise channel key. Room members
+  without a direct channel cannot be wrapped for yet.
+- *THREADS.md* is written only for repos with a public thread, and left as an
+  unstaged change.
+- *Squash* is of content (an archived thread keeps decisions, features and
+  rules); the ref's history is not rewritten, since that would need a forced
+  push.
+
 ## Questions
 
 **Everything crosstalk asks of a person is a question**, with options and a
