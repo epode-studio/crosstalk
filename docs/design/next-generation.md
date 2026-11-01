@@ -23,7 +23,7 @@ one, reopen one, or bring a question from one to where you are looking.
 
 | Noun | What it is |
 |---|---|
-| **People** | Everyone you have verified with four words. |
+| **People** | Everyone you trust: your repo's collaborators, plus anyone you verified with four words. |
 | **Threads** | A piece of work and the conversation about it, shared with some of those people. One file in the repo. |
 | **Features** | The shippable parts of a thread. Each is everyday or risky, and may have a flag. |
 | **Questions** | The only way crosstalk ever asks anything of a person. |
@@ -52,10 +52,25 @@ nothing else.
 
 ## People
 
-You verify someone once, with four words read aloud and two fingerprints that
-cross over, as today. After that they are **verified**, and that is the only
-level there is: verified people in a thread can do anything in it. There is no
-ladder.
+**There is no join step.** The repository already knows your team:
+
+- **Collaborators are trusted automatically.** The first time you open a
+  session in a repo, crosstalk reads its collaborators from the host and their
+  published SSH keys (`github.com/<user>.keys`). Messages are sealed to those
+  keys. Nobody types or reads anything.
+- **Four words, only for people outside the repo**, such as a contractor or a
+  friend on another project. Read aloud once, fingerprints crossing over, as
+  today.
+- **Your own machines link themselves.** Each machine has its own key, listed
+  on your account. Every key on your account is you. Nothing is copied
+  between machines.
+
+The cost: for collaborators you trust the host not to swap a key to put itself
+in the middle. It still cannot read anything on its own. If a collaborator's
+key ever changes, that is a question to you, not something accepted silently.
+
+Either way a person ends up **verified**, and that is the only level there is:
+verified people in a thread can do anything in it. There is no ladder.
 
 You can **mute** a person or a thread. Nothing else about who may interrupt you
 needs configuring, because interruptions follow the question rule below.
@@ -64,8 +79,8 @@ A verified person's words still always arrive as data, never inside your turn
 (see `DECISIONS.md`). Being verified decides what they can do, not how their
 text is presented to your agent.
 
-This is a clean break: existing rooms are not converted, and people verify each
-other again.
+This is a clean break: existing rooms are not converted. Collaborators need
+nothing; anyone outside a shared repo is verified again with four words.
 
 Bots need a decision: probably a bot is a member that can post to a thread but
 cannot start sessions on your machine.
@@ -166,10 +181,13 @@ whoever asked.
 
 **A question never enters another thread's context.** A question from auth
 shown while you are in firmware is for you, not for the firmware agent. It
-appears as a hook message and in the statusline, which you see and the model
-does not. You answer with `@auth y`, or `@auth` and your words. The
-`UserPromptSubmit` hook routes the answer to the session that asked and blocks
-the prompt, so the firmware agent never sees either. Otherwise the fix for
+appears in crosstalk's **mod**, Claude Code's plugin UI (a band above the
+prompt, a status line, toasts), which you see and the model does not. You
+answer there, or by typing `@auth y`, which the mod takes before it becomes a
+prompt. The mod also takes incoming peer messages so the model never reads
+them. Where mods are unavailable, a `UserPromptSubmit` hook blocks the `@`
+prompt instead, which keeps it from the model but still leaves it in the
+transcript file. Otherwise the fix for
 cross-talk would bring it straight back.
 
 **"In a session" means the one you are looking at.** The last session you
@@ -284,8 +302,9 @@ layout in other terminals starts with those that have real APIs (iTerm2,
 kitty, WezTerm).
 
 Outside tmux, status is written as escape codes to the session's own tty, found
-from the process id in the session registry. crosstalk also emits herdr's open
-OSC 7501 status, so anything that reads it works too.
+from the process id in the session registry. Status comes from crosstalk's own
+hooks. OSC 7501, the Program Status Protocol Claude Code can speak, only flows
+once the terminal answers its query, and almost no terminal does yet.
 
 **To test first:** whether Claude Code overwrites a tab or window name crosstalk
 sets, and whether writing to another session's tty is reliable outside tmux.
@@ -338,11 +357,14 @@ push, so hosted CI confirms rather than discovers, but a slow suite stays slow.
 
 Two:
 
-- `/crosstalk:join` for the four words, which you cannot do in plain language.
+- `/crosstalk:join` for the four words with someone outside your repos.
 - `/crosstalk:doctor` for when something is broken.
 
 Everything else, from muting someone to asking what Marie is working on or
 linking another machine, is plain language in any session.
+
+The full research behind the terminal and Claude Code sections is in
+[`reports/Terminal as agent workspace.md`](../../reports/Terminal%20as%20agent%20workspace.md).
 
 ## Against Entire
 
