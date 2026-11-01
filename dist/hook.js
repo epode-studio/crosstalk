@@ -25,6 +25,8 @@ var P = {
   sessions: path.join(ROOT, "sessions.json"),
   outbox: path.join(ROOT, "outbox.json"),
   usage: path.join(ROOT, "usage.json"),
+  routes: path.join(ROOT, "routes.json"),
+  unrouted: path.join(ROOT, "unrouted.json"),
   daemonSock: path.join(ROOT, "daemon.sock"),
   daemonLock: path.join(ROOT, "daemon.lock"),
   log: path.join(ROOT, "daemon.log")
@@ -111,6 +113,8 @@ var P2 = {
   sessions: path3.join(ROOT2, "sessions.json"),
   outbox: path3.join(ROOT2, "outbox.json"),
   usage: path3.join(ROOT2, "usage.json"),
+  routes: path3.join(ROOT2, "routes.json"),
+  unrouted: path3.join(ROOT2, "unrouted.json"),
   daemonSock: path3.join(ROOT2, "daemon.sock"),
   daemonLock: path3.join(ROOT2, "daemon.lock"),
   log: path3.join(ROOT2, "daemon.log")
@@ -169,6 +173,27 @@ import path4 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 var dirOf2 = (metaUrl) => path4.dirname(fileURLToPath2(metaUrl));
 var rootFrom2 = (metaUrl) => path4.join(dirOf2(metaUrl), "..");
+
+// src/footprint.ts
+function pathsFromToolInput(input) {
+  if (!input || typeof input !== "object")
+    return [];
+  const i = input;
+  const out = [];
+  for (const k of ["file_path", "notebook_path", "path"]) {
+    const v = i[k];
+    if (typeof v === "string" && v)
+      out.push(v);
+  }
+  for (const k of ["command", "patch", "input"]) {
+    const v = i[k];
+    const text = typeof v === "string" ? v : Array.isArray(v) ? v.join(`
+`) : "";
+    for (const m of text.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm))
+      out.push(m[1].trim());
+  }
+  return [...new Set(out)].slice(0, 20);
+}
 
 // src/hook.ts
 var input = await new Promise((resolve) => {
@@ -245,7 +270,8 @@ async function registerSession() {
     name,
     cwd,
     socket: socket ?? "",
-    transcript: hook.transcript_path ?? hook.transcriptPath
+    transcript: hook.transcript_path ?? hook.transcriptPath,
+    .../^post_?tool_?use$/i.test(eventName) ? { touched: pathsFromToolInput(hook.tool_input ?? hook.toolInput ?? hook.tool_args) } : {}
   }).catch(() => {});
 }
 async function pendingNotice() {
