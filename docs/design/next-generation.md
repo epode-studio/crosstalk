@@ -38,6 +38,11 @@ nothing else.
 
 - **Native to the code CLI.** No app, no TUI, no dashboard, no tmux. Plugin,
   hooks, MCP and one daemon. You drive it in plain language from any session.
+- **Nothing to start.** No app or multiplexer to launch first, no room to
+  create, no command to remember. You open an ordinary session in whatever
+  terminal you use, and everything grows out of it. Anything that needs a step
+  before you can work is a design bug: it is what was wrong with rooms, and
+  what is wrong with herdr, where every terminal has to live inside it.
 - **Automatic before explicit.** You never say which thread or session
   something belongs to. When crosstalk is unsure, it asks once and remembers.
 - **Nobody reads code.** People decide what should happen and judge whether it
@@ -262,13 +267,21 @@ notifications. crosstalk drives them, so the terminal *becomes* the app.
 in thread order, a tab opened when a thread gets a session, closed when the
 thread is done. It still never takes focus on its own.
 
-**tmux first.** It works inside every terminal and over SSH, has a complete
-scripting API, and makes remote machines free: a session on a linked machine is
-a tmux window there, attached from here. Status uses tmux's own window options
-(`rename-window`, `window-status-style`) rather than escape codes, which tmux
-does not pass through reliably. Other terminals get the basics first, status on
-tabs and notifications, and full layout later, starting with those with real
-APIs (iTerm2, kitty, WezTerm).
+**Your terminal, not ours.** Your own sessions stay in whatever terminal you
+opened them in. crosstalk adapts to it through the adapters above and never
+asks you to move into tmux or anything else.
+
+**tmux, invisibly.** Sessions crosstalk starts for you run in a tmux server it
+keeps in the background. They survive closing your window, which is herdr's
+real benefit, without its launch step. You never attach unless you want to
+watch one, and `@auth open` does that for you, in a new tab of your own
+terminal. On a linked machine the same background server holds its sessions.
+
+**If you already live in tmux**, crosstalk uses it directly, with full layout,
+through tmux's own window options (`rename-window`, `window-status-style`)
+rather than escape codes, which tmux does not pass through reliably. Full
+layout in other terminals starts with those that have real APIs (iTerm2,
+kitty, WezTerm).
 
 Outside tmux, status is written as escape codes to the session's own tty, found
 from the process id in the session registry. crosstalk also emits herdr's open
