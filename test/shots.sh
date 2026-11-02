@@ -118,6 +118,8 @@ js '
 ' >/dev/null
 nohup bun src/daemon.ts >>"$TMP/daemon.log" 2>&1 &
 for _ in $(seq 1 40); do [ -S "$CROSSTALK_HOME/daemon.sock" ] && break; sleep 0.25; done
+# The history's first drain runs two seconds after the daemon starts; after it, nothing drains here.
+sleep 3
 rpc "{\"op\":\"register\",\"sessionId\":\"sess-a\",\"pid\":$$,\"name\":\"auth\",\"cwd\":\"$WT\",\"socket\":\"\"}" >/dev/null
 
 echo
