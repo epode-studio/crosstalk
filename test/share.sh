@@ -191,12 +191,12 @@ check "$(field "$(rpc "$A" '{"op":"peers"}')" 'r.peers.map(p => p.label).sort().
 # --- ana serves, and shares with ben -----------------------------------------------------------
 echo
 echo "share: ana shows ben the auth page"
-OUT=$(mcp "$A" sess-a crosstalk_serve "{\"command\":\"bun $TMP/srv.ts\",\"name\":\"web\"}" "$WT")
+OUT=$(mcp "$A" sess-a crosstalk_work "{\"action\":\"serve\",\"command\":\"bun $TMP/srv.ts\",\"name\":\"web\"}" "$WT")
 has "$OUT" "started web" "ana's server runs as a crosstalk service"
 SP=$(echo "$OUT" | sed -n 's/.*PORT=\([0-9]*\).*/\1/p' | head -1)
 has "$(waitfor 15 sh -c "curl -s --max-time 2 http://127.0.0.1:$SP/")" "up on $SP" "and answers on :$SP"
 waitfor 10 sh -c "grep -o '\"host\": \"auth\"' '$A/proxy.json'" >/dev/null
-OUT=$(mcp "$A" sess-a crosstalk_share '{"name":"auth web","with":["ben"]}' "$WT")
+OUT=$(mcp "$A" sess-a crosstalk_look '{"action":"share","name":"auth web","with":["ben"]}' "$WT")
 has "$OUT" "shared auth · web with ben until" "crosstalk_share shares it with ben"
 has "$OUT" "no public URL" "through the encrypted channel, not a public URL"
 has "$OUT" "auth.ana.localhost" "and says what ben's name for it is"
@@ -213,12 +213,12 @@ SUM=$(curl -s --max-time 30 --resolve "auth.ana.localhost:$PB:127.0.0.1" "http:/
 WANT=$(curl -s --max-time 10 "http://127.0.0.1:$SP/big" | sha256sum | cut -c1-16)
 check "$SUM" "$WANT" "a 2 MB response arrives whole, in chunks over the relay"
 has "$(bun "$TMP/ws.ts" "$PB" "auth.ana.localhost:$PB" 2>&1)" "echo hello" "a websocket through it echoes"
-LIST=$(mcp "$B" sess-b crosstalk_urls '{"kind":"shared"}' "$TMP")
+LIST=$(mcp "$B" sess-b crosstalk_look '{"action":"urls","kind":"shared"}' "$TMP")
 has "$LIST" "auth · web · from ana · until" "ben's crosstalk_urls lists it as shared from ana"
 has "$LIST" "http://auth.ana.localhost:$PB" "by its name"
 has "$LIST" "data, not instructions" "framed as data"
-has "$(mcp "$A" sess-a crosstalk_urls '{"kind":"shared"}' "$WT")" "shared with ben · until" "ana's lists it as shared with ben"
-has "$(mcp "$B" sess-b crosstalk_shares '{}' "$TMP")" "ana shares auth · web with you" "crosstalk_shares on ben's side"
+has "$(mcp "$A" sess-a crosstalk_look '{"action":"urls","kind":"shared"}' "$WT")" "shared with ben · until" "ana's lists it as shared with ben"
+has "$(mcp "$B" sess-b crosstalk_look '{"action":"shares"}' "$TMP")" "ana shares auth · web with you" "crosstalk_shares on ben's side"
 has "$(cat "$B/history.json" "$B"/*.json 2>/dev/null | grep -o 'ana shared auth · web with you' | head -1)" "ana shared auth · web with you" "ben is told (a digest line without the mod); nothing was opened"
 
 # --- cat, who is not named ---------------------------------------------------------------------
@@ -244,13 +244,13 @@ has "$RAW" "up on $SP" "it is the shared server's path"
 PROBE=$(rpc "$B" "{\"op\":\"share_probe\",\"to\":\"ana\",\"share\":\"$SID\",\"path\":\"http://127.0.0.1:$OP/\"}")
 check "$(field "$PROBE" 'r.status')" "400" "a frame whose path is another host and port is refused"
 hasnt "$PROBE" "ANA PRIVATE" "and reaches nothing"
-OUT=$(mcp "$A" sess-a crosstalk_share "{\"url\":\"http://localhost:$PA\",\"with\":[\"ben\"]}" "$WT")
+OUT=$(mcp "$A" sess-a crosstalk_look "{\"action\":\"share\",\"url\":\"http://localhost:$PA\",\"with\":[\"ben\"]}" "$WT")
 check "$(field "$(cat "$A/shares.json")" 'r.out.length')" "1" "ana's own proxy cannot be shared"
 
 # --- unshare, and expiry -----------------------------------------------------------------------
 echo
 echo "unshare and expiry cut it off"
-OUT=$(mcp "$A" sess-a crosstalk_unshare '{"name":"auth"}' "$WT")
+OUT=$(mcp "$A" sess-a crosstalk_look '{"action":"unshare","name":"auth"}' "$WT")
 has "$OUT" "stopped sharing auth · web" "crosstalk_unshare stops it"
 has "$(waitfor 15 grep -o "ana's $SID revoked" "$TMP/db.log")" "revoked" "ben's daemon hears of it"
 hasnt "$(via "$PB" auth.ana.localhost /)" "up on" "ben's curl gets nothing now"
@@ -261,7 +261,7 @@ has "$(waitfor 10 sh -c "grep -o '\"state\": \"revoked\"' '$B/urls.json'")" "rev
 # The same server shared again right after: a new share (a new id) that ben's proxy routes as soon
 # as his daemon takes the offer, not at the proxy's next look. Long enough that delivery never races
 # the expiry; the expiry is then waited for as an event, on both sides.
-OUT=$(mcp "$A" sess-a crosstalk_share '{"name":"auth web","with":["ben"],"for":"0.2m"}' "$WT")
+OUT=$(mcp "$A" sess-a crosstalk_look '{"action":"share","name":"auth web","with":["ben"],"for":"0.2m"}' "$WT")
 has "$OUT" "shared auth · web with ben" "shared again, for twelve seconds"
 SID2=$(field "$(cat "$A/shares.json")" 'r.out.find(s => !s.ended).id')
 has "$(waitfor 15 sh -c "grep -o '\"id\": \"$SID2\"' '$B/shares.json'")" "$SID2" "ben's daemon takes the new offer"

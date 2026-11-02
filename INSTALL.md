@@ -104,7 +104,7 @@ Nothing is downloaded or built at install time beyond the clone itself.
 
 If it did not work, report the command's output to the person rather than
 trying other commands. In the next session they open, the tools are there:
-`crosstalk_peers` answers.
+`crosstalk_people action "peers"` answers.
 
 ## 5. Tell the person
 

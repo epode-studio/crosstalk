@@ -2,9 +2,9 @@
 // daemon. Each lives in its own module; this only gives them the daemon's
 // threads, sessions, pickers and digest, and answers their ops:
 //
-//   disk            src/disk: the budget question, crosstalk_disk
+//   disk            src/disk: the budget question, crosstalk_work action "disk"
 //   team_install    src/install/team.ts: "Turn crosstalk on for everyone…"
-//   stats           src/metrics: crosstalk_stats, and a weekly digest line
+//   stats           src/metrics: crosstalk_doctor action "stats", and a weekly digest line
 //   thread_person   src/threads/rekey.ts: take someone out, or leave; re-keys
 //
 // Cross-repo heads-ups are the coordinator's (they ride on the `edited` op).
@@ -77,7 +77,7 @@ export function createExtras(d: ExtrasDeps) {
       for (const r of readSpawned()) if (!r.removedAt && gone.has(path.resolve(r.worktree))) writeSpawned({ ...r, removedAt: Date.now() })
       return out
     },
-    ask: (o) => ask({ ...o, kind: "disk", say: `Say "free it", "show me" or "not now"; the agent answers with crosstalk_disk.` }),
+    ask: (o) => ask({ ...o, kind: "disk", say: `Say "free it", "show me" or "not now"; the agent answers with crosstalk_work action "disk".` }),
     settle: (id) => ui.withStore((items, now) => ui.settle(items, id, "answered", now)),
     digest: d.digest,
     log: d.log,
@@ -99,7 +99,7 @@ export function createExtras(d: ExtrasDeps) {
         options: [Team.YES, Team.NO],
         sessionId: d.threads.sessionsIn(ids)[0],
         thread: r.slug,
-        say: `Say "turn crosstalk on for everyone" or "not now"; the agent answers with crosstalk_team_install.`,
+        say: `Say "turn crosstalk on for everyone" or "not now"; the agent answers with crosstalk_people action "install".`,
       })
       d.log(`team install: asked about ${r.slug}`)
     }

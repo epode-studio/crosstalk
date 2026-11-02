@@ -140,11 +140,11 @@ keys() { curl -s -m 3 "http://127.0.0.1:$PORT/__test/keys?fp=$1"; }
 
 echo
 echo "live: ana shares her server with ben, over stream frames"
-OUT=$(mcp "$A" sess-a crosstalk_serve "{\"command\":\"bun $TMP/srv.ts\",\"name\":\"web\"}" "$WT")
+OUT=$(mcp "$A" sess-a crosstalk_work "{\"action\":\"serve\",\"command\":\"bun $TMP/srv.ts\",\"name\":\"web\"}" "$WT")
 SP=$(echo "$OUT" | sed -n 's/.*PORT=\([0-9]*\).*/\1/p' | head -1)
 has "$(waitfor 15 sh -c "curl -s --max-time 2 http://127.0.0.1:$SP/")" "up on $SP" "ana's server answers on :$SP"
 waitfor 10 sh -c "grep -o '\"host\": \"auth\"' '$A/proxy.json'" >/dev/null
-OUT=$(mcp "$A" sess-a crosstalk_share '{"name":"auth web","with":["ben"]}' "$WT")
+OUT=$(mcp "$A" sess-a crosstalk_look '{"action":"share","name":"auth web","with":["ben"]}' "$WT")
 has "$OUT" "with ben" "crosstalk_share shares it with ben"
 NAME=$(field "$(cat "$A/shares.json")" 'r.out[0].name')
 HOST="$NAME.ana.localhost"
@@ -177,7 +177,7 @@ check "$KB" '{"keys":[]}' "ben's holds no share frame"
 
 echo
 echo "messages: ordinary sends still go"
-R=$(mcp "$B" sess-b crosstalk_send '{"to":"ana","text":"still talking after the pause","intent":"fyi"}' "$TMP")
+R=$(mcp "$B" sess-b crosstalk_say '{"action":"tell","to":"ana","text":"still talking after the pause","intent":"fyi"}' "$TMP")
 has "$(waitfor 15 sh -c "cat '$A'/*.json '$A'/*/*.json 2>/dev/null | grep -o 'still talking after the pause' | head -1")" "still talking" "ben's message reaches ana"
 
 echo

@@ -19,7 +19,7 @@ export function gate(u: { url: string; kind: string }, o: { proxyPort?: number }
   } catch {
     return { error: "not a URL" }
   }
-  if (/\.localhost$/i.test(url.hostname)) return { error: "that is a name through crosstalk's proxy; share the service itself (crosstalk_urls lists it)" }
+  if (/\.localhost$/i.test(url.hostname)) return { error: "that is a name through crosstalk's proxy; share the service itself (crosstalk_look action \"urls\" lists it)" }
   if (u.kind !== "local" || url.protocol !== "http:" || !LOOPBACK.test(url.hostname)) return { error: "only a local server (http on localhost) can be shared" }
   const port = Number(url.port || 80)
   if (!(port > 0 && port < 65536)) return { error: "no port" }

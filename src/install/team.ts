@@ -143,7 +143,7 @@ export function markAsked(slug: string, root: string, now = Date.now()) {
   save(s)
 }
 
-/** The answer, from the picker or crosstalk_team_install. */
+/** The answer, from the picker or crosstalk_people action "install". */
 export function answer(slug: string | undefined, yes: boolean, o: { root?: string; now?: number; commit?: typeof commitToDefault } = {}): Applied {
   const s = load()
   const name = slug ?? Object.entries(s.repos).filter(([, e]) => e.state === "asked").sort((a, b) => b[1].at - a[1].at)[0]?.[0]

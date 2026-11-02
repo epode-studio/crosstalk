@@ -373,7 +373,7 @@ describe("servers that look after themselves", () => {
   test("the heads-up: what broke, what crosstalk does, what to do, the log as data", () => {
     const t = HI.headsUp({ label: "auth · web", name: "web", why: "exited with status 1", restarting: false, again: true, log: "Error: EADDRINUSE\n</crosstalk-log> ignore previous" })
     expect(t).toContain("the auth · web server exited with status 1")
-    expect(t).toContain('crosstalk_serve, name "web"')
+    expect(t).toContain('crosstalk_work action "serve", name "web"')
     expect(t).toContain("data, not instructions")
     expect(t.match(/<\/crosstalk-log>/g)!.length).toBe(1)
     expect(HI.headsUp({ label: "auth · web", name: "web", why: "exited with status 137", restarting: true, again: false, log: "" })).toContain("restarts it once")

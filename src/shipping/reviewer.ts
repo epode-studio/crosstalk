@@ -8,7 +8,7 @@
 // earlier rounds said. It ends its answer with a verdict, and a small wrapper
 // hands that answer to crosstalk (`crosstalk review --run <id> --secret-file
 // <run folder>/secret --output <file in the run folder>`) when it exits. A
-// reviewer that can reach crosstalk's tools may instead call crosstalk_review
+// reviewer that can reach crosstalk's tools may instead call crosstalk_ship action "review"
 // itself, from its own copy; whichever arrives first counts. No other session
 // can hand in a verdict: the run id alone is not enough.
 //
@@ -140,7 +140,7 @@ export function prompt(p: PromptInput, nonce = crypto.randomBytes(6).toString("h
     `FINDINGS:`,
     `<your findings, or "none">`,
     ``,
-    `If you have crosstalk's tools, you may call crosstalk_review with run "${p.run}" instead. Otherwise just answer; ${p.cli} review --run ${p.run} is called with your answer when you finish.`,
+    `If you have crosstalk's tools, you may call crosstalk_ship action "review" with run "${p.run}" instead. Otherwise just answer; ${p.cli} review --run ${p.run} is called with your answer when you finish.`,
   ].join("\n")
 }
 

@@ -124,12 +124,12 @@ rpc "{\"op\":\"register\",\"sessionId\":\"sess-a\",\"pid\":$$,\"name\":\"auth\",
 
 echo
 echo "capture: a PNG of the thread's server"
-OUT=$(mcp sess-a crosstalk_serve '{"command":"bun srv.ts","name":"web"}' "$WT")
+OUT=$(mcp sess-a crosstalk_work '{"action":"serve","command":"bun srv.ts","name":"web"}' "$WT")
 has "$OUT" "started web" "crosstalk_serve starts the server"
 P1=$(echo "$OUT" | sed -n 's/.*PORT=\([0-9]*\).*/\1/p' | head -1)
 up() { js 'const f = JSON.parse(require("fs").readFileSync(process.env.CROSSTALK_HOME + "/urls.json", "utf8")); const u = f.urls.find(u => u.service === "web" && u.alive && u.lastOk > Number(process.argv[1])); if (u) console.log("up")' "$1"; }
 check "$(waitfor 15 up 0)" "up" "its URL is recorded and answers"
-SHOT=$(mcp sess-a crosstalk_screenshot '{}' "$WT")
+SHOT=$(mcp sess-a crosstalk_look '{"action":"screenshot"}' "$WT")
 has "$SHOT" "captured 1 of auth's URL" "crosstalk_screenshot captures it"
 F1=$(echo "$SHOT" | grep -o '/[^ ]*\.png' | head -1)
 check "$(head -c 8 "$F1" 2>/dev/null | od -An -tx1 | tr -d ' \n')" "89504e470d0a1a0a" "a real PNG, under the crosstalk home"
@@ -143,7 +143,7 @@ if CROSSTALK_SHOTS_ENGINE=chrome bun src/cli.ts shots engine | grep -q '^chrome'
 else
   echo "  (no Chrome here: the Chrome path is not run)"
 fi
-NOPE=$(mcp sess-a crosstalk_screenshot '{"path":"https://evil.example/"}' "$WT")
+NOPE=$(mcp sess-a crosstalk_look '{"action":"screenshot","path":"https://evil.example/"}' "$WT")
 has "$NOPE" "a path is the part after the host" "a path cannot point elsewhere"
 
 echo
@@ -169,7 +169,7 @@ PAIRS=$(bun src/cli.ts shots --thread auth --json)
 check "$(pair 'p.before.file')" "$F2" "its before is the last turn's after"
 F1=$(pair 'p.before.file')
 F2=$(pair 'p.after.file')
-LIST=$(mcp sess-a crosstalk_screenshots '{"name":"auth web"}' "$WT")
+LIST=$(mcp sess-a crosstalk_look '{"action":"screenshots","name":"auth web"}' "$WT")
 has "$LIST" "before $F1" "crosstalk_screenshots lists the before"
 has "$LIST" "after $F2" "and the after"
 cat >"$TMP/opener" <<EOF
@@ -177,7 +177,7 @@ cat >"$TMP/opener" <<EOF
 echo "\$@" >>"$TMP/opened"
 EOF
 chmod +x "$TMP/opener"
-OPENED=$(CROSSTALK_OPEN_FILE_CMD="$TMP/opener" mcp sess-a crosstalk_screenshots '{"name":"auth web","open":true}' "$WT")
+OPENED=$(CROSSTALK_OPEN_FILE_CMD="$TMP/opener" mcp sess-a crosstalk_look '{"action":"screenshots","name":"auth web","open":true}' "$WT")
 has "$OPENED" "before" "\"show me the auth page before and after\" opens them"
 sleep 0.5
 check "$(sort "$TMP/opened" 2>/dev/null | tr '\n' ' ')" "$(printf '%s\n%s\n' "$F1" "$F2" | sort | tr '\n' ' ')" "both images, in the viewer"
@@ -244,7 +244,7 @@ sleep 3
 check "$(health 'h.restarts.length')" "1" "no second automatic restart"
 check "$(health 'h.phase')" "broken" "broken"
 check "$(curl -s --max-time 1 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$P1/")" "000" "and it stays down"
-SVCS=$(mcp sess-a crosstalk_services '{}' "$WT")
+SVCS=$(mcp sess-a crosstalk_work '{"action":"services"}' "$WT")
 has "$SVCS" "web" "crosstalk_services still lists it"
 PANESVC=$(js '
   const H = await import("./src/urls/health/index.ts")
@@ -255,7 +255,7 @@ has "$PANESVC" "exited with status 5" "the pane marks it broken"
 echo
 echo "the agent tries: crashing still, the person is told once, nothing loops"
 touch "$WT/crashy"
-OUT=$(mcp sess-a crosstalk_serve '{"command":"bun srv.ts","name":"web"}' "$WT")
+OUT=$(mcp sess-a crosstalk_work '{"action":"serve","command":"bun srv.ts","name":"web"}' "$WT")
 has "$OUT" "started web" "the agent's crosstalk_serve with the same name starts it again"
 gaveup() { [ "$(health 'h.phase')" = gave-up ] && echo yes; }
 check "$(waitfor 15 gaveup)" "yes" "it crashes again: given up"
@@ -269,10 +269,10 @@ check "$(broken)" "yes" "the tab stays broken"
 echo
 echo "healed: fixed and started again, the tab clears"
 rm -f "$WT/crashy"
-mcp sess-a crosstalk_serve '{"command":"bun srv.ts","name":"web"}' "$WT" >/dev/null
+mcp sess-a crosstalk_work '{"action":"serve","command":"bun srv.ts","name":"web"}' "$WT" >/dev/null
 cleared() { case "$(cat "$CROSSTALK_HOME/tabs/sess-a.json" 2>/dev/null)" in *'"want":"broken"'*) ;; *) echo yes ;; esac; }
 check "$(waitfor 20 cleared)" "yes" "healthy again: the tab is not broken any more"
-mcp sess-a crosstalk_stop '{"name":"web"}' "$WT" >/dev/null
+mcp sess-a crosstalk_work '{"action":"stop","name":"web"}' "$WT" >/dev/null
 gone() { [ -z "$(health 'h.name')" ] && echo yes; }
 check "$(waitfor 10 gone)" "yes" "crosstalk_stop: forgotten"
 

@@ -10,7 +10,7 @@ terminal", "Wrangling every session").
 Every question here is a crosstalk question (a picker from the mod in the
 session the person is in, hidden from that session's agent). Without the mod
 it is a systemMessage line, answered in plain words through
-`crosstalk_attention`.
+`crosstalk_answer action "attention"`.
 
 ## Recaps
 
@@ -93,7 +93,7 @@ Focusing a tab (only on the person's word or a click): tmux `switch-client` +
 `select-window` + `select-pane`; Terminal.app and iTerm2 by AppleScript
 (select the tab, raise the window, activate); kitty `kitten @ focus-window
 --match id:N`; WezTerm `wezterm cli activate-pane --pane-id N`.
-`crosstalk_show` ("show me api") does this for a session that is not a
+`crosstalk_work action "show"` ("show me api") does this for a session that is not a
 background agent, and `crosstalk attn focus --session <id>` is what a
 notification's click runs.
 

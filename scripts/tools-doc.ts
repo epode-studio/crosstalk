@@ -10,7 +10,7 @@ import { spawn } from "node:child_process"
 const ROOT = path.resolve(import.meta.dir, "..")
 const OUT = path.join(ROOT, "docs/tools.md")
 
-type Tool = { name: string; description?: string; inputSchema?: { properties?: Record<string, unknown>; required?: string[] } }
+type Tool = { name: string; description?: string; inputSchema?: { properties?: Record<string, any>; required?: string[] } }
 
 const tools = await new Promise<Tool[]>((resolve, reject) => {
   const p = spawn("bun", [path.join(ROOT, "src/server.ts")], {
@@ -36,58 +36,39 @@ const tools = await new Promise<Tool[]>((resolve, reject) => {
   })
 })
 
-/** The order they are grouped in below; anything unlisted lands in "Other". */
-const GROUPS: [string, string, string[]][] = [
-  ["Messages", "Moving something between two people mid-task.", ["crosstalk_send", "crosstalk_read", "crosstalk_read_slice", "crosstalk_ask", "crosstalk_answer", "crosstalk_handoff"]],
-  ["Presence", "Who is around and what they are touching.", ["crosstalk_peers", "crosstalk_rooms"]],
-  ["Tasks", "Work a room has agreed, and who took it.", ["crosstalk_tasks", "crosstalk_task_add", "crosstalk_task_claim", "crosstalk_task_done"]],
-  ["Facts", "What the room keeps deriving and would rather not derive again.", ["crosstalk_facts", "crosstalk_remember", "crosstalk_confirm", "crosstalk_correct"]],
-  ["Decisions", "What was settled, written where the code lives.", ["crosstalk_decide"]],
-  ["Threads", "A piece of work and the conversation about it, found from what each session works on.", ["crosstalk_thread_read", "crosstalk_thread"]],
-  ["No commands", "What used to need a slash command, from plain words (src/ui-extra/).", ["crosstalk_room", "crosstalk_mute", "crosstalk_trust", "crosstalk_doctor", "crosstalk_link"]],
-  ["Services", "Long-running processes that outlive the session, on the worktree's own ports (docs/services.md).", ["crosstalk_serve", "crosstalk_services", "crosstalk_stop", "crosstalk_env"]],
-  ["URLs", "Every URL the threads have, labelled, with names instead of ports, and screenshots of them before and after (docs/urls.md).", ["crosstalk_urls", "crosstalk_open_url", "crosstalk_screenshot", "crosstalk_screenshots", "crosstalk_history", "crosstalk_qr"]],
-  ["Sharing", "A running server shared with named teammates over the encrypted channel, never a public URL unless asked (docs/urls.md, 8).", ["crosstalk_share", "crosstalk_unshare", "crosstalk_shares"]],
-  ["Sessions", "Every session, here and on your own other machines: what is running, closing, finding and resuming past ones, renaming, moving, the background (src/sessions/).", ["crosstalk_sessions", "crosstalk_close", "crosstalk_find", "crosstalk_resume", "crosstalk_rename", "crosstalk_move", "crosstalk_background", "crosstalk_popout"]],
-  ["Looking around", "A thread beside the chat, a worktree in the editor, what happened, what shipped.", ["crosstalk_pane", "crosstalk_open", "crosstalk_digest", "crosstalk_standup"]],
-]
+type Prop = { type?: string; enum?: string[]; description?: string; items?: { type?: string } }
 
-const byName = new Map(tools.map((t) => [t.name, t]))
-const placed = new Set(GROUPS.flatMap(([, , names]) => names))
-const leftover = tools.filter((t) => !placed.has(t.name)).map((t) => t.name)
-if (leftover.length) GROUPS.push(["Other", "Not yet grouped.", leftover])
+const typeOf = (p: Prop) => (p.enum ? p.enum.map((v) => `\`${v}\``).join(" \\| ") : p.type === "array" ? `${p.items?.type ?? "object"}[]` : (p.type ?? "object"))
+const cell = (s: string) => s.replace(/\s*\n\s*/g, " ").replace(/\|/g, "\\|").trim()
 
-const args = (t: Tool) => {
-  const props = Object.keys(t.inputSchema?.properties ?? {})
-  if (!props.length) return "none"
-  const req = new Set(t.inputSchema?.required ?? [])
-  return props.map((p) => (req.has(p) ? `\`${p}\`` : `\`${p}\`?`)).join(", ")
-}
-
+const size = JSON.stringify(tools).length
 const out: string[] = [
   "# Tools",
   "",
-  "The MCP server advertises these. Every agent in a room gets the same set,",
-  "whether it reached crosstalk through the plugin or through MCP alone.",
+  "The MCP server advertises these. Every agent gets the same set, whether it",
+  "reached crosstalk through the plugin or through MCP alone. There are eight,",
+  "each with an `action`, rather than one per feature: every definition is in",
+  "every session's context on every turn (docs/design/next-generation.md,",
+  '"Three nouns").',
   "",
   "**Generated** by `bun scripts/tools-doc.ts`, from the server itself. Edit the",
-  "tool, not this file.",
+  "tool (src/tools/), not this file.",
   "",
-  `${tools.length} tools.`,
+  `${tools.length} tools, ${tools.reduce((n, t: any) => n + (t.inputSchema?.properties?.action?.enum?.length ?? 0), 0)} actions, ${size.toLocaleString("en")} characters of definitions (about ${Math.round(size / 4).toLocaleString("en")} tokens).`,
+  "",
+  "| Tool | Actions |",
+  "|---|---|",
+  ...tools.map((t: any) => `| [\`${t.name}\`](#${t.name}) | ${(t.inputSchema?.properties?.action?.enum ?? []).join(", ")} |`),
   "",
 ]
 
-for (const [title, blurb, names] of GROUPS) {
-  const rows = names.map((n) => byName.get(n)).filter(Boolean) as Tool[]
-  if (!rows.length) continue
-  out.push(`## ${title}`, "", blurb, "", "| Tool | Arguments | What it does |", "|---|---|---|")
-  for (const t of rows) {
-    const desc = (t.description ?? "").replace(/\s*\n\s*/g, " ").replace(/\|/g, "\\|").trim()
-    out.push(`| \`${t.name}\` | ${args(t)} | ${desc} |`)
-  }
+for (const t of tools as any[]) {
+  const props = Object.entries((t.inputSchema?.properties ?? {}) as Record<string, Prop>)
+  out.push(`## ${t.name}`, "", (t.description ?? "").trim(), "", "| Argument | Type | For |", "|---|---|---|")
+  for (const [name, p] of props) out.push(`| \`${name}\`${name === "action" ? "" : "?"} | ${cell(typeOf(p))} | ${cell(p.description ?? "")} |`)
   out.push("")
 }
 
-out.push("A `?` marks an optional argument.", "")
+out.push("A `?` marks an optional argument. `action` is required on every tool.", "")
 fs.writeFileSync(OUT, out.join("\n"))
-console.log(`docs/tools.md: ${tools.length} tools`)
+console.log(`docs/tools.md: ${tools.length} tools, ${size} characters`)

@@ -64,14 +64,15 @@ send({ jsonrpc: "2.0", method: "notifications/initialized" })
 send({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })
 const list = await waitFor(2)
 const names: string[] = (list?.result?.tools ?? []).map((t: any) => t.name)
-names.length ? ok(`lists ${names.length} tools`) : bad("listed no tools")
-for (const want of ["crosstalk_send", "crosstalk_read", "crosstalk_peers", "crosstalk_facts"])
-  names.includes(want) ? ok(`offers ${want}`) : bad(`missing ${want}`)
+const EIGHT = ["crosstalk_thread", "crosstalk_say", "crosstalk_work", "crosstalk_look", "crosstalk_ship", "crosstalk_people", "crosstalk_answer", "crosstalk_doctor"]
+JSON.stringify([...names].sort()) === JSON.stringify([...EIGHT].sort()) ? ok("lists exactly the eight tools") : bad(`lists ${names.join(", ")}`)
+const actions = (list?.result?.tools ?? []).every((t: any) => t.inputSchema?.properties?.action?.enum?.length && t.inputSchema?.required?.includes("action"))
+actions ? ok("every tool takes a required action from an enum") : bad("a tool has no action enum")
 
 const schemas = (list?.result?.tools ?? []).every((t: any) => t.inputSchema?.type === "object")
 schemas ? ok("every tool carries an object input schema") : bad("a tool has no input schema")
 
-send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "crosstalk_peers", arguments: {} } })
+send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "crosstalk_people", arguments: { action: "peers" } } })
 const call = await waitFor(3)
 const text = call?.result?.content?.[0]?.text
 typeof text === "string" ? ok("answers a tool call with content") : bad("tool call returned no content")
@@ -79,6 +80,10 @@ typeof text === "string" ? ok("answers a tool call with content") : bad("tool ca
 send({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "no_such_tool", arguments: {} } })
 const boom = await waitFor(4)
 boom && (boom.error || boom.result?.isError) ? ok("refuses a tool it does not have") : bad("accepted an unknown tool")
+
+send({ jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "crosstalk_people", arguments: {} } })
+const bare = await waitFor(5)
+bare?.result?.isError && /needs an action/.test(bare.result.content?.[0]?.text ?? "") ? ok("refuses a call without an action") : bad("accepted a call without an action")
 
 child.kill()
 process.exit(failed)

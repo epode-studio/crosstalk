@@ -175,7 +175,7 @@ export function digest(
     `who stands behind it and how long since anyone last did.`,
     ``,
     ...lines,
-    ...(dropped ? [``, `${dropped} more; call crosstalk_facts to see them.`] : []),
+    ...(dropped ? [``, `${dropped} more; call crosstalk_thread action "note" kind "fact" to see them.`] : []),
     `</crosstalk-facts>`,
   ].join("\n")
 }

@@ -94,7 +94,7 @@ test('the pane draws a thread: waiting, decision, features with flag stage, rece
   const clock = engine(on, acts)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.settle()
-  await $.tool.call({ tool: 'mcp__plugin_crosstalk_crosstalk__crosstalk_pane', thread: 'auth' } as any)
+  await $.tool.call({ tool: 'mcp__plugin_crosstalk_crosstalk__crosstalk_look', action: 'pane', thread: 'auth' } as any)
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
     expect((await ui.find({ type: 'Text', text: /keep the v1 endpoint/ }))?.text).toContain('blocking')
@@ -112,7 +112,7 @@ test('the pane has a Links section: by kind, clickable, dead ones marked', async
   const clock = engine(on, acts)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.settle()
-  await $.tool.call({ tool: 'mcp__plugin_crosstalk_crosstalk__crosstalk_pane', thread: 'auth' } as any)
+  await $.tool.call({ tool: 'mcp__plugin_crosstalk_crosstalk__crosstalk_look', action: 'pane', thread: 'auth' } as any)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: /^Links$/ })).toBeDefined()

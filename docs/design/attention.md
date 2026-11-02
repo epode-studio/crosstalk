@@ -147,7 +147,7 @@ arrives first.
 ```
 /crosstalk:facts                        what the room holds
 /crosstalk:facts add "..."              from the terminal
-crosstalk_remember / crosstalk_facts    from the agent
+crosstalk_thread action "note" kind "fact" / crosstalk_thread action "note" kind "fact"    from the agent
 ```
 
 **The discipline this needs.** Injecting shared text into a session at startup is

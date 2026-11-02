@@ -79,7 +79,7 @@ export function indexPage(routes: Route[], port: number, asked?: string): string
           return `<li><a href="${esc(u)}">${esc(u)}</a> &rarr; ${esc(r.group)} &middot; ${esc(r.service)} on :${r.port}</li>`
         })
         .join("\n")
-    : "<li>Nothing yet. Services crosstalk runs (crosstalk_serve) show up here by name.</li>"
+    : "<li>Nothing yet. Services crosstalk runs (crosstalk_work action \"serve\") show up here by name.</li>"
   return `<!doctype html><meta charset="utf-8"><title>crosstalk</title><style>body{font:14px/1.5 system-ui,sans-serif;margin:2rem;max-width:46rem}code{background:#eee;padding:0 .2em}</style>
 <h1>crosstalk</h1><p>${asked ? `No service is called <code>${esc(asked)}</code> here.` : "The local servers crosstalk knows by name:"}</p><ul>
 ${rows}

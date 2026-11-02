@@ -126,7 +126,7 @@ export type PaneModel = {
   links?: PaneLink[]
   /** Screenshots, each URL's before and after, as files (src/urls/shots/); the mod links them, it cannot draw images. */
   shots?: PaneShot[]
-  /** A QR code crosstalk_qr made for the phone (src/urls/history/phone.ts): half-block rows, drawn white on black. */
+  /** A QR code crosstalk_look action "qr" made for the phone (src/urls/history/phone.ts): half-block rows, drawn white on black. */
   qr?: { label: string; caption: string; rows: string[]; at: number; why?: string }
 }
 

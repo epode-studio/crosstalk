@@ -6,7 +6,7 @@
 // mod's picker when the mod is there, else a systemMessage (seen by the person,
 // never by the model). Nothing is said when all is well.
 //
-// The whole report is still `crosstalk doctor`, and crosstalk_doctor returns it
+// The whole report is still `crosstalk doctor`, and crosstalk_doctor action "report" returns it
 // when someone asks "is crosstalk OK?".
 
 import fs from "node:fs"
@@ -119,7 +119,7 @@ export function act(id: string, action: string, value: string | undefined) {
     return {
       ok: true,
       item: it,
-      prompt: `crosstalk says something is wrong. ${it.question ?? ""} Help me fix it; crosstalk_doctor has the whole report.`,
+      prompt: `crosstalk says something is wrong. ${it.question ?? ""} Help me fix it; crosstalk_doctor action "report" has the whole report.`,
       text: "handed to the agent",
     }
   return { ok: true, item: it, text: `Left as it is. Say "is crosstalk OK?" any time.` }

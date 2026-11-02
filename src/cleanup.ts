@@ -4,7 +4,7 @@
 // work has landed: its branch is merged into the default branch, or the branch
 // is gone, and its session has ended. crosstalk then offers once, as the mod's
 // picker or a systemMessage, to remove those worktrees, and answers in plain
-// words through crosstalk_cleanup. Removing is `git worktree remove` (which
+// words through crosstalk_work action "cleanup". Removing is `git worktree remove` (which
 // refuses anything with changes) and `git worktree prune`, and the merged
 // branch is deleted with `git branch -d`, which refuses an unmerged one.
 //
@@ -13,7 +13,7 @@
 //
 // Nothing in use is removed (docs/services.md): a worktree that a process
 // works in (its cwd is inside) or listens from is kept, whoever started it.
-// A crosstalk service (crosstalk_serve) running in one is the thread's own:
+// A crosstalk service (crosstalk_work action "serve") running in one is the thread's own:
 // the offer says it stops first, and after the person's yes it is stopped
 // (SIGTERM, then its tmux window closed) before the worktree goes. Without
 // that yes, removing refuses while it runs.

@@ -996,7 +996,7 @@ describe("the engine", () => {
     await e.review({ run: launches[2].run, secret: launches[2].secret, verdict: "approve", findings: "none" })
     await e.review({ run: launches[3].run, secret: launches[3].secret, verdict: "approve", findings: "none" })
     expect(port.get(t.id)!.features["login-v2"].ship?.state).toBe("needs-evidence")
-    expect(woke.at(-1)!.text).toContain("crosstalk_evidence")
+    expect(woke.at(-1)!.text).toContain('crosstalk_ship action "evidence"')
     // Evidence: a diff is refused, plain words with proof are not, and the merge is asked.
     expect((await e.evidence("s2", { feature: "login v2", summary: "diff --git a/x b/x\n@@ -1 +1 @@" })).ok).toBe(false)
     const ev = await e.evidence("s2", { feature: "login v2", summary: "Login is rate limited to 5 tries a minute.", tests: ["rate-limit.test: 4 pass"] })

@@ -1,16 +1,16 @@
 // Shipping, run by the daemon: from "the work is ready" to merged, flagged,
 // ramped and, when production says so, turned off again.
 //
-//   crosstalk_feature   declare a feature, or make it risky (never everyday:
+//   crosstalk_ship action "feature"   declare a feature, or make it risky (never everyday:
 //                       that is a question to a person)
-//   crosstalk_ready     the author says the work is ready. This, not the
+//   crosstalk_ship action "ready"     the author says the work is ready. This, not the
 //                       session going idle, starts review: a session goes
 //                       idle for many reasons (a question, a break, a wrong
 //                       turn), and only the author knows the work is done
-//   crosstalk_review    a reviewer's verdict (its wrapper calls it too)
-//   crosstalk_evidence  evidence of behaviour, for a risky merge or a flag step
-//   crosstalk_flag      move a flag; off any time, up through a question
-//   crosstalk_incident  production says something is wrong
+//   crosstalk_ship action "review"    a reviewer's verdict (its wrapper calls it too)
+//   crosstalk_ship action "evidence"  evidence of behaviour, for a risky merge or a flag step
+//   crosstalk_ship action "flag"      move a flag; off any time, up through a question
+//   crosstalk_ship action "incident"  production says something is wrong
 //
 // What it knows about each feature lives on the feature in the thread (see
 // types.ts), so it reaches the thread's people and the ref. What only this
@@ -95,7 +95,7 @@ export type Deps = {
   home: string
   /** The crosstalk command a reviewer's wrapper calls back with. */
   cli: string
-  /** Hand text to an agent's session as data (a held message it reads with crosstalk_read). */
+  /** Hand text to an agent's session as data (a held message it reads with crosstalk_say action "read"). */
   wake: (sessionId: string, text: string) => void
   /** Put a question to people: the mod's picker in these sessions. The thread question is the engine's. */
   ask: (q: Question) => void
@@ -428,7 +428,7 @@ export class ShipEngine {
 
   // --- features and risk -------------------------------------------------------------------
 
-  /** crosstalk_feature: declare one, set its flag, or make it risky. */
+  /** crosstalk_ship action "feature": declare one, set its flag, or make it risky. */
   async feature(sid: string | undefined, a: { thread?: string; name?: string; risk?: string; why?: string; flag?: string; branch?: string }): Promise<Out> {
     const name = String(a.name ?? "").trim()
     if (!name) return fail("a feature needs a name")
@@ -472,7 +472,7 @@ export class ShipEngine {
       const parts = [`${name} is ${risk} in ${t.meta.value.name}${risk === "risky" && why ? ` (${why})` : ""}.`]
       if (lowering) parts.push(`Making it everyday again is a question for a person, asked now; it stays risky until they answer.`)
       if (flag && risk === "risky") parts.push(`It ships behind the flag ${flag}: keep the new behaviour off unless ${flag} is on.`)
-      parts.push(`When the work is committed on ${branch ?? "its branch"} and ready, call crosstalk_ready.`)
+      parts.push(`When the work is committed on ${branch ?? "its branch"} and ready, call crosstalk_ship action "ready".`)
       return { ok: true, text: parts.join(" "), feature: id, risk, ...(flag ? { flag } : {}), ...(lowering ? { question: lowering.id } : {}) }
     })
   }
@@ -488,7 +488,7 @@ export class ShipEngine {
 
   // --- review ---------------------------------------------------------------------------
 
-  /** crosstalk_ready: the work is ready. Reviewers start. */
+  /** crosstalk_ship action "ready": the work is ready. Reviewers start. */
   async ready(sid: string | undefined, a: { thread?: string; feature?: string; response?: string }): Promise<Out> {
     const name = String(a.feature ?? "").trim()
     if (!name) return fail("say which feature is ready")
@@ -603,7 +603,7 @@ export class ShipEngine {
   }
 
   /**
-   * crosstalk_review / the wrapper: one reviewer's verdict. Only from the
+   * crosstalk_ship action "review" / the wrapper: one reviewer's verdict. Only from the
    * run's wrapper (it holds the run's secret, from the run's folder) or from
    * the reviewer's own session (working in the run's copy): the run id alone
    * is in `git worktree list` for the author to read. An `output` file is read
@@ -700,7 +700,7 @@ export class ShipEngine {
         `<crosstalk-review feature="${attr(f.name)}" round="${rd.round}">`,
         esc(findings),
         `</crosstalk-review>`,
-        `Fix what you agree with and commit it. Then call crosstalk_ready with feature "${f.name}" and a response saying what you changed and what you disagree with, and why. The reviewers see your response next round.`,
+        `Fix what you agree with and commit it. Then call crosstalk_ship action "ready" with feature "${f.name}" and a response saying what you changed and what you disagree with, and why. The reviewers see your response next round.`,
       ].join("\n"),
     )
     return { ok: true, text: `changes requested; the author has the findings` }
@@ -722,7 +722,7 @@ export class ShipEngine {
     const own = this.ownFlagChange(root, sha.sha, f)
     if (own) {
       this.patch(t, f.id, { state: "blocked", last: own })
-      this.tellAuthor(key, `${f.name} cannot merge: ${own}. A feature's own flag is moved by crosstalk (crosstalk_flag), never by the branch. Take that change out of ${F.FLAGS_FILE}, commit, and call crosstalk_ready with feature "${f.name}" again.`)
+      this.tellAuthor(key, `${f.name} cannot merge: ${own}. A feature's own flag is moved by crosstalk (crosstalk_ship action "flag"), never by the branch. Take that change out of ${F.FLAGS_FILE}, commit, and call crosstalk_ship action "ready" with feature "${f.name}" again.`)
       return { ok: false, text: own }
     }
     const check = await this.check(root, sha.sha, f.ship.branch, cfg)
@@ -732,7 +732,7 @@ export class ShipEngine {
     }
     if (!check.ok) {
       this.patch(t, f.id, { state: "red", last: `checks failed: ${check.cmd}` })
-      this.tellAuthor(key, `${f.name} is signed off, but its checks fail on ${f.ship.branch} (${check.cmd}). The end of the output:\n<crosstalk-check>\n${esc(check.out)}\n</crosstalk-check>\nFix it, commit, and call crosstalk_ready with feature "${f.name}" again.`)
+      this.tellAuthor(key, `${f.name} is signed off, but its checks fail on ${f.ship.branch} (${check.cmd}). The end of the output:\n<crosstalk-check>\n${esc(check.out)}\n</crosstalk-check>\nFix it, commit, and call crosstalk_ship action "ready" with feature "${f.name}" again.`)
       return { ok: true, text: `signed off, but the checks failed (${check.cmd})` }
     }
     this.fact(t, `Checks pass on ${f.ship.branch}${check.cmd ? ` (${check.cmd})` : " (no test command found; nothing to run)"} at ${sha.sha.slice(0, 12)}, the reviewed commit`)
@@ -746,7 +746,7 @@ export class ShipEngine {
       this.patch(t, f.id, { state: "needs-evidence", last: "signed off and green; waiting for evidence" })
       this.tellAuthor(
         key,
-        `${f.name} is risky, signed off and green. Before it merges a person decides, and they need evidence of behaviour: what it now does differently, in plain words, with proof (tests that pass, evals, before and after, screenshots). Never a diff. Attach it with crosstalk_evidence, feature "${f.name}".`,
+        `${f.name} is risky, signed off and green. Before it merges a person decides, and they need evidence of behaviour: what it now does differently, in plain words, with proof (tests that pass, evals, before and after, screenshots). Never a diff. Attach it with crosstalk_ship action "evidence", feature "${f.name}".`,
       )
       return { ok: true, text: "signed off and green; the author is asked for evidence" }
     }
@@ -765,8 +765,8 @@ export class ShipEngine {
     const t = this.T().get(unkey(key).thread)!
     const why = !sha ? "crosstalk has no record of which commit was reviewed" : `${f.ship?.branch} moved after the review (reviewed ${sha.slice(0, 12)}, now ${tip ? tip.slice(0, 12) : "gone"})`
     this.patch(t, f.id, { state: "building", last: `not merged: ${why}` })
-    this.tellAuthor(key, `${f.name} did not go further: ${why}. Only a reviewed commit is checked and merged. When the branch is as you want it, call crosstalk_ready with feature "${f.name}" again and the reviewers look at it as it is now.`)
-    return { ok: false, text: `not merged: ${why}; it is reviewed again on the next crosstalk_ready` }
+    this.tellAuthor(key, `${f.name} did not go further: ${why}. Only a reviewed commit is checked and merged. When the branch is as you want it, call crosstalk_ship action "ready" with feature "${f.name}" again and the reviewers look at it as it is now.`)
+    return { ok: false, text: `not merged: ${why}; it is reviewed again on the next crosstalk_ship action "ready"` }
   }
 
   /** Whether the branch itself changes the feature's flag (or its dark companion) in the flags file. */
@@ -826,7 +826,7 @@ export class ShipEngine {
       this.fact(t, `The preview of ${f.name}${r.url ? ` at ${r.url}` : ""} failed: ${r.error}`)
       this.tellAuthor(
         key,
-        `${f.name} is signed off and its checks pass, but its preview ${r.url ? `at ${r.url} ` : ""}failed: ${r.error}. The end of the output:\n<crosstalk-check>\n${esc(r.check?.out ?? r.out)}\n</crosstalk-check>\nFix it, commit, and call crosstalk_ready with feature "${f.name}" again.`,
+        `${f.name} is signed off and its checks pass, but its preview ${r.url ? `at ${r.url} ` : ""}failed: ${r.error}. The end of the output:\n<crosstalk-check>\n${esc(r.check?.out ?? r.out)}\n</crosstalk-check>\nFix it, commit, and call crosstalk_ship action "ready" with feature "${f.name}" again.`,
       )
       return { ok: true, stop: true, text: `signed off and green, but the preview failed: ${r.error}` }
     }
@@ -883,7 +883,7 @@ export class ShipEngine {
     }
   }
 
-  /** crosstalk_evidence */
+  /** crosstalk_ship action "evidence" */
   async evidence(sid: string | undefined, a: { thread?: string; feature?: string } & E.EvidenceInput): Promise<Out> {
     const t = this.T().find(sid, a.thread)
     if (!t) return fail(a.thread ? `no thread called "${a.thread}"` : "this session is in no thread yet")
@@ -1042,7 +1042,7 @@ export class ShipEngine {
           })
         else if (st.state === "CLOSED") {
           this.patch(t, f.id, { state: "blocked", last: `its PR ${pr} was closed without merging` })
-          this.tellAuthor(key, `The PR for ${f.name} (${pr}) was closed without merging. Call crosstalk_ready with feature "${f.name}" when it should go in.`)
+          this.tellAuthor(key, `The PR for ${f.name} (${pr}) was closed without merging. Call crosstalk_ship action "ready" with feature "${f.name}" when it should go in.`)
           did.push(`${f.name}: PR closed`)
         }
       }
@@ -1074,7 +1074,7 @@ export class ShipEngine {
     const since = cur === "off" ? 0 : this.stageAt(t, f.flag, cur) ?? 0
     const ev = [...(f.ship?.evidence ?? [])].reverse().find((e) => (e.stage === cur || (cur === "off" && e.stage === "merge")) && e.at >= since)
     if (!ev) {
-      this.tellAuthor(key, `${f.name} is merged and its flag ${f.flag} is ${cur}. Before it goes to ${next}, a person decides on evidence of how it behaves ${cur === "off" ? "so far" : `at ${cur}`}: watch it, then attach that with crosstalk_evidence, feature "${f.name}", stage "${cur}". Any regression: turn the flag off with crosstalk_flag, no question needed.`)
+      this.tellAuthor(key, `${f.name} is merged and its flag ${f.flag} is ${cur}. Before it goes to ${next}, a person decides on evidence of how it behaves ${cur === "off" ? "so far" : `at ${cur}`}: watch it, then attach that with crosstalk_ship action "evidence", feature "${f.name}", stage "${cur}". Any regression: turn the flag off with crosstalk_ship action "flag", no question needed.`)
       return { ok: true, text: `${f.flag} is ${cur}; the next step (${next}) waits for evidence at ${cur}` }
     }
     const means =
@@ -1143,12 +1143,12 @@ export class ShipEngine {
     this.fact(t, `Flag ${f.flag} is now ${stage} (${who}: ${why})${baseline ? `. Baseline before the step: ${Mx.describeMetrics(baseline)}` : ""}`)
     if (stage === "on") {
       this.task(t, `Remove the flag ${f.flag} and the old path for "${f.name}": it is fully on`)
-      this.tellAuthor(key, `${f.flag} is fully on. A task in the thread asks for the flag and the old code path to be removed; claim it with crosstalk_tasks when you take it.`)
+      this.tellAuthor(key, `${f.flag} is fully on. A task in the thread asks for the flag and the old code path to be removed; claim it with crosstalk_thread action "note" kind "task" op "claim" when you take it.`)
     }
     return { ok: true, text: said }
   }
 
-  /** crosstalk_flag: off at once, from anyone; up is a question for a risky feature. */
+  /** crosstalk_ship action "flag": off at once, from anyone; up is a question for a risky feature. */
   async flag(sid: string | undefined, a: { thread?: string; feature?: string; flag?: string; stage?: string; why?: string }): Promise<Out> {
     const stage = F.parseStage(a.stage)
     if (!stage) return fail("stage is one of off, internal, N% or on")
@@ -1283,7 +1283,7 @@ export class ShipEngine {
         case "merge": {
           if (chosen !== YES.merge) {
             this.patch(t, f.id, { state: "needs-evidence", last: `${who} said not yet` })
-            this.tellAuthor(key, `${who} said not yet to merging ${f.name}. Attach better evidence with crosstalk_evidence when you have it, and they will be asked again.`)
+            this.tellAuthor(key, `${who} said not yet to merging ${f.name}. Attach better evidence with crosstalk_ship action "evidence" when you have it, and they will be asked again.`)
             return { ok: true, text: `${f.name} waits` }
           }
           this.decision(t, `${who} agreed to merge ${f.name} on its evidence`)
@@ -1303,7 +1303,7 @@ export class ShipEngine {
             this.save()
             this.patch(t, f.id, { state: "changes", last: `${who} sided with the reviewers` })
             this.decision(t, `${who} sided with the reviewers on ${f.name}`)
-            this.tellAuthor(key, `${who} sided with the reviewers on ${f.name}. Make the change they asked for, commit it, and call crosstalk_ready with feature "${f.name}".`)
+            this.tellAuthor(key, `${who} sided with the reviewers on ${f.name}. Make the change they asked for, commit it, and call crosstalk_ship action "ready" with feature "${f.name}".`)
             return { ok: true, text: "the author makes the reviewers' change" }
           }
           if (chosen === YES.disagreeAuthor) {
@@ -1458,7 +1458,7 @@ export class ShipEngine {
         `<crosstalk-metrics flag="${attr(f.flag!)}" stage="${attr(w.stage)}">`,
         `${what}\n${Mx.describeMetrics(m, w.baseline)}`,
         `</crosstalk-metrics>`,
-        `Find the cause, fix it on a branch, and call crosstalk_ready when the fix is ready.`,
+        `Find the cause, fix it on a branch, and call crosstalk_ship action "ready" when the fix is ready.`,
       ].join("\n"),
     )
     this.d.log(`ship: killed ${f.flag}: ${what}`)
@@ -1521,15 +1521,15 @@ export class ShipEngine {
       this.tellAuthor(key, text)
     }
     if (shadow.length) {
-      tellOnce("shadow", `${f.flag} has been dark for ${dur(this.now() - w.since)}, and the shadow disagrees with the old path too often: ${shadow.map((b) => b.text).join("; ")}. It stays dark until that is fixed; nobody is affected meanwhile. Find out why the two paths disagree, fix it on a branch, and call crosstalk_ready.`)
+      tellOnce("shadow", `${f.flag} has been dark for ${dur(this.now() - w.since)}, and the shadow disagrees with the old path too often: ${shadow.map((b) => b.text).join("; ")}. It stays dark until that is fixed; nobody is affected meanwhile. Find out why the two paths disagree, fix it on a branch, and call crosstalk_ship action "ready".`)
       return { ok: true, text: `${f.flag} stays dark: ${shadow.map((b) => b.text).join("; ")}` }
     }
     if (!m) {
       tellOnce(
         "none",
         f.risk === "risky"
-          ? `${f.flag} has been ${stage} for ${dur(this.now() - w.since)}, and there are no metrics to judge it by (set metrics: in .crosstalk/ship, or a provider that has them). Attach what you saw with crosstalk_evidence, feature "${f.name}", stage "${stage}", for the next step's question.`
-          : `${f.flag} has been ${stage} for ${dur(this.now() - w.since)}. There are no metrics to judge it by (set metrics: in .crosstalk/ship), so it does not go further by itself: turn it up with crosstalk_flag when you are happy with it.`,
+          ? `${f.flag} has been ${stage} for ${dur(this.now() - w.since)}, and there are no metrics to judge it by (set metrics: in .crosstalk/ship, or a provider that has them). Attach what you saw with crosstalk_ship action "evidence", feature "${f.name}", stage "${stage}", for the next step's question.`
+          : `${f.flag} has been ${stage} for ${dur(this.now() - w.since)}. There are no metrics to judge it by (set metrics: in .crosstalk/ship), so it does not go further by itself: turn it up with crosstalk_ship action "flag" when you are happy with it.`,
       )
       return { ok: true, text: `${f.flag} at ${stage}: no metrics, so no step by itself` }
     }
@@ -1560,7 +1560,7 @@ export class ShipEngine {
     const next = F.nextStage(stage as F.Stage, cfg.everydayRamp)
     if (!next) return { ok: true, text: `${f.flag} at ${stage}: the end of its ramp` }
     if (gaps.length) {
-      tellOnce("gaps", `${f.flag} has been ${stage} for ${dur(this.now() - w.since)}, but it does not go further by itself: ${gaps.join("; ")}. Turn it up with crosstalk_flag when you are happy with it.`)
+      tellOnce("gaps", `${f.flag} has been ${stage} for ${dur(this.now() - w.since)}, but it does not go further by itself: ${gaps.join("; ")}. Turn it up with crosstalk_ship action "flag" when you are happy with it.`)
       return { ok: true, text: `${f.flag} at ${stage}: held, not stepped (${gaps.join("; ")})` }
     }
     w.asked = true
@@ -1622,8 +1622,8 @@ export class ShipEngine {
           `<crosstalk-incident source="${attr(inc.source)}">`,
           esc(text),
           `</crosstalk-incident>`,
-          killed ? `crosstalk turned the flag ${killed} off already.` : `If it is behind a flag, turning that off with crosstalk_flag needs no question.`,
-          `Find the cause, fix it on a branch, and call crosstalk_ready when the fix is ready.`,
+          killed ? `crosstalk turned the flag ${killed} off already.` : `If it is behind a flag, turning that off with crosstalk_ship action "flag" needs no question.`,
+          `Find the cause, fix it on a branch, and call crosstalk_ship action "ready" when the fix is ready.`,
         ].join("\n"),
       )
       this.d.log(`ship: incident ${inc.title} reopened ${t.meta.value.name} by ${m.by}`)
@@ -1632,7 +1632,7 @@ export class ShipEngine {
     const repo = [...roots.entries()].find(([, r]) => o.cwd && path.resolve(o.cwd).startsWith(path.resolve(G.mainOf(r) ?? r)))?.[0] ?? [...roots.keys()][0] ?? ""
     const t = this.T().open({ name: `incident-${M.slug(inc.title, 30)}`, repo })
     this.fact(t, text)
-    this.task(t, `Find the cause of "${inc.title}". When it is found, link it to the thread that shipped it with crosstalk_incident (link) so that thread hears about it`)
+    this.task(t, `Find the cause of "${inc.title}". When it is found, link it to the thread that shipped it with crosstalk_ship action "incident" (link) so that thread hears about it`)
     this.T().mutate(t.id, (th, by, now) => M.setRecap(th, by, `Looking for the cause of an incident from ${inc.source}: ${inc.title}`, now))
     this.d.log(`ship: incident ${inc.title} started ${t.meta.value.name}`)
     return { ok: true, text: `no thread clearly shipped this; started ${t.meta.value.name} to find the cause${notes.length ? `; ${notes.join("; ")}` : ""}`, thread: t.meta.value.name, reopened: false, ...(killed ? { killed } : {}) }
@@ -1649,7 +1649,7 @@ export class ShipEngine {
     this.T().mutate(cause.id, (th, by, now) => M.setMeta(th, by, { status: "active" }, now))
     this.T().mutate(inc.id, (th, by, now) => M.setMeta(th, by, { status: "done" }, now))
     this.T().notify(cause.id, `◢ crosstalk: ${cause.meta.value.name} is reopened: the incident ${inc.meta.value.name} traced its cause here.`)
-    for (const sid2 of this.T().sessionsIn(cause.id)) this.d.wake(sid2, `The incident thread ${inc.meta.value.name} traced its cause to this thread, ${cause.meta.value.name}. crosstalk_thread_read shows both; fix it and call crosstalk_ready.`)
+    for (const sid2 of this.T().sessionsIn(cause.id)) this.d.wake(sid2, `The incident thread ${inc.meta.value.name} traced its cause to this thread, ${cause.meta.value.name}. crosstalk_thread action "read" shows both; fix it and call crosstalk_ship action "ready".`)
     return { ok: true, text: `${inc.meta.value.name} is linked to ${cause.meta.value.name}, which is reopened` }
   }
 
@@ -1694,7 +1694,7 @@ export class ShipEngine {
         if (this.now() - r.done.at > 7 * 24 * 60 * 60_000) delete this.st.runs[r.id]
         continue
       }
-      if (this.now() - r.at > maxAgeMs) void this.recordReview(r, { verdict: "changes", findings: `The ${r.kind} reviewer (${r.client}) did not answer within ${Math.round(maxAgeMs / 60_000)} minutes. Nothing was reviewed; call crosstalk_ready again to retry.` })
+      if (this.now() - r.at > maxAgeMs) void this.recordReview(r, { verdict: "changes", findings: `The ${r.kind} reviewer (${r.client}) did not answer within ${Math.round(maxAgeMs / 60_000)} minutes. Nothing was reviewed; call crosstalk_ship action "ready" again to retry.` })
     }
     this.save()
   }

@@ -198,7 +198,7 @@ The first session you open afterwards asks once:
 ```
 
 Without the mod, the same question is a systemMessage. You answer it in plain words ("bring my
-other sessions into crosstalk"), which reaches `crosstalk_gather`.
+other sessions into crosstalk"), which reaches `crosstalk_work action "gather"`.
 
 After yes, each session restarts only once Claude Code's registry says it is **idle**. A busy
 session waits until it next goes idle. A detached `crosstalk gather --finish` checks every 2

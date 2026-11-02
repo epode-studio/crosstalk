@@ -74,13 +74,13 @@ export function brief(name: string, s: Stuck, v: View): string {
     ...r.lines,
     ``,
     `## Your task`,
-    `Work with the session already on the thread (crosstalk_send reaches its people) and take a part of the work it has not started. crosstalk_thread_read shows the whole thread.`,
+    `Work with the session already on the thread (crosstalk_say action "tell" reaches its people) and take a part of the work it has not started. crosstalk_thread action "read" shows the whole thread.`,
   ].join("\n")
 }
 
 // --- every new agent's brief -----------------------------------------------------
 //
-// An agent started from a session in a thread (crosstalk_spawn, `crosstalk
+// An agent started from a session in a thread (crosstalk_work action "spawn", `crosstalk
 // spawn`) starts from the thread, not only the task: its first prompt is the
 // thread's record, kept short, then the task. The record is framed as what it
 // is, notes kept by the thread's people and sessions: data about the work. The
@@ -99,7 +99,7 @@ export function threadBrief(v: View, task: string, o: { from?: string } = {}): s
     ``,
     ...r.lines,
     ``,
-    `crosstalk_thread_read shows the whole thread; crosstalk_send with no recipient reaches the people in it.`,
+    `crosstalk_thread action "read" shows the whole thread; crosstalk_say action "tell" with no recipient reaches the people in it.`,
     ``,
     `## Your task`,
     task,

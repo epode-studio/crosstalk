@@ -9,9 +9,9 @@
 //
 // Asked once per repository, the first time there is something to copy:
 // "Copy .env and 2 other local files into new worktrees of api?" as the mod's
-// picker, else a systemMessage the agent answers with crosstalk_env. The
+// picker, else a systemMessage the agent answers with crosstalk_people action "env". The
 // answer is kept in <crosstalk home>/env/consent.json and never asked again;
-// crosstalk_env {confirm} changes it. Without a yes nothing is copied.
+// crosstalk_people {action: "env", confirm} changes it. Without a yes nothing is copied.
 //
 // The files stay on this machine. Their names are all that is ever said
 // (tool results, the systemMessage, the daemon's log); their contents are read
@@ -144,7 +144,7 @@ export function answer(o: { main: string; yes: boolean; worktrees?: string[]; gi
   const name = s.repos[key]?.name ?? nameOf(o.main)
   s.repos[key] = { ...s.repos[key], name, state: o.yes ? "yes" : "no", at: o.now ?? Date.now() }
   save(s)
-  if (!o.yes) return { ok: true, text: `◢ crosstalk: not copying local files into new worktrees of ${name}. You will not be asked there again; crosstalk_env {confirm: true} changes it.`, copied: {} }
+  if (!o.yes) return { ok: true, text: `◢ crosstalk: not copying local files into new worktrees of ${name}. You will not be asked there again; crosstalk_people {action: "env", confirm: true} changes it.`, copied: {} }
   const sel = select(o.main, o.git ?? liveGit)
   const copied: Record<string, string[]> = {}
   const refused = new Set<string>(sel.refused.map((r) => `${r.rel} (${r.why})`))
@@ -162,7 +162,7 @@ export function answer(o: { main: string; yes: boolean; worktrees?: string[]; gi
   return { ok: true, text, copied }
 }
 
-/** What crosstalk_env without confirm says: the answer, and what would be copied. Names only. */
+/** What crosstalk_people action "env" without confirm says: the answer, and what would be copied. Names only. */
 export function status(main: string): string {
   const name = nameOf(main)
   const c = consent(main)
@@ -170,5 +170,5 @@ export function status(main: string): string {
   const list = sel.files.length ? names(sel.files.map((f) => f.rel)) : "nothing"
   const refused = sel.refused.length ? ` Left out: ${sel.refused.map((r) => `${r.rel} (${r.why})`).join(", ")}.` : ""
   const said = c === "yes" ? "copied into each new worktree" : c === "no" ? "not copied (you said not in this repo)" : "not copied until you say so"
-  return `◢ crosstalk: ${name}'s gitignored local files: ${list}. They are ${said}.${refused} crosstalk_env {confirm: true|false} changes it.`
+  return `◢ crosstalk: ${name}'s gitignored local files: ${list}. They are ${said}.${refused} crosstalk_people {action: "env", confirm: true|false} changes it.`
 }
