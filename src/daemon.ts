@@ -62,6 +62,10 @@ if (!identity) {
   process.exit(1)
 }
 
+// Waiting on the ui store's lock blocks this event loop, so the daemon waits
+// briefly and answers "busy" rather than stall every session (src/uistate.ts).
+ui.setLockWait(Number(process.env.CROSSTALK_DAEMON_UI_LOCK_WAIT_MS ?? 250))
+
 const log = (...a: unknown[]) => {
   // Whatever starts the daemon points stdout at daemon.log, so writing there
   // as well duplicated every line.
@@ -107,6 +111,13 @@ const modLive = (s: Registered | undefined) => !!s?.modSeenAt && Date.now() - s.
  * is dropped is carried over to the next session in the same directory.
  */
 const PULL_SESSION_TTL_MS = 6 * 60 * 60 * 1000
+
+/**
+ * How long after its last announcement a pull-mode session keeps its unread
+ * messages from being carried over to another session that registers. Matches
+ * the quiet period after which one is dropped from a directory's roster.
+ */
+const PULL_LIVE_MS = Number(process.env.CROSSTALK_PULL_LIVE_MS ?? 10 * 60 * 1000)
 
 const stillAround = (id: string, reg: Registered) =>
   reg.socket
@@ -283,6 +294,10 @@ function pickSession(preferName?: string): Registered | undefined {
 
 /** What the user answered when a message matched no session. */
 const routes = loadRoutes()
+/** edit_shared answers, per session and file: whether another thread shares it. */
+const editShared = new Map<string, { shared: boolean; at: number }>()
+const EDIT_SHARED_TTL_MS = Number(process.env.CROSSTALK_EDIT_SHARED_TTL_MS ?? 5000)
+
 /** Messages held until the user says which session they belong to. */
 const unrouted: Unrouted[] = loadUnrouted()
 const persistUnrouted = () => saveUnrouted(unrouted)
@@ -506,6 +521,16 @@ function routeCandidates(u: Unrouted): Registered[] {
  * an item keeps its state however often this runs.
  */
 function uiSync(sid: string): ui.UiItem[] {
+  // Everything that runs git or reads other state is worked out first, outside
+  // the store's lock, which every hook and the mod wait on.
+  // "Which thread is this session part of?", when its files match two equally,
+  // unless a standing rule answers it.
+  coord.autoThread(sid)
+  const tq = threads.question(sid)
+  const waiting = new Set(unrouted.map(routeId))
+  const asks = unrouted
+    .filter((u) => u.askedSession === sid || !sessions.has(u.askedSession ?? ""))
+    .map((u) => ({ u, q: routeQuestionFor(u), cands: routeCandidates(u) }))
   return ui.withStore((items, now) => {
     for (const m of held[sid] ?? []) {
       // Read by the agent with crosstalk_read: the card has done its job.
@@ -529,19 +554,11 @@ function uiSync(sid: string): ui.UiItem[] {
         now,
       )
     }
-    // "Which thread is this session part of?", when its files match two equally,
-    // unless a standing rule answers it.
-    coord.autoThread(sid)
-    const tq = threads.question(sid)
     if (tq) ui.upsert(items, { id: tq.id, kind: "thread", sessionId: sid, question: tq.question, options: tq.options, ts: now }, now)
     for (const it of Object.values(items))
       if (it.kind === "thread" && it.sessionId === sid && it.id !== tq?.id) ui.settle(items, it.id, "answered", now)
-    const waiting = new Set(unrouted.map(routeId))
-    for (const u of unrouted) {
-      if (u.askedSession !== sid && sessions.has(u.askedSession ?? "")) continue
-      const q = routeQuestionFor(u)
+    for (const { u, q, cands } of asks) {
       const where = [q.repo, q.branch].filter(Boolean).join(" @ ") || "an unknown repo"
-      const cands = routeCandidates(u)
       // Every label ever offered keeps naming its session: a picker raised a
       // while ago answers with the label it showed.
       const targets = { ...items[routeId(u)]?.targets, ...Object.fromEntries(cands.map((s) => [s.name, s.sessionId])) }
@@ -866,8 +883,10 @@ function onEnvelope(
   // message is actually held.
   if (!ctx?.replayingParked && seenIds.has(env.id))
     return log(`dropped replay of ${env.id} from ${peerLabel}`)
+  // A held or parked message passed this check when it first arrived; it may
+  // sit for days before someone routes it, and that is not a replay.
   const age = Date.now() - (env.ts ?? 0)
-  if (age > REPLAY_WINDOW_MS || age < -MAX_SKEW_MS) {
+  if (!ctx?.replayingParked && (age > REPLAY_WINDOW_MS || age < -MAX_SKEW_MS)) {
     return log(`dropped stale or future-dated ${env.kind} from ${peerLabel} (${Math.round(age / 1000)}s)`)
   }
 
@@ -1473,6 +1492,10 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       // arrived, and a new session gets a new id. Without this, anything unread
       // when you quit is stranded in queue.json forever.
       const liveIds = new Set(listLocalSessions().map((s) => s.sessionId))
+      // A session with no inbox socket (Codex, agy) is in no registry, so it
+      // is alive for as long as it keeps announcing itself.
+      for (const [id, reg] of sessions)
+        if (!reg.socket && Date.now() - (reg.seenAt ?? 0) < PULL_LIVE_MS) liveIds.add(id)
       let adopted = 0
       for (const [sid, msgs] of Object.entries(held)) {
         if (sid === sessionId || liveIds.has(sid)) continue
@@ -2089,8 +2112,10 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       const st = rooms.load()
       for (const x of going) {
         const env = x.env as Envelope
-        // The binding decides, unless the session is gone, so name it as well.
-        onEnvelope(x.label, key ? env : { ...env, toSession: target.name }, {
+        // The person picked the session, so it is named: neither the binding
+        // nor a main session (src/main.ts) may send it anywhere else. A rule's
+        // automatic answer still goes through the binding.
+        onEnvelope(x.label, key && req.auto ? env : { ...env, toSession: target.name }, {
           replayingParked: true,
           strangerInRoom: x.stranger,
           room: x.roomId ? st[x.roomId] : undefined,
@@ -2099,6 +2124,28 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       log(`routed ${going.length} held message(s) from ${u.label} to ${target.name}`)
       if (!req.auto) coord.answeredRoute(req.sessionId, { sender: u.label, repo: fp?.repo, target: target.sessionId })
       return { ok: true, delivered: going.length, to: target.name, remembered: !!key }
+    }
+
+    // Asked by the PostToolUse hook before it works out an edit report: does
+    // any other thread share this file? Cached briefly per file.
+    case "edit_shared": {
+      const self = resolveSession(req)
+      const abs = typeof req.path === "string" ? req.path : ""
+      if (!self || !abs) return { ok: true, shared: false }
+      const fp = footprintOf(self)
+      if (!fp.repo) return { ok: true, shared: false }
+      const root = fp.root ?? threads.rootFor(fp.repo)
+      const file = root ? path.relative(root, abs).split(path.sep).join("/") : ""
+      // Somewhere this cannot place: let the report work it out, as before.
+      if (!file || file.startsWith("..") || path.isAbsolute(file)) return { ok: true, shared: true }
+      const key = `${self.sessionId}|${fp.repo}|${file}`
+      const c = editShared.get(key)
+      if (c && Date.now() - c.at < EDIT_SHARED_TTL_MS) return { ok: true, shared: c.shared, cached: true }
+      let shared = coord.warn.shares(fp.repo, file, self.sessionId)
+      if (!shared && threads.idsFor(self.sessionId).length) shared = coord.cross.dependents(fp.repo).length > 0
+      if (editShared.size > 2000) editShared.clear()
+      editShared.set(key, { shared, at: Date.now() })
+      return { ok: true, shared }
     }
 
     // What crosstalk's mod shows in one session: its held messages as cards,

@@ -19,13 +19,14 @@ import fs from "node:fs"
 import { ensureDaemon, request } from "./client.ts"
 import { loadIdentity } from "./config.ts"
 import { rootFrom } from "./paths.ts"
+import { sessionsDir } from "./registry.ts"
 import { pathsFromToolInput } from "./footprint.ts"
 import * as restore from "./restore.ts"
 import * as ui from "./uistate.ts"
 import * as gather from "./gather.ts"
 import * as termHook from "./terminal/hook.ts"
 import * as firstuse from "./repotrust/firstuse.ts"
-import { editReport } from "./warn/edit.ts"
+import { editReport, editedPath } from "./warn/edit.ts"
 import * as doctorCheck from "./ui-extra/doctor.ts"
 import * as metrics from "./metrics/log.ts"
 import * as attnHook from "./attention/hook.ts"
@@ -354,13 +355,16 @@ if (restoreClient === "claude" && /^(SessionStart|UserPromptSubmit|Stop|PreCompa
 // that absence is what tells the daemon to hold messages for the hook to pull.
 const socket = process.env.CLAUDE_CODE_MESSAGING_SOCKET
 
+/** How long registering waits on the daemon, which answers it in milliseconds when it is well. */
+const REGISTER_TIMEOUT_MS = Number(process.env.CROSSTALK_REGISTER_TIMEOUT_MS ?? 4000)
+
 async function registerSession() {
   if (!(await ensureDaemon(root))) return
   let name = `session-${process.ppid}`
   if (socket) {
     // Claude Code publishes a registry we can read a proper name and cwd from.
     try {
-      const dir = path.join(os.homedir(), ".claude", "sessions")
+      const dir = sessionsDir()
       for (const f of fs.readdirSync(dir)) {
         if (!f.endsWith(".json")) continue
         const e = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"))
@@ -389,7 +393,9 @@ async function registerSession() {
     ...(/^post_?tool_?use$/i.test(eventName)
       ? { touched: pathsFromToolInput(hook.tool_input ?? hook.toolInput ?? hook.tool_args) }
       : {}),
-  }).catch(() => null)
+    // Well inside the 60s Claude Code gives a hook: a daemon this slow to
+    // register a session is not going to answer anything else in time either.
+  }, REGISTER_TIMEOUT_MS).catch(() => null)
   // A key-change question about someone trusted through this repo, for a
   // session without the mod: shown to the person, never to the model.
   if (registered?.systemMessage && restoreClient === "claude")
@@ -479,9 +485,15 @@ if (!isSessionStart) await registerSession()
 
 // An edit: which top-level symbols changed, and the diff, for any other thread
 // whose footprint includes the file (src/warn/). Cheap: one file and git.
+// The report costs several git calls and an outline of the whole file, so the
+// daemon is asked first, in one cheap request, whether any other thread shares
+// the file at all; most edits are to files nobody else is near.
 if (/^PostToolUse$/.test(eventName)) {
   try {
-    const rep = editReport({ cwd, tool: String(hook.tool_name ?? ""), input: hook.tool_input })
+    const at = { cwd, tool: String(hook.tool_name ?? ""), input: hook.tool_input }
+    const file = editedPath(at)
+    const shared = file ? await request({ op: "edit_shared", sessionId, cwd, path: file }, 2000).catch(() => null) : null
+    const rep = shared?.shared ? editReport(at) : null
     if (rep) await request({ op: "edited", sessionId, cwd, edit: rep }, 4000).catch(() => null)
   } catch {}
 }
