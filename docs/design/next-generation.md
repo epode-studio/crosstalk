@@ -652,6 +652,36 @@ Technical, each with a proposal:
    shared thread file, so only the recap ever leaves it, sealed.
 5. **Bots.** Decided: something narrower than a member (see People).
 
+## URLs are what people review
+
+Nobody reads code, so the running thing is what a person looks at. crosstalk
+keeps track of it.
+
+- **Every URL is collected and labelled:** local servers (from crosstalk's
+  services and their detected ports), previews, pull requests, and links an
+  agent's commands print. Each has what it is (`auth · dev server`,
+  `auth · preview`, `auth · PR #12`), its thread, and whether it still answers.
+  Dead ones drop off.
+- **Names, not ports:** `http://auth.localhost`, through a small local proxy
+  that follows each worktree's service wherever its port moves. Browsers already
+  send `*.localhost` to this machine.
+- **One list, anywhere:** in the pane, clickable; on the tab
+  (`auth · auth.localhost`); and by asking any session ("what's the auth URL?",
+  "open the billing preview").
+- **Shared with teammates:** "show marie the auth page" gives her a link to the
+  running server through the sealed relay, only for the people named; her agent
+  can test against it. Nothing is public unless asked for.
+- **Screenshots as evidence:** after a change, a headless browser captures the
+  thread's URLs, before and after. Those are the evidence a person reviews.
+- **Servers that look after themselves:** each URL is checked; a crash or error
+  turns the tab red and tells the thread's agent, which restarts or fixes it.
+- **On the phone:** a QR code in the pane opens a share link.
+- **History:** every link, preview and screenshot a thread had, kept in its
+  file.
+- **Servers that just start:** a new worktree gets the main checkout's `.env`
+  and other local secrets copied in. They stay on this machine: never in git,
+  a thread or the relay.
+
 ## Built
 
 Every part above has a first version on the branch, with its tests in
