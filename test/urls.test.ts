@@ -291,19 +291,19 @@ describe("what people see", () => {
     expect(TH.withBadge("auth", "auth.localhost:1355")).toBe("auth · auth.localhost:1355")
     expect(TH.withBadge("auth", "x\x1b]0;evil\x07")).toBe("auth · x0evil")
   })
-  test("the pane's links group by kind, mark dead ones, and only plain http(s) is clickable", () => {
+  test("the pane's Running groups by kind, marks dead ones, and only plain http(s) is clickable", () => {
     const links = [
-      { label: "auth · dev server", url: "http://auth.localhost:1355", kind: "local" as const, alive: true },
-      { label: "auth · PR #12", url: "https://github.com/a/b/pull/12", kind: "pr" as const, alive: false },
-      { label: "auth · acme.dev", url: "https://acme.dev/", kind: "link" as const, alive: true },
+      { label: "auth · dev server", url: "http://auth.localhost:1355", kind: "server" as const, alive: true, owner: "you" },
+      { label: "auth · PR #12", url: "https://github.com/a/b/pull/12", kind: "pr" as const, alive: false, owner: "you" },
+      { label: "auth · acme.dev", url: "https://acme.dev/", kind: "link" as const, alive: true, owner: "you" },
     ]
-    expect(PU.linkGroups(links).map((g) => g.title)).toEqual(["Local", "Pull requests", "Links found in output"])
-    expect(PU.linkLine(links[1])).toBe("○ auth · PR #12 · dead")
+    expect(PU.runningGroups(links).map((g) => g.title)).toEqual(["Servers", "Pull requests", "Links found in output"])
+    expect(PU.runningLine(links[1]!, 0)).toBe("○ auth · PR #12 · dead")
     expect(PU.linkable("http://auth.localhost:1355")).toBe(true)
     expect(PU.linkable("javascript:alert(1)")).toBe(false)
     expect(PU.linkable("http://a.dev/\x1b]8;;x")).toBe(false)
-    const lines = PU.paneLines({ thread: "auth", status: "active", people: [], sessions: 1, waiting: [], recent: [], features: [], links }, 0)
-    expect(lines).toContain("Links")
+    const lines = PU.paneLines({ thread: "auth", status: "active", people: [], sessions: 1, waiting: [], recent: [], features: [], running: links }, 0)
+    expect(lines).toContain("Running")
     expect(lines).toContain("  ● auth · dev server http://auth.localhost:1355")
   })
   test("crosstalk_urls frames its list as data, and a label cannot close the frame", () => {
@@ -327,10 +327,10 @@ describe("what people see", () => {
 })
 
 describe("threads and the pane", () => {
-  test("a record's thread comes from its session's placement; the pane lists the thread's links, by proxy name", async () => {
+  test("a record's thread comes from its session's placement; Running lists the thread's, local servers by proxy name", async () => {
     const M = await import("../src/threads/model.ts")
     const U = await import("../src/urls/index.ts")
-    const P = await import("../src/ui-extra/pane.ts")
+    const R = await import("../src/threads/running.ts")
     const t = M.create({ name: "billing", repo: "acme/app", by: "fp1", label: "ana" })
     fs.writeFileSync(path.join(process.env.CROSSTALK_HOME!, "threads.json"), JSON.stringify({ threads: { [t.id]: t }, placed: { s9: { threads: [t.id] } }, roots: {} }))
     PX.writeState({ port: 1355, routes: [] })
@@ -339,10 +339,15 @@ describe("threads and the pane", () => {
     store.add({ url: "https://github.com/a/b/pull/7", kind: "pr", source: "pr", label: "auth · PR #7", thread: "auth" })
     expect(U.threadOfSession("s9")).toBe("billing")
     expect(store.forThread("billing").map((u) => u.label)).toEqual(["billing · dev server"])
-    const links = P.paneLinks({ thread: "billing", store })
-    expect(links).toEqual([{ label: "billing · dev server", url: "http://billing.localhost:1355", kind: "local", alive: true, thread: "billing" }])
-    expect(P.paneLinks({ main: true, store }).length).toBe(2)
+    const proxy = PX.readState()
+    const links = R.project(undefined, { urls: store.forThread("billing"), proxy })
+    expect(links).toEqual([{ kind: "server", label: "billing · dev server", url: "http://billing.localhost:1355", raw: "http://localhost:4110", name: "billing.localhost", alive: true, owner: "you", thread: "billing" }])
+    expect(R.project(undefined, { urls: store.list(), proxy }).length).toBe(2)
+    // A server this worktree runs is one entry, its URL record folded into it.
+    const rec = { ...store.forThread("billing")[0]!, service: "web" }
+    const merged = R.project(undefined, { urls: [rec], proxy, servers: [{ name: "web", ports: [4110], url: "http://localhost:4110" }] })
+    expect(merged).toEqual([{ kind: "server", label: "billing · dev server", url: "http://billing.localhost:1355", raw: "http://localhost:4110", name: "billing.localhost", alive: true, owner: "you", thread: "billing", ports: [4110] }])
     PX.clearState()
-    expect(P.paneLinks({ thread: "billing", store })[0].url).toBe("http://localhost:4110")
+    expect(R.project(undefined, { urls: store.forThread("billing"), proxy: null })[0]!.url).toBe("http://localhost:4110")
   })
 })

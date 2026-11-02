@@ -1,5 +1,5 @@
 // Muting a person or a thread in plain words ("mute jo", "mute auth for an
-// hour"), the crosstalk_people action "mute" tool. A person is muted the way /crosstalk:mute
+// hour"), the crosstalk_people action "mute" tool. A person is muted the way `crosstalk mute`
 // always did (src/trust.ts, through the daemon). A thread is muted here: its
 // messages are held quietly, like a muted person's, and its cards go.
 //

@@ -114,17 +114,30 @@ curl -H 'Host: auth.localhost' http://127.0.0.1:1355/
 
 or a line in `/etc/hosts`: `127.0.0.1 auth.localhost web.auth.localhost`.
 
-## 4. One list, anywhere
+## 4. One list, anywhere: Running
+
+A thread's **Running** (`src/threads/running.ts`) is one list over what this
+document describes: its servers (a crosstalk service and its URL record are one
+entry, by its proxy name), previews, pull requests, what is shown to people or
+by them (a share and its record are one entry, with whom and until when),
+links found in output, and screenshots. Each has a kind, a label, a URL or
+name, whether it is alive, and whose it is. It is a view, not a store: the
+pane, the tool, the status line and the digest all read the same function.
 
 | Where | What |
 |---|---|
-| `crosstalk_look {action: "urls", thread?, kind?, alive?}` | the list, this session's first: "what's the auth URL?" Framed as data, inside `<crosstalk-urls>`: labels can come from teammates and links from command output, so they are never instructions. |
+| `crosstalk_look {action: "running", thread?, kind?, alive?}` | the list, this session's first: "what's the auth URL?", "what's running?". `kind` is server, preview, pr, share, link or screenshot. Framed as data, inside `<crosstalk-running>`: labels can come from teammates and links from command output, so they are never instructions. |
 | `crosstalk_look {action: "open_url", name?, thread?, kind?}` | "open the billing preview": the one whose label, name or URL has every word, opened in the browser (`open` on macOS, `xdg-open` elsewhere; never through a shell). A local server opens by its proxy name. Several matches open none and are listed. |
-| the pane | a **Links** section: Local, Previews, Pull requests, Links found in output; each clickable (an OSC 8 link in the terminal, only plain http(s)), dead ones marked. The main session's pane lists every thread's. |
-| the tab and status line | the worktree's name instead of its port while the proxy is up: `auth · auth.localhost:1355` (no port on 80), else `auth · :4100` as before |
+| the pane | a **Running** section: Servers, Previews, Pull requests, Shown to people, Links found in output, Screenshots; each clickable (an OSC 8 link in the terminal, only plain http(s)), dead ones marked. The main session's pane lists every thread's. |
+| the tab and status line | the tab: the worktree's name instead of its port while the proxy is up, `auth · auth.localhost:1355` (no port on 80), else `auth · :4100`. The status line: where the thread's one server is, or how many things run (`◢ auth · auth.localhost:1355 · 1 waiting`) |
 | `crosstalk urls [--thread T] [--kind K] [--json]` | the same list, for scripts |
 
 ## 5. History
+
+A thread's **History** (`src/threads/history.ts`) is everything it once had in
+Running and in Notes, searched by one function: the links below, and the notes
+that ended (a task done, a fact corrected or removed, whose tombstone keeps its
+text). The pane shows the latest few that no longer run.
 
 urls.json forgets (dead records after a week); a thread keeps what it had to
 look at for its whole life, in a `links` section of the thread itself
@@ -157,6 +170,7 @@ like the rest:
   folded away".
 - **Asking**: `crosstalk_look {action: "history", thread?, query?, before?, after?}`: "what did
   the login page look like before the redesign?" lists the matching entries,
+  links and ended notes together,
   most recently seen first, with dates and screenshot paths, inside
   `<crosstalk-history>` (data, not instructions). A screenshot path is a file
   on the machine named with it and exists only there; the list says which is
@@ -238,14 +252,14 @@ marie's browser ─▶ auth.paul.localhost:1355 (marie's proxy)
 |---|---|
 | `crosstalk_look {action: "share", url \| name \| thread, with: [people], for?, public?}` | share one local server (a crosstalk service, or a localhost URL a command printed) with exactly these people, for 8 hours unless `for` says (`2h`, `30m`, `until 18:00`; a week at most) |
 | `crosstalk_look {action: "unshare", id \| url \| name \| thread, with?}` | stop it now, for everyone or only `with`: open requests and websockets are cut off |
-| `crosstalk_look action "shares"` | what you share and what is shared with you, framed as data |
+| `crosstalk_look {action: "running", kind: "share"}` | what you show and what is shown to you, framed as data |
 
 **On the owner's machine (paul).** The share is one URL record and the people
 named in it, each by the fingerprint of their direct channel: exact crosstalk
 names (`marie`, never a prefix), never an agent, never someone muted; a person
 trusted through a repository is included on each of their machines. A
 `shared` record, `auth · web · shared with marie · until 18:00`, is in the
-pane's **Shared** links and in `crosstalk_look action "urls"`. Each frame from marie's daemon
+pane's Running, under **Shown to people**, and in `crosstalk_look action "running"`. Each frame from marie's daemon
 is checked against the share as it arrives: her fingerprint in it, not muted
 now, not an agent, the share neither expired nor stopped. A request goes to
 127.0.0.1 (then ::1) on the share's port and nowhere else: a frame names a
@@ -264,7 +278,7 @@ request, so a service that restarts on another port stays shared.
   for the thread's main server, `web-auth.paul.localhost` for another; never a
   bare name, never shadowing one of marie's own;
 - a `shared` record, `auth · web · from paul · until 18:00`, in her pane and her
-  agent's `crosstalk_look action "urls"`, inside `<crosstalk-urls>` as data, so her agent can
+  agent's `crosstalk_look action "running"`, inside `<crosstalk-running>` as data, so her agent can
   test against it;
 - a card, **Open it / Not now / Stop it**, or a digest line without the mod.
   Nothing is opened by itself. Stop it closes it on her side and tells paul.

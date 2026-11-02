@@ -160,7 +160,7 @@ echo "a decision"
 D=$(rpc "$A" "{\"op\":\"decide\",\"sessionId\":\"a-feat\",\"cwd\":\"$R/ana-feat\",\"text\":\"v1 tokens accepted until 0.2\"}")
 has "$D" '"thread":"token-v2"' "recorded in the thread"
 [ -f "$R/ana-feat/DECISIONS.md" ] && fail "and not in DECISIONS.md" || pass "and not in DECISIONS.md"
-live() { field "$(rpc "$B" '{"op":"thread_read","sessionId":"b-feat"}')" 'r.threads[0].decisions.map(d => d.text).join(";")'; }
+live() { field "$(rpc "$B" '{"op":"thread_read","sessionId":"b-feat"}')" 'r.threads[0].notes.filter(n => n.kind === "decision").map(d => d.text).join(";")'; }
 check "$(wait_for 5 live)" "v1 tokens accepted until 0.2" "ben has it at once, over the relay"
 onremote() { git --git-dir="$R/remote.git" rev-parse -q --verify refs/crosstalk/threads 2>/dev/null; }
 [ -n "$(wait_for 10 onremote)" ] && pass "the ref was pushed to the remote" || fail "the ref was pushed to the remote"
@@ -179,7 +179,7 @@ stop_daemon "$B"
 rm -f "$B/threads.json"
 start_daemon "$B" "$TMP/db.log"
 for _ in $(seq 1 40); do [ -S "$B/daemon.sock" ] && break; sleep 0.25; done
-fromref() { field "$(rpc "$B" '{"op":"thread_read","sessionId":"b-feat"}')" 'r.threads.flatMap(t => t.decisions.map(d => d.text)).join(";")'; }
+fromref() { field "$(rpc "$B" '{"op":"thread_read","sessionId":"b-feat"}')" 'r.threads.flatMap(t => t.notes.filter(n => n.kind === "decision").map(d => d.text)).join(";")'; }
 check "$(wait_for 10 fromref)" "v1 tokens accepted until 0.2" "a replica that knew nothing reads the sealed decision back from the ref"
 check "$(grep -c 'thread token-v2 started for b-feat' "$TMP/db.log")" "1" "and joins that thread rather than starting another"
 sleep 2

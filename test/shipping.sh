@@ -254,8 +254,8 @@ hasnt "$(cat "$TMP/reviewer-env" 2>/dev/null)" "UNLEASH_ADMIN_TOKEN" "and neithe
 check "$(git -C "$TMP/remote.git" rev-parse main)" "$(g "$APP" rev-parse crosstalk/guide)" "fast-forwarded and pushed to the remote"
 has "$(cat "$TMP/calls")" "claude|review|$CROSSTALK_HOME/shipping/reviews/" "the reviewer ran in its own copy of the branch"
 T1=$(rpc '{"op":"thread_read","sessionId":"s-guide"}')
-has "$(field "$T1" 'r.threads[0].decisions.map(d => d.text).join(";")')" "Reviewers signed off on user guide: review by claude" "sign-off recorded in the thread"
-has "$(field "$T1" 'r.threads[0].facts.map(d => d.text).join(";")')" "Checks pass on crosstalk/guide (sh check.sh)" "the repo's test command ran"
+has "$(field "$T1" 'r.threads[0].notes.filter(n => n.kind === "decision").map(d => d.text).join(";")')" "Reviewers signed off on user guide: review by claude" "sign-off recorded in the thread"
+has "$(field "$T1" 'r.threads[0].notes.filter(n => n.kind === "fact").map(d => d.text).join(";")')" "Checks pass on crosstalk/guide (sh check.sh)" "the repo's test command ran"
 check "$(field "$T1" 'r.threads[0].status')" "done" "the thread is done once its feature is in"
 check "$(ls "$CROSSTALK_HOME/shipping/reviews/"*/copy 2>/dev/null | wc -l | tr -d ' ')" "0" "the reviewer's copy is gone"
 has "$(told s-guide)" "user guide merged into main" "the author is told"
@@ -335,7 +335,7 @@ has "$INC" "reopened" "and reopens the thread that shipped it"
 has "$(flags_on_remote)" "login-v2: off" "off in .crosstalk/flags"
 T2=$(rpc '{"op":"thread_read","sessionId":"s-login"}')
 check "$(field "$T2" 'r.threads[0].status')" "active" "the thread is active again"
-has "$(field "$T2" 'r.threads[0].tasks.map(t => t.text).join(";")')" "500s on login" "with a task to find the cause"
+has "$(field "$T2" 'r.threads[0].notes.filter(n => n.kind === "task").map(t => t.text).join(";")')" "500s on login" "with a task to find the cause"
 has "$(told s-login)" "crosstalk-incident" "its agent is told, as data"
 UNC=$(ct incident --source pagerduty --title "disk full on db-3" --files "infra/disk.sh" 2>&1)
 has "$UNC" "started incident-disk-full" "an unclear incident starts its own thread"
@@ -421,8 +421,8 @@ has "$W7" "errors went from 2 to 9" "errors went up past the threshold"
 has "$(shop_flags)" "pay-v2: off" "so the flag is off"
 T7=$(rpc '{"op":"thread_read","sessionId":"s-pay"}')
 check "$(field "$T7" 'r.threads[0].status')" "active" "the thread is reopened"
-has "$(field "$T7" 'r.threads[0].tasks.map(t => t.text).join(";")')" "regressed at internal" "with a task to find out why"
-has "$(field "$T7" 'r.threads[0].facts.map(t => t.text).join(";")')" "crosstalk turned pay-v2 off" "and the fact recorded for everyone"
+has "$(field "$T7" 'r.threads[0].notes.filter(n => n.kind === "task").map(t => t.text).join(";")')" "regressed at internal" "with a task to find out why"
+has "$(field "$T7" 'r.threads[0].notes.filter(n => n.kind === "fact").map(t => t.text).join(";")')" "crosstalk turned pay-v2 off" "and the fact recorded for everyone"
 has "$(told s-pay)" "crosstalk-metrics" "its agent is told, as data"
 
 # --- 8. everyday auto-ramp -------------------------------------------------------------------------

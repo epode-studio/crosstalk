@@ -302,15 +302,15 @@ export class ShipEngine {
   }
 
   private fact(t: Thread, text: string) {
-    this.T().mutate(t.id, (th, by, now) => M.put(th, "facts", M.newItemId("f"), { text: text.slice(0, 4000), who: this.T().label, at: now }, by, now))
+    this.T().mutate(t.id, (th, by, now) => M.put(th, "notes", M.newItemId("f"), { kind: "fact", text: text.slice(0, 4000), who: this.T().label, at: now }, by, now))
   }
 
   private decision(t: Thread, text: string) {
-    this.T().mutate(t.id, (th, by, now) => M.put(th, "decisions", M.newItemId("d"), { text: text.slice(0, 2000), who: this.T().label, at: now }, by, now))
+    this.T().mutate(t.id, (th, by, now) => M.put(th, "notes", M.newItemId("d"), { kind: "decision", text: text.slice(0, 2000), who: this.T().label, at: now }, by, now))
   }
 
   private task(t: Thread, text: string) {
-    this.T().mutate(t.id, (th, by, now) => M.put(th, "tasks", M.newItemId("t"), { text, who: this.T().label, at: now, state: "open" }, by, now))
+    this.T().mutate(t.id, (th, by, now) => M.put(th, "notes", M.newItemId("t"), { kind: "task", text, who: this.T().label, at: now, state: "open" }, by, now))
   }
 
   /** The clone to work in for a thread: the asking session's, else the one the ref is written in. */
@@ -558,9 +558,9 @@ export class ShipEngine {
         run: runId,
         thread: {
           name: t.meta.value.name,
-          recap: t.recap.value,
-          decisions: M.live(t, "decisions").map((x) => x.text).slice(-20),
-          facts: M.live(t, "facts").map((x) => x.text).filter((x) => !/^Review \(/.test(x)).slice(-20),
+          recap: M.recap(t),
+          decisions: M.notes(t, "decision").map((x) => x.text).slice(-20),
+          facts: M.notes(t, "fact").map((x) => x.text).filter((x) => !/^Review \(/.test(x)).slice(-20),
           questions: M.live(t, "questions").filter((q) => q.answer).map((q) => `${q.text} → ${q.answer}`).slice(-10),
         },
         feature: { name: f.name, risk: f.risk, why: f.ship?.why, flag: f.flag },
@@ -1107,7 +1107,7 @@ export class ShipEngine {
 
   /** When the flag reached a stage, from the thread's facts. */
   private stageAt(t: Thread, flag: string, stage: string): number | undefined {
-    return M.live(t, "facts")
+    return M.notes(t, "fact")
       .filter((x) => x.text.startsWith(`Flag ${flag} is now ${stage}`))
       .map((x) => x.at)
       .pop()
@@ -1645,7 +1645,7 @@ export class ShipEngine {
     if (!inc || !cause) return fail("name the incident thread and the thread that shipped the cause")
     if (inc.id === cause.id) return fail("those are the same thread")
     this.fact(inc, `The cause is in the thread ${cause.meta.value.name}`)
-    this.fact(cause, `The incident thread ${inc.meta.value.name} found its cause here: ${M.live(inc, "facts")[0]?.text ?? inc.meta.value.name}`)
+    this.fact(cause, `The incident thread ${inc.meta.value.name} found its cause here: ${M.notes(inc, "fact")[0]?.text ?? inc.meta.value.name}`)
     this.T().mutate(cause.id, (th, by, now) => M.setMeta(th, by, { status: "active" }, now))
     this.T().mutate(inc.id, (th, by, now) => M.setMeta(th, by, { status: "done" }, now))
     this.T().notify(cause.id, `◢ crosstalk: ${cause.meta.value.name} is reopened: the incident ${inc.meta.value.name} traced its cause here.`)

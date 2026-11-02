@@ -324,7 +324,7 @@ describe("heads-up and conflict between two machines", () => {
       resolve: (id: string) => id,
       decide: (_sid: string | undefined, o: { text: string; thread?: string }) => {
         const t = s.threads[o.thread!]
-        if (t) M.put(t, "decisions", M.newItemId("d"), { text: o.text, who: me, at: 1 }, me)
+        if (t) M.put(t, "notes", M.newItemId("d"), { kind: "decision", text: o.text, who: me, at: 1 }, me)
         return { ok: true }
       },
     } as any
@@ -389,8 +389,8 @@ describe("heads-up and conflict between two machines", () => {
     expect(A.propose("a-auth", { id, owner: "mine", text: "auth owns parsing" }).outcome).toBe("waiting")
     expect(B.propose("b-bill", { id, owner: "theirs" }).outcome).toBe("agreed")
     expect(A.conflict(id).state).toBe("agreed")
-    expect(M.live(ta, "decisions").some((d) => /auth changes it/.test(d.text))).toBe(true)
-    expect(M.live(tb, "decisions").some((d) => /auth changes it/.test(d.text))).toBe(true)
+    expect(M.notes(ta, "decision").some((d) => /auth changes it/.test(d.text))).toBe(true)
+    expect(M.notes(tb, "decision").some((d) => /auth changes it/.test(d.text))).toBe(true)
     expect(asked).toEqual([])
   })
 })

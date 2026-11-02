@@ -22,8 +22,8 @@ export function prBody(t: M.Thread, f: M.Item<M.Feature>): string {
   if (f.risk === "risky" && f.ship?.why) out.push("", `Risky because: ${line(f.ship.why)}`)
 
   if (!sealed) {
-    out.push("", "## Recap", "", t.recap.value ? t.recap.value.trim() : "_No recap yet._")
-    const decisions = M.live(t, "decisions").sort((a, b) => a.at - b.at)
+    out.push("", "## Recap", "", M.recap(t) ? M.recap(t).trim() : "_No recap yet._")
+    const decisions = M.notes(t, "decision").sort((a, b) => a.at - b.at)
     out.push("", "## Decisions", "")
     if (decisions.length) for (const d of decisions) out.push(`- ${day(d.at)} · ${d.who} · ${line(d.text)}${d.rationale ? ` (${line(d.rationale)})` : ""}`)
     else out.push("_None recorded._")

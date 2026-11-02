@@ -184,7 +184,7 @@ check "$(sort "$TMP/opened" 2>/dev/null | tr '\n' ' ')" "$(printf '%s\n%s\n' "$F
 PANE=$(js '
   const S = await import("./src/urls/shots/index.ts")
   const P = await import("./src/ui-extra/pure.ts")
-  console.log(S.paneShots({ thread: "auth" }).map(s => [P.shotLine(s, Date.now()), P.fileLink(s.after.file)].join(" ")).join("\n"))
+  console.log(S.paneShots({ thread: "auth" }).map(s => [P.runningLine({ kind: "screenshot", alive: true, owner: "you", ...s }, Date.now()), P.fileLink(s.after.file)].join(" ")).join("\n"))
 ')
 has "$PANE" "auth · web · before" "the pane's before / after line"
 has "$PANE" "file://$CROSSTALK_HOME/shots/auth/" "with a file link"

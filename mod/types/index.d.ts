@@ -42,17 +42,35 @@ export type Pane = {
   people: string[]
   sessions: number
   waiting: string[]
-  decision?: { text: string; who: string; at: number }
+  /** Notes: the newest decisions, facts and rules, and open tasks. */
+  notes?: { kind: 'decision' | 'fact' | 'task' | 'rule'; text: string; who?: string; at?: number; state?: string }[]
   recent: { from: string; text: string; ts?: number }[]
   features: PaneFeature[]
-  /** crosstalk services running in this session's worktree (docs/services.md). */
-  services?: { name: string; ports: number[]; url?: string; broken?: string }[]
-  /** The thread's URLs (src/urls/), each with whether it answers; in the main session, every thread's. */
-  links?: { label: string; url: string; kind: 'local' | 'preview' | 'pr' | 'link' | 'shared'; alive: boolean; thread?: string }[]
+  /** Running (src/threads/running.ts): what the thread runs and where to look; in the main session every thread's. Screenshots are linked, never drawn. */
+  running?: Running[]
+  /** History: the latest things the thread had and no longer does. */
+  history?: { kind: string; label: string; at: number; url?: string }[]
   /** A QR code for the phone (crosstalk_look action "qr"): half-block rows, drawn white on black. */
   qr?: { label: string; caption: string; rows: string[]; at: number; why?: string }
-  /** Screenshots, each URL's before and after, as files (src/urls/shots/): linked, never drawn. */
-  shots?: { label: string; path?: string; before?: { file: string; at: number }; after: { file: string; at: number } }[]
+}
+
+/** One thing in a thread's Running (src/ui-extra/pure.ts PaneRunning). */
+export type Running = {
+  kind: 'server' | 'preview' | 'pr' | 'share' | 'link' | 'screenshot'
+  label: string
+  url?: string
+  raw?: string
+  name?: string
+  alive: boolean
+  owner: string
+  thread?: string
+  ports?: number[]
+  broken?: string
+  with?: string[]
+  until?: number
+  path?: string
+  before?: { file: string; at: number }
+  after?: { file: string; at: number }
 }
 
 declare module 'claude-code' {

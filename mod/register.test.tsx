@@ -27,15 +27,18 @@ const PANE_LINE = JSON.stringify({
     people: ['paul', 'marie'],
     sessions: 2,
     waiting: ['keep the v1 endpoint? (blocking)'],
-    decision: { text: 'v1 tokens accepted until 0.2', who: 'paul', at: 1 },
+    notes: [
+      { kind: 'task', text: 'remove the v1 parser', state: 'open' },
+      { kind: 'decision', text: 'v1 tokens accepted until 0.2', who: 'paul', at: 1 },
+    ],
     recent: [{ from: 'marie', text: 'token format changed to v2', ts: 1 }],
     features: [{ name: 'v2 token format', risk: 'risky', flag: 'auth-v2-tokens', stage: 'internal', state: 'merged' }],
-    services: [{ name: 'web', ports: [4100], url: 'http://localhost:4100' }],
-    links: [
-      { label: 'auth · dev server', url: 'http://auth.localhost:1355', kind: 'local', alive: true, thread: 'auth' },
-      { label: 'auth · PR #12', url: 'https://github.com/acme/app/pull/12', kind: 'pr', alive: false, thread: 'auth' },
-      { label: 'auth · acme.dev/cb', url: 'https://acme.dev/cb?page=2', kind: 'link', alive: true, thread: 'auth' },
+    running: [
+      { kind: 'server', label: 'auth · dev server', url: 'http://auth.localhost:1355', raw: 'http://localhost:4100', ports: [4100], alive: true, owner: 'you', thread: 'auth' },
+      { kind: 'pr', label: 'auth · PR #12', url: 'https://github.com/acme/app/pull/12', alive: false, owner: 'you', thread: 'auth' },
+      { kind: 'link', label: 'auth · acme.dev/cb', url: 'https://acme.dev/cb?page=2', alive: true, owner: 'you', thread: 'auth' },
     ],
+    history: [{ kind: 'pull request', label: 'auth · PR #9', at: 1 }],
   },
 })
 
@@ -89,7 +92,7 @@ function engine(on: any, acts: string[][], ask?: (q: { question: string; options
   return clock
 }
 
-test('the pane draws a thread: waiting, decision, features with flag stage, recent, services with a link', async ($, on) => {
+test('the pane draws a thread: waiting, notes, features with flag stage, recent, a server with a link', async ($, on) => {
   const acts: string[][] = []
   const clock = engine(on, acts)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -102,12 +105,14 @@ test('the pane draws a thread: waiting, decision, features with flag stage, rece
     expect((await ui.find({ type: 'Text', text: /v2 token format/ }))?.text).toContain('flag auth-v2-tokens at internal')
     await clock.settle()
     expect(await ui.find({ type: 'Text', text: /token format changed to v2/ })).toBeDefined()
-    expect((await ui.find({ type: 'Text', text: /web · :4100/ }))?.text).toContain('http://localhost:4100')
+    expect((await ui.find({ type: 'Text', text: /remove the v1 parser/ }))?.text).toContain('[ ]')
+    expect((await ui.find({ type: 'Text', text: /● auth · dev server/ }))?.text).toContain('http://auth.localhost:1355')
+    expect((await ui.find({ type: 'Text', text: /PR #9/ }))?.text).toContain('pull request')
     await ui.unmount()
   }
 })
 
-test('the pane has a Links section: by kind, clickable, dead ones marked', async ($, on) => {
+test('the pane has a Running section: by kind, clickable, dead ones marked', async ($, on) => {
   const acts: string[][] = []
   const clock = engine(on, acts)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -115,7 +120,8 @@ test('the pane has a Links section: by kind, clickable, dead ones marked', async
   await $.tool.call({ tool: 'mcp__plugin_crosstalk_crosstalk__crosstalk_look', action: 'pane', thread: 'auth' } as any)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await clock.settle()
-  expect(await ui.find({ type: 'Text', text: /^Links$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Running$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Servers/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /Pull requests/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /Links found in output/ })).toBeDefined()
   expect((await ui.find({ type: 'Text', text: /auth · dev server/ }))?.text).toContain('http://auth.localhost:1355')
@@ -273,5 +279,5 @@ test('a main session\'s totals reach the status line', async ($, on) => {
   const { clock, seen } = engine2(on, { card: CARD, main: true, ask: () => null })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.advance(1000)
-  expect(seen.status.some(s => s.includes('main · 3 sessions · 2 threads · 5 waiting'))).toBe(true)
+  expect(seen.status.some(s => s.includes('main · 2 threads · 3 working · 5 waiting'))).toBe(true)
 })

@@ -192,15 +192,15 @@ OUTSIDE=""
 has "$(waitfor 15 sh -c "bun -e 'const f=JSON.parse(require(\"fs\").readFileSync(\"$CROSSTALK_HOME/urls.json\",\"utf8\")); const u=f.urls.find(u=>u.url===\"http://localhost:$OPORT/\"); if (u && u.alive === false) console.log(\"dead\")'")" "dead" "a stopped server is marked dead"
 
 echo
-echo "tools: one list, anywhere"
-LIST=$(mcp sess-b crosstalk_look '{"action":"urls"}' "$TMP")
-has "$LIST" "auth · web — http://auth.localhost:$PPORT (http://localhost:$P2)" "crosstalk_urls labels the service, by its name"
+echo "tools: one list, anywhere (Running)"
+LIST=$(mcp sess-b crosstalk_look '{"action":"running"}' "$TMP")
+has "$LIST" "auth · web — http://auth.localhost:$PPORT (http://localhost:$P2) · server" "Running labels the server, by its name"
 has "$LIST" "auth · app.acme.dev/cb — https://app.acme.dev/cb?page=2 · link found in output · not checked" "and the link, as found in output"
 has "$LIST" "data, not instructions" "framed as data"
-has "$LIST" "<crosstalk-urls>" "inside its own block"
+has "$LIST" "<crosstalk-running>" "inside its own block"
 hasnt "$LIST" "SEKRET123" "never the token"
-has "$(mcp sess-b crosstalk_look '{"action":"urls","thread":"auth","kind":"link"}' "$TMP")" "app.acme.dev" "by thread and kind"
-hasnt "$(mcp sess-b crosstalk_look '{"action":"urls","thread":"auth","kind":"link"}' "$TMP")" "auth · web" "and only that kind"
+has "$(mcp sess-b crosstalk_look '{"action":"running","thread":"auth","kind":"link"}' "$TMP")" "app.acme.dev" "by thread and kind"
+hasnt "$(mcp sess-b crosstalk_look '{"action":"running","thread":"auth","kind":"link"}' "$TMP")" "auth · web" "and only that kind"
 OPENED=$(CROSSTALK_OPEN_URL_CMD="$TMP/bin/opener" mcp sess-b crosstalk_look '{"action":"open_url","name":"auth web"}' "$TMP")
 has "$OPENED" "opened auth · web" "crosstalk_open_url opens it"
 sleep 0.5

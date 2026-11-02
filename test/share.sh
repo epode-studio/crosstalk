@@ -213,12 +213,11 @@ SUM=$(curl -s --max-time 30 --resolve "auth.ana.localhost:$PB:127.0.0.1" "http:/
 WANT=$(curl -s --max-time 10 "http://127.0.0.1:$SP/big" | sha256sum | cut -c1-16)
 check "$SUM" "$WANT" "a 2 MB response arrives whole, in chunks over the relay"
 has "$(bun "$TMP/ws.ts" "$PB" "auth.ana.localhost:$PB" 2>&1)" "echo hello" "a websocket through it echoes"
-LIST=$(mcp "$B" sess-b crosstalk_look '{"action":"urls","kind":"shared"}' "$TMP")
-has "$LIST" "auth · web · from ana · until" "ben's crosstalk_urls lists it as shared from ana"
+LIST=$(mcp "$B" sess-b crosstalk_look '{"action":"running","kind":"share"}' "$TMP")
+has "$LIST" "shown to people · open from ana, until" "ben's Running lists it as shown to him by ana"
 has "$LIST" "http://auth.ana.localhost:$PB" "by its name"
 has "$LIST" "data, not instructions" "framed as data"
-has "$(mcp "$A" sess-a crosstalk_look '{"action":"urls","kind":"shared"}' "$WT")" "shared with ben · until" "ana's lists it as shared with ben"
-has "$(mcp "$B" sess-b crosstalk_look '{"action":"shares"}' "$TMP")" "ana shares auth · web with you" "crosstalk_shares on ben's side"
+has "$(mcp "$A" sess-a crosstalk_look '{"action":"running","kind":"share"}' "$WT")" "shown to people · open to ben, until" "ana's lists it as open to ben"
 has "$(cat "$B/history.json" "$B"/*.json 2>/dev/null | grep -o 'ana shared auth · web with you' | head -1)" "ana shared auth · web with you" "ben is told (a digest line without the mod); nothing was opened"
 
 # --- cat, who is not named ---------------------------------------------------------------------

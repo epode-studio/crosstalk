@@ -202,7 +202,7 @@ describe("evidence and the pane", () => {
     expect(Sh.forEvidence({ thread: "nobody" })).toEqual([])
     const ps = Sh.paneShots({ thread: "billing" })
     expect(ps[1]).toMatchObject({ label: "billing · web", before: { file: a }, after: { file: b } })
-    const line = Pure.shotLine(ps[1], 300 + 120_000)
+    const line = Pure.runningLine({ kind: "screenshot", alive: true, owner: "you", ...ps[1]! }, 300 + 120_000)
     expect(line).toBe("billing · web · before 2m · after 2m")
     expect(Pure.fileLink("/a b/c.png")).toBe("file:///a%20b/c.png")
     expect(Pure.fileLink("relative.png")).toBeUndefined()
@@ -410,6 +410,6 @@ describe("the tab's broken state", () => {
     expect(Status.readTab("tab2")?.broken).toBeUndefined()
   })
   test("the pane marks a broken service", () => {
-    expect(Pure.serviceLine({ name: "web", ports: [], broken: "exited with status 1" })).toBe("web · broken: exited with status 1")
+    expect(Pure.runningLine({ kind: "server", label: "web", alive: false, owner: "you", broken: "exited with status 1" }, 0)).toBe("○ web · broken: exited with status 1")
   })
 })

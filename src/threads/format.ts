@@ -12,8 +12,14 @@
 //   people: [paul, marie]
 //   …
 //   ---
-//   ## Recap …  ## Questions …  ## Decisions …
+//   ## Recap …  ## Questions …  ## Notes …
 //   <!-- crosstalk:state {…} -->
+//
+// Notes are one list (model.ts): `- decision · 2026-11-01 · paul · …`,
+// `- fact · …`, `- [ ] …` for a task, `- rule · …`. A file from before notes,
+// with ## Decisions, ## Facts, ## Tasks and ## Rules, or a sealed one with a
+// line for each of those and for the recap, reads the same and is written
+// back as notes.
 //
 // A sealed thread shows nothing but its id and who it is wrapped for. Each
 // section is one line, sealed on its own (see seal.ts), so git diffs and merges
@@ -27,7 +33,7 @@
 //     - <to fingerprint> <from fingerprint> <wrapped key>
 //   ---
 //   meta: <sealed>
-//   recap: <sealed>
+//   notes: <sealed>
 //   …
 
 import * as M from "./model.ts"
@@ -37,7 +43,7 @@ export const HEADER = "crosstalk: thread/v1"
 const STATE_OPEN = "<!-- crosstalk:state"
 const STATE_CLOSE = "-->"
 /** Sections added after the format first shipped: a file written before them has no line for them. */
-const LATER: ReadonlySet<string> = new Set(["links"])
+const LATER: ReadonlySet<string> = new Set(["links", "notes"])
 
 /** A JSON string or bare word, whichever reads back the same. */
 const word = (s: string) => (/^[A-Za-z0-9][A-Za-z0-9 ._/*@+-]*$/.test(s) && !/[ ]$/.test(s) ? s : JSON.stringify(s))
@@ -50,6 +56,13 @@ export function fileName(t: M.Thread, taken: Set<string> = new Set()): string {
   if (!t.meta.value.public) return `${t.id}.md`
   const plain = `${t.meta.value.name}.md`
   return taken.has(plain) ? `${t.meta.value.name}.${t.id.slice(0, 8)}.md` : plain
+}
+
+/** A note's line in a public file: what fromMarkdown reads back. */
+export function noteLine(n: M.Note): string {
+  if (n.kind === "decision") return `- decision · ${day(n.at)} · ${n.who} · ${oneLine(n.text)}`
+  if (n.kind === "task") return `- [${n.state === "done" ? "x" : " "}] ${oneLine(n.text)}`
+  return `- ${n.kind} · ${oneLine(n.text)}`
 }
 
 export function renderPublic(t: M.Thread): string {
@@ -78,10 +91,7 @@ export function renderPublic(t: M.Thread): string {
   fm.push("---")
   const body: string[] = ["", "## Recap", v.recap ? oneLine(v.recap) : "", ""]
   body.push("## Questions", ...M.live(t, "questions").map((q) => `- ${oneLine(q.text)}${q.blocking ? " (blocking)" : ""}${q.answer ? ` → ${oneLine(q.answer)}` : ""}`), "")
-  body.push("## Decisions", ...M.live(t, "decisions").map((d) => `- ${day(d.at)} · ${d.who} · ${oneLine(d.text)}`), "")
-  body.push("## Facts", ...M.live(t, "facts").map((f) => `- ${oneLine(f.text)}`), "")
-  body.push("## Tasks", ...M.live(t, "tasks").map((k) => `- [${k.state === "done" ? "x" : " "}] ${oneLine(k.text)}`), "")
-  body.push("## Rules", ...M.live(t, "rules").map((r) => `- ${oneLine(r.text)}`), "")
+  body.push("## Notes", ...M.notes(t, ["decision", "fact", "task", "rule"]).map(noteLine), "")
   // Exact state for crosstalk. "-->" can only occur inside a JSON string, where
   // its escaped form means the same.
   const state = M.canonical(t).replace(/-->/g, "--\\u003e")
@@ -164,9 +174,12 @@ export function parse(text: string): Parsed {
       epoch: Number(get("epoch")) || 0,
       open: (key) => {
         try {
-          const o: any = { v: 1, id }
-          // A section newer than the file (links) is empty, not a reason to refuse it.
+          const o: any = { v: 2, id }
+          // A section newer than the file (links, notes) is empty, not a reason to refuse it.
           for (const s of M.SECTIONS) o[s] = !blobs.has(s) && LATER.has(s) ? {} : openSection(key, id, s, blobs.get(s) ?? "")
+          // A file from before notes: its recap, decisions, facts, tasks and
+          // rules lines, which parseThread folds into notes.
+          for (const s of M.LEGACY_SECTIONS) if (blobs.has(s)) o[s] = openSection(key, id, s, blobs.get(s)!)
           const c: any = openSection(key, id, "clock", blobs.get("clock") ?? "")
           o.lamport = c.lamport
           o.touchedAt = c.touchedAt
@@ -202,7 +215,6 @@ function fromMarkdown(id: string, fm: string[], body: string): M.Thread | null {
   const t = M.create({ id, name: unword(get("name") ?? id), repo: unword(get("repo") ?? ""), by, label: by, now: 0, public: true })
   t.people = {}
   t.meta = { l: 0, by, value: { ...t.meta.value, status, combinedInto: get("combined-into") || undefined } }
-  t.recap.l = 0
   t.lamport = 0
   const mark = (list: M.ListName, key: string, data: object) =>
     ((t as any)[list][key] = { ...data, l: 0, by, id: key })
@@ -237,22 +249,35 @@ function fromMarkdown(id: string, fm: string[], body: string): M.Thread | null {
       sections.set(at, [])
     } else if (at && l.trim()) sections.get(at)!.push(l)
   }
-  t.recap.value = (sections.get("recap") ?? []).join(" ").trim()
+  const recap = (sections.get("recap") ?? []).join(" ").trim()
+  if (recap) mark("notes", M.RECAP_ID, { kind: "recap", text: recap, who: "", at: 0 })
   const bullets = (k: string) => (sections.get(k) ?? []).filter((l) => l.startsWith("- ")).map((l) => l.slice(2).trim())
   bullets("questions").forEach((q, i) => {
     const blocking = /\(blocking\)\s*$/.test(q)
     mark("questions", `md_q${i}`, { text: q.replace(/\s*\(blocking\)\s*$/, ""), blocking, who: "", at: 0 })
   })
-  bullets("decisions").forEach((d, i) => {
+  const decision = (d: string, id: string) => {
     const m = /^(\d{4}-\d{2}-\d{2})\s+·\s+([^·]+?)\s+·\s+(.+)$/.exec(d)
-    mark("decisions", `md_d${i}`, m ? { text: m[3], who: m[2], at: Date.parse(m[1]) } : { text: d, who: "", at: 0 })
-  })
-  bullets("facts").forEach((x, i) => mark("facts", `md_f${i}`, { text: x, who: "", at: 0 }))
-  bullets("tasks").forEach((x, i) => {
+    mark("notes", id, m ? { kind: "decision", text: m[3], who: m[2], at: Date.parse(m[1]) } : { kind: "decision", text: d, who: "", at: 0 })
+  }
+  const task = (x: string, id: string) => {
     const m = /^\[( |x)\]\s+(.+)$/.exec(x)
-    mark("tasks", `md_t${i}`, { text: m ? m[2] : x, who: "", at: 0, state: m?.[1] === "x" ? "done" : "open" })
+    mark("notes", id, { kind: "task", text: m ? m[2] : x, who: "", at: 0, state: m?.[1] === "x" ? "done" : "open" })
+  }
+  // Version 1's sections, each its own list.
+  bullets("decisions").forEach((d, i) => decision(d, `md_d${i}`))
+  bullets("facts").forEach((x, i) => mark("notes", `md_f${i}`, { kind: "fact", text: x, who: "", at: 0 }))
+  bullets("tasks").forEach((x, i) => task(x, `md_t${i}`))
+  bullets("rules").forEach((x, i) => mark("notes", `md_r${i}`, { kind: "rule", text: x, who: "", at: 0 }))
+  // Notes: one list, each line saying its kind.
+  bullets("notes").forEach((x, i) => {
+    const id = `md_n${i}`
+    if (/^\[( |x)\]\s/.test(x)) return task(x, id)
+    const m = /^(decision|fact|rule)\s+·\s+(.+)$/.exec(x)
+    if (!m) return mark("notes", id, { kind: "fact", text: x, who: "", at: 0 })
+    if (m[1] === "decision") return decision(m[2], id)
+    mark("notes", id, { kind: m[1], text: m[2], who: "", at: 0 })
   })
-  bullets("rules").forEach((x, i) => mark("rules", `md_r${i}`, { text: x, who: "", at: 0 }))
   return t
 }
 
@@ -272,7 +297,8 @@ export function summary(threads: M.Thread[]): string {
   for (const t of pub) {
     const v = M.view(t)
     const open = v.questions.filter((q) => !q.answer)
-    const last = v.decisions[v.decisions.length - 1]
+    const decisions = v.notes.filter((n) => n.kind === "decision")
+    const last = decisions[decisions.length - 1]
     lines.push(`- **${v.name}** · ${v.status} · ${v.people.join(", ") || "nobody yet"}`)
     const more: string[] = []
     if (open.length) more.push(`${open.length} open question${open.length === 1 ? "" : "s"}: ${oneLine(open[0].text)}`)

@@ -39,6 +39,7 @@ import * as M from "./model.ts"
 import * as F from "./format.ts"
 import * as S from "./store.ts"
 import * as I from "./infer.ts"
+import * as N from "../notes.ts"
 import { sealSection, unwrapFor, wrapKey, newKey } from "./seal.ts"
 import { botSafe } from "../ui-extra/bots.ts"
 import * as K from "./rekey.ts"
@@ -926,7 +927,7 @@ export class ThreadService {
         if (mine && !mine.gone) continue
         M.put(s, list, id, data, this.me, now)
       }
-    if (!s.recap.value && x.recap.value) M.setRecap(s, this.me, x.recap.value, now)
+    if (!M.recap(s) && M.recap(x)) M.setRecap(s, this.me, M.recap(x), now)
     if (s.meta.value.public !== x.meta.value.public && x.meta.value.public === false)
       // Combining never makes sealed work public.
       M.setMeta(s, this.me, { public: false }, now)
@@ -988,7 +989,7 @@ export class ThreadService {
     const t = this.target(sessionId, o.thread)
     if ("error" in t) return { ok: false as const, error: t.error }
     const now = this.now()
-    M.put(t, "decisions", M.newItemId("d"), { text: o.text, who: this.label, at: now, ...(o.rationale ? { rationale: o.rationale } : {}), ...(o.session ? { session: o.session } : {}) }, this.me, now)
+    M.note(t, { kind: "decision", text: o.text, who: this.label, at: now, ...(o.rationale ? { rationale: o.rationale } : {}), ...(o.session ? { session: o.session } : {}) }, this.me, now)
     this.touched.add(t.id)
     this.flush()
     return { ok: true as const, thread: t.meta.value.name }
@@ -998,11 +999,47 @@ export class ThreadService {
     const t = this.target(sessionId, o.thread)
     if ("error" in t) return { ok: false as const, error: t.error }
     const now = this.now()
-    const id = M.newItemId("f")
-    M.put(t, "facts", id, { text: o.text, who: this.label, at: now }, this.me, now)
+    const id = M.note(t, { kind: "fact", text: o.text, who: this.label, at: now }, this.me, now)
     this.touched.add(t.id)
     this.flush()
     return { ok: true as const, thread: t.meta.value.name, id }
+  }
+
+  /** The session's thread that holds note `id` of `kind`, or the one named. */
+  holding(sessionId: string | undefined, id: string, kind: M.NoteKind, name?: string): M.Thread | undefined {
+    if (name) {
+      const t = this.find(sessionId, name)
+      return t && M.noteOf(t, id, kind) ? t : undefined
+    }
+    const ids = sessionId ? this.idsFor(sessionId) : Object.keys(this.st.threads)
+    return ids.map((x) => this.thread(x)).find((t): t is M.Thread => !!t && !!M.noteOf(t, id, kind))
+  }
+
+  /** A fact still holds: whoever says so stands behind it, as with facts kept outside threads. */
+  confirmFact(sessionId: string | undefined, o: { id: string; thread?: string }) {
+    const t = this.holding(sessionId, o.id, "fact", o.thread)
+    if (!t) return { ok: false as const, error: `no fact ${o.id} in this session's threads` }
+    const now = this.now()
+    const data = N.confirmed(t, o.id, this.label, now)!
+    M.put(t, "notes", o.id, data, this.me, now)
+    this.touched.add(t.id)
+    this.flush()
+    return { ok: true as const, thread: t.meta.value.name, id: o.id }
+  }
+
+  /** A fact was wrong: the new one takes its place, the old one ends (it stays in History, saying what replaced it). */
+  correctFact(sessionId: string | undefined, o: { id: string; text?: string; reason?: string; thread?: string }) {
+    const t = this.holding(sessionId, o.id, "fact", o.thread)
+    if (!t) return { ok: false as const, error: `no fact ${o.id} in this session's threads` }
+    const now = this.now()
+    const old = M.noteOf(t, o.id, "fact")!
+    const next = o.text?.trim() ? M.note(t, { kind: "fact", text: o.text.trim(), who: this.label, at: now }, this.me, now) : undefined
+    const { l: _l, by: _b, id: _i, gone: _g, ...data } = old
+    M.put(t, "notes", o.id, { ...data, ...(next ? { supersededBy: next } : {}), ...(o.reason ? { reason: o.reason } : {}) }, this.me, now)
+    M.remove(t, "notes", o.id, this.me, now)
+    this.touched.add(t.id)
+    this.flush()
+    return { ok: true as const, thread: t.meta.value.name, id: next ?? o.id }
   }
 
   task(sessionId: string | undefined, o: { text?: string; id?: string; op: "add" | "claim" | "done"; note?: string; thread?: string }) {
@@ -1011,19 +1048,18 @@ export class ThreadService {
     const now = this.now()
     if (o.op === "add") {
       if (!o.text?.trim()) return { ok: false as const, error: "a task needs some text" }
-      const id = M.newItemId("t")
-      M.put(t, "tasks", id, { text: o.text.trim(), who: this.label, at: now, state: "open" }, this.me, now)
+      const id = M.note(t, { kind: "task", text: o.text.trim(), who: this.label, at: now, state: "open" }, this.me, now)
       this.touched.add(t.id)
       this.flush()
       return { ok: true as const, thread: t.meta.value.name, id }
     }
-    const k = o.id ? t.tasks[o.id] : undefined
-    if (!k || k.gone) return { ok: false as const, error: `no task ${o.id} in ${t.meta.value.name}` }
+    const k = M.noteOf(t, o.id, "task")
+    if (!k) return { ok: false as const, error: `no task ${o.id} in ${t.meta.value.name}` }
     const { l: _l, by: _b, id: _i, gone: _g, ...data } = k
     if (o.op === "claim") {
       if (k.state !== "open" && k.claimedBy !== this.label) return { ok: false as const, error: "somebody else has that one. Pick a different task rather than doing it twice." }
-      M.put(t, "tasks", k.id, { ...data, state: "claimed", claimedBy: this.label }, this.me, now)
-    } else M.put(t, "tasks", k.id, { ...data, state: "done", doneBy: this.label, ...(o.note ? { note: o.note } : {}) }, this.me, now)
+      M.put(t, "notes", k.id, { ...data, state: "claimed", claimedBy: this.label }, this.me, now)
+    } else M.put(t, "notes", k.id, { ...data, state: "done", doneBy: this.label, ...(o.note ? { note: o.note } : {}) }, this.me, now)
     this.touched.add(t.id)
     this.flush()
     return { ok: true as const, thread: t.meta.value.name, id: k.id }
@@ -1075,7 +1111,7 @@ export class ThreadService {
       changed = M.put(t, "questions", q.id, { ...data, answer: o.answer.text, answeredBy: this.label }, this.me, now) || changed
     }
     if (o.rule?.text)
-      changed = M.put(t, "rules", M.newItemId("r"), { text: o.rule.text, who: this.label, at: now, ...(o.rule.when ? { when: o.rule.when } : {}), ...(o.rule.then ? { then: o.rule.then } : {}) }, this.me, now) || changed
+      changed = M.put(t, "notes", M.newItemId("r"), { kind: "rule", text: o.rule.text, who: this.label, at: now, ...(o.rule.when ? { when: o.rule.when } : {}), ...(o.rule.then ? { then: o.rule.then } : {}) }, this.me, now) || changed
     if (changed) this.touched.add(t.id)
     this.flush()
     return { ok: true as const, thread: M.view(t) }
@@ -1487,9 +1523,10 @@ export class ThreadService {
 /** Archive a thread and keep only what was decided. */
 export function squash(t: M.Thread, by: string, now: number): boolean {
   let changed = M.setMeta(t, by, { status: "archived" }, now)
-  for (const list of ["facts", "tasks", "questions", "sessions"] as const)
+  for (const list of ["questions", "sessions"] as const)
     for (const id of M.ids(t, list)) changed = M.remove(t, list, id, by, now) || changed
-  if (t.recap.value) changed = M.setRecap(t, by, "", now) || changed
+  // Notes keep their decisions and rules; facts, tasks and the recap go (to History).
+  for (const n of M.live(t, "notes")) if (n.kind === "fact" || n.kind === "task" || n.kind === "recap") changed = M.remove(t, "notes", n.id, by, now) || changed
   return changed
 }
 

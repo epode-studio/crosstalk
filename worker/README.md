@@ -23,11 +23,17 @@ cd worker
 npx wrangler deploy
 ```
 
+This is checked with wrangler: `bun run test:worker` runs the Worker under
+`wrangler dev`, and the Durable Object migrations (`v1` to `v3`) are wrangler's.
+Cloudflare's newer `cf` CLI is not given here, because its command for
+deploying a Worker with Durable Object migrations has not been checked against
+this one; wrangler is what works.
+
 The client reaches invites at `/invite/<slot>` and the Durable Object holding
 them is `Invites`. Both were called `pair`/`Pairing` until pairing stopped being
 a concept, so a relay deployed before that answers the old path and the client
-gets a banner instead of an offer. **Redeploy after pulling this**, or joining a
-room hangs and then times out with nothing useful in it. `test/e2e.sh` probes
+gets a banner instead of an offer. **Redeploy after pulling this**, or joining with
+words hangs and then times out with nothing useful in it. `test/e2e.sh` probes
 the route before it does anything else and says so in one line.
 
 An applied migration tag is a record of what already happened, so `v1` still
@@ -37,7 +43,7 @@ have Cloudflare comparing a tag it has already run against different contents.
 Then point crosstalk at it, on both machines:
 
 ```
-/crosstalk:room new --relay wss://crosstalk-relay.<your-subdomain>.workers.dev
+/crosstalk:join --relay wss://crosstalk-relay.<your-subdomain>.workers.dev
 ```
 
 Set `CROSSTALK_DEFAULT_RELAY` to that URL and invites become four words with

@@ -81,11 +81,12 @@ export const plainName = (v: unknown) => cleanName(v, 60)?.replace(/[#@: ]+/g, "
 export function recordLines(v: View, max: Limits = { decisions: 20, rules: 0, facts: 10, files: 30 }): string[] {
   const n = (x: unknown) => neutral(x)
   const lines: string[] = [`Recap:`, neutral(v.recap, true) || "(none yet)"]
-  const decisions = last(v.decisions, max.decisions)
+  const of = (k: M.NoteKind) => v.notes.filter((x) => x.kind === k)
+  const decisions = last(of("decision"), max.decisions)
   const open = first(v.questions.filter((q) => !q.answer), max.questions)
-  const tasks = first(v.tasks.filter((k) => k.state !== "done"), max.tasks)
-  const rules = last(v.rules ?? [], max.rules)
-  const facts = last(v.facts, max.facts)
+  const tasks = first(of("task").filter((k) => k.state !== "done"), max.tasks)
+  const rules = last(of("rule"), max.rules)
+  const facts = last(of("fact"), max.facts)
   const files = first(v.files, max.files)
   const day = (at: number) => (Number.isFinite(at) ? new Date(at).toISOString().slice(0, 10) : "?")
   if (decisions.length) lines.push(``, `Decisions:`, ...decisions.map((d) => `- ${day(d.at)} · ${n(d.who)} · ${n(d.text)}`))

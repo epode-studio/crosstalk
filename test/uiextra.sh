@@ -171,9 +171,9 @@ CROSSTALK_HOME="$E" bun -e '
   const t = M.create({ id: "0123456789abcdef", name: "auth", repo: "github.com/acme/api", by: P, label: "paul", now: now - 86400000 })
   M.put(t, "people", Q, { label: "marie" }, P, now)
   M.setRecap(t, P, "PANE-RECAP-CANARY moving tokens to v2", now)
-  M.put(t, "decisions", "d1", { text: "v1 tokens accepted until 0.2", who: "paul", at: now - 3600000 }, P, now)
+  M.put(t, "notes", "d1", { kind: "decision", text: "v1 tokens accepted until 0.2", who: "paul", at: now - 3600000 }, P, now)
   M.put(t, "features", "v2", { name: "v2 token format", risk: "risky", flag: "auth-v2", ship: { state: "merged", stage: "internal", merged: { sha: "a", at: now - 600000, files: [], shas: [], how: "pr" } } }, P, now)
-  M.put(t, "tasks", "k1", { text: "write the migration note", who: "marie", at: now - 1000, state: "done", doneBy: "marie" }, Q, now)
+  M.put(t, "notes", "k1", { kind: "task", text: "write the migration note", who: "marie", at: now - 1000, state: "done", doneBy: "marie" }, Q, now)
   fs.mkdirSync(process.env.CROSSTALK_HOME, { recursive: true })
   fs.writeFileSync(path.join(process.env.CROSSTALK_HOME, "threads.json"), JSON.stringify({ v: 1, threads: { [t.id]: t }, placed: { se: { threads: [t.id], why: {} } } }))'
 DIG=$(tool "$E" se crosstalk_thread '{"action":"digest","since":"2d"}')

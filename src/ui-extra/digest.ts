@@ -16,6 +16,8 @@ import path from "node:path"
 import { P } from "../config.ts"
 import * as M from "../threads/model.ts"
 import { labelOf, readThreads, type ThreadState } from "./threadfile.ts"
+import { running as runningNow } from "../threads/running.ts"
+import { runningLine, runningWhere, type PaneRunning } from "./pure.ts"
 
 export type Event = {
   at: number
@@ -51,7 +53,7 @@ export function events(st: ThreadState, since: number): Event[] {
   for (const t of Object.values(st.threads)) {
     if (t.meta.value.combinedInto) continue
     const name = t.meta.value.name
-    for (const d of M.live(t, "decisions")) if (d.at >= since) out.push({ at: d.at, thread: name, kind: "decision", who: d.who, text: cut(d.text) })
+    for (const d of M.notes(t, "decision")) if (d.at >= since) out.push({ at: d.at, thread: name, kind: "decision", who: d.who, text: cut(d.text) })
     for (const f of M.live(t, "features")) {
       const m = f.ship?.merged
       if (m && m.at >= since)
@@ -61,13 +63,13 @@ export function events(st: ThreadState, since: number): Event[] {
         out.push({ at: Math.max(m?.at ?? 0, Math.min(t.touchedAt, Date.now())), thread: name, kind: "shipped", who: labelOf(st, f.by), text: `${f.name}: ${f.flag} is fully on` })
     }
     for (const q of M.live(t, "questions")) if (q.answer && q.at >= since) out.push({ at: q.at, thread: name, kind: "answered", who: q.answeredBy, text: `"${cut(q.text, 90)}": ${cut(q.answer, 80)}` })
-    for (const k of M.live(t, "tasks")) {
+    for (const k of M.notes(t, "task")) {
       if (k.at < since) continue
       if (/incident/i.test(k.text)) out.push({ at: k.at, thread: name, kind: "incident", who: k.who, text: cut(k.text) })
       else if (k.state === "done") out.push({ at: k.at, thread: name, kind: "done", who: k.doneBy ?? k.who, text: cut(k.text) })
     }
     if (/^incident-/.test(name) && t.meta.value.createdAt >= since && !out.some((e) => e.thread === name && e.kind === "incident"))
-      out.push({ at: t.meta.value.createdAt, thread: name, kind: "incident", text: cut(t.recap.value || name) })
+      out.push({ at: t.meta.value.createdAt, thread: name, kind: "incident", text: cut(M.recap(t) || name) })
   }
   return out.sort((a, b) => a.at - b.at)
 }
@@ -90,8 +92,17 @@ const VERB: Record<Event["kind"], string> = {
   task: "task",
 }
 
-/** The digest as plain text. */
-export function digest(o: { since?: number; now?: number; st?: ThreadState; rules?: string[] } = {}): { text: string; events: Event[]; rules: string[] } {
+/** What runs in a thread now, for the digest: answering things only, never screenshots. */
+const runningFor = (thread: string): PaneRunning[] => {
+  try {
+    return runningNow(thread, { max: 8 }).filter((r) => r.alive && r.kind !== "screenshot")
+  } catch {
+    return []
+  }
+}
+
+/** The digest as plain text: what happened in each thread, and what it runs now (its Running). */
+export function digest(o: { since?: number; now?: number; st?: ThreadState; rules?: string[]; running?: (thread: string) => PaneRunning[] } = {}): { text: string; events: Event[]; rules: string[] } {
   const now = o.now ?? Date.now()
   const since = o.since ?? now - DAY
   const ev = events(o.st ?? readThreads(), since)
@@ -110,6 +121,8 @@ export function digest(o: { since?: number; now?: number; st?: ThreadState; rule
             ? `- ${e.who ?? "someone"} answered ${e.text}`
             : `- ${e.who ? `${e.who} ` : ""}${VERB[e.kind]} ${e.text}`,
       )
+    const run = (o.running ?? runningFor)(thread)
+    if (run.length) lines.push(`- running: ${run.slice(0, 4).map((r) => `${runningLine(r, now).replace(/^[●○] /, "")}${runningWhere(r) ? ` (${runningWhere(r)})` : ""}`).join("; ")}`)
   }
   if (rules.length) lines.push("", "Answered by standing rules", ...rules.map((r) => `- ${cut(r, 200)}`))
   return { text: lines.join("\n"), events: ev, rules }

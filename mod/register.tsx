@@ -5,12 +5,14 @@
 //                  Hand to agent / Reply / Open thread / More…, and More… opens
 //                  a second picker, Mute / Later ($.ui.ask takes four options)
 //   a question     a peer's crosstalk ask: Answer / Hand to agent / Open thread / More…
-//   the pane       a thread beside the chat: status, people, what is waiting, the
-//                  latest decision, recent messages, features with risk and flag.
-//                  By itself in the main session (drawn from 144 columns), and
-//                  when asked: Open thread, or the agent's crosstalk_look action "pane". Live.
-//   invite         the words for someone joining a room or a link, from
-//                  crosstalk_people action "room" / crosstalk_people action "link": shown here, never to the model
+//   the pane       a thread beside the chat: status, people, what is waiting,
+//                  then its Notes, Features, Running (servers, previews, PRs,
+//                  what is shown to people, links, screenshots) and History,
+//                  and recent messages. By itself in the main session (drawn
+//                  from 144 columns), and when asked: Open thread, or the
+//                  agent's crosstalk_look action "pane". Live. Drawn by draw.tsx.
+//   invite         the words for someone joining with words, or for linking a
+//                  machine, from crosstalk_people action "room" / "link": shown here, never to the model
 //   doctor         something broken, noticed at SessionStart, with the fix
 //   digest         at a pause (a turn ends, nothing runs; at most every two
 //                  hours), one line in the band of what happened in the threads
@@ -38,15 +40,13 @@
 //   main           the status line of a main session counts every session
 //   own thread     a message about this session's own thread is handed to the
 //                  agent by itself (as data), when the prompt is empty and idle
-//   status line    ◢ <threads or repo> · :4100 · <n> waiting, the ports of this
-//                  worktree's crosstalk services (docs/services.md) after the name,
-//                  or its name through crosstalk's proxy, auth.localhost:1355
-//   links          the pane's Links: the thread's URLs by kind (local, previews,
-//                  PRs, links found in output), clickable, alive or dead
-//                  (docs/urls.md); in the main session every thread's
-//   screenshots    the pane's before / after lines, each a file link (OSC 8):
-//                  a mod cannot draw an image; a service that broke is marked
-//                  in Services (src/urls/shots/, src/urls/health/)
+//   status line    ◢ <threads or repo> · auth.localhost:1355 · <n> waiting: where
+//                  the thread's one server is, or how many things run
+//                  (src/threads/running.ts), from the watch; pure.ts statusLine
+//   running        the pane's Running by kind, clickable, alive or dead
+//                  (docs/urls.md); in the main session every thread's.
+//                  Screenshots are before / after file links (OSC 8): a mod
+//                  cannot draw an image; a server that broke is marked
 //   tab status     working / waiting on you / done on this session's own tab,
 //                  through `crosstalk term status` (src/terminal/status.ts)
 //
@@ -71,8 +71,9 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Item, Pane, Receipt } from './types'
-import { HANDED_PROMPT, LATER, MORE, MORE_OPTIONS, MUTE, OPEN_THREAD, ago, cardOptions, featureLine, fileLink, linkGroups, linkLine, linkable, parseAt, shotLine, takesAt } from '../src/ui-extra/pure.ts'
+import type { Item, Pane } from './types'
+import { HANDED_PROMPT, LATER, MORE, MORE_OPTIONS, MUTE, OPEN_THREAD, cardOptions, parseAt, statusLine, takesAt } from '../src/ui-extra/pure.ts'
+import { bandTree, paneTree } from './draw.tsx'
 
 const items = atom({ plugin: 'crosstalk', key: 'items' } as const, [])
 const receipts = atom({ plugin: 'crosstalk', key: 'receipts' } as const, [])
@@ -82,17 +83,12 @@ const digestAtom = atom({ plugin: 'crosstalk', key: 'digest' } as const, '')
 
 const PANE_ID = 'thread'
 
-const FRAME = '#6c6c6c'
-const SENDER = '#d7875f'
-const THREAD = '#5fafd7'
-const CARD_MAX = 64
-
 let session = ''
 let bin = ''
 let label = ''
 let repo = ''
-/** This worktree's services' ports, `:4100`, or its proxy name, `auth.localhost:1355`, from the watch. */
-let ports = ''
+/** Where the thread runs, `auth.localhost:1355`, or how many things do, from the watch. */
+let where = ''
 /** This session's threads, from the daemon: what the status line leads with. */
 let threadNames: string[] = []
 /** Set while this is the main session: totals across every session. */
@@ -138,22 +134,6 @@ const isCard = (it: Item) => it.kind === 'message' || it.kind === 'ask'
 const cut = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
 const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim()
 
-function age(ts: number | undefined, now: number): string {
-  if (!ts) return ''
-  const s = Math.max(0, Math.round((now - ts) / 1000))
-  if (s < 60) return 'now'
-  if (s < 3600) return `${Math.round(s / 60)}m`
-  if (s < 86400) return `${Math.round(s / 3600)}h`
-  return `${Math.round(s / 86400)}d`
-}
-
-function size(bytes: number | undefined): string {
-  if (bytes === undefined) return ''
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
-
 function header(it: Item): string {
   if (it.kind === 'restore') return 'Restore'
   if (it.kind === 'route') return 'Route'
@@ -178,17 +158,9 @@ function header(it: Item): string {
 }
 
 async function showStatus($: EngineInterface, open: Item[]) {
-  // `◢ auth · tokens · 1 waiting`: the session's own threads first, else what the cards are about.
-  const threads = [...new Set(open.filter(isCard).map(i => i.thread).filter((t): t is string => !!t))]
-  const named = threadNames.length ? threadNames.slice(0, 3).join(' · ') : threads.length ? threads.slice(0, 3).join(', ') : repo
-  // `auth · :4100`: the ports of what crosstalk runs here, the numbers and nothing more.
-  const where = ports ? `${named || 'crosstalk'} · ${ports}` : named
-  // Nothing waiting and no room: say nothing, rather than a line in every session.
-  const text = mainTotals
-    ? `◢ main · ${mainTotals.sessions} session${mainTotals.sessions === 1 ? '' : 's'} · ${mainTotals.threads} thread${mainTotals.threads === 1 ? '' : 's'} · ${Math.max(mainTotals.waiting, open.length)} waiting`
-    : open.length || label || ports
-      ? `◢ ${where || 'crosstalk'} · ${open.length} waiting`
-      : undefined
+  // `◢ auth · tokens · auth.localhost:1355 · 1 waiting`: the session's own threads first, else what the cards are about.
+  const cards = [...new Set(open.filter(isCard).map(i => i.thread).filter((t): t is string => !!t))]
+  const text = statusLine({ threads: threadNames, cards, repo, where, waiting: open.length, label, ...(mainTotals ? { main: mainTotals } : {}) })
   if (text !== lastStatus) $.ui.status(text)
   lastStatus = text
 }
@@ -209,7 +181,7 @@ async function received($: EngineInterface, line: string) {
   let w: {
     items?: Item[]
     label?: string
-    ports?: string
+    where?: string
     note?: { id: string; text: string }
     threads?: string[]
     threadNotes?: { id: string; text: string }[]
@@ -223,7 +195,7 @@ async function received($: EngineInterface, line: string) {
   }
   lastLineAt = await $.clock.now()
   label = w.label ?? ''
-  ports = typeof w.ports === 'string' ? w.ports.replace(/[^a-z0-9.:\- …]/gi, '').slice(0, 80) : ''
+  where = typeof w.where === 'string' ? w.where.replace(/[^a-z0-9.:\- …]/gi, '').slice(0, 80) : ''
   threadNames = Array.isArray(w.threads) ? w.threads.filter((t): t is string => typeof t === 'string') : []
   mainTotals = w.main && typeof w.main.sessions === 'number' ? w.main : null
   for (const n of w.threadNotes ?? [])
@@ -712,115 +684,9 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($, e) => {
-    const { Box, Text, Link } = $.ui.resolve(e)
     const p = await read($, paneAtom)
     const problem = await read($, paneError)
-    const now = await $.clock.now()
-    const clean = (s: string) => s.replace(/[\u0000-\u001f\u007f]/g, ' ')
-    if (!p)
-      return (
-        <Box flexDirection="column">
-          <Text dimColor>{clean(problem || 'loading the thread…')}</Text>
-        </Box>
-      )
-    const section = (title: string, rows: string[], key: string) => (
-      <Box key={key} flexDirection="column" marginTop={1}>
-        <Text bold>{title}</Text>
-        {rows.map((r, i) => (
-          <Text key={`${key}${i}`} wrap="truncate">
-            {' '}
-            {clean(r)}
-          </Text>
-        ))}
-      </Box>
-    )
-    return (
-      <Box flexDirection="column">
-        <Text wrap="truncate">
-          <Text color={THREAD} bold>
-            ◢ {clean(p.thread)}
-          </Text>
-          <Text dimColor> · {clean(p.status)}{p.sessions ? ` · ${p.sessions} session${p.sessions === 1 ? '' : 's'}` : ''}</Text>
-        </Text>
-        <Text wrap="truncate">{clean(p.people.join('  ') || 'nobody yet')}</Text>
-        {p.recap ? (
-          <Text dimColor wrap="wrap">
-            {clean(p.recap)}
-          </Text>
-        ) : null}
-        {p.qr ? (
-          // For the phone (crosstalk_look action "qr"): white on black, so it scans on any terminal theme. Never model context.
-          <Box key="q" flexDirection="column" marginTop={1}>
-            <Text bold wrap="truncate">On your phone · {clean(p.qr.label)}</Text>
-            {p.qr.rows.map((r, i) => (
-              <Text key={`q${i}`} color="#ffffff" backgroundColor="#000000" wrap="truncate">
-                {r}
-              </Text>
-            ))}
-            <Text dimColor wrap="truncate">{clean(p.qr.caption)}</Text>
-            {p.qr.why ? <Text dimColor wrap="wrap">{clean(p.qr.why)}</Text> : null}
-          </Box>
-        ) : null}
-        {section('Waiting', p.waiting.length ? p.waiting.map(w => `? ${w}`) : ['nothing'], 'w')}
-        {p.decision ? section('Latest decision', [`${p.decision.text} (${p.decision.who}${p.decision.at ? `, ${ago(p.decision.at, now)}` : ''})`], 'd') : null}
-        {p.features.length ? section('Features', p.features.map(featureLine), 'f') : null}
-        {p.recent.length ? section('Recent', p.recent.map(r => `${r.from} ${ago(r.ts, now)} ${r.text}`), 'r') : null}
-        {p.services?.length ? (
-          <Box key="s" flexDirection="column" marginTop={1}>
-            <Text bold>Services</Text>
-            {p.services.map((s, i) => (
-              <Text key={`s${i}`} wrap="truncate">
-                {' '}
-                {clean(s.name)}
-                {s.broken ? <Text color="red">{` · broken: ${clean(s.broken)} `}</Text> : s.ports.length ? ` · ${s.ports.map(n => `:${n}`).join(' ')} ` : ' · starting'}
-                {s.url && /^http:\/\/localhost:\d+$/.test(s.url) ? <Link href={s.url}>{s.url}</Link> : null}
-              </Text>
-            ))}
-          </Box>
-        ) : null}
-        {p.shots?.length ? (
-          // A mod cannot draw an image: each before and after is a file link (OSC 8) to open it.
-          <Box key="sh" flexDirection="column" marginTop={1}>
-            <Text bold>Screenshots</Text>
-            {p.shots.map((s, i) => (
-              <Box key={`sh${i}`} flexDirection="column">
-                <Text wrap="truncate">
-                  {' '}
-                  {clean(shotLine(s, now))}
-                </Text>
-                {[...(s.before ? [{ w: 'before', f: s.before.file }] : []), { w: 'after ', f: s.after.file }].map(({ w, f }) => {
-                  const href = fileLink(f)
-                  return (
-                    <Text key={`sh${i}${w}`} wrap="truncate" dimColor>
-                      {'  '}
-                      {w} {href ? <Link href={href}>{clean(f)}</Link> : clean(f)}
-                    </Text>
-                  )
-                })}
-              </Box>
-            ))}
-          </Box>
-        ) : null}
-        {p.links?.length ? (
-          <Box key="l" flexDirection="column" marginTop={1}>
-            <Text bold>Links</Text>
-            {linkGroups(p.links).map(g => (
-              <Box key={`l${g.kind}`} flexDirection="column">
-                <Text dimColor> {g.title}</Text>
-                {g.links.map((l, i) => (
-                  <Text key={`l${g.kind}${i}`} wrap="truncate" dimColor={!l.alive}>
-                    {'  '}
-                    {clean(linkLine(l))}{' '}
-                    {linkable(l.url) ? <Link href={l.url}>{l.url}</Link> : clean(l.url)}
-                  </Text>
-                ))}
-              </Box>
-            ))}
-          </Box>
-        ) : null}
-        {problem ? <Text dimColor>{clean(problem)}</Text> : null}
-      </Box>
-    )
+    return paneTree($.ui.resolve(e), p, problem, await $.clock.now())
   })
 
   // crosstalk's own deliveries into the inbox (a notice, a route question, a
@@ -856,179 +722,6 @@ export const register: Register = on => {
     const open = await read($, items)
     const digest = await read($, digestAtom)
     if (open.length === 0 && !digest) return next(e)
-    const { Box, Text } = $.ui.resolve(e)
-    const now = await $.clock.now()
-    const W = Math.max(24, Math.min(e.props.bodyColumns, CARD_MAX))
-    const later = (it: Item) => (raisable(it) ? '' : ' · picker after your next turn')
-    return (
-      <Box flexDirection="column">
-        {digest ? (
-          <Text key="digest" wrap="truncate" dimColor>
-            {digest.replace(/[\u0000-\u001f\u007f]/g, ' ')}
-          </Text>
-        ) : null}
-        {open.map(it => {
-          if (it.kind === 'invite')
-            return (
-              <Text key={it.id} wrap="truncate">
-                <Text color={THREAD} bold>◢ invite</Text>
-                <Text> {it.text ?? ''}</Text>
-                <Text dimColor> · read the words to them; they work once, for fifteen minutes</Text>
-              </Text>
-            )
-          if (it.kind === 'doctor')
-            return (
-              <Text key={it.id} wrap="truncate">
-                <Text color={THREAD} bold>◢ crosstalk</Text>
-                <Text dimColor>
-                  {' '}
-                  · {cut(oneLine((it.question ?? 'something is wrong').replace(/^crosstalk found /, 'found ')), 140)}{later(it)}
-                </Text>
-              </Text>
-            )
-          if (it.kind === 'restore')
-            return (
-              <Text key={it.id} wrap="truncate">
-                <Text color={THREAD} bold>◢ restore</Text>
-                <Text dimColor>
-                  {' '}
-                  · {it.count ?? 0} session{it.count === 1 ? '' : 's'} waiting · or say "restore them"{later(it)}
-                </Text>
-              </Text>
-            )
-          if (it.kind === 'gather')
-            return (
-              <Text key={it.id} wrap="truncate">
-                <Text color={THREAD} bold>◢ gather</Text>
-                <Text dimColor>
-                  {' '}
-                  · {it.count ?? 0} session{it.count === 1 ? '' : 's'} without crosstalk · or say "bring them in"{later(it)}
-                </Text>
-              </Text>
-            )
-          if (it.kind === 'team')
-            return (
-              <Text key={it.id} wrap="truncate">
-                <Text color={THREAD} bold>◢ team</Text>
-                <Text dimColor>
-                  {' '}
-                  · {it.from}'s key changed and is not trusted yet{later(it)}
-                </Text>
-              </Text>
-            )
-          if (it.kind === 'cleanup')
-            return (
-              <Text key={it.id} wrap="truncate">
-                <Text color={THREAD} bold>◢ clean up</Text>
-                <Text dimColor>
-                  {' '}
-                  · {it.count ?? 0} finished worktree{it.count === 1 ? '' : 's'} · or say "clean up the worktrees"{later(it)}
-                </Text>
-              </Text>
-            )
-          if (it.kind === 'ship')
-            return (
-              <Text key={it.id} wrap="truncate">
-                <Text color={THREAD} bold>◢ ship</Text>
-                <Text dimColor>
-                  {' '}
-                  · {it.thread ? `${it.thread}: ` : ''}{cut(oneLine(it.question ?? 'a question for you'), 90)}{later(it)}
-                </Text>
-              </Text>
-            )
-          if (it.kind === 'thread')
-            return (
-              <Text key={it.id} wrap="truncate">
-                <Text color={THREAD} bold>◢ thread</Text>
-                <Text dimColor>
-                  {' '}
-                  · which thread is this session part of?{later(it)}
-                </Text>
-              </Text>
-            )
-          if (it.kind === 'rule' || it.kind === 'connect' || it.kind === 'conflict' || it.kind === 'disk' || it.kind === 'install')
-            return (
-              <Text key={it.id} wrap="truncate">
-                <Text color={THREAD} bold>◢ {it.kind}</Text>
-                <Text dimColor>
-                  {' '}
-                  · {it.kind === 'rule' ? 'always answer this way?' : it.kind === 'disk' ? 'free disk from finished threads?' : it.kind === 'install' ? `turn crosstalk on for everyone in ${it.thread ?? 'this repo'}?` : it.kind === 'connect' ? `connect with your team in ${it.thread ?? 'this repo'}?` : `who changes ${it.thread ?? 'it'}?`}
-                  {later(it)}
-                </Text>
-              </Text>
-            )
-          if (it.kind === 'attention')
-            return (
-              <Text key={it.id} wrap="truncate">
-                <Text color={THREAD} bold>◢ {it.from ?? it.thread ?? 'crosstalk'}</Text>
-                <Text dimColor>
-                  {' '}
-                  · {cut(oneLine(it.question ?? 'a question for you'), 90)}
-                  {later(it)}
-                </Text>
-              </Text>
-            )
-          if (it.kind === 'route')
-            return (
-              <Text key={it.id} wrap="truncate">
-                <Text color={THREAD} bold>◢ route</Text>
-                <Text dimColor>
-                  {' '}
-                  · a message from {it.from} needs a session{later(it)}
-                </Text>
-              </Text>
-            )
-          const head = `◢ ${it.from} · ${it.thread ?? 'crosstalk'}`
-          const a = age(it.ts, now)
-          const fill = Math.max(1, W - 7 - head.length - a.length)
-          return (
-            <Box key={it.id} flexDirection="column" width={W}>
-              <Text>
-                <Text color={FRAME}>╭─ </Text>
-                <Text color={SENDER} bold>◢ {it.from}</Text>
-                <Text color={FRAME}> · </Text>
-                <Text color={THREAD}>{it.thread ?? 'crosstalk'}</Text>
-                <Text color={FRAME}> {'─'.repeat(fill)} </Text>
-                <Text dimColor>{a}</Text>
-                <Text color={FRAME}>─╮</Text>
-              </Text>
-              <Box width={W}>
-                <Text color={FRAME}>│ </Text>
-                <Box flexGrow={1}>
-                  <Text wrap="truncate">
-                    {it.kind === 'ask' ? '? ' : ''}
-                    {oneLine(it.text ?? '')}
-                  </Text>
-                </Box>
-                <Text color={FRAME}> │</Text>
-              </Box>
-              {(it.chips ?? []).map((c, i) => (
-                <Box key={`${it.id}:chip${i}`} width={W}>
-                  <Text color={FRAME}>│ </Text>
-                  <Box flexGrow={1}>
-                    <Text wrap="truncate">
-                      <Text color="suggestion">▸ {c.kind}</Text> {c.label} <Text dimColor>{size(c.bytes)}</Text>
-                    </Text>
-                  </Box>
-                  <Text color={FRAME}> │</Text>
-                </Box>
-              ))}
-              {later(it) ? (
-                <Box width={W}>
-                  <Text color={FRAME}>│ </Text>
-                  <Box flexGrow={1}>
-                    <Text dimColor wrap="truncate">
-                      the picker comes after your next turn
-                    </Text>
-                  </Box>
-                  <Text color={FRAME}> │</Text>
-                </Box>
-              ) : null}
-              <Text color={FRAME}>╰{'─'.repeat(W - 2)}╯</Text>
-            </Box>
-          )
-        })}
-      </Box>
-    )
+    return bandTree($.ui.resolve(e), open, digest, await $.clock.now(), e.props.bodyColumns, raisable)
   })
 }

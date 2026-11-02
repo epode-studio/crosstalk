@@ -115,7 +115,12 @@ src/daemon.ts    relay link, routing, triage, injection
 src/server.ts    the MCP server, channel push
 src/tools/       the eight MCP tools and the action each resolves to
 src/link.ts      encrypted channel to the relay
-src/rooms.ts     rooms, invitations, room keys
+src/rooms.ts     how the protocol groups people joined with words: invitations, keys
+src/threads/     threads: the model (notes, features, …), the file, sealing, the ref
+src/threads/running.ts   a thread's Running: one view over services, URLs, shares, shots
+src/threads/history.ts   a thread's History: its links and ended notes, one search
+src/notes.ts     notes kept outside threads (facts.ts, tasks.ts), listed as notes
+mod/             what the person sees in Claude Code: register.tsx, draw.tsx
 src/inject.ts    writes into a session's inbox socket
 src/footprint.ts what a session is working on, and matching a message to it
 src/restore.ts   which sessions a restart lost, and reopening them per terminal
@@ -139,4 +144,4 @@ bun scripts/release.ts "what changed"
 ```
 
 `CROSSTALK_HOME` moves crosstalk's state, so you can run several identities on
-one machine and put them in a room with each other. That is how all of this was tested.
+one machine and join them together with words. That is how all of this was tested.

@@ -15,10 +15,9 @@ const OLD: [old: string, tool: string, args: Record<string, unknown>, handed?: R
   ["crosstalk_thread_read", "crosstalk_thread", { action: "read", thread: "auth" }, { thread: "auth" }],
   ["crosstalk_decide", "crosstalk_thread", { action: "note", kind: "decision", text: "v2 tokens", rationale: "r", tell: "marie" }, { text: "v2 tokens", rationale: "r", tell: "marie" }],
   ["crosstalk_remember", "crosstalk_thread", { action: "note", kind: "fact", text: "tokens are v2", tags: ["api"] }, { text: "tokens are v2", tags: ["api"] }],
-  ["crosstalk_facts", "crosstalk_thread", { action: "note", kind: "fact" }, {}],
+  ["crosstalk_notes", "crosstalk_thread", { action: "note", kind: "fact" }, { kind: "fact" }],
   ["crosstalk_confirm", "crosstalk_thread", { action: "note", kind: "fact", op: "confirm", id: "f1" }, { id: "f1" }],
   ["crosstalk_correct", "crosstalk_thread", { action: "note", kind: "fact", op: "correct", id: "f1", text: "now v3", reason: "moved" }, { id: "f1", text: "now v3", reason: "moved" }],
-  ["crosstalk_tasks", "crosstalk_thread", { action: "note", kind: "task" }, {}],
   ["crosstalk_task_add", "crosstalk_thread", { action: "note", kind: "task", text: "write docs", for: "jo" }, { text: "write docs", for: "jo" }],
   ["crosstalk_task_claim", "crosstalk_thread", { action: "note", kind: "task", op: "claim", id: "t1" }, { id: "t1" }],
   ["crosstalk_task_done", "crosstalk_thread", { action: "note", kind: "task", op: "done", id: "t1", text: "shipped" }, { id: "t1", note: "shipped" }],
@@ -57,14 +56,13 @@ const OLD: [old: string, tool: string, args: Record<string, unknown>, handed?: R
   ["crosstalk_disk", "crosstalk_work", { action: "disk", rule: true }, { rule: true }],
   ["crosstalk_open", "crosstalk_work", { action: "open", thread: "auth", editor: "zed" }, { thread: "auth", editor: "zed" }],
 
-  ["crosstalk_urls", "crosstalk_look", { action: "urls", kind: "shared" }, { kind: "shared" }],
+  ["crosstalk_running", "crosstalk_look", { action: "running", kind: "share" }, { kind: "share" }],
   ["crosstalk_open_url", "crosstalk_look", { action: "open_url", name: "auth web" }, { name: "auth web" }],
   ["crosstalk_screenshot", "crosstalk_look", { action: "screenshot", path: "/login" }, { path: "/login" }],
   ["crosstalk_screenshots", "crosstalk_look", { action: "screenshots", name: "auth", open: true }, { name: "auth", open: true }],
   ["crosstalk_history", "crosstalk_look", { action: "history", thread: "auth", query: "login" }, { thread: "auth", query: "login" }],
   ["crosstalk_share", "crosstalk_look", { action: "share", name: "auth web", with: ["ben"], for: "2h" }, { name: "auth web", with: ["ben"], for: "2h" }],
   ["crosstalk_unshare", "crosstalk_look", { action: "unshare", name: "auth" }, { name: "auth" }],
-  ["crosstalk_shares", "crosstalk_look", { action: "shares" }, {}],
   ["crosstalk_qr", "crosstalk_look", { action: "qr", name: "auth preview" }, { name: "auth preview" }],
   ["crosstalk_pane", "crosstalk_look", { action: "pane", thread: "auth" }, { thread: "auth" }],
 
@@ -96,6 +94,9 @@ const OLD: [old: string, tool: string, args: Record<string, unknown>, handed?: R
 
 /** Calls that reach an old tool through a part of it, rather than the whole. */
 const PARTS: [old: string, tool: string, args: Record<string, unknown>, handed: Record<string, unknown>][] = [
+  ["crosstalk_notes", "crosstalk_thread", { action: "note", kind: "task", thread: "auth" }, { thread: "auth", kind: "task" }],
+  ["crosstalk_notes", "crosstalk_thread", { action: "note" }, {}],
+  ["crosstalk_confirm", "crosstalk_thread", { action: "note", kind: "fact", op: "confirm", id: "f1", thread: "auth" }, { id: "f1", thread: "auth" }],
   ["crosstalk_thread", "crosstalk_thread", { action: "note", kind: "rule", text: "always v2", when: "w", then: "t" }, { rule: { text: "always v2", when: "w", then: "t" } }],
   ["crosstalk_thread", "crosstalk_thread", { action: "note", kind: "recap", text: "half done", thread: "auth" }, { thread: "auth", recap: "half done" }],
   ["crosstalk_thread", "crosstalk_thread", { action: "note", kind: "question", text: "v1?", blocking: true }, { question: { text: "v1?", blocking: true } }],
@@ -147,10 +148,10 @@ describe("the surface", () => {
 })
 
 describe("every tool of the old surface is reachable", () => {
-  test("the table names each of the 73 once", () => {
+  test("the table names each of the 73 once, less the lists that are now one: notes (facts, tasks) and running (urls, shares)", () => {
     const names = OLD.map(([n]) => n)
     expect(new Set(names).size).toBe(names.length)
-    expect(names.length).toBe(73)
+    expect(names.length).toBe(71)
   })
 
   for (const [old, tool, args, handed] of [...OLD, ...PARTS])

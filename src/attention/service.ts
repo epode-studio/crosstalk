@@ -285,7 +285,7 @@ export class AttentionService {
 
   private threadText(t: M.Thread): string {
     const v = M.view(t)
-    return [v.recap, ...v.features.map((f) => f.name), ...v.tasks.map((k) => k.text), ...v.decisions.slice(-10).map((x) => x.text), ...v.questions.map((q) => q.text)].join(" ")
+    return [v.recap, ...v.features.map((f) => f.name), ...v.notes.filter((k) => k.kind === "task").map((k) => k.text), ...v.notes.filter((x) => x.kind === "decision").slice(-10).map((x) => x.text), ...v.questions.map((q) => q.text)].join(" ")
   }
 
   /**
@@ -313,7 +313,7 @@ export class AttentionService {
   private storeRecap(threadId: string, recap: string) {
     const t = this.d.threads.thread(threadId)
     if (!t || !recap) return
-    const cur = t.recap.value
+    const cur = M.recap(t)
     if (cur && this.st.autoRecap[t.id] !== cur) return
     if (cur === recap) return
     this.d.threads.mutate(t.id, (th, by, now) => M.setRecap(th, by, recap, now))
