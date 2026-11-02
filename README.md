@@ -205,6 +205,10 @@ terminal app you already use and turns it into the workspace.
   other machines. Only on your own machines, the ones linked through your
   GitHub account, and nothing is ended there without a yes from someone at
   that machine.
+- **Names, not ports.** A thread's dev server is `http://auth.localhost`
+  (`:1355` where port 80 needs privileges), through a small local proxy that
+  follows it when its port moves, websockets and HMR included. The tab says
+  `auth · auth.localhost:1355`, not a number.
 - **Not just your agents.** Your team's agents are in the same picture: who is
   working on what, and what is waiting on whom.
 
@@ -526,6 +530,13 @@ The measure is time from idea to merge, and how few of your minutes it took.
   worktrees never fight over :3000; the next session is told what is running
   where, and a session is never restarted, or a worktree removed, under
   something still running. [How](docs/services.md).
+- **Every URL, labelled.** Local servers, previews, pull requests and links an
+  agent's commands print are kept per thread (`auth · dev server`,
+  `auth · preview`, `auth · PR #12`), checked to see they still answer, and
+  dropped when they are dead. "What's the auth URL?" and "open the billing
+  preview" work from any session; the pane lists them, clickable. Tokens in a
+  printed link are taken out before it is kept, and nothing an agent printed
+  is ever fetched. [How](docs/urls.md).
 - **Attach the thing, not a description of it.** "Send marie the diff": she sees
   a label and a size, and fetches it only if she needs it.
 - **No commands to learn.** Say it to any agent: "marie gave me words:
@@ -647,6 +658,7 @@ Permission relay across people is not implemented and never will be.
 
 - [Restore after a restart](docs/restore.md), getting every session back in its tab after a restart or crash
 - [Services](docs/services.md), dev servers and watchers that outlive sessions, on each worktree's own ports
+- [URLs](docs/urls.md), every URL a thread has, labelled and checked, and names instead of ports
 
 - [The next generation](docs/design/next-generation.md), the design this README describes, and what is still open
 

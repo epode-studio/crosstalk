@@ -60,6 +60,7 @@ import * as gather from "./gather.ts"
 import { uiCmd } from "./uicli.ts"
 import * as terminal from "./terminal/cli.ts"
 import * as shipCli from "./shipping/cli.ts"
+import { urlsCmd } from "./urls/cli.ts"
 import fs from "node:fs"
 import path from "node:path"
 import os from "node:os"
@@ -1758,5 +1759,7 @@ const commands: Record<string, () => Promise<void>> = {
   ui: () => uiCmd(argv, ROOT_DIR),
   // Sessions and attention, for the mod and notifications: src/attention/cli.ts.
   attn: () => attnCli.attnCmd(argv),
+  // Every URL the threads have, and the proxy's names: src/urls/cli.ts.
+  urls: () => urlsCmd(argv),
 }
 await (commands[cmd] ?? (async () => die(`unknown command "${cmd}"`)))()

@@ -79,7 +79,8 @@ without ss). `crosstalk_serve` waits up to three seconds for the server to bind
 so it can say where it listens.
 
 **Where they show.** After the session's title on its tab (`auth · :4100`,
-the number and nothing more), on the mod's status line (`◢ auth · :4100 · 0
+the number and nothing more, or the worktree's name through crosstalk's proxy
+while it is up, `auth · auth.localhost:1355`: [urls.md](urls.md)), on the mod's status line (`◢ auth · :4100 · 0
 waiting`), and in the thread pane under Services, each with a link to
 `http://localhost:<port>` (an OSC 8 hyperlink in the terminal).
 

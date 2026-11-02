@@ -32,6 +32,7 @@ import * as metrics from "./metrics/log.ts"
 import * as attnHook from "./attention/hook.ts"
 import * as sessionNames from "./sessions/names.ts"
 import * as pastSessions from "./sessions/index.ts"
+import * as urlTrack from "./urls/index.ts"
 
 const input = await new Promise<string>((resolve) => {
   let raw = ""
@@ -285,6 +286,19 @@ if (restoreClient === "claude" && sessionId) {
     if (chrome.systemMessage) systemMessage = systemMessage ? `${systemMessage}\n${chrome.systemMessage}` : chrome.systemMessage
   } catch {}
 }
+/**
+ * Links a Bash command printed (src/urls/): local servers, PRs and other
+ * links, labelled and kept as data, with credentials taken out. Nothing is
+ * fetched or opened here, and none of it goes to the model. Any client whose
+ * PostToolUse carries the output; no room needed.
+ */
+if (/^post_?tool_?use$/i.test(eventName) && sessionId && !process.env.CROSSTALK_NO_URLS) {
+  try {
+    const out = urlTrack.outputOf(hook)
+    if (out) urlTrack.collectFromOutput({ sessionId, cwd, text: out })
+  } catch {}
+}
+
 /** What Claude Code reads beside the answer: the tab's progress sequence and the session's name. */
 const chromeOut = (hookSpecific?: Record<string, unknown>) => {
   const out: Record<string, unknown> = {}

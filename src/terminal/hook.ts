@@ -12,7 +12,9 @@
 //   services   on a session start, which crosstalk services still run in this
 //              worktree (the person's systemMessage, and a line for the agent
 //              as data) and the worktree's own ports; their ports after the
-//              session's title, `auth · :4100` (docs/services.md)
+//              session's title, `auth · :4100` (docs/services.md), or the
+//              worktree's name through crosstalk's proxy while it is up,
+//              `auth · auth.localhost:1355` (docs/urls.md)
 
 import * as S from "./status.ts"
 import * as ui from "../uistate.ts"
@@ -20,6 +22,8 @@ import * as spawn from "../spawn.ts"
 import * as cleanup from "../cleanup.ts"
 import * as Svc from "../services/service.ts"
 import * as Pt from "../services/ports.ts"
+import * as Urls from "../urls/index.ts"
+import { readState } from "../urls/proxy.ts"
 
 export type Chrome = {
   terminalSequence?: string
@@ -27,12 +31,26 @@ export type Chrome = {
   systemMessage?: string
   /** For the agent, at SessionStart: the worktree's ports and its running services, as data. */
   context?: string
-  /** The ports of this worktree's running services, `:4100`, for after the title. */
+  /** The ports of this worktree's running services, `:4100`, or its proxy name, `auth.localhost:1355`, for after the title. */
   badge?: string
 }
 
-/** `auth · :4100`: a title with its services' ports after it, the number and nothing more. */
-export const withBadge = (title: string | undefined, badge: string | undefined) => (title && badge ? `${title} · ${badge.replace(/[^0-9: …]/g, "")}` : title)
+/** What a badge may hold: ports, or a host name and port. Nothing that could be an escape sequence. */
+export const badgeText = (b: string) => b.replace(/[^a-z0-9.:\- …]/gi, "").slice(0, 80)
+
+/** `auth · :4100` or `auth · auth.localhost:1355`: a title with where its services are after it. */
+export const withBadge = (title: string | undefined, badge: string | undefined) => (title && badge ? `${title} · ${badgeText(badge)}` : title)
+
+/** The worktree's proxy name while the proxy is up and a service runs here, else the ports. */
+function named(cwd: string, ports: string | undefined): string | undefined {
+  if (!ports) return ports
+  try {
+    const s = readState()
+    return (s && Urls.badge(Pt.rootOf(cwd), s)) || ports
+  } catch {
+    return ports
+  }
+}
 
 /**
  * A spawned agent's title, `auth · auth-2`. Control characters are stripped
@@ -76,14 +94,14 @@ export function fromHook(o: { event: string; sessionId: string; cwd: string; hoo
       // After a compaction or /clear the agent has lost the line; the person was told already.
       if (b.systemMessage && !/^(clear|compact)$/.test(String(o.hook?.source ?? ""))) out.systemMessage = [out.systemMessage, b.systemMessage].filter(Boolean).join("\n")
       if (b.context) out.context = b.context
-      if (b.badge) out.badge = b.badge
+      if (b.badge) out.badge = named(o.cwd, b.badge)
     } catch {}
   } else if (/^UserPromptSubmit$/.test(o.event) && !o.env.CROSSTALK_NO_SERVICES) {
     try {
       // Cheap: a readdir, and one git and one tmux call only when crosstalk runs services at all.
       if (Svc.readAll().some((s) => !s.stoppedAt)) {
         const b = Svc.badge(Svc.running(Pt.rootOf(o.cwd)))
-        if (b) out.badge = b
+        if (b) out.badge = named(o.cwd, b)
       }
     } catch {}
   }

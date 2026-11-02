@@ -33,6 +33,7 @@ import * as moreTools from "./moretools.ts"
 import * as attnTools from "./attention/tools.ts"
 import * as svcTools from "./services/tools.ts"
 import * as sessionTools from "./sessions/tools.ts"
+import * as urlTools from "./urls/tools.ts"
 import { rootFrom } from "./paths.ts"
 import { sessionsDir } from "./registry.ts"
 import { channelVerdict, hostArgv } from "./channels.ts"
@@ -415,6 +416,8 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     ...svcTools.TOOLS,
     // Close, find, resume, rename, move, pop out, background; here or on your other machines (src/sessions/).
     ...sessionTools.TOOLS,
+    // Every URL the threads have, labelled, by name through the local proxy (src/urls/).
+    ...urlTools.TOOLS,
     {
       name: "crosstalk_thread_read",
       description:
@@ -696,6 +699,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           (await attnTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
           (await svcTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
           (await sessionTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
+          (await urlTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
           err(`unknown tool ${req.params.name}`)
         )
     }
