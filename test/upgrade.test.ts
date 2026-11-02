@@ -33,6 +33,14 @@ describe("daemon upgrade", () => {
     expect(C.daemonOutdated("0.2.1")).toBe(false) // an old session never pulls a newer daemon back
     expect(C.daemonOutdated("")).toBe(false)
   })
+  test("only a crosstalk daemon is ever stopped, never this process or a reused pid", () => {
+    expect(C.isDaemonProcess(process.pid, () => "bun /x/dist/daemon.js")).toBe(false)
+    expect(C.isDaemonProcess(4242, () => "bun /Users/p/.claude/plugins/cache/epode/crosstalk/0.2.1/dist/daemon.js")).toBe(true)
+    expect(C.isDaemonProcess(4242, () => "node /opt/crosstalk/src/daemon.ts")).toBe(true)
+    expect(C.isDaemonProcess(4242, () => "/usr/bin/vim notes.txt")).toBe(false)
+    expect(C.isDaemonProcess(4242, () => "node my-daemon.js --watch")).toBe(false)
+    expect(C.isDaemonProcess(4242, () => null)).toBe(false)
+  })
   test("the plugin's own version is read from its manifest", () => {
     const root = path.join(import.meta.dir, "..")
     expect(C.pluginVersion(root)).toBe(JSON.parse(fs.readFileSync(path.join(root, ".claude-plugin", "plugin.json"), "utf8")).version)

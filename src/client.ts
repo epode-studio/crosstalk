@@ -2,7 +2,7 @@
 
 import net from "node:net"
 import fs from "node:fs"
-import { spawn } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import path from "node:path"
 import { P } from "./config.ts"
 import { rootFrom, shim } from "./paths.ts"
@@ -95,10 +95,32 @@ export function daemonOutdated(mine: string): boolean {
   }
 }
 
-/** Stop an older daemon so this install's starts. SIGTERM only; true when it has gone. */
-async function stopOutdated(): Promise<boolean> {
+/**
+ * Whether a pid is a crosstalk daemon: never this process, and its command
+ * line runs crosstalk's daemon entry, so a stale lock naming a reused pid is
+ * never signalled.
+ */
+export function isDaemonProcess(pid: number, args: (pid: number) => string | null = psArgs): boolean {
+  if (!pid || pid === process.pid || pid === process.ppid) return false
+  const a = args(pid) ?? ""
+  return /(^|[\/\s])daemon\.(js|ts)(\s|$)/.test(a) || /\bcrosstalk\S*\s+daemon\s*$/.test(a)
+}
+
+function psArgs(pid: number): string | null {
   try {
-    process.kill(Number(fs.readFileSync(P.daemonLock, "utf8")), "SIGTERM")
+    const r = spawnSync("ps", ["-o", "args=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 })
+    return r.status === 0 ? r.stdout.trim() : null
+  } catch {
+    return null
+  }
+}
+
+/** Stop an older daemon so this install's starts. SIGTERM only, only to a crosstalk daemon; true when it has gone. */
+async function stopOutdated(): Promise<boolean> {
+  const pid = Number(fs.readFileSync(P.daemonLock, "utf8"))
+  if (!isDaemonProcess(pid)) return false
+  try {
+    process.kill(pid, "SIGTERM")
   } catch {}
   for (let i = 0; i < 50; i++) {
     if (!daemonRunning()) return true
