@@ -177,7 +177,10 @@ terminal app you already use and turns it into the workspace.
   brought back by crosstalk: one window per repository, a thread's tabs side by
   side.
 - **Status at a glance.** Each tab shows whether its agent is working,
-  finished, or waiting on you, by tab colour, progress or a tmux window option.
+  finished, or waiting on you: a progress mark where the terminal draws one,
+  tab colour in iTerm2 and kitty, a window option in tmux. Terminal.app has no
+  tab badge, only the background, so crosstalk leaves your backgrounds alone
+  unless you set `CROSSTALK_TAB_COLOUR=1`.
   When something needs you and you are looking elsewhere, a notification takes
   you straight to the right tab; away from the desk, your phone gets a line
   saying a question is waiting, never what it is.
@@ -194,7 +197,7 @@ terminal app you already use and turns it into the workspace.
   you say yes on the picker. Its dev server keeps running unless you say
   otherwise. It is archived, not lost, so a restart never offers it back. Its
   tab goes with it.
-- **Tidy up.** "I'm overwhelmed" or "tidy up" puts one question to you: close
+- **Tidy up.** "I'm overwhelmed" or "tidy up my sessions" puts one question to you: close
   the sessions you have left idle, fold sessions doing the same work into one
   (the one kept is told where the others had got to), and close the empty
   tabs ended sessions left behind. "And merge my windows" makes them tabs of
@@ -359,6 +362,34 @@ put it on your PATH once:
 ```
 /crosstalk:install path
 ```
+
+<br>
+
+### Updating
+
+**Claude Code**
+
+```
+claude plugin marketplace update epode
+claude plugin update crosstalk@epode
+```
+
+Sessions you start afterwards run the new version, and the first of them
+replaces crosstalk's background process if it is older. Sessions already open
+keep the old version until you restart them.
+
+If `claude plugin marketplace list` shows `epode` as a **Folder** rather than
+GitHub, it was added from a local copy and never sees a release. Switch it once;
+your identity, people and threads are kept, since they live in
+`~/.claude/crosstalk`, not in the plugin:
+
+```
+claude plugin marketplace remove epode
+claude plugin marketplace add epode-studio/crosstalk
+claude plugin install crosstalk@epode
+```
+
+Other agents update the way they installed it.
 
 <br>
 
@@ -613,6 +644,7 @@ The measure is time from idea to merge, and how few of your minutes it took.
 | Cards, pickers, the thread pane and status line in Claude Code | **here** (mod, 2.1.287+) |
 | Restore every agent after a restart or crash | **here** |
 | Opening and restoring agents in your terminal's tabs | **here** (Terminal.app, iTerm2, kitty, WezTerm, Ghostty, tmux, Windows Terminal) |
+| Tidy up: idle sessions and empty tabs closed, similar sessions folded into one | **here**, first version (tabs close in Terminal.app and tmux) |
 | Main session, answers become rules, agents warning each other | **here**, first version |
 | Shipping: reviewer agents, evidence, flags, production reopening threads | **here**: Unleash first, plus LaunchDarkly, PostHog, GrowthBook and Statsig; previews, dark launches, metrics-driven ramps and kills |
 
