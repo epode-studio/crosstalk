@@ -15,7 +15,8 @@
 #               by hand is refused by ana's daemon
 #   no SSRF     an absolute-form request for another port on ana's machine
 #               reaches only the shared server; one as a frame path is refused
-#   unshare     cuts ben off; a share for three seconds expires by itself
+#   unshare     cuts ben off; sharing it again reaches him at once (his proxy
+#               routes it as the offer is taken); a short share expires by itself
 #
 # Every process, tmux server and file started here is torn down on exit.
 
@@ -28,9 +29,11 @@ export CROSSTALK_SHARE_TEST=1
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 PORT=${SHARE_RELAY_PORT:-8893}
-PA=${SHARE_PROXY_A:-48651}
-PB=${SHARE_PROXY_B:-48652}
-PC=${SHARE_PROXY_C:-48653}
+# Below Linux's ephemeral range (32768-60999): an outgoing socket that happened to get a fixed port
+# there would leave a daemon with no proxy at all.
+PA=${SHARE_PROXY_A:-28651}
+PB=${SHARE_PROXY_B:-28652}
+PC=${SHARE_PROXY_C:-28653}
 TMP=$(mktemp -d)
 A="$TMP/a"; B="$TMP/b"; C="$TMP/c"
 export HOME="$TMP/user"
@@ -62,6 +65,9 @@ rpc() { CROSSTALK_HOME="$1" bun -e '
 field() { echo "$1" | bun -e 'const r = JSON.parse(await Bun.stdin.text()); const v = (0, eval)("(r) => " + process.argv[1])(r); console.log(typeof v === "string" ? v : JSON.stringify(v ?? null))' "$2"; }
 mcp() { bun "$ROOT/test/mcp-call.ts" "$1" "$2" "$3" "$4" "$5" 2>&1; }
 via() { curl -s --max-time 10 --resolve "$2:$1:127.0.0.1" "http://$2:$1${3:-/}" 2>/dev/null; }
+# ben's curl, only once ana's server is what answers: his proxy's "no service is called that" page is
+# an answer too, and waitfor would stop at it.
+reaches() { local v; v=$(via "$@"); case "$v" in *"up on"*) echo "$v" ;; esac; }
 waitfor() {
   local n=$1; shift
   for _ in $(seq 1 $((n * 5))); do v=$("$@" 2>/dev/null); [ -n "$v" ] && { echo "$v"; return; }; sleep 0.2; done
@@ -75,6 +81,10 @@ cleanup() {
   [ -n "$OTHER" ] && kill "$OTHER" 2>/dev/null
   tmux -L crosstalk kill-server 2>/dev/null
   pkill -f "$TMP/" 2>/dev/null
+  if [ "$FAILED" -ne 0 ] && [ -n "${SHARE_KEEP:-}" ]; then
+    mkdir -p "$SHARE_KEEP" && cp -r "$TMP"/*.log "$A" "$B" "$C" "$SHARE_KEEP"/ 2>/dev/null
+    echo "logs kept in $SHARE_KEEP"
+  fi
   rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -173,6 +183,9 @@ start_daemon "$B" "$PB" "$TMP/db.log"
 start_daemon "$C" "$PC" "$TMP/dc.log"
 for _ in $(seq 1 40); do [ -S "$A/daemon.sock" ] && [ -S "$B/daemon.sock" ] && [ -S "$C/daemon.sock" ] && break; sleep 0.25; done
 has "$(waitfor 15 grep -o 'relay ready' "$TMP/db.log")" "relay ready" "three daemons on one relay"
+for X in "a $PA" "b $PB" "c $PC"; do set -- $X
+  has "$(waitfor 10 grep -o "proxy on http://127.0.0.1:$2" "$TMP/d$1.log")" "proxy on http://127.0.0.1:$2" "daemon $1's proxy is on :$2"
+done
 check "$(field "$(rpc "$A" '{"op":"peers"}')" 'r.peers.map(p => p.label).sort().join(",")')" "ben,cat" "ana has a direct channel with ben and with cat"
 
 # --- ana serves, and shares with ben -----------------------------------------------------------
@@ -192,7 +205,7 @@ has "$(waitfor 15 sh -c "grep -o 'auth.ana.localhost' '$B/urls.json'")" "auth.an
 has "$(waitfor 15 grep -o "ana shared auth · web as auth.ana.localhost" "$TMP/db.log")" "auth.ana.localhost" "with a listener of its own"
 has "$(waitfor 10 sh -c "grep -o '\"host\": \"auth.ana\"' '$B/proxy.json'")" "auth.ana" "ben's proxy routes auth.ana.localhost"
 
-PAGE=$(waitfor 15 via "$PB" auth.ana.localhost /)
+PAGE=$(waitfor 15 reaches "$PB" auth.ana.localhost /)
 has "$PAGE" "up on $SP" "ben's curl through his proxy gets ana's page"
 has "$PAGE" "host=auth.ana.localhost:$PB" "the Host is ben's name for it"
 has "$PAGE" "viewer=ben" "and ana's server can tell it is ben"
@@ -245,15 +258,20 @@ PROBE=$(rpc "$B" "{\"op\":\"share_probe\",\"to\":\"ana\",\"share\":\"$SID\",\"pa
 check "$(field "$PROBE" 'r.status')" "410" "and ana's daemon refuses the old share by itself"
 has "$(waitfor 10 sh -c "grep -o '\"state\": \"revoked\"' '$B/urls.json'")" "revoked" "ben's link is marked ended"
 
-OUT=$(mcp "$A" sess-a crosstalk_share '{"name":"auth web","with":["ben"],"for":"0.05m"}' "$WT")
-has "$OUT" "shared auth · web with ben" "shared again, for three seconds"
+# The same server shared again right after: a new share (a new id) that ben's proxy routes as soon
+# as his daemon takes the offer, not at the proxy's next look. Long enough that delivery never races
+# the expiry; the expiry is then waited for as an event, on both sides.
+OUT=$(mcp "$A" sess-a crosstalk_share '{"name":"auth web","with":["ben"],"for":"0.2m"}' "$WT")
+has "$OUT" "shared auth · web with ben" "shared again, for twelve seconds"
 SID2=$(field "$(cat "$A/shares.json")" 'r.out.find(s => !s.ended).id')
-has "$(waitfor 15 via "$PB" auth.ana.localhost /)" "up on $SP" "ben reaches it"
-sleep 4
-hasnt "$(via "$PB" auth.ana.localhost /)" "up on" "and after three seconds, not"
+has "$(waitfor 15 sh -c "grep -o '\"id\": \"$SID2\"' '$B/shares.json'")" "$SID2" "ben's daemon takes the new offer"
+# One look, no retry: the route is in ben's proxy before his shares.json has the share.
+has "$(via "$PB" auth.ana.localhost /)" "up on $SP" "ben reaches it at once"
+has "$(waitfor 30 grep -o "share: $SID2 expired" "$TMP/da.log")" "expired" "ana's daemon ends it when its time is up"
+has "$(waitfor 15 grep -o "ana's $SID2 expired" "$TMP/db.log")" "expired" "and ben's daemon ends it too"
+hasnt "$(via "$PB" auth.ana.localhost /)" "up on" "after that, ben cannot reach it"
 PROBE=$(rpc "$B" "{\"op\":\"share_probe\",\"to\":\"ana\",\"share\":\"$SID2\",\"path\":\"/\"}")
 check "$(field "$PROBE" 'r.status')" "410" "ana's daemon refuses an expired share"
-has "$(grep -o "share: $SID2 expired" "$TMP/da.log" | head -1)" "expired" "ana's daemon ended it"
 
 stop_daemon "$A"; stop_daemon "$B"; stop_daemon "$C"
 echo

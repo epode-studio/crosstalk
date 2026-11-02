@@ -90,6 +90,16 @@ export const urls = (o: { file?: string; now?: () => number } = {}) =>
 const extra: (() => Target[])[] = []
 /** More names for the proxy, from another part of the daemon: servers shared with this machine (src/share/). */
 export const addTargets = (fn: () => Target[]) => void extra.push(fn)
+const changed: (() => void)[] = []
+/** The proxy, to hear that the names changed (it reads them again at once). */
+export const onTargetsChanged = (fn: () => void) => void changed.push(fn)
+/** Names changed now (a share given here started or ended): the proxy reads them again, not at its next poll. */
+export function targetsChanged() {
+  for (const fn of changed)
+    try {
+      fn()
+    } catch {}
+}
 
 /** Running services, for the proxy: cheap (no port lookup; the ports last seen, else the PORT given). */
 export function targets(): Target[] {

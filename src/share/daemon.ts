@@ -472,6 +472,7 @@ export function createShares(d: ShareDeps) {
     s.ended = why
     s.endedAt = Date.now()
     viewer.close(s.id, why === "expired" ? "has expired" : why === "declined" ? "was closed here" : "was stopped")
+    U.targetsChanged()
     settleCard(s.id)
     save()
     try {
@@ -504,6 +505,9 @@ export function createShares(d: ShareDeps) {
     const s: S.InShare = { id: r.id, owner: label, fingerprint: p.fingerprint!, label: r.label, name, ...(thread ? { thread } : {}), expiresAt: r.expiresAt, at: Date.now() }
     if (!startListener(s)) return
     state.in.push(s)
+    // The proxy routes the name now: it would otherwise wait for its next look (up to seconds), and a
+    // request in between gets "no service is called that", e.g. on sharing again right after unsharing.
+    U.targetsChanged()
     card(s)
     save()
     recordIn(s)

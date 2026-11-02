@@ -84,8 +84,11 @@ The daemon runs a small reverse proxy (`src/urls/proxy.ts`):
   started the service; without one, the worktree's folder name. Names are DNS
   labels (lower case, digits, hyphens).
 - **follows the port**: the service's current port, looked up again every
-  three seconds and at once for a name it does not know, so a service
-  restarted on another port keeps its name.
+  three seconds and (at most once a second) for a name it does not know, so
+  a service restarted on another port keeps its name. A server shared with
+  this machine is routed the moment the offer is taken, and unrouted the
+  moment it ends: the daemon tells the proxy rather than waiting for its next
+  look.
 - **websockets and streaming**: once routed, the connection is piped both
   ways as it is, so a dev server's HMR socket, server-sent events and streamed
   responses work. The Host header reaches the server unchanged; Vite, Next.js
