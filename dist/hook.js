@@ -1835,6 +1835,8 @@ var RECHECK_MS = 10 * 60 * 1000;
 
 // src/threads/model.ts
 var STATUSES = ["active", "waiting", "done", "archived"];
+var NOTE_KINDS = ["decision", "fact", "task", "rule", "recap"];
+var RECAP_ID = "recap";
 var LISTS = [
   "people",
   "sessions",
@@ -1842,13 +1844,14 @@ var LISTS = [
   "branches",
   "features",
   "questions",
-  "decisions",
-  "facts",
-  "tasks",
-  "rules",
+  "notes",
   "links"
 ];
-var SECTIONS = ["meta", "recap", ...LISTS];
+var SECTIONS = ["meta", ...LISTS];
+var LEGACY_LISTS = { decisions: "decision", facts: "fact", tasks: "task", rules: "rule" };
+var LEGACY_SECTIONS = ["recap", ...Object.keys(LEGACY_LISTS)];
+var COMMITTED_NOTES = new Set(["decision", "rule"]);
+var newer = (a, b) => a.l !== b.l ? a.l > b.l : a.by > b.by;
 function slug(s, max = 40) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, max).replace(/-+$/g, "") || "thread";
 }
@@ -1856,30 +1859,45 @@ function parseThread(v) {
   if (!v || typeof v !== "object")
     return null;
   const o = v;
-  if (o.v !== 1 || typeof o.id !== "string" || !/^[0-9a-f]{8,32}$/.test(o.id))
+  if (o.v !== 1 && o.v !== 2 || typeof o.id !== "string" || !/^[0-9a-f]{8,32}$/.test(o.id))
     return null;
   const stamp = (s) => s && typeof s.l === "number" && typeof s.by === "string";
   if (!stamp(o.meta) || !o.meta.value || typeof o.meta.value.name !== "string" || !STATUSES.includes(o.meta.value.status))
     return null;
-  if (!stamp(o.recap) || typeof o.recap.value !== "string")
-    return null;
   const out = {
-    v: 1,
+    v: 2,
     id: o.id,
     meta: { l: o.meta.l, by: o.meta.by, value: { ...o.meta.value, name: slug(o.meta.value.name), public: !!o.meta.value.public, repo: String(o.meta.value.repo ?? "") } },
-    recap: { l: o.recap.l, by: o.recap.by, value: o.recap.value.slice(0, 4000) },
     lamport: Number(o.lamport) || 0,
     touchedAt: Number(o.touchedAt) || 0
   };
-  for (const k of LISTS) {
-    const src = o[k] && typeof o[k] === "object" ? o[k] : {};
+  const itemsOf = (src) => {
     const items = {};
-    for (const [id, it] of Object.entries(src).slice(0, 2000))
+    for (const [id, it] of Object.entries(src && typeof src === "object" ? src : {}).slice(0, 2000))
       if (stamp(it) && typeof id === "string" && id.length <= 300 && it.id === id)
         items[id] = it;
-    out[k] = items;
-  }
-  for (const k of [out.meta, out.recap, ...LISTS.flatMap((k) => Object.values(out[k]))])
+    return items;
+  };
+  for (const k of LISTS)
+    out[k] = itemsOf(o[k]);
+  const notes = {};
+  for (const [id, n] of Object.entries(out.notes))
+    if (NOTE_KINDS.includes(n.kind))
+      notes[id] = n;
+  const fold = (id, n) => {
+    if (!notes[id] || newer(n, notes[id]))
+      notes[id] = n;
+  };
+  for (const [list, kind] of Object.entries(LEGACY_LISTS))
+    for (const [id, it] of Object.entries(itemsOf(o[list])))
+      fold(id, { ...it, kind });
+  if (stamp(o.recap) && typeof o.recap.value === "string")
+    fold(RECAP_ID, { kind: "recap", text: o.recap.value, who: "", at: 0, l: o.recap.l, by: o.recap.by, id: RECAP_ID });
+  const r = notes[RECAP_ID];
+  if (r)
+    notes[RECAP_ID] = { ...r, text: String(r.text ?? "").slice(0, 4000) };
+  out.notes = notes;
+  for (const k of [out.meta, ...LISTS.flatMap((k) => Object.values(out[k]))])
     out.lamport = Math.max(out.lamport, k.l);
   return out;
 }

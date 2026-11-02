@@ -1,25 +1,17 @@
 # The next generation
 
 Status: decided in an interview on 2026-11-01, and built as a first version on
-2026-11-02. Where each part lives, and what has not yet been checked in real use,
+2026-11-02; the thread reshaped around Notes, Features, Running and History the
+same day. Where each part lives, and what has not yet been checked in real use,
 is in [Built](#built) at the end.
+
+A newcomer meets three things: **people**, **threads** and **questions**. The
+first two sections say what they are; everything after is how they work.
 
 ## In two sentences
 
 **You say what you want, and you answer questions.** Everything else is agents
 working in threads with the people you trust.
-
-## The problem this fixes
-
-A room today belongs to an identity, not to a session. When a message arrives,
-`pickSession()` in `src/daemon.ts` delivers it to the session the sender named,
-or else to whichever local session is idle, or any live one, or the first one
-ever registered. The message's subject plays no part. So with api, firmware and
-docs open, a note about the auth token format lands in whichever is idle: the
-right person, the wrong chat.
-
-And crosstalk can only talk to sessions you already started. It cannot start
-one, reopen one, or bring a question from one to where you are looking.
 
 ## Three nouns
 
@@ -49,16 +41,18 @@ session. People say "put two more on auth", not "spawn a session".
 fourth noun: a message either informs (read it when you like) or asks (it is a
 question).
 
-**Rooms are gone.** The four words remain for people outside your repos.
+**Rooms are gone as a place.** The four words remain for people outside your
+repos, who become "the people you joined with words": the protocol still
+groups them as a room, and nobody meets one.
 
 **Eight tools**, each with an action, instead of one per feature:
 
 | Tool | For |
 |---|---|
-| `thread` | read a thread; add a note; change a feature or status; move or leave |
+| `thread` | read a thread; add or list its notes; change a feature or status; move or leave |
 | `say` | tell or ask people; reply; hand a message to the agent |
 | `work` | start, stop, resume, background, rename workers; start and stop servers |
-| `look` | what's running and where: links, open, screenshots, share, QR, history |
+| `look` | a thread's Running and History: what runs and where, open, screenshots, show it to people, QR |
 | `ship` | ready, review, evidence, flags, incidents |
 | `people` | trust, mute, join with words, link machines |
 | `answer` | answer a question |
@@ -66,6 +60,18 @@ question).
 
 Every tool description is loaded into every session on every turn, so fewer,
 broader tools cost less context and are easier for an agent to choose between.
+
+## Why: the problem this fixes
+
+A room today belongs to an identity, not to a session. When a message arrives,
+`pickSession()` in `src/daemon.ts` delivers it to the session the sender named,
+or else to whichever local session is idle, or any live one, or the first one
+ever registered. The message's subject plays no part. So with api, firmware and
+docs open, a note about the auth token format lands in whichever is idle: the
+right person, the wrong chat.
+
+And crosstalk can only talk to sessions you already started. It cannot start
+one, reopen one, or bring a question from one to where you are looking.
 
 ## Principles
 
@@ -151,19 +157,20 @@ Moving tokens to v2 format; v1 kept for one release.
 ## Questions
 - keep the v1 endpoint? (blocking)
 
-## Decisions
-- 2026-11-01 · paul · v1 tokens accepted until 0.2
-
-## Facts
-- staging DB is shared with the demo env
-
-## Tasks
+## Notes
+- decision · 2026-11-01 · paul · v1 tokens accepted until 0.2
+- fact · staging DB is shared with the demo env
 - [ ] remove v1 parser after 0.2
+- rule · always keep one release of overlap
 ```
 
-Today's separate facts, tasks and decisions are sections of this file. The
-statusline, the opening banner, the session name, the digest and the PR
-description are all read from it.
+Notes are one list, each line saying its kind (a task is a checkbox). A file
+written before notes, with separate Decisions, Facts, Tasks and Rules sections,
+or a sealed one with a line for each, still opens; it is written back as notes
+on its next commit. Running and History are not in the file as such: Running
+is what the machine runs now, and History is the file's links and its ended
+notes. The status line, the opening banner, the session name, the digest and
+the PR description are all read from it.
 
 **Sealed unless marked public.** The file is committed encrypted to the
 thread's people, so it is private even in a public repo. Mark a thread public
@@ -213,17 +220,21 @@ open:
 - *The default branch is not a thread.* "Same repo and branch, same thread"
   holds on work branches; on main the files decide, and three new files in one
   folder start a thread named after it.
-- *Merging.* Sections merge on their own: meta and recap last-writer-wins on a
-  Lamport clock, every list as a set of items with last-writer-wins per item
-  and tombstones. Two people appending a decision at once both keep theirs.
+- *Merging.* Sections merge on their own: meta last-writer-wins on a Lamport
+  clock, every list (notes among them) as a set of items with last-writer-wins
+  per item and tombstones. Two people appending a decision at once both keep
+  theirs. The recap is the note with the id `recap`, so it still has one
+  writer winning. A replica that has not updated sends notes as four lists and
+  a recap value; they fold into notes with their ids and stamps, so the two
+  merge item by item.
 - *Keys.* One random key per thread, each section sealed with it separately;
   the key is wrapped per person under the pairwise channel key. Room members
   without a direct channel cannot be wrapped for yet.
 - *THREADS.md* is written only for repos with a public thread, and left as an
   unstaged change.
-- *Squash* is of content (an archived thread keeps decisions, features and
-  rules); the ref's history is not rewritten, since that would need a forced
-  push.
+- *Squash* is of content (an archived thread keeps its decisions, rules and
+  features; its facts, tasks and recap end, and stay in History); the ref's
+  history is not rewritten, since that would need a forced push.
 
 ## Questions
 
@@ -611,8 +622,11 @@ Nothing has to be remembered:
 | Something broken | crosstalk notices and tells you, with the fix. "Is crosstalk OK?" works too |
 | Anything else | Plain words to any agent: "mute jo", "what's marie on?", "show me auth" |
 
-Under the hood the agent calls crosstalk's tools; slash commands and the CLI
-remain for scripts and people who like them.
+Under the hood the agent calls crosstalk's tools. Four slash commands remain,
+each for what words in the conversation should not or cannot do:
+`/crosstalk:join` (the words, kept out of the model), `/crosstalk:doctor`,
+`/crosstalk:install` and `/crosstalk:secure`. The CLI keeps the rest for
+scripts.
 
 ## Installing
 
@@ -659,9 +673,10 @@ merged thread.
 |---|---|
 | Named rooms, and invitations to them | Threads, found automatically |
 | A five-level trust ladder | Verified, plus mute |
-| Facts, tasks, decisions as separate stores | Sections of the thread file |
+| Facts, tasks, decisions, rules and recaps as separate stores and sections | Notes: one list in the thread, each with its kind |
+| Services, URLs, previews, PRs, shares, screenshots as separate lists | Running: one view per thread |
 | Messages to whichever session is idle | Messages to sessions in the same thread |
-| Fourteen slash commands | None to remember |
+| Fourteen slash commands | Four, none to remember |
 | Approvals, reviews and notices as separate things | Questions |
 
 ## Still open
@@ -696,9 +711,9 @@ keeps track of it.
 - **Names, not ports:** `http://auth.localhost`, through a small local proxy
   that follows each worktree's service wherever its port moves. Browsers already
   send `*.localhost` to this machine.
-- **One list, anywhere:** in the pane, clickable; on the tab
-  (`auth · auth.localhost`); and by asking any session ("what's the auth URL?",
-  "open the billing preview").
+- **One list, anywhere:** the thread's Running, in the pane, clickable; on the
+  tab (`auth · auth.localhost`); and by asking any session ("what's the auth
+  URL?", "open the billing preview").
 - **Shared with teammates:** "show marie the auth page" gives her a link to the
   running server through the sealed relay, only for the people named; her agent
   can test against it. Nothing is public unless asked for.
@@ -708,7 +723,7 @@ keeps track of it.
   turns the tab red and tells the thread's agent, which restarts or fixes it.
 - **On the phone:** a QR code in the pane opens a share link.
 - **History:** every link, preview and screenshot a thread had, kept in its
-  file.
+  file, searched together with its ended notes.
 - **Servers that just start:** a new worktree gets the main checkout's `.env`
   and other local secrets copied in. They stay on this machine: never in git,
   a thread or the relay.
@@ -723,7 +738,8 @@ Every part above has a first version on the branch, with its tests in
 | Routing by repo, branch and files | `src/footprint.ts`, `routeInbound` in `src/daemon.ts` | `docs/architecture.md` |
 | Restore after a restart | `src/restore.ts` | `docs/restore.md` |
 | Sessions already open | `src/gather.ts` | `docs/restore.md` |
-| The mod: cards, pickers, status line, pane | `mod/register.tsx`, `src/uistate.ts`, `src/uicli.ts`, `src/ui-extra/` | `spike/mod/README.md` |
+| The mod: cards, pickers, status line, pane | `mod/register.tsx`, `mod/draw.tsx`, `src/uistate.ts`, `src/uicli.ts`, `src/ui-extra/`; snapshots in `test/snapshots/` | `spike/mod/README.md` |
+| Notes, Running and History: one list of notes per thread (migrated from separate sections on read), one view of what runs, one search of what it had | `src/threads/model.ts`, `src/notes.ts`, `src/threads/running.ts`, `src/threads/history.ts` | this document, `docs/urls.md` |
 | Peer notices when channels are off | `src/channels.ts` | `docs/architecture.md` |
 | Trust through repository access, first use per repo | `src/repotrust/` | `docs/security.md` |
 | Threads, sealed, on their own ref; re-keying | `src/threads/` | `docs/architecture.md`, `docs/security.md` |

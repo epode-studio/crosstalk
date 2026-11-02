@@ -333,7 +333,7 @@ What it rests on, and what it costs:
   for a share that already ended here is never taken again, so a relay that
   keeps copies cannot re-open what was stopped.
 - **Nothing opens by itself.** The viewer gets a card (Open it, Not now,
-  Stop it) or a digest line. In the viewer agent's `crosstalk_look action "urls"` the share is
+  Stop it) or a digest line. In the viewer agent's `crosstalk_look action "running"` the share is
   data inside `<crosstalk-urls>`, its label cut to plain text, so a label
   cannot pass for an instruction; the agent may test against it, as it may
   against any local URL.
