@@ -28,6 +28,7 @@ import { answer as applyAnswer, decide, memberKey, type Member, type Pins, type 
 import { collaborators, keysFor, ownLogin, signingKey } from "./github.ts"
 import { fetchStatements, findRepo, ensureRefspec, listStatements, publish, type Repo } from "./gitref.ts"
 import { canonical, cleanMachine, keyHint, makeStatement, parse, sign, verify } from "./statement.ts"
+import * as firstuse from "./firstuse.ts"
 
 const DIR = () => path.join(ROOT, "repotrust")
 const FILE = () => path.join(DIR(), "state.json")
@@ -193,6 +194,8 @@ async function syncNow(cwd: string, o: { force?: boolean; log?: (...a: unknown[]
   if (!id) return { ok: false, skipped: "no crosstalk identity on this machine yet" }
   const repo = await findRepo(cwd)
   if (!repo) return { ok: false, skipped: "not in a git repository with a GitHub remote" }
+  // Nothing is fetched or pushed in a repo the person has not said yes to (firstuse.ts).
+  if (!firstuse.allowed(repo.slug)) return { ok: true, repo: repo.slug, skipped: `not connected in ${repo.slug}: first use asks once` }
 
   let s = load()
   const prev = s.repos[repo.slug]

@@ -46,6 +46,7 @@ import * as repotrust from "./repotrust/index.ts"
 import type { Envelope, Frame, Intent, Kind, SessionPresence, Slice } from "./protocol.ts"
 import { ThreadService } from "./threads/service.ts"
 import * as threadModel from "./threads/model.ts"
+import { Coordinator, RULES_FILE } from "./coordinator.ts"
 
 const identity = loadIdentity()
 if (!identity) {
@@ -121,7 +122,13 @@ persistSessions()
 // Found from each session's footprint, synced to their people over the relay,
 // committed to refs/crosstalk/threads on change. All of it in src/threads/.
 
+// The main session, standing rules and agents warning each other
+// (src/coordinator.ts), made once everything it calls back into exists.
+let coord: Coordinator
+
 const threads = new ThreadService({
+  extra: { file: RULES_FILE, read: (repo, text) => coord?.readRules(repo, text), render: (repo) => coord?.renderRules(repo) },
+  onFlush: (ids) => coord?.onThreadsFlush(ids),
   identity,
   peers: () => loadPeers(),
   send: (label, env) => sendEnvelope(label, env),
@@ -318,10 +325,15 @@ function holdUnrouted(
   env: Envelope,
   ctx: { room?: rooms.Room; strangerInRoom?: boolean } | undefined,
   r: { ask: "none" | "tie"; tied: Registered[]; fp: footprint.Summary },
-) {
+): void {
+  // A standing rule says where this sender's messages about this repo go.
+  const ruled = coord.autoRoute(peerLabel, r.fp.repo)
+  if (ruled && sessions.get(ruled))
+    return void onEnvelope(peerLabel, { ...env, toSession: sessions.get(ruled)!.name }, { ...ctx, replayingParked: true })
   seenIds.set(env.id, Date.now())
   if (unrouted.some((u) => u.id === env.id)) return
-  const asked = mostRecentSession()
+  // With a main session open, that is where the question goes (src/main.ts).
+  const asked = sessions.get(coord.mainId() ?? "") ?? mostRecentSession()
   const u: Unrouted = {
     id: env.id,
     label: peerLabel,
@@ -482,7 +494,9 @@ function uiSync(sid: string): ui.UiItem[] {
         now,
       )
     }
-    // "Which thread is this session part of?", when its files match two equally.
+    // "Which thread is this session part of?", when its files match two equally,
+    // unless a standing rule answers it.
+    coord.autoThread(sid)
     const tq = threads.question(sid)
     if (tq) ui.upsert(items, { id: tq.id, kind: "thread", sessionId: sid, question: tq.question, options: tq.options, ts: now }, now)
     for (const it of Object.values(items))
@@ -516,7 +530,8 @@ function uiSync(sid: string): ui.UiItem[] {
     for (const it of Object.values(items))
       if (it.kind === "route" && it.sessionId === sid && !waiting.has(it.id)) ui.settle(items, it.id, "answered", now)
     repotrust.syncUi(items, sid, now)
-    return ui.openFor(items, sid)
+    // A main session sees everything cross-cutting; a working one only its own (src/main.ts).
+    return coord.itemsFor(items, sid)
   })
 }
 
@@ -810,7 +825,7 @@ function onEnvelope(
   peerLabel: string,
   env: Envelope,
   ctx?: { room?: rooms.Room; strangerInRoom?: boolean; replayingParked?: boolean },
-) {
+): void {
   // A parked envelope is re-run through here once a session registers, so the
   // duplicate check has to skip that path and only record an id once the
   // message is actually held.
@@ -857,6 +872,9 @@ function onEnvelope(
 
   if (env.kind === "room_key") return acceptRoomKey(peerLabel, env)
 
+  // Heads-ups, conflicts and standing rules (src/coordinator.ts): direct channels only.
+  if (coord.accept(peerLabel, env, !!ctx?.room)) return
+
   if (env.kind === "fact" || env.kind === "fact_sync") return acceptFacts(peerLabel, env)
   if (env.kind === "task" || env.kind === "task_sync") return acceptTasks(peerLabel, env)
 
@@ -886,10 +904,16 @@ function onEnvelope(
       })
     return
   }
+  // Answered by a standing rule (src/rules/): nobody is asked.
+  if (coord.autoAsk(peerLabel, env)) {
+    seenIds.set(env.id, Date.now())
+    return log(`answered ${peerLabel}'s ask by a standing rule`)
+  }
 
   const route = routeInbound(peerLabel, env)
   if ("ask" in route) return holdUnrouted(peerLabel, env, ctx, route)
-  const target = route.target
+  // With a main session open, a question from another thread goes there.
+  const target = sessions.get(coord.redirect({ how: route.how, kind: env.kind, intent: env.intent, target: route.target?.sessionId }) ?? "") ?? route.target
   if (!target) {
     orphaned.push({ label: peerLabel, env, stranger: !!ctx?.strangerInRoom })
     persistParked()
@@ -1923,6 +1947,10 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         correlation: req.correlation,
         replyTo: req.replyTo,
       }
+      if (!req.auto) {
+        const asked = Object.values(held).flat().find((m) => m.correlation && m.correlation === req.correlation)
+        if (asked) coord.answeredAsk(req.sessionId, { sender: asked.from, text: asked.text }, String(req.text ?? ""))
+      }
       return sendEnvelope(label, env)
     }
 
@@ -2029,6 +2057,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         })
       }
       log(`routed ${going.length} held message(s) from ${u.label} to ${target.name}`)
+      if (!req.auto) coord.answeredRoute(req.sessionId, { sender: u.label, repo: fp?.repo, target: target.sessionId })
       return { ok: true, delivered: going.length, to: target.name, remembered: !!key }
     }
 
@@ -2046,7 +2075,8 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         label: identity!.label,
         threads: threads.namesFor(sid),
         // The mod toasts these; taken here, the hook does not show them again.
-        ...(req.mod ? { threadNotes: threads.takeNotes(sid) } : {}),
+        ...(req.mod ? { threadNotes: coord.notesFor(sid, threads.takeNotes(sid)) } : {}),
+        ...(coord.mainStatus(sid) ? { main: coord.mainStatus(sid) } : {}),
       }
     }
 
@@ -2069,6 +2099,11 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         return r
       }
 
+      if (action === "answer" && value !== undefined) {
+        const c = coord.uiAct(sid, before, value)
+        if (c) return c
+      }
+
       if (before.kind === "team") {
         if (action !== "answer" || !value) return { ok: false, error: "a key question is answered with Trust it or Don't trust it" }
         const r = repotrust.answerQuestion(id, value === repotrust.TRUST)
@@ -2078,8 +2113,10 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         if (action !== "answer" || !value) return { ok: false, error: "a thread question is answered with a thread" }
         const claim = ui.withStore((items, now) => ui.act(items, id, "answer", now, value))
         if (!claim.ok) return claim
+        const tq = coord.threadQuestionOf(sid)
         const r = threads.answer(sid, value)
         if (!r.ok) ui.withStore((items, now) => ui.reopen(items, id, now))
+        else if (tq) coord.answered(tq, value, { sid })
         return { ...r, item: claim.item }
       }
 
@@ -2087,7 +2124,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         if (action !== "answer" || !value) return { ok: false, error: "a route question is answered with a session" }
         const claim = ui.withStore((items, now) => ui.act(items, id, "answer", now, value))
         if (!claim.ok) return claim
-        const r: any = await handle({ op: "route", id: id.slice("route:".length), session: before.targets?.[value] ?? value })
+        const r: any = await handle({ op: "route", id: id.slice("route:".length), session: before.targets?.[value] ?? value, sessionId: sid })
         if (!r?.ok) ui.withStore((items, now) => ui.reopen(items, id, now))
         return { ...r, item: claim.item }
       }
@@ -2118,6 +2155,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
             : await handle({ op: "send", sessionId: sid, to, text: value, replyTo: m.id, thread: m.thread, intent: "fyi" })
         if (r?.ok) markHeld(id, settledHeld)
         else ui.withStore((items, now) => ui.reopen(items, id, now))
+        if (r?.ok && m.kind === "ask") coord.answeredAsk(sid, { sender: m.from, text: m.text }, value)
         return { ...r, item: claim.item, to: m.from }
       }
       return { ok: false, error: `unknown action ${action}` }
@@ -2232,7 +2270,10 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       const self = resolveSession(req)
       if (!self) return { ok: true, threads: [], all: threads.list() }
       // With the mod there, its toasts carry the notices; the hook only takes the banner.
-      const out = threads.forSession(self.sessionId, self.name, !!req.consume, !!req.consume && !modLive(self) && !req.mod)
+      const take = !!req.consume && !modLive(self) && !req.mod
+      const out = threads.forSession(self.sessionId, self.name, !!req.consume, false)
+      // Notices and digest lines, with the cross-cutting ones kept for a main session.
+      if (take) out.notes = coord.notesFor(self.sessionId, threads.takeNotes(self.sessionId)).map((n) => n.text)
       // The title is offered only when it changes, so a name the person gave
       // the session afterwards is not overwritten on every prompt.
       const retitle = !!req.consume && !!out.title && out.title !== self.title
@@ -2249,14 +2290,16 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       const sid = self?.sessionId
       if (req.pick) {
         if (!sid) return { ok: false, error: "no session to place" }
+        const tq = coord.threadQuestionOf(sid)
         const r = threads.answer(sid, String(req.pick))
+        if (r.ok && tq) coord.answered(tq, String(req.pick), { sid })
         if (r.ok) ui.withStore((items, now) => {
           for (const it of Object.values(items)) if (it.kind === "thread" && it.sessionId === sid) ui.settle(items, it.id, "answered", now)
         })
         return r
       }
       if (req.leave) return sid ? threads.leave(sid, String(req.leave)) : { ok: false, error: "no session" }
-      return threads.edit(sid, {
+      const edited = threads.edit(sid, {
         thread: req.thread,
         status: req.status,
         public: req.public,
@@ -2266,6 +2309,9 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         answer: req.answer,
         rule: req.rule,
       })
+      // A person's answer is remembered; the second identical one offers a standing rule.
+      const offer = edited.ok && req.answer?.id ? coord.answeredThreadQuestion(sid, req.thread, String(req.answer.id), String(req.answer.text ?? "")) : null
+      return offer ? { ...edited, offer: coord.offerView(offer) } : edited
     }
 
     case "thread_read": {
@@ -2309,10 +2355,46 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       return repotrust.answerQuestion(String(req.id ?? ""), req.trust)
     }
 
-    default:
+    default: {
+      // The main session, standing rules, heads-ups and conflicts.
+      const r = await coord.handle(req, resolveSession(req))
+      if (r !== undefined) return r
       return { ok: false, error: `unknown op "${req.op}"` }
+    }
   }
 }
+
+coord = new Coordinator({
+  identity,
+  threads,
+  log,
+  root: P.root,
+  peers: () => loadPeers(),
+  send: (label, env) => sendEnvelope(label, env),
+  sessions: () => sessions,
+  status: statusOf,
+  presence: () => peerPresence,
+  holdLocal: (sid, h, slices) => {
+    hold(sid, h, slices)
+    const reg = sessions.get(sid)
+    log(`${h.kind} from ${h.from} held for ${reg?.name ?? sid}`)
+    if (!reg?.socket || modLive(reg)) return
+    h.surfaced = true
+    persist()
+    const notice = { count: (held[sid] ?? []).filter((m) => !m.readAt).length, peer: h.from, peerSession: h.fromSession, intent: h.intent, kind: h.kind }
+    if (!push(sid, { push: "arrival", ...notice }))
+      injectNotice({ socket: reg.socket, replyTo: reg.socket, fromName: `crosstalk ◢ ${h.from}` }, notice).catch((e) => log(`inject failed: ${e.message}`))
+  },
+  waitingIn: (sid) =>
+    ui.openFor(ui.snapshot(), sid).filter((i) => i.kind !== "message" && i.kind !== "ask").length + (held[sid] ?? []).filter((m) => !m.readAt).length,
+  modLive: (sid) => modLive(sessions.get(sid)),
+  repoOf: (sid) => {
+    const reg = sessions.get(sid)
+    return reg ? footprintOf(reg).repo : undefined
+  },
+  route: (id, session) => handle({ op: "route", id, session, auto: true }),
+  answerPeer: (label, correlation, text, replyTo) => handle({ op: "answer", to: label, correlation, text, replyTo, auto: true }),
+})
 
 fs.mkdirSync(path.dirname(P.daemonSock), { recursive: true, mode: 0o700 })
 
@@ -2381,6 +2463,7 @@ control.listen(P.daemonSock, () => {
   // Sessions that outlived the last daemon are placed again, and every repo
   // with threads catches up with its remote. Neither can hold anything up.
   threads.retain([...sessions.keys()])
+  coord.start()
   for (const reg of sessions.values()) observeThreads(reg)
   threads.fade()
   void threads.syncAll()

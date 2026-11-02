@@ -223,3 +223,14 @@ export function injectMessage(
     ].join("\n"),
   )
 }
+
+/**
+ * The person's own instruction, sent from their main session to another of
+ * their sessions (crosstalk_steer). Presented with the target session's own
+ * messaging token, because it is the user speaking in their own session; only
+ * the daemon's control socket, which only this user can reach, ever asks for
+ * it, and nothing a peer sends can.
+ */
+export function injectInstruction(opts: InjectOptions & { token?: string }, m: { from: string; text: string }) {
+  return send(opts, [`Your user, from their session ${attr(m.from)}:`, ``, String(m.text).slice(0, 8000)].join("\n"))
+}

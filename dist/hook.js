@@ -2,9 +2,9 @@
 // @bun
 
 // src/hook.ts
-import path14 from "path";
+import path17 from "path";
 import os6 from "os";
-import fs11 from "fs";
+import fs13 from "fs";
 
 // src/client.ts
 import net from "node:net";
@@ -2206,6 +2206,286 @@ function fromHook(o) {
   return out;
 }
 
+// src/repotrust/firstuse.ts
+import fs11 from "node:fs";
+import path15 from "node:path";
+
+// src/crypto.ts
+var SCRYPT = { N: 32768, r: 8, p: 1, maxmem: 256 * 1024 * 1024 };
+
+// src/repotrust/gitref.ts
+import path14 from "node:path";
+
+// src/repotrust/statement.ts
+import { execFile } from "node:child_process";
+function quietEnv() {
+  const env = { ...process.env, SSH_ASKPASS_REQUIRE: "never", GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" };
+  delete env.SSH_ASKPASS;
+  delete env.DISPLAY;
+  return env;
+}
+function run(file, args, o = {}) {
+  return new Promise((resolve) => {
+    const child = execFile(file, args, { cwd: o.cwd, env: o.env ?? quietEnv(), timeout: o.timeoutMs ?? 15000, maxBuffer: 4 << 20, encoding: "utf8" }, (err, stdout, stderr) => {
+      const code = err ? typeof err.code === "number" ? err.code : 1 : 0;
+      resolve({ code, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
+    });
+    child.stdin?.end(o.input ?? "");
+  });
+}
+
+// src/repotrust/gitref.ts
+var LOCAL_PREFIX = "refs/crosstalk/keys/";
+var FETCHED_PREFIX = "refs/crosstalk/remote/keys/";
+var REFSPEC = `+${LOCAL_PREFIX}*:${FETCHED_PREFIX}*`;
+var MAX_BLOB = 16 * 1024;
+var git2 = (cwd, args, o = {}) => run("git", args, { cwd, input: o.input, env: o.env ?? quietEnv(), timeoutMs: o.timeoutMs ?? 15000 });
+function githubSlug(url) {
+  const m = url.match(/^(?:ssh:\/\/)?git@github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i) ?? url.match(/^(?:https?|git):\/\/(?:[^@/]+@)?github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i);
+  return m ? `${m[1]}/${m[2]}`.toLowerCase() : null;
+}
+async function findRepo(cwd) {
+  if (!cwd)
+    return null;
+  const top = await git2(cwd, ["rev-parse", "--show-toplevel"], { timeoutMs: 5000 });
+  if (top.code !== 0)
+    return null;
+  const dir = top.stdout.trim();
+  const list = await git2(dir, ["remote"], { timeoutMs: 5000 });
+  const remotes = list.stdout.split(`
+`).map((s) => s.trim()).filter(Boolean);
+  remotes.sort((a, b) => a === "origin" ? -1 : b === "origin" ? 1 : 0);
+  for (const remote of remotes) {
+    const u = await git2(dir, ["remote", "get-url", remote], { timeoutMs: 5000 });
+    const url = u.stdout.trim();
+    if (u.code !== 0 || !url)
+      continue;
+    const slug = githubSlug(url) ?? (process.env.CROSSTALK_REPOTRUST_ANY_REMOTE === "1" ? `local/${path14.basename(url).replace(/\.git$/, "").toLowerCase()}` : null);
+    if (slug)
+      return { top: dir, remote, url, slug };
+  }
+  return null;
+}
+
+// src/repotrust/github.ts
+var BUCKET = { max: 30, perMs: 10 * 60 * 1000 };
+
+// src/repotrust/firstuse.ts
+var CONNECT = "Connect";
+var NOT_HERE = "Not in this repo";
+var FILE = () => path15.join(ROOT, "repotrust", "firstuse.json");
+function load() {
+  try {
+    const s = JSON.parse(fs11.readFileSync(FILE(), "utf8"));
+    if (s?.v === 1 && s.repos)
+      return s;
+  } catch {}
+  return { v: 1, repos: {} };
+}
+function save(s) {
+  fs11.mkdirSync(path15.dirname(FILE()), { recursive: true, mode: 448 });
+  const tmp = `${FILE()}.${process.pid}.tmp`;
+  fs11.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs11.renameSync(tmp, FILE());
+}
+var off = () => process.env.CROSSTALK_NO_REPOTRUST === "1";
+function publishedBefore(slug) {
+  try {
+    const s = JSON.parse(fs11.readFileSync(path15.join(ROOT, "repotrust", "state.json"), "utf8"));
+    return !!s?.repos?.[slug]?.ownPublished;
+  } catch {
+    return false;
+  }
+}
+function consent(slug, s = load()) {
+  if (process.env.CROSSTALK_REPOTRUST_AUTO === "1")
+    return "yes";
+  const e = s.repos[slug];
+  if (e?.state === "yes" || e?.state === "no")
+    return e.state;
+  return publishedBefore(slug) ? "yes" : undefined;
+}
+var connectId = (slug) => `connect:${slug}`;
+var questionText = (slug) => `Connect with your team in ${slug}? This publishes your public key and GitHub login on a hidden ref in this repo.`;
+async function offer(cwd, sessionId, now = Date.now()) {
+  if (off() || !cwd)
+    return null;
+  const repo = await findRepo(cwd).catch(() => null);
+  if (!repo)
+    return null;
+  const s = load();
+  if (consent(repo.slug, s) || s.repos[repo.slug])
+    return null;
+  s.repos[repo.slug] = { state: "asked", at: now, session: sessionId, cwd: repo.top };
+  save(s);
+  return { slug: repo.slug, question: questionText(repo.slug) };
+}
+async function surface2(cwd, sessionId, mod = modActive2(sessionId)) {
+  const o = await offer(cwd, sessionId);
+  if (!o)
+    return {};
+  const text = `\u25e2 crosstalk: ${o.question} Say "connect me" to go ahead, or "not in this repo" and you will not be asked here again.`;
+  if (!mod)
+    return { systemMessage: text };
+  try {
+    return {
+      item: withStore2((items, now) => upsert2(items, { id: connectId(o.slug), kind: "connect", sessionId, thread: o.slug, question: o.question, options: [CONNECT, NOT_HERE], ts: now }, now))
+    };
+  } catch {
+    return { systemMessage: text };
+  }
+}
+
+// src/warn/edit.ts
+import fs12 from "node:fs";
+import path16 from "node:path";
+import { spawnSync as spawnSync7 } from "node:child_process";
+
+// src/warn/outline.ts
+var WHOLE = "*";
+function langOf(file) {
+  if (/\.(m|c)?(t|j)sx?$/i.test(file))
+    return "ts";
+  if (/\.pyi?$/i.test(file))
+    return "py";
+  return null;
+}
+var TS = /^(?:export\s+)?(?:default\s+)?(?:declare\s+)?(?:abstract\s+)?(?:async\s+)?(?:function\s*\*?|class|interface|type|enum|const|let|var|namespace)\s+([A-Za-z_$][\w$]*)/;
+var PY = /^(?:async\s+)?(?:def|class)\s+([A-Za-z_]\w*)|^([A-Za-z_]\w*)\s*(?::[^=]*)?=(?!=)/;
+function outline(text, lang) {
+  if (!lang)
+    return [];
+  const lines = text.split(`
+`);
+  const re = lang === "ts" ? TS : PY;
+  const starts = [];
+  for (let i = 0;i < lines.length; i++) {
+    const m = re.exec(lines[i]);
+    if (m)
+      starts.push({ name: m[1] ?? m[2], line: i + 1 });
+  }
+  return starts.map((s, i) => ({ name: s.name, start: s.line, end: (starts[i + 1]?.line ?? lines.length + 1) - 1 }));
+}
+function symbolsAt(syms, from, to) {
+  return syms.filter((s) => s.start <= to && s.end >= from).map((s) => s.name);
+}
+function bodies(text, lang) {
+  const lines = text.split(`
+`);
+  const out = new Map;
+  for (const s of outline(text, lang))
+    out.set(s.name, lines.slice(s.start - 1, s.end).join(`
+`).trimEnd());
+  return out;
+}
+function changedSymbols(file, before, after) {
+  if ((before ?? "") === (after ?? ""))
+    return [];
+  const lang = langOf(file);
+  if (!lang)
+    return [WHOLE];
+  const a = bodies(before ?? "", lang);
+  const b = bodies(after ?? "", lang);
+  const out = new Set;
+  for (const [n, t] of b)
+    if (a.get(n) !== t)
+      out.add(n);
+  for (const n of a.keys())
+    if (!b.has(n))
+      out.add(n);
+  return [...out];
+}
+function symbolsOfEdit(file, after, newText) {
+  const lang = langOf(file);
+  if (!lang)
+    return [WHOLE];
+  if (!newText)
+    return null;
+  const at = after.indexOf(newText);
+  if (at === -1)
+    return null;
+  const from = after.slice(0, at).split(`
+`).length;
+  const to = from + newText.split(`
+`).length - 1;
+  return symbolsAt(outline(after, lang), from, to);
+}
+
+// src/warn/edit.ts
+var EDIT_TOOLS = /^(Edit|MultiEdit|Write|NotebookEdit|str_replace_based_edit_tool|apply_patch)$/;
+var MAX_DIFF = 32 * 1024;
+function git3(cwd, args) {
+  try {
+    const r = spawnSync7("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 3000, maxBuffer: 8 << 20 });
+    return { ok: r.status === 0, out: r.stdout ?? "" };
+  } catch {
+    return { ok: false, out: "" };
+  }
+}
+function baseOf(root) {
+  const head = git3(root, ["rev-parse", "-q", "--verify", "HEAD"]);
+  if (!head.ok)
+    return;
+  for (const ref of ["refs/remotes/origin/HEAD", "refs/remotes/origin/main", "refs/remotes/origin/master"]) {
+    if (!git3(root, ["rev-parse", "-q", "--verify", ref]).ok)
+      continue;
+    const mb = git3(root, ["merge-base", "HEAD", ref]);
+    if (mb.ok && mb.out.trim())
+      return mb.out.trim();
+  }
+  return head.out.trim();
+}
+function editReport(o) {
+  if (!EDIT_TOOLS.test(o.tool))
+    return null;
+  const raw = o.input?.file_path ?? o.input?.notebook_path ?? o.input?.path;
+  if (typeof raw !== "string" || !raw)
+    return null;
+  const abs = path16.resolve(o.cwd || "/", raw);
+  const top = git3(path16.dirname(abs), ["rev-parse", "--show-toplevel"]);
+  if (!top.ok)
+    return null;
+  const root = top.out.trim();
+  const file = path16.relative(root, abs).split(path16.sep).join("/");
+  if (!file || file.startsWith(".."))
+    return null;
+  let after = null;
+  try {
+    after = fs12.readFileSync(abs, "utf8");
+  } catch {}
+  const base = baseOf(root);
+  const before = base ? (() => {
+    const r = git3(root, ["show", `${base}:${file}`]);
+    return r.ok ? r.out : null;
+  })() : null;
+  const pending = changedSymbols(file, before, after);
+  let symbols = null;
+  const news = [
+    ...typeof o.input?.new_string === "string" ? [o.input.new_string] : [],
+    ...Array.isArray(o.input?.edits) ? o.input.edits.map((e) => e?.new_string).filter((s) => typeof s === "string") : []
+  ];
+  if (news.length && after !== null) {
+    const found = news.map((n) => symbolsOfEdit(file, after, n));
+    if (found.every((f) => f !== null))
+      symbols = [...new Set(found.flat())];
+  }
+  if (!symbols || !symbols.length)
+    symbols = pending.length ? pending : [WHOLE];
+  let diff = base ? git3(root, ["diff", base, "--", file]).out : "";
+  if (!diff.trim())
+    diff = `--- /dev/null
++++ b/${file}
+${(after ?? "").split(`
+`).slice(0, 200).map((l) => `+${l}`).join(`
+`)}
+`;
+  if (diff.length > MAX_DIFF)
+    diff = diff.slice(0, MAX_DIFF) + `
+\u2026 truncated
+`;
+  return { file, root, symbols, pending, diff };
+}
+
 // src/hook.ts
 var input = await new Promise((resolve) => {
   let raw = "";
@@ -2242,8 +2522,8 @@ function agyCwd() {
   if (Array.isArray(ws) && typeof ws[0] === "string" && ws[0])
     return ws[0];
   const here = process.cwd();
-  if (AGENT_DIRS.has(path14.basename(here)))
-    return path14.dirname(here);
+  if (AGENT_DIRS.has(path17.basename(here)))
+    return path17.dirname(here);
   return here;
 }
 var cwd = hook.cwd ?? hook.working_dir ?? hook.workspace_roots?.[0] ?? (isAgy ? agyCwd() : process.cwd());
@@ -2322,6 +2602,14 @@ var chromeOut = (hookSpecific) => {
     out.hookSpecificOutput = { hookEventName: eventName, ...hookSpecific ?? {}, ...title };
   return out;
 };
+if (restoreClient === "claude" && sessionId && isSessionStart && !/^(clear|compact)$/.test(String(hook.source ?? "")) && !/^sdk/i.test(process.env.CLAUDE_CODE_ENTRYPOINT ?? "")) {
+  try {
+    const m = (await surface2(cwd, sessionId)).systemMessage;
+    if (m)
+      systemMessage = systemMessage ? `${systemMessage}
+${m}` : m;
+  } catch {}
+}
 if (!loadIdentity() || !sessionId) {
   process.stdout.write(JSON.stringify(isGoose ? { decision: "allow" } : isAgy || isHermes || isKimi || isCursor ? {} : { continue: true, ...systemMessage ? { systemMessage } : {}, ...chromeOut() }));
   process.exit(0);
@@ -2334,11 +2622,11 @@ async function registerSession() {
   let name = `session-${process.ppid}`;
   if (socket) {
     try {
-      const dir = path14.join(os6.homedir(), ".claude", "sessions");
-      for (const f of fs11.readdirSync(dir)) {
+      const dir = path17.join(os6.homedir(), ".claude", "sessions");
+      for (const f of fs13.readdirSync(dir)) {
         if (!f.endsWith(".json"))
           continue;
-        const e = JSON.parse(fs11.readFileSync(path14.join(dir, f), "utf8"));
+        const e = JSON.parse(fs13.readFileSync(path17.join(dir, f), "utf8"));
         if (e.sessionId === sessionId) {
           name = e.name ?? name;
           break;
@@ -2346,7 +2634,7 @@ async function registerSession() {
       }
     } catch {}
   } else {
-    name = hook.thread_name ?? (path14.basename(cwd) || name);
+    name = hook.thread_name ?? (path17.basename(cwd) || name);
   }
   const registered = await request({
     op: "register",
@@ -2408,6 +2696,13 @@ if (!DELIVERS.test(eventName))
   say();
 if (!isSessionStart)
   await registerSession();
+if (/^PostToolUse$/.test(eventName)) {
+  try {
+    const rep = editReport({ cwd, tool: String(hook.tool_name ?? ""), input: hook.tool_input });
+    if (rep)
+      await request({ op: "edited", sessionId, cwd, edit: rep }, 4000).catch(() => null);
+  } catch {}
+}
 async function threadsSay() {
   if (restoreClient !== "claude" || !/^(SessionStart|UserPromptSubmit)$/.test(eventName))
     return;
