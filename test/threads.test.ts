@@ -855,3 +855,28 @@ Moving tokens to v2.
     for (const s of M.LEGACY_SECTIONS) expect(now).not.toMatch(new RegExp(`^${s}: `, "m"))
   })
 })
+
+// --- History: links and ended notes, one search ------------------------------------
+
+describe("history", () => {
+  test("links the thread had and notes that ended are searched together, newest first", async () => {
+    const TH = await import("../src/threads/history.ts")
+    const L = await import("../src/urls/history/links.ts")
+    const t = sample("aaaa")
+    L.record(t, "aaaa", { url: "https://github.com/acme/api/pull/9", kind: "pr", label: "auth · PR #9", seen: 1_000, first: 1_000 }, 1_000)
+    // A task done and a fact corrected: both end, and both are kept.
+    const k = M.noteOf(t, "t_1", "task")!
+    const { l: _l, by: _b, id: _i, gone: _g, ...data } = k
+    M.put(t, "notes", "t_1", { ...data, state: "done", doneBy: "paul", at: 2_000 }, "aaaa")
+    M.put(t, "notes", "f_1", { ...M.noteOf(t, "f_1", "fact")!, supersededBy: "f_2", at: 3_000 } as any, "aaaa")
+    M.remove(t, "notes", "f_1", "aaaa")
+    const all = TH.history(t)
+    expect(all.map((e) => `${e.from}:${e.kind}:${e.why ?? ""}`)).toEqual(["note:fact:corrected", "note:task:done", "link:pr:"])
+    expect(TH.searchHistory(t, { query: "staging" }).map((e) => e.label)).toEqual(["staging DB is shared with the demo env --> careful"])
+    expect(TH.searchHistory(t, { query: "pull request" }).map((e) => e.label)).toEqual(["auth · PR #9"])
+    expect(TH.searchHistory(t, { kind: "note" }).length).toBe(2)
+    expect(TH.searchHistory(t, { after: 2_500 }).map((e) => e.kind)).toEqual(["fact"])
+    // Live notes are not history: they are Notes.
+    expect(TH.history(t).some((e) => e.label === "v1 tokens accepted until 0.2")).toBe(false)
+  })
+})

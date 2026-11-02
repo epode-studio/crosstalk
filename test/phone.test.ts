@@ -330,7 +330,7 @@ describe("a thread's links", () => {
     expect(o).not.toBeNull()
     expect(o!.links).toEqual({})
     // A blob moved into the links line does not open as links.
-    const moved = text.replace(/^links: \S+$/m, `links: ${/^facts: (\S+)$/m.exec(text)![1]}`)
+    const moved = text.replace(/^links: \S+$/m, `links: ${/^notes: (\S+)$/m.exec(text)![1]}`)
     const pm = F.parse(moved)
     if (pm.kind !== "sealed") throw new Error("not sealed")
     expect(pm.open(key)).toBeNull()

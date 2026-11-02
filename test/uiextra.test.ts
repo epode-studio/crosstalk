@@ -109,7 +109,7 @@ describe("@ shortcuts", () => {
 })
 
 describe("the thread pane", () => {
-  test("status, people, waiting, latest decision, recent, features with risk and flag stage", () => {
+  test("status, people, waiting, notes, recent, features with risk and flag stage", () => {
     const items: Record<string, any> = {
       "msg:1": { id: "msg:1", kind: "message", sessionId: "s", state: "handed", createdAt: T0, updatedAt: T0, from: "marie", thread: "auth", text: "token format changed to v2", ts: T0 - 120_000 },
       "msg:2": { id: "msg:2", kind: "ask", sessionId: "s", state: "pending", createdAt: T0, updatedAt: T0, from: "jo", thread: "auth", text: "can billing read v2 yet?", ts: T0 - 60_000 },
@@ -121,12 +121,12 @@ describe("the thread pane", () => {
     expect(p.people).toEqual(["paul", "marie"])
     expect(p.waiting[0]).toBe("keep the v1 endpoint? (blocking)")
     expect(p.waiting).toContain("jo asks: can billing read v2 yet?")
-    expect(p.decision?.text).toBe("v1 tokens accepted until 0.2")
+    expect(p.notes?.find((n) => n.kind === "decision")?.text).toBe("v1 tokens accepted until 0.2")
     expect(p.recent.map((r) => r.from)).toEqual(["jo", "marie"])
     expect(p.recent.some((r) => r.text === "elsewhere")).toBe(false)
     const f = p.features.find((x) => x.name === "v2 token format")!
     expect(pure.featureLine(f)).toBe("v2 token format · risky · flag auth-v2-tokens at internal · merged")
-    expect(pure.paneLines(p, T0).join("\n")).toContain("Latest decision")
+    expect(pure.paneLines(p, T0).join("\n")).toContain(" decision · v1 tokens accepted until 0.2 (paul, 1h)")
   })
 })
 

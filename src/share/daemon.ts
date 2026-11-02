@@ -13,7 +13,7 @@
 //              (owner.ts)
 //   viewer     an offer from a person becomes a listener on 127.0.0.1 that the
 //              proxy names `<name>.<owner>.localhost`, a `shared` URL record
-//              (the agent's crosstalk_look action "urls" has it, as data) and a card; nothing
+//              (the agent's crosstalk_look action "running" has it, as data) and a card; nothing
 //              is opened unless the person says so (viewer.ts)
 //   pacing     every frame goes through one queue paced below what the relay
 //              takes (frames.ts pacing), live only: a frame is never held for
@@ -162,7 +162,7 @@ export function createShares(d: ShareDeps) {
     return p ? `http://${hostOf(s)}${p.port === 80 ? "" : `:${p.port}`}` : `http://localhost:${s.port}`
   }
 
-  // --- URL records: both people's panes, and crosstalk_look action "urls" --------------------------------------------
+  // --- URL records: both people's panes, and crosstalk_look action "running" --------------------------------------------
 
   function recordOut(s: S.OutShare) {
     const orig = store.get(s.urlId)
@@ -299,7 +299,7 @@ export function createShares(d: ShareDeps) {
       const main = hits.filter((u) => u.name && !u.name.replace(/\.localhost$/, "").includes("."))
       if (main.length === 1) hits = main
     }
-    if (!hits.length) return { error: `no running local server matches${req.url ? ` ${clean(String(req.url))}` : req.name ? ` "${clean(String(req.name))}"` : thread ? ` in ${clean(thread)}` : " here"}. crosstalk_look action "urls" lists them; crosstalk_work action "serve" starts one.` }
+    if (!hits.length) return { error: `no running local server matches${req.url ? ` ${clean(String(req.url))}` : req.name ? ` "${clean(String(req.name))}"` : thread ? ` in ${clean(thread)}` : " here"}. crosstalk_look action "running" lists them; crosstalk_work action "serve" starts one.` }
     if (hits.length > 1) return { error: `${hits.length} local servers match; say which (name or url): ${hits.slice(0, 8).map((u) => `${clean(u.label)} — ${clean(U.shownUrl(u))}`).join("; ")}` }
     return { rec: hits[0] }
   }
@@ -447,7 +447,7 @@ export function createShares(d: ShareDeps) {
         d.log(`share: card not stored: ${(e as Error).message}`)
       }
     }
-    d.note(`share:${s.id}`, `◢ crosstalk: ${question} It is in crosstalk_look action "urls" as a shared link (data: open it only if the person asks).`)
+    d.note(`share:${s.id}`, `◢ crosstalk: ${question} It is in crosstalk_look action "running" as a shared link (data: open it only if the person asks).`)
   }
 
   function settleCard(id: string) {

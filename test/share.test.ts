@@ -442,16 +442,21 @@ describe("over the wire", () => {
 })
 
 describe("both people's panes", () => {
-  test("a Shared group, and an ended share reads as ended", async () => {
-    const { linkGroups, linkLine } = await import("../src/ui-extra/pure.ts")
-    const links = [
-      { label: "auth · web", url: "http://auth.localhost:1355", kind: "local" as const, alive: true },
-      { label: "auth · web · shared with marie · until 18:00", url: "http://auth.localhost:1355", kind: "shared" as const, alive: true },
-      { label: "auth · web · from paul · until 18:00", url: "http://auth.paul.localhost:1355", kind: "shared" as const, alive: false },
-    ]
-    const g = linkGroups(links)
-    expect(g.map((x) => x.title)).toEqual(["Local", "Shared"])
-    expect(linkLine(links[1])).toBe("● auth · web · shared with marie · until 18:00")
-    expect(linkLine(links[2])).toBe("○ auth · web · from paul · until 18:00 · ended")
+  test("Running has a Shown to people group: who yours is open to and for how long, whose a teammate's is, and an ended one reads as ended", async () => {
+    const { runningGroups, runningLine } = await import("../src/ui-extra/pure.ts")
+    const { project } = await import("../src/threads/running.ts")
+    const now = Date.parse("2026-11-02T10:00:00Z")
+    const items = project("auth", {
+      now,
+      servers: [{ name: "web", ports: [4100], url: "http://localhost:4100" }],
+      out: [{ id: "sh1", urlId: "svc:x", label: "auth · web", name: "auth", thread: "auth", target: { svc: "web" }, with: [{ label: "marie", fingerprint: "fp-m" }], createdAt: now - 3600_000, expiresAt: now + 7 * 3600_000 }],
+      in: [{ id: "sh2", owner: "paul", fingerprint: "fp-p", label: "auth · web", name: "auth", thread: "auth", expiresAt: now - 1, at: now - 9 * 3600_000, ended: "expired" }],
+      urls: [{ id: "shared:1", url: "http://auth.paul.localhost:1355", kind: "shared", source: "share", label: "auth · web", thread: "auth", name: "auth.paul.localhost", firstSeen: 0, lastSeen: 0, lastCheck: 0, alive: false }],
+    })
+    const g = runningGroups(items)
+    expect(g.map((x) => x.title)).toEqual(["Servers", "Shown to people"])
+    const shares = g[1]!.items
+    expect(shares.map((r) => runningLine(r, now))).toEqual(["● auth · web · with marie · 7h left", "○ auth · web · from paul · ended"])
+    expect(shares[1]!.owner).toBe("paul")
   })
 })

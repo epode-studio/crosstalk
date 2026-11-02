@@ -7,7 +7,9 @@
 //                 opens a second picker with Mute / Later
 //   @ shortcuts   `@<thread> <text>`, `@main`, `@restore`: optional, typed at
 //                 the prompt and taken before they become one
-//   the pane      what a thread pane shows, as plain data
+//   the pane      what a thread pane shows, as plain data: status, people,
+//                 what is waiting, Notes, Features, Running, History
+//   the status line   `◢ auth · auth.localhost:1355 · 1 waiting`
 
 export const HAND = "Hand to agent"
 export const REPLY = "Reply"
@@ -107,6 +109,9 @@ export function matchOption(typed: string, options: readonly string[]): string |
 export type PaneFeature = { name: string; risk: string; flag?: string; stage?: string; state?: string }
 export type PaneRecent = { from: string; text: string; ts?: number }
 
+/** A note in the pane: its kind and one line. */
+export type PaneNote = { kind: "decision" | "fact" | "task" | "rule"; text: string; who?: string; at?: number; state?: string }
+
 /** One thread, as its pane draws it. Never model context. */
 export type PaneModel = {
   thread: string
@@ -114,26 +119,128 @@ export type PaneModel = {
   repo?: string
   recap?: string
   people: string[]
+  /** How many agents are working in it. */
   sessions: number
   /** What is waiting: open questions, and things the person has to answer. */
   waiting: string[]
-  decision?: { text: string; who: string; at: number }
+  /** The latest notes, newest first: decisions, open tasks, facts, rules. */
+  notes?: PaneNote[]
   recent: PaneRecent[]
   features: PaneFeature[]
-  /** crosstalk services running in this session's worktree, with where they listen (docs/services.md). */
-  services?: PaneService[]
-  /** The thread's URLs (src/urls/): in the main session, every thread's. */
-  links?: PaneLink[]
-  /** Screenshots, each URL's before and after, as files (src/urls/shots/); the mod links them, it cannot draw images. */
-  shots?: PaneShot[]
+  /** What it runs and where to look (src/threads/running.ts): in the main session, every thread's. */
+  running?: PaneRunning[]
+  /** What it once had: the latest ended links and notes (src/threads/history.ts). */
+  history?: PaneHistory[]
   /** A QR code crosstalk_look action "qr" made for the phone (src/urls/history/phone.ts): half-block rows, drawn white on black. */
   qr?: { label: string; caption: string; rows: string[]; at: number; why?: string }
 }
 
-/** `broken`: crashed or stopped answering (src/urls/health/), with why. */
-export type PaneService = { name: string; ports: number[]; url?: string; broken?: string }
-
 export type PaneShot = { label: string; path?: string; before?: { file: string; at: number }; after: { file: string; at: number } }
+
+/** What a thread runs and where to look, one kind of thing each. */
+export type RunningKind = "server" | "preview" | "pr" | "share" | "link" | "screenshot"
+
+/**
+ * One thing in Running. `owner`: "you", or whose it is (a teammate who showed
+ * you their server). `alive`: it answers (a server, a preview, a link), is
+ * open (a share), or is there (a screenshot). A screenshot's `before` and
+ * `after` are files; a server's `ports` and `broken` are what the machinery
+ * knows of it.
+ */
+export type PaneRunning = {
+  kind: RunningKind
+  label: string
+  url?: string
+  /** The address underneath, when `url` is its local name: `http://localhost:4100`. */
+  raw?: string
+  /** Its local name, `auth.localhost`, when it has one. */
+  name?: string
+  alive: boolean
+  owner: string
+  thread?: string
+  ports?: number[]
+  broken?: string
+  /** Who a share of yours is open to. */
+  with?: string[]
+  until?: number
+  path?: string
+  before?: { file: string; at: number }
+  after?: { file: string; at: number }
+}
+
+/** One thing in History: a link, preview, PR or screenshot the thread had, or a note that ended. */
+export type PaneHistory = { kind: string; label: string; at: number; url?: string }
+
+export const RUNNING_KINDS: readonly (readonly [RunningKind, string])[] = [
+  ["server", "Servers"],
+  ["preview", "Previews"],
+  ["pr", "Pull requests"],
+  ["share", "Shown to people"],
+  ["link", "Links found in output"],
+  ["screenshot", "Screenshots"],
+] as const
+
+/** Running by kind, in the order above, empty kinds left out. */
+export function runningGroups(items: readonly PaneRunning[]): { kind: RunningKind; title: string; items: PaneRunning[] }[] {
+  return RUNNING_KINDS.map(([kind, title]) => ({ kind, title, items: items.filter((r) => r.kind === kind) })).filter((g) => g.items.length)
+}
+
+/** Where a running thing is, for a person: its local name, else its address. */
+export const runningWhere = (r: PaneRunning) => r.url ?? (r.ports?.length ? `localhost:${r.ports[0]}` : "")
+
+/** A running thing's line: `● auth · dev server`, `○ auth · PR #12 · dead`, `● web · broken: exited 1`. */
+export function runningLine(r: PaneRunning, now: number): string {
+  const mark = r.alive ? "●" : "○"
+  if (r.kind === "screenshot")
+    return `${r.label}${r.path ? ` ${r.path}` : ""} · ${r.before ? `before ${ago(r.before.at, now)}` : "no before yet"} · after ${ago(r.after?.at, now)}`
+  if (r.broken) return `${mark} ${r.label} · broken: ${r.broken}`
+  if (r.kind === "server" && !r.url && !r.ports?.length) return `${mark} ${r.label} · starting`
+  const who = r.kind === "share" ? (r.owner === "you" ? (r.with?.length ? ` · with ${r.with.join(", ")}` : "") : ` · from ${r.owner}`) : ""
+  const left = r.kind === "share" && r.alive && r.until ? ` · ${until(r.until, now)} left` : ""
+  const dead = r.alive ? "" : r.kind === "share" ? " · ended" : " · dead"
+  return `${mark} ${r.label}${who}${left}${dead}`
+}
+
+/** `7h`, `40m`: how long until `ts`. */
+export function until(ts: number, now: number): string {
+  const s = Math.max(0, Math.round((ts - now) / 1000))
+  if (s < 3600) return `${Math.max(1, Math.round(s / 60))}m`
+  if (s < 86400) return `${Math.round(s / 3600)}h`
+  return `${Math.round(s / 86400)}d`
+}
+
+/** A note's line in the pane: `decision · v1 accepted until 0.2 (paul, 2h)`, `[ ] remove the v1 parser`. */
+export function noteLine(n: PaneNote, now: number): string {
+  const when = n.who || n.at ? ` (${[n.who, n.at ? ago(n.at, now) : ""].filter(Boolean).join(", ")})` : ""
+  if (n.kind === "task") return `[${n.state === "done" ? "x" : n.state === "claimed" ? "~" : " "}] ${n.text}${n.state === "claimed" && n.who ? ` (${n.who})` : ""}`
+  return `${n.kind} · ${n.text}${when}`
+}
+
+/** A History line: `PR #9 · merged · 3d` or `fact · staging was shared · ended 5d`. */
+export const historyLine = (h: PaneHistory, now: number) => `${h.label} · ${h.kind} · ${ago(h.at, now)}`
+
+// --- the status line -----------------------------------------------------------------
+
+/** What the status line says runs: where its one server is (`auth.localhost:1355`), else how many things run. */
+export function runningSummary(items: readonly PaneRunning[]): string {
+  const up = items.filter((r) => r.alive && r.kind !== "screenshot" && r.owner === "you")
+  const servers = up.filter((r) => r.kind === "server")
+  return servers.length === 1 ? runningWhere(servers[0]!).replace(/^https?:\/\//, "") : up.length ? `${up.length} running` : ""
+}
+
+/**
+ * The status line: `◢ auth · tokens · auth.localhost:1355 · 1 waiting`. The
+ * session's threads, else what its cards are about, else its repo; where its
+ * one server is (or how many things run); what waits. Nothing at all when
+ * nothing is waiting and nothing runs.
+ */
+export function statusLine(o: { threads: readonly string[]; cards?: readonly string[]; repo?: string; running?: readonly PaneRunning[]; where?: string; waiting: number; label?: string; main?: { sessions: number; threads: number; waiting: number } }): string | undefined {
+  if (o.main) return `◢ main · ${o.main.threads} thread${o.main.threads === 1 ? "" : "s"} · ${o.main.sessions} working · ${Math.max(o.main.waiting, o.waiting)} waiting`
+  const named = o.threads.length ? o.threads.slice(0, 3).join(" · ") : o.cards?.length ? o.cards.slice(0, 3).join(", ") : o.repo ?? ""
+  const where = o.where || runningSummary(o.running ?? [])
+  if (!o.waiting && !o.label && !where) return undefined
+  return `◢ ${[named || "crosstalk", where].filter(Boolean).join(" · ")} · ${o.waiting} waiting`
+}
 
 /** `file:///…`, its path escaped, for an OSC 8 link to a screenshot. Only an absolute path of printable characters. */
 export const fileLink = (file: string) => (/^\/[^\u0000-\u001f\u007f]*$/.test(file) && file.length <= 1000 ? `file://${file.split("/").map(encodeURIComponent).join("/")}` : undefined)
@@ -141,30 +248,8 @@ export const fileLink = (file: string) => (/^\/[^\u0000-\u001f\u007f]*$/.test(fi
 /** A screenshot pair's line: `auth · web /login · before 2m · after now`. */
 export const shotLine = (s: PaneShot, now: number) => `${s.label}${s.path ? ` ${s.path}` : ""} · ${s.before ? `before ${ago(s.before.at, now)}` : "no before yet"} · after ${ago(s.after.at, now)}`
 
-/** One URL in the pane: what it is, where (the proxy's name for a local server), and whether it answers. */
-export type PaneLink = { label: string; url: string; kind: "local" | "preview" | "pr" | "link" | "shared"; alive: boolean; thread?: string }
-
-export const LINK_KINDS = [
-  ["local", "Local"],
-  ["preview", "Previews"],
-  ["pr", "Pull requests"],
-  ["link", "Links found in output"],
-  ["shared", "Shared"],
-] as const
-
-/** The pane's links by kind, in the order above, empty kinds left out. */
-export function linkGroups(links: readonly PaneLink[]): { kind: PaneLink["kind"]; title: string; links: PaneLink[] }[] {
-  return LINK_KINDS.map(([kind, title]) => ({ kind, title, links: links.filter((l) => l.kind === kind) })).filter((g) => g.links.length)
-}
-
 /** A URL the pane may make clickable: http(s), a plain host, nothing that is not printable. */
 export const linkable = (url: string) => url.length <= 500 && /^https?:\/\/[A-Za-z0-9.\[\]:-]+(\/[!-~]*)?$/.test(url)
-
-/** A link's line: `● auth · dev server`, or `○ auth · dev server · dead`. */
-export const linkLine = (l: PaneLink) => `${l.alive ? "●" : "○"} ${l.label}${l.alive ? "" : l.kind === "shared" ? " · ended" : " · dead"}`
-
-/** A service's line in the pane: `web · :4100`. */
-export const serviceLine = (s: PaneService) => (s.broken ? `${s.name} · broken: ${s.broken}` : s.ports.length ? `${s.name} · ${s.ports.map((p) => `:${p}`).join(" ")}` : `${s.name} · starting`)
 
 /** A feature's line in the pane: `v2 tokens · risky · flag auth-v2 at internal · merged`. */
 export function featureLine(f: PaneFeature): string {
@@ -184,22 +269,26 @@ export function ago(ts: number | undefined, now: number): string {
   return `${Math.round(s / 86400)}d`
 }
 
-/** Plain lines of a pane, for a surface or a test that draws text alone. */
+
+/** Plain lines of a pane, for a surface or a test that draws text alone: the same sections the mod draws. */
 export function paneLines(p: PaneModel, now: number): string[] {
-  const out = [`◢ ${p.thread} · ${p.status}`, p.people.length ? p.people.join("  ") : "nobody yet"]
+  const out = [`◢ ${p.thread} · ${p.status}${p.sessions ? ` · ${p.sessions} working` : ""}`, p.people.length ? p.people.join("  ") : "nobody yet"]
   if (p.recap) out.push("", p.recap)
   out.push("", "Waiting", ...(p.waiting.length ? p.waiting.map((w) => ` ? ${w}`) : [" nothing"]))
-  if (p.decision) out.push("", "Latest decision", ` ${p.decision.text} (${p.decision.who}${p.decision.at ? `, ${ago(p.decision.at, now)}` : ""})`)
+  if (p.notes?.length) out.push("", "Notes", ...p.notes.map((n) => ` ${noteLine(n, now)}`))
   if (p.features.length) out.push("", "Features", ...p.features.map((f) => ` ${featureLine(f)}`))
+  if (p.running?.length) {
+    out.push("", "Running")
+    for (const g of runningGroups(p.running)) {
+      out.push(` ${g.title}`)
+      for (const r of g.items) {
+        const where = runningWhere(r)
+        out.push(`  ${runningLine(r, now)}${where ? ` ${where}` : ""}`)
+        if (r.kind === "screenshot") out.push(...(r.before ? [`   before ${r.before.file}`] : []), ...(r.after ? [`   after  ${r.after.file}`] : []))
+      }
+    }
+  }
   if (p.recent.length) out.push("", "Recent", ...p.recent.map((r) => ` ${r.from} ${ago(r.ts, now)} ${r.text}`))
-  if (p.services?.length) out.push("", "Services", ...p.services.map((s) => ` ${serviceLine(s)}${s.url ? ` ${s.url}` : ""}`))
-  if (p.links?.length) {
-    out.push("", "Links")
-    for (const g of linkGroups(p.links)) out.push(` ${g.title}`, ...g.links.map((l) => `  ${linkLine(l)} ${l.url}`))
-  }
-  if (p.shots?.length) {
-    out.push("", "Screenshots")
-    for (const s of p.shots) out.push(` ${shotLine(s, now)}`, ...(s.before ? [`  before ${s.before.file}`] : []), `  after  ${s.after.file}`)
-  }
+  if (p.history?.length) out.push("", "History", ...p.history.map((h) => ` ${historyLine(h, now)}`))
   return out
 }

@@ -69,6 +69,22 @@ export async function callLegacy(name: string, a: any, o: Ctx): Promise<Result |
       return r.ok ? ok({ done: a.id }) : err(r.error ?? "not marked done")
     }
 
+    case "crosstalk_running": {
+      const R = await import("../threads/running.ts")
+      const U = await import("../urls/index.ts")
+      let thread = a.thread ? String(a.thread) : undefined
+      let worktree: string | undefined
+      try {
+        worktree = U.rootOf(CWD)
+      } catch {}
+      thread ??= U.threadOfSession(SESSION_ID) ?? (worktree ? U.threadOfRoot(worktree) : undefined)
+      try {
+        U.syncServices({ store: U.urls() })
+      } catch {}
+      const all = R.running(thread, { sessionId: SESSION_ID, worktree, max: 60 }).filter((r) => (!a.kind || r.kind === a.kind) && (a.alive === undefined || r.alive === !!a.alive))
+      return { content: [{ type: "text" as const, text: R.runningText(all, { thread }) }] }
+    }
+
     case "crosstalk_notes": {
       const r = await request({ op: "notes", sessionId: SESSION_ID, cwd: CWD, thread: a.thread, kind: a.kind })
       if (!r.ok) return err(r.error ?? "no notes")

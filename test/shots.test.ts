@@ -410,6 +410,6 @@ describe("the tab's broken state", () => {
     expect(Status.readTab("tab2")?.broken).toBeUndefined()
   })
   test("the pane marks a broken service", () => {
-    expect(Pure.serviceLine({ name: "web", ports: [], broken: "exited with status 1" })).toBe("web · broken: exited with status 1")
+    expect(Pure.runningLine({ kind: "server", label: "web", alive: false, owner: "you", broken: "exited with status 1" }, 0)).toBe("○ web · broken: exited with status 1")
   })
 })

@@ -18,9 +18,9 @@ import * as restore from "./restore.ts"
 import * as ui from "./uistate.ts"
 import * as gather from "./gather.ts"
 import * as cleanup from "./cleanup.ts"
-import * as Svc from "./services/service.ts"
 import * as Urls from "./urls/index.ts"
-import { readState as readProxy } from "./urls/proxy.ts"
+import { running } from "./threads/running.ts"
+import { runningSummary } from "./ui-extra/pure.ts"
 import * as extra from "./ui-extra/uicli.ts"
 import * as sessionCtl from "./sessions/control.ts"
 import * as envTools from "./env/tools.ts"
@@ -90,7 +90,7 @@ function tendGather(session: string) {
 async function watch(session: string, interval: number) {
   let last = ""
   let lastRestoreCheck = 0
-  let ports: string | undefined
+  let where: string | undefined
   const parent = process.ppid
   for (;;) {
     // The session that started this is gone: so is the reason to run.
@@ -111,16 +111,13 @@ async function watch(session: string, interval: number) {
         // Finished agent worktrees: offered once, checked at most every ten minutes.
         cleanup.surface(session, cleanup.offerOnce(), true)
       } catch {}
-      // This worktree's services' ports, for the status line (`auth · :4100`).
+      // What runs, for the status line: the thread's Running (src/threads/running.ts),
+      // said as its one server's name (`auth.localhost:1355`) or how many run.
       try {
-        ports = Svc.badge(Svc.forSession(session).map((s) => ({ listening: s.ports }))) || undefined
-        // Its name through crosstalk's proxy instead, while that is up (`auth.localhost:1355`, src/urls/).
-        const st = ports ? readProxy() : null
-        const cwd = st ? (restore.readOne(session)?.cwd ?? process.cwd()) : undefined
-        if (st && cwd) ports = Urls.badge(Urls.rootOf(cwd), st) ?? ports
+        where = runningSummary(running(Urls.threadOfSession(session), { sessionId: session })) || undefined
       } catch {}
     }
-    const w = { ...(await waiting(session, true)), note: gather.peekNote(session) ?? undefined, ...(ports ? { ports } : {}) }
+    const w = { ...(await waiting(session, true)), note: gather.peekNote(session) ?? undefined, ...(where ? { where } : {}) }
     const line = JSON.stringify(w)
     if (line !== last) {
       last = line

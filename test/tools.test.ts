@@ -56,14 +56,13 @@ const OLD: [old: string, tool: string, args: Record<string, unknown>, handed?: R
   ["crosstalk_disk", "crosstalk_work", { action: "disk", rule: true }, { rule: true }],
   ["crosstalk_open", "crosstalk_work", { action: "open", thread: "auth", editor: "zed" }, { thread: "auth", editor: "zed" }],
 
-  ["crosstalk_urls", "crosstalk_look", { action: "urls", kind: "shared" }, { kind: "shared" }],
+  ["crosstalk_running", "crosstalk_look", { action: "running", kind: "share" }, { kind: "share" }],
   ["crosstalk_open_url", "crosstalk_look", { action: "open_url", name: "auth web" }, { name: "auth web" }],
   ["crosstalk_screenshot", "crosstalk_look", { action: "screenshot", path: "/login" }, { path: "/login" }],
   ["crosstalk_screenshots", "crosstalk_look", { action: "screenshots", name: "auth", open: true }, { name: "auth", open: true }],
   ["crosstalk_history", "crosstalk_look", { action: "history", thread: "auth", query: "login" }, { thread: "auth", query: "login" }],
   ["crosstalk_share", "crosstalk_look", { action: "share", name: "auth web", with: ["ben"], for: "2h" }, { name: "auth web", with: ["ben"], for: "2h" }],
   ["crosstalk_unshare", "crosstalk_look", { action: "unshare", name: "auth" }, { name: "auth" }],
-  ["crosstalk_shares", "crosstalk_look", { action: "shares" }, {}],
   ["crosstalk_qr", "crosstalk_look", { action: "qr", name: "auth preview" }, { name: "auth preview" }],
   ["crosstalk_pane", "crosstalk_look", { action: "pane", thread: "auth" }, { thread: "auth" }],
 
@@ -149,10 +148,10 @@ describe("the surface", () => {
 })
 
 describe("every tool of the old surface is reachable", () => {
-  test("the table names each of the 73, less the two lists that are now one (notes), once", () => {
+  test("the table names each of the 73 once, less the lists that are now one: notes (facts, tasks) and running (urls, shares)", () => {
     const names = OLD.map(([n]) => n)
     expect(new Set(names).size).toBe(names.length)
-    expect(names.length).toBe(72)
+    expect(names.length).toBe(71)
   })
 
   for (const [old, tool, args, handed] of [...OLD, ...PARTS])
