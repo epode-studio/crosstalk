@@ -673,6 +673,11 @@ Every part above has a first version on the branch, with its tests in
 | Disk budget, team install, metrics, threads across repos | `src/disk/`, `src/install/`, `src/metrics/`, `src/threads/crossrepo.ts` | `INSTALL.md` |
 | Shipping: risk, reviewers, evidence, merging, flags (Unleash first), previews, dark launch, metrics ramps, incidents | `src/shipping/` | `docs/shipping.md` |
 
+**Pull requests from sealed threads** carry the feature, its evidence and its
+reviewers, never the thread's recap, decisions or open questions: a PR is
+readable by everyone with access to the repo, which can be more people than the
+thread is sealed to. Public threads put all of it in the PR. Decided 2026-11-02.
+
 ### Not yet checked in real use
 
 - **On a Mac:** everything per terminal except restore (tested by hand in
