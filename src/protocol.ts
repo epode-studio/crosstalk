@@ -129,3 +129,36 @@ export function* lines(buffer: { rest: string }, chunk: string): Generator<unkno
     }
   }
 }
+
+/**
+ * A name a sender chose (their session, a thread, a room), cut to a short
+ * plain charset: letters, digits, space and `._-@:`, and a leading `#`. It ends up in notices,
+ * tag attributes and cards on the receiving side, so nothing that could close
+ * a tag, start a line or pass for markup survives. Empty or not a string is
+ * undefined.
+ */
+export function cleanName(v: unknown, max = 64): string | undefined {
+  if (typeof v !== "string") return undefined
+  const s = v
+    .normalize("NFKC")
+    .replace(/[^\p{L}\p{N} ._#@:-]+/gu, "-")
+    .replace(/\s+/g, " ")
+    .trim()
+    // A room's leading # is its own; anywhere else it could pass for a heading.
+    .replace(/(?!^)#/g, "-")
+    .slice(0, max)
+    .trim()
+  return s || undefined
+}
+
+/** Clean an inbound envelope's sender-chosen names in place, on receipt. */
+export function cleanEnvelope(env: Envelope): Envelope {
+  if (!env || typeof env !== "object") return env
+  env.fromSession = cleanName(env.fromSession) ?? "-"
+  if (env.fromAgent !== undefined) env.fromAgent = cleanName(env.fromAgent)
+  if (env.thread !== undefined) env.thread = cleanName(env.thread)
+  if (env.room !== undefined) env.room = cleanName(env.room)
+  if (env.toSession !== undefined) env.toSession = cleanName(env.toSession)
+  if (Array.isArray(env.threads)) env.threads = env.threads.map((t) => cleanName(t)).filter((t): t is string => !!t)
+  return env
+}

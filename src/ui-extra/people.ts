@@ -32,6 +32,32 @@ const LINK = /^ {4}\/crosstalk:link (\d{3,6}-[a-z]+(?:-[a-z]+)+(?: at \S+)?)\s*$
 export const DONE = "Done"
 export const CANCEL = "Cancel it"
 
+/**
+ * Words this process has put in a result, without the mod. They go out once:
+ * every later result of these tools has them taken out, whatever printed them.
+ */
+const issued: string[] = []
+
+/** Any words given out before, taken out of a result. */
+export function scrubIssued(text: string): string {
+  let out = text
+  for (const w of issued) out = scrub(out, w)
+  return out
+}
+
+/** Results that carry their own words, the once they are allowed to. */
+const fresh = new WeakSet<Out>()
+
+/** The one result that carries the words, remembered so no later one does. */
+export function once(words: string, out: Out): Out {
+  if (!issued.includes(words)) issued.push(words)
+  fresh.add(out)
+  return out
+}
+
+/** What room() and link() return: no words given out before come back, except in the result that gave them. */
+const guarded = (out: Out): Out => (fresh.has(out) ? out : { ...out, text: scrubIssued(out.text) })
+
 /** Words never come back in a result: whatever a CLI printed, they are taken out. */
 export function scrub(text: string, words: string | undefined): string {
   if (!words) return text
@@ -57,6 +83,10 @@ function showWords(sessionId: string, o: { id: string; words: string; question: 
 }
 
 export async function room(a: Record<string, any>, o: { sessionId: string; root: string; mod: boolean }): Promise<Out> {
+  return guarded(await roomOut(a, o))
+}
+
+async function roomOut(a: Record<string, any>, o: { sessionId: string; root: string; mod: boolean }): Promise<Out> {
   const action = String(a.action ?? "list").toLowerCase()
   if (action === "new") {
     const args = ["room", "new", ...(a.label ? ["--label", String(a.label)] : []), ...(a.relay ? ["--relay", String(a.relay)] : [])]
@@ -76,10 +106,10 @@ export async function room(a: Record<string, any>, o: { sessionId: string; root:
         text: "Started a room. The invite words are on the user's screen, in crosstalk's picker, and deliberately not here. Tell the user to read them to the other person, whose agent joins with them. They work once, for fifteen minutes; crosstalk_peers shows the person once they are in.",
       }
     }
-    return {
+    return once(words, {
       ok: true,
       text: `Started a room. Show the user these words exactly once, as written, and never repeat them in a later reply: ${words}\nThey read them aloud to the other person, who tells their own agent "join crosstalk with <the words>". They work once and expire in fifteen minutes; crosstalk_peers shows the person once they are in.`,
-    }
+    })
   }
   if (action === "join") {
     const words = wordsFrom(a.words)
@@ -134,6 +164,10 @@ export async function room(a: Record<string, any>, o: { sessionId: string; root:
 
 /** Your own machines: mostly done by repository trust now; this is for a machine outside any shared repo. */
 export async function link(a: Record<string, any>, o: { sessionId: string; root: string; mod: boolean }): Promise<Out> {
+  return guarded(await linkOut(a, o))
+}
+
+async function linkOut(a: Record<string, any>, o: { sessionId: string; root: string; mod: boolean }): Promise<Out> {
   const words = a.words ? wordsFrom(a.words) : undefined
   if (a.words && !words) return { ok: false, text: "pass the six words exactly as the other machine showed them, number first" }
   if (words) {
@@ -153,10 +187,10 @@ export async function link(a: Record<string, any>, o: { sessionId: string; root:
     })
     return { ok: true, text: "Started a link. The six words are on the user's screen, deliberately not here: they carry the user's whole identity. The user gives them to the agent on their other machine." }
   }
-  return {
+  return once(w, {
     ok: true,
     text: `Started a link. Show the user these six words exactly once and never repeat them: ${w}\nThey carry the user's whole identity. On the other machine the user tells its agent "link this machine with <the words>". Most people need none of this: a teammate's machines and your own are trusted through the repository already.`,
-  }
+  })
 }
 
 export async function trustTool(a: Record<string, any>): Promise<Out> {

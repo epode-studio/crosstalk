@@ -25,6 +25,8 @@
 set -u
 export CROSSTALK_NO_GATHER=1 CROSSTALK_NO_RESTORE=1 CROSSTALK_NO_REPOTRUST=1
 export CROSSTALK_THREAD_SETTLE_MS=300 CROSSTALK_THREAD_SYNC_MS=600000 CROSSTALK_WARN_RATE_MS=0
+# a-main reads ben's question before it steers; the wait after peer text is test/boundary.sh's
+export CROSSTALK_STEER_COOLDOWN_MS=0
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 PORT=${PORT:-8897}
@@ -159,7 +161,20 @@ INBOX_PID=$!
 for _ in $(seq 1 20); do [ -S "$SOCK" ] && break; sleep 0.1; done
 rpc "$A" "{\"op\":\"register\",\"sessionId\":\"a-api\",\"pid\":1,\"name\":\"a-api\",\"cwd\":\"$R/ana-main\",\"socket\":\"$SOCK\",\"token\":\"tok-123\"}" >/dev/null
 ST=$(rpc "$A" '{"op":"steer","sessionId":"a-main","session":"a-api","text":"stop and summarise where you are"}')
-has "$ST" "Told a-api" "\"tell the api one to stop\" steers it"
+has "$ST" "needs your user's yes" "without the mod, steering is refused: nobody can say yes"
+check "$(cat "$TMP/inbox.log" 2>/dev/null)" "" "and nothing reaches the inbox"
+# Another of ana's sessions, whose mod polls: a-main keeps the hook's notes, which a live mod would take.
+rpc "$A" "{\"op\":\"register\",\"sessionId\":\"a-desk\",\"pid\":1,\"name\":\"a-desk\",\"cwd\":\"$R/ana-main\",\"socket\":\"\"}" >/dev/null
+rpc "$A" '{"op":"ui","sessionId":"a-desk","mod":true}' >/dev/null
+ST=$(rpc "$A" '{"op":"steer","sessionId":"a-desk","session":"a-ap","text":"stop"}')
+has "$ST" 'no session called' "a part of a name names no session"
+ST=$(rpc "$A" '{"op":"steer","sessionId":"a-desk","session":"a-api","text":"stop and summarise where you are"}')
+has "$ST" "Asked your user to confirm" "with the mod, \"tell the api one to stop\" asks the person first"
+check "$(cat "$TMP/inbox.log" 2>/dev/null)" "" "nothing reaches the inbox before they say yes"
+STID=$(field "$(ui_of "$A" a-desk)" 'r.items.filter(i => i.kind === "steer").map(i => i.id)[0]')
+has "$(field "$(ui_of "$A" a-desk)" 'JSON.stringify(r.items.find(i => i.kind === "steer"))')" 'Tell a-api: \"stop and summarise where you are\"?' "the picker shows the exact words"
+ST=$(rpc "$A" "{\"op\":\"ui_act\",\"sessionId\":\"a-desk\",\"id\":\"$STID\",\"action\":\"answer\",\"value\":\"Tell it\"}")
+has "$ST" "Told a-api" "their yes steers it"
 sleep 0.5
 INBOX=$(cat "$TMP/inbox.log" 2>/dev/null)
 has "$INBOX" "stop and summarise where you are" "the instruction lands in that session's inbox"

@@ -17,7 +17,7 @@ import { chooseEditor, findWorktree, launch } from "./open.ts"
 import { pane } from "./pane.ts"
 
 const WORDS_RULE =
-  "Never repeat invite or link words in your reply beyond what the result tells you to show, and never send them through crosstalk itself."
+  "When a result carries invite or link words (only without crosstalk's mod), show them to the user exactly once, as written, and never repeat them in a later reply, a summary, a commit, a file or any tool call; later results have them taken out. Never send them through crosstalk itself."
 
 export const TOOLS = [
   {

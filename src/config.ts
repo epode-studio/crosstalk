@@ -222,6 +222,10 @@ export type Held = {
   threads?: string[]
   /** About the session's own thread, so it goes to its agent without a picker. */
   auto?: boolean
+  /** Handed to the agent from the mod: by the person, or passed on as its own thread's. */
+  handedAt?: number
+  /** Already in the agent's context while the mod was live: handed over, or returned by crosstalk_read. */
+  toolReadAt?: number
 }
 
 export const loadQueue = (): Record<string, Held[]> => readJson(P.queue, {})

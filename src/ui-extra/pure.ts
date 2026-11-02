@@ -20,6 +20,17 @@ export const LATER = "Later"
 /** $.ui.ask refuses more than this many options. */
 export const MAX_OPTIONS = 4
 
+/**
+ * The turn the mod submits after the person hands a message over. It names
+ * nobody: a sender's label, session or thread is theirs to choose, and in the
+ * person's own voice it would be words they never said.
+ */
+export const HANDED_PROMPT = "I handed you the crosstalk message above. Read it and act on it if it concerns this session."
+
+/** A steer's confirmation picker (src/coordinator.ts). */
+export const STEER_YES = "Tell it"
+export const STEER_NO = "Don't"
+
 /** The first picker for a message card. */
 export const CARD_OPTIONS: readonly string[] = [HAND, REPLY, OPEN_THREAD, MORE]
 /** The first picker for a peer's question. */

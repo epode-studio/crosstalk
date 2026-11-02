@@ -64,7 +64,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Item, Pane, Receipt } from './types'
-import { LATER, MORE, MORE_OPTIONS, MUTE, OPEN_THREAD, ago, cardOptions, featureLine, parseAt, takesAt } from '../src/ui-extra/pure.ts'
+import { HANDED_PROMPT, LATER, MORE, MORE_OPTIONS, MUTE, OPEN_THREAD, ago, cardOptions, featureLine, parseAt, takesAt } from '../src/ui-extra/pure.ts'
 
 const items = atom({ plugin: 'crosstalk', key: 'items' } as const, [])
 const receipts = atom({ plugin: 'crosstalk', key: 'receipts' } as const, [])
@@ -159,6 +159,7 @@ function header(it: Item): string {
   if (it.kind === 'doctor') return 'crosstalk'
   if (it.kind === 'disk') return 'Disk'
   if (it.kind === 'install') return 'Team'
+  if (it.kind === 'steer') return 'Steer'
   if (it.kind === 'attention') return it.id.startsWith('attn:perm:') ? 'Permission' : it.id.startsWith('attn:staff:') ? 'Staffing' : 'Fresh start'
   return cut(it.thread ? `${it.from} · ${it.thread}` : it.from ?? 'crosstalk', 12)
 }
@@ -353,18 +354,21 @@ async function watch($: EngineInterface) {
 /** Raise the first picker that may come up by itself now, if the person is not busy. */
 async function maybeRaise($: EngineInterface) {
   if (asking || busy || !interactive) return
-  const all = await read($, items)
-  // About this session's own thread: it goes to the agent without asking, once.
-  const own = all.find(i => i.auto && isCard(i) && i.state === 'pending' && i.raisedAt === undefined)
-  const next = own ?? all.find(raisable)
-  if (!next) return
-  const box = await $.prompt.read()
-  if (box.text.trim()) return
+  // Taken before the first await: the 2s timer, a watch line and a turn ending
+  // all call this, and one passing the check while another awaits would raise
+  // the same picker twice, or hand the same message over twice.
   asking = true
   try {
+    const all = await read($, items)
+    // About this session's own thread: it goes to the agent without asking, once.
+    const own = all.find(i => i.auto && isCard(i) && i.state === 'pending' && i.raisedAt === undefined)
+    const next = own ?? all.find(raisable)
+    if (!next) return
+    const box = await $.prompt.read()
+    if (box.text.trim()) return
     if (own) {
       await markRaised($, own.id, await $.clock.now())
-      await hand($, own)
+      await hand($, own, true)
       return
     }
     const r = await cli($, ['act', '--id', next.id, '--action', 'raised'])
@@ -397,7 +401,7 @@ async function raise($: EngineInterface, it: Item) {
       answer = await $.ui.ask(it.question ?? 'crosstalk has a shipping question', { options: it.options ?? ['Not yet'], header: header(it) })
     else if (it.kind === 'thread')
       answer = await $.ui.ask(it.question ?? 'Which thread is this session part of?', { options: it.options ?? ['New thread', 'No thread'], header: header(it) })
-    else if (it.kind === 'rule' || it.kind === 'connect' || it.kind === 'conflict' || it.kind === 'invite' || it.kind === 'doctor' || it.kind === 'disk' || it.kind === 'install' || it.kind === 'attention')
+    else if (it.kind === 'rule' || it.kind === 'connect' || it.kind === 'conflict' || it.kind === 'invite' || it.kind === 'doctor' || it.kind === 'disk' || it.kind === 'install' || it.kind === 'attention' || it.kind === 'steer')
       answer = await $.ui.ask(it.question ?? 'crosstalk has a question', { options: (it.options ?? ['Not now']).slice(0, 4), header: header(it) })
     else {
       const what = it.kind === 'ask' ? 'asks' : 'says'
@@ -455,7 +459,7 @@ async function answered($: EngineInterface, it: Item, answer: string) {
     await receipt($, `disk-${it.id}`, r.text ?? r.error ?? 'crosstalk: the disk question did not answer')
     return
   }
-  if (it.kind === 'rule' || it.kind === 'connect' || it.kind === 'conflict' || it.kind === 'invite' || it.kind === 'install' || it.kind === 'attention') {
+  if (it.kind === 'rule' || it.kind === 'connect' || it.kind === 'conflict' || it.kind === 'invite' || it.kind === 'install' || it.kind === 'attention' || it.kind === 'steer') {
     const r = await step($, it, 'answer', answer)
     $.ui.toast(oneLine((r.text ?? r.error ?? 'crosstalk did not answer').replace(/^◢ crosstalk: /, '')))
     return
@@ -516,22 +520,35 @@ async function reply($: EngineInterface, it: Item, text: string) {
   $.ui.toast(r.ok ? `${it.kind === 'ask' ? 'answered' : 'replied to'} ${it.from}` : `not sent: ${r.error ?? 'no answer'}`)
 }
 
-/** Hand a message to the agent: as data, with a turn to act on it, and a receipt only the person sees. */
-async function hand($: EngineInterface, it: Item) {
-  const r = await step($, it, 'hand')
+/**
+ * Hand a message to the agent: as data, and a receipt only the person sees.
+ *
+ * Handed by the person, a turn follows to act on it, in words that name
+ * nobody (HANDED_PROMPT): a sender's label, session or thread is theirs to
+ * choose, and in the person's voice it would be words they never said. Passed
+ * on by crosstalk because it is about this session's own thread (`auto`), the
+ * daemon frames it as exactly that, and no turn starts in the person's voice.
+ *
+ * If the row cannot be appended the claim is undone: a message marked handed
+ * and read but never delivered would be lost.
+ */
+async function hand($: EngineInterface, it: Item, auto = false) {
+  const r = await step($, it, 'hand', auto ? 'auto' : undefined)
   if (!r.ok || !r.text) {
     $.ui.toast(`not handed over: ${r.error ?? 'no answer'}`)
     return
   }
-  const appended = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: r.text }] } })
+  const appended = await $.session
+    .append({ message: { type: 'user', content: [{ type: 'text', text: r.text }] } })
+    .catch((err: unknown) => ({ deny: String(err).slice(0, 120) }))
   if ('deny' in appended && appended.deny) {
+    await cli($, ['act', '--id', it.id, '--action', 'unhand'])
+    settled.delete(it.id)
     $.ui.toast(`not handed over: ${appended.deny}`)
     return
   }
-  await receipt($, `hand-${it.id}`, `◢ handed ${it.from}${it.thread ? ` · ${it.thread}` : ''} to the agent`)
-  await $.prompt.submit({
-    text: `I handed you the crosstalk message from ${it.from}${it.thread ? ` (${it.thread})` : ''} above. Read it and act on it if it concerns this session.`,
-  })
+  await receipt($, `hand-${it.id}`, auto ? `◢ passed ${it.from}${it.thread ? ` · ${it.thread}` : ''} to the agent: its own thread` : `◢ handed ${it.from}${it.thread ? ` · ${it.thread}` : ''} to the agent`)
+  if (!auto) await $.prompt.submit({ text: HANDED_PROMPT })
 }
 
 async function receipt($: EngineInterface, key: string, text: string) {
