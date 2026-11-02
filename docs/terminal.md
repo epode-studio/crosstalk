@@ -116,12 +116,13 @@ there. After a restart, a background agent is restored into `tmux -L crosstalk`,
 
 ## Wrangling sessions
 
-Any session can close, find, resume, rename, move and send away any other, in plain words.
+Any session can close, tidy up, find, resume, rename, move and send away any other, in plain words.
 The code is in `src/sessions/`.
 
 | You say | Tool | What happens |
 |---|---|---|
-| "close billing" | `crosstalk_work action "close"` | Billing exits as if you quit it, and its record is marked archived, so restore never offers it back as a crash. Its services (dev servers and the like) keep running unless you say to stop them too (`services: "stop"`). |
+| "close billing" | `crosstalk_work action "close"` | Billing exits as if you quit it, and its record is marked archived, so restore never offers it back as a crash. Its tab closes too when nothing else runs in it (Terminal.app and tmux). Its services (dev servers and the like) keep running unless you say to stop them too (`services: "stop"`). |
+| "tidy up", "I'm overwhelmed" | `crosstalk_work action "tidy"` | One question for the lot. Sessions idle for 20 minutes or more, with nothing waiting on you, close with their tabs. Sessions doing the same work (the same thread, or the same folder) fold into one: the one you are in, else one in use, else the one used last, stays, and is handed where the others had got to. Tabs that ended sessions left with only a shell close. "And merge my windows" also makes Terminal's windows tabs of one. Busy sessions are never touched, and everything closed can be resumed. "Close everything but auth" names the sessions instead. |
 | "find the session where I fixed the token refresh" | `crosstalk_work action "find"` | Past sessions that match, best first, each with an id. |
 | "resume it" | `crosstalk_work action "resume"` | A new tab in the repository's window, beside its thread's tabs, running `claude --resume <id>` (`codex resume <id>` for Codex) in its folder. |
 | "call this one payments" | `crosstalk_work action "rename"` | The tab title on its next turn, its name in `crosstalk_work action "sessions"`, and its entry in its threads. |

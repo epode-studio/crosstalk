@@ -21971,6 +21971,160 @@ init_services();
 init_paths();
 init_postpone();
 import { spawn as spawnChild } from "node:child_process";
+
+// src/sessions/tidy.ts
+init_restore();
+init_gather();
+init_uistate();
+var IDLE_MIN = () => Math.max(1, Number(process.env.CROSSTALK_TIDY_IDLE_MIN ?? 20));
+var SHELLS = new Set(["zsh", "-zsh", "bash", "-bash", "fish", "-fish", "sh", "-sh", "login", "nu", "pwsh"]);
+function suggest(o) {
+  const min = o.idleMin ?? IDLE_MIN();
+  const seen = new Map(o.recs.map((r) => [r.sessionId, r.seenAt]));
+  const out = [];
+  for (const l of o.lives) {
+    if (l.id === o.self || l.id === o.main)
+      continue;
+    const st = o.status(l.id);
+    if (st && st !== "idle")
+      continue;
+    if (o.waiting(l.id) > 0)
+      continue;
+    const at = seen.get(l.id);
+    if (!at)
+      continue;
+    const idleMin = Math.floor((o.now - at) / 60000);
+    if (idleMin < min)
+      continue;
+    out.push({ id: l.id, name: l.name, idleMin, why: `idle ${ago2(idleMin)}` });
+  }
+  return out.sort((a, b) => b.idleMin - a.idleMin);
+}
+var ago2 = (min) => min < 60 ? `${min} min` : min < 48 * 60 ? `${Math.round(min / 60)} h` : `${Math.round(min / 1440)} days`;
+function waitingFor(sessionId) {
+  try {
+    return Object.values(snapshot()).filter((i) => i.sessionId === sessionId && !["answered", "handed", "muted"].includes(i.state)).length;
+  } catch {
+    return 0;
+  }
+}
+var statusOf = () => {
+  const reg = new Map;
+  try {
+    for (const e of readRegistry())
+      reg.set(e.sessionId, e.status);
+  } catch {}
+  return (id) => reg.get(id);
+};
+function appleCloseIdleTabScript(tty) {
+  return [
+    `if application "Terminal" is running then`,
+    `	tell application "Terminal"`,
+    `		repeat with w in windows`,
+    `			repeat with t in tabs of w`,
+    `				if (tty of t) is ${asq(tty)} then`,
+    `					if busy of t then return "busy"`,
+    `					do script "exit" in t`,
+    `					return "closed"`,
+    `				end if`,
+    `			end repeat`,
+    `		end repeat`,
+    `	end tell`,
+    `end if`,
+    `return ""`
+  ].join(`
+`);
+}
+var appleWindowCountScript = [`if application "Terminal" is running then`, `	tell application "Terminal" to return (count of windows) as text`, `end if`, `return "0"`].join(`
+`);
+var appleMergeScript = [
+  `tell application "Terminal" to activate`,
+  `delay 0.3`,
+  `tell application "System Events" to tell process "Terminal"`,
+  `	click menu item "Merge All Windows" of menu "Window" of menu bar 1`,
+  `end tell`,
+  `return "merged"`
+].join(`
+`);
+var tmuxBase = (t) => t.socket ? ["-S", t.socket] : [];
+function closeTabSteps(t, platform = process.platform) {
+  if (t.tmux?.pane) {
+    const base = tmuxBase(t.tmux);
+    return [
+      {
+        probe: { cmd: "tmux", args: [...base, "display-message", "-p", "-t", t.tmux.pane, "#{pane_current_command}"] },
+        close: { cmd: "tmux", args: [...base, "kill-pane", "-t", t.tmux.pane] },
+        closesIf: (out) => SHELLS.has(out.trim())
+      }
+    ];
+  }
+  if (kindOf(t) === "apple" && t.tty && platform === "darwin")
+    return [{ close: { cmd: "osascript", args: ["-"], input: appleCloseIdleTabScript(t.tty) }, closesIf: () => true }];
+  return [];
+}
+function closeTab(t, run, platform = process.platform) {
+  let closed = false;
+  for (const s of closeTabSteps(t, platform)) {
+    if (s.probe) {
+      const p = run(s.probe);
+      if (!p.ok || !s.closesIf(p.out))
+        continue;
+    }
+    const r = run(s.close);
+    if (r.ok && (s.probe || /closed/.test(r.out)))
+      closed = true;
+  }
+  return closed;
+}
+function leftoverTabs(recs, liveTtys) {
+  const seen = new Set;
+  const out = [];
+  for (const r of [...recs].filter((r) => r.endedAt).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0))) {
+    const key = r.terminal.tmux?.pane ? `tmux:${r.terminal.tmux.socket ?? ""}:${r.terminal.tmux.pane}` : r.terminal.tty;
+    if (!key || seen.has(key) || r.terminal.tty && liveTtys.has(r.terminal.tty))
+      continue;
+    if (!r.terminal.tmux?.pane && kindOf(r.terminal) !== "apple")
+      continue;
+    seen.add(key);
+    out.push(r);
+  }
+  return out;
+}
+function similar(o) {
+  const seen = new Map(o.recs.map((r) => [r.sessionId, r.seenAt]));
+  const groups = new Map;
+  for (const l of o.lives) {
+    const key = l.threads.length ? `thread:${l.threads[0]}` : `cwd:${l.cwd}`;
+    groups.set(key, [...groups.get(key) ?? [], l]);
+  }
+  const out = [];
+  for (const [key, g] of groups) {
+    if (g.length < 2)
+      continue;
+    const used = (l) => o.status(l.id) && o.status(l.id) !== "idle";
+    const keep = g.find((l) => l.id === o.self) ?? g.find((l) => l.id === o.main) ?? g.find(used) ?? [...g].sort((a, b) => (seen.get(b.id) ?? 0) - (seen.get(a.id) ?? 0))[0];
+    const why = key.startsWith("thread:") ? `same thread, ${key.slice(7)}` : "same folder";
+    for (const l of g) {
+      if (l.id === keep.id || l.id === o.self || l.id === o.main || used(l) || o.waiting(l.id) > 0)
+        continue;
+      out.push({ id: l.id, name: l.name, into: keep.id, intoName: keep.name, why });
+    }
+  }
+  return out;
+}
+function foldNote(f, s) {
+  const where = (s?.recap || s?.title || "").replace(/\s+/g, " ").trim();
+  const files = (s?.files ?? []).slice(-8);
+  return [
+    `${f.name} was folded into this session when tidying up (${f.why}).`,
+    where ? `Where it had got to: ${where.length > 1200 ? where.slice(0, 1199) + "\u2026" : where}` : "",
+    files.length ? `Files it worked on: ${files.join(", ")}` : "",
+    `Its conversation is archived; "resume ${f.name}" brings it back.`
+  ].filter(Boolean).join(`
+`);
+}
+
+// src/sessions/control.ts
 function liveDeps(env = process.env) {
   return {
     env,
@@ -22049,7 +22203,7 @@ function isClientArgs(args, client) {
   }
   return false;
 }
-var YES2 = { close: "Close", background: "Send it", rename: "Rename", move: "Move", remote: "Do it", resume: "Resume it", spawn: "Start it" };
+var YES2 = { close: "Close", background: "Send it", rename: "Rename", move: "Move", remote: "Do it", resume: "Resume it", spawn: "Start it", tidy: "Tidy up" };
 var NO2 = "Cancel";
 var VERBS = {
   close: /\b(close|stop|end|quit|exit|kill|archive|shut)\b/i,
@@ -22058,7 +22212,8 @@ var VERBS = {
   move: /\b(move|put|switch|belongs?)\b/i,
   resume: /\b(resume|reopen|open|bring|continue)\b/i,
   spawn: /\b(start|spawn|put|get|run|spin|agent)\b/i,
-  remote: /./
+  remote: /./,
+  tidy: /\b(tidy|tidying|clean|cleanup|close|clear|declutter|overwhelm\w*|tabs?)\b/i
 };
 function interruptsLine(busy) {
   if (!busy.length)
@@ -22069,6 +22224,8 @@ function questionFor(a, target, svc = [], busy = []) {
   const n = target?.name ?? ("session" in a ? a.session : "");
   if (a.kind === "resume")
     return `Resume ${n}?`;
+  if (a.kind === "tidy")
+    return tidyQuestion(a);
   if (a.kind === "spawn")
     return `Start ${a.count && a.count > 1 ? `${a.count} agents` : "an agent"} in ${path22.basename(a.cwd)}: "${a.task.length > 120 ? a.task.slice(0, 119) + "\u2026" : a.task}"?`;
   switch (a.kind) {
@@ -22110,6 +22267,8 @@ function typedAsks(prompt, a, target, now, withinMs = typedWindow(), self = fals
   const verb = a.kind === "remote" ? VERBS[a.req.kind] : VERBS[a.kind];
   if (!verb.test(t))
     return false;
+  if (a.kind === "tidy")
+    return true;
   const names = target ? [target.name, ...target.threads, target.id.slice(0, 8)] : ("session" in a) ? [a.session] : [];
   if (a.kind === "remote") {
     if (!has(t, a.machine))
@@ -22176,6 +22335,8 @@ async function perform(a, by, d, from) {
       return { ok: false, text: `\u25e2 crosstalk: ${bot}` };
     return spawnAgents({ task: a.task, name: a.name, count: a.count, cwd: a.cwd, by, env: d.env, peer: from });
   }
+  if (a.kind === "tidy")
+    return tidy(a, by, d, from);
   const lives = await liveSessions(d);
   const t = resolve(a.session, lives);
   if (!t.ok)
@@ -22233,9 +22394,120 @@ async function close(l, o, d, from) {
     sweep();
     mark(l.id, { archived: now });
   } catch {}
+  let tabGone = false;
+  if (o.tab !== false)
+    try {
+      tabGone = closeTab(l.terminal, d.run);
+    } catch {}
   const svcLine = o.services === "stop" ? stopped.length ? ` Stopped ${stopped.join(", ")}.` : "" : keepsLine(svc, false);
   const cut = busy.length ? ` What it was still running stopped with it (${what(busy).replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")}).` : "";
-  return { ok: true, text: `\u25e2 crosstalk: closed ${l.name}.${svcLine}${cut} It is archived, not lost: say "resume ${l.name}" to bring it back.`, closed: l.id };
+  return { ok: true, text: `\u25e2 crosstalk: closed ${l.name}${tabGone ? " and its tab" : ""}.${svcLine}${cut} It is archived, not lost: say "resume ${l.name}" to bring it back.`, closed: l.id, tabGone };
+}
+var tidyIdleMin = () => IDLE_MIN();
+var list2 = (xs) => xs.length <= 6 ? xs.join(", ") : `${xs.slice(0, 5).join(", ")} and ${xs.length - 5} more`;
+function tidyQuestion(a) {
+  const parts = [];
+  const into = new Map;
+  for (const f of a.folds)
+    into.set(f.intoName, [...into.get(f.intoName) ?? [], f.name]);
+  for (const [k, v] of into)
+    parts.push(`fold ${list2(v)} into ${k}`);
+  if (a.names.length)
+    parts.push(`${a.names.length} idle session${a.names.length === 1 ? "" : "s"} (${list2(a.names)})`);
+  if (a.tabs)
+    parts.push(`${a.tabs} empty tab${a.tabs === 1 ? "" : "s"} left by ended sessions`);
+  const first = parts[0] ?? "";
+  const what = parts.length ? `${first.startsWith("fold") ? "F" + first.slice(1) : `Close ${first}`}${parts.slice(1).map((p, i) => (i === parts.length - 2 ? " and " : ", ") + (p.startsWith("fold") ? p : `close ${p}`)).join("")}` : "";
+  const merge = a.merge ? what ? ", then merge Terminal's windows into tabs" : "Merge Terminal's windows into tabs" : "";
+  const keep = a.names.length || a.folds.length ? ` Each is archived and can be resumed; dev servers keep running.${a.folds.length ? " A folded session's last state goes to the one it joins." : ""}` : "";
+  return `${what}${merge}?${keep}`;
+}
+async function tidyPlan(o) {
+  const lives = await liveSessions(o.d);
+  const recs = readAll();
+  const named = [];
+  const missing = [];
+  for (const ref of o.sessions ?? []) {
+    const t = resolve(ref, lives);
+    if (t.ok && t.live.id !== o.by)
+      named.push(t.live);
+    else if (!t.ok)
+      missing.push(ref);
+  }
+  const status = statusOf();
+  const folds = o.sessions?.length ? [] : similar({ lives, recs, status, waiting: waitingFor, self: o.by });
+  const folded = new Set(folds.map((f) => f.id));
+  const offers = o.sessions?.length ? [] : suggest({ lives, recs, status, waiting: waitingFor, self: o.by, now: o.d.now() }).filter((x) => !folded.has(x.id) && !folds.some((f) => f.into === x.id));
+  const tabs = leftoverTabs(recs, new Set(lives.map((l) => l.terminal.tty).filter((t) => !!t)));
+  let windows = 0;
+  if (process.platform === "darwin") {
+    const r = o.d.run({ cmd: "osascript", args: ["-"], input: appleWindowCountScript });
+    windows = r.ok ? Number(r.out.trim()) || 0 : 0;
+  }
+  return { offers, folds, named, missing, tabs, windows };
+}
+async function tidy(a, by, d, from) {
+  const bot = refuseBot(from, "close sessions on this machine");
+  if (bot)
+    return { ok: false, text: `\u25e2 crosstalk: ${bot}` };
+  const lives = await liveSessions(d);
+  const done = [];
+  const notes = [];
+  const folded = [];
+  for (const f of a.folds) {
+    const t = resolve(f.id, lives);
+    const keep = resolve(f.into, lives);
+    if (!t.ok || !keep.ok || t.live.id === by)
+      continue;
+    let sum = null;
+    try {
+      const file = transcriptOf(t.live.id, t.live.cwd, d.env);
+      sum = file ? summarize(file) : null;
+    } catch {}
+    const r = await close(t.live, { by, services: "keep" }, d, from);
+    if (!r.ok) {
+      notes.push(r.text.replace(/^\u25e2 crosstalk: /, ""));
+      continue;
+    }
+    folded.push(`${t.live.name} into ${keep.live.name}`);
+    const text = foldNote(f, sum);
+    withStore((items, now) => upsert(items, { id: `fold:${t.live.id}`, kind: "message", sessionId: keep.live.id, from: "crosstalk", thread: keep.live.threads[0], text, auto: true, ts: now }, now));
+  }
+  for (const id of a.sessions) {
+    const t = resolve(id, lives);
+    if (!t.ok)
+      continue;
+    if (t.live.id === by)
+      continue;
+    const r = await close(t.live, { by, services: "keep" }, d, from);
+    if (r.ok)
+      done.push(t.live.name);
+    else
+      notes.push(r.text.replace(/^\u25e2 crosstalk: /, ""));
+  }
+  let tabs = 0;
+  if (a.tabs) {
+    const recs = readAll();
+    const live = new Set((await liveSessions(d)).map((l) => l.terminal.tty).filter((t) => !!t));
+    for (const r of leftoverTabs(recs, live))
+      try {
+        if (closeTab(r.terminal, d.run))
+          tabs++;
+      } catch {}
+  }
+  let merged = false;
+  if (a.merge && process.platform === "darwin") {
+    const r = d.run({ cmd: "osascript", args: ["-"], input: appleMergeScript });
+    merged = r.ok;
+    if (!r.ok)
+      notes.push(`Terminal's windows were not merged (${r.out.split(`
+`).pop()}); Window \u25b8 Merge All Windows does it by hand.`);
+  }
+  const parts = [folded.length ? `folded ${list2(folded)}` : "", done.length ? `closed ${list2(done)}` : "", tabs ? `${tabs} empty tab${tabs === 1 ? "" : "s"}` : "", merged ? "merged Terminal's windows into tabs" : ""].filter(Boolean);
+  const head = parts.length ? `\u25e2 crosstalk: ${parts.join(", ")}.` : "\u25e2 crosstalk: nothing needed closing.";
+  const tail = done.length || folded.length ? ` Each is archived: say "resume <name>" to bring one back.` : "";
+  return { ok: true, text: [head + tail, ...notes.map((n) => `  ${n}`)].join(`
+`), closed: done };
 }
 function freeTmuxName(base, has) {
   const b = slug(base, 24) || "session";
@@ -22471,6 +22743,33 @@ ${r.text}`.replace(`Say "resume <id>"`, `Say "resume <id> on ${r.machine}"`) : `
       if (!t.ok)
         return text(t);
       return text(await gate({ by: o.sessionId, cwd: o.cwd, action: { kind: "move", session: t.live.id, thread: String(a.thread ?? "") }, target: t.live }, d));
+    }
+    case "crosstalk_tidy": {
+      const names = Array.isArray(a.sessions) ? a.sessions.map(String).filter(Boolean).slice(0, 50) : [];
+      const plan = await tidyPlan({ by: o.sessionId, sessions: names.length ? names : undefined, d });
+      const close = names.length ? plan.named : plan.offers;
+      const merge = a.merge === true && plan.windows > 1;
+      const action = {
+        kind: "tidy",
+        sessions: close.map((x) => x.id),
+        names: close.map((x) => x.name),
+        folds: a.fold === false ? [] : plan.folds,
+        tabs: a.tabs === false ? 0 : plan.tabs.length,
+        merge
+      };
+      const missing = plan.missing.length ? ` No open session called ${plan.missing.join(", ")}.` : "";
+      if (!action.sessions.length && !action.folds.length && !action.tabs && !action.merge) {
+        const hint = plan.windows > 1 && a.merge !== true ? ` Terminal has ${plan.windows} windows: say "merge my windows" to make them tabs of one.` : "";
+        return text({ ok: true, text: `\u25e2 crosstalk: nothing to tidy. No session has been idle for ${tidyIdleMin()} minutes or shares work with another, and no tab is left empty.${missing}${hint}` });
+      }
+      const out = await gate({ by: o.sessionId, cwd: o.cwd, action }, d);
+      const why = plan.offers.length && !names.length ? `
+Idle: ${plan.offers.map((x) => `${x.name} (${x.why})`).join(", ")}.` : "";
+      const folds = action.folds.length ? `
+Similar: ${action.folds.map((f) => `${f.name} \u2192 ${f.intoName} (${f.why})`).join(", ")}.` : "";
+      const win = plan.windows > 1 && !merge ? `
+Terminal has ${plan.windows} windows; with merge: true they become tabs of one, if your user wants that.` : "";
+      return text({ ...out, text: `${out.text}${why}${folds}${win}${missing}` });
     }
     case "crosstalk_popout":
       return text(popout({ name: String(a.name ?? ""), cwd: o.cwd, by: o.sessionId || undefined, env: d.env }));
@@ -23232,7 +23531,7 @@ var runningWhere = (r) => r.url ?? (r.ports?.length ? `localhost:${r.ports[0]}` 
 function runningLine(r, now) {
   const mark = r.alive ? "\u25cf" : "\u25cb";
   if (r.kind === "screenshot")
-    return `${r.label}${r.path ? ` ${r.path}` : ""} \u00b7 ${r.before ? `before ${ago2(r.before.at, now)}` : "no before yet"} \u00b7 after ${ago2(r.after?.at, now)}`;
+    return `${r.label}${r.path ? ` ${r.path}` : ""} \u00b7 ${r.before ? `before ${ago3(r.before.at, now)}` : "no before yet"} \u00b7 after ${ago3(r.after?.at, now)}`;
   if (r.broken)
     return `${mark} ${r.label} \u00b7 broken: ${r.broken}`;
   if (r.kind === "server" && !r.url && !r.ports?.length)
@@ -23250,7 +23549,7 @@ function until2(ts, now) {
     return `${Math.round(s / 3600)}h`;
   return `${Math.round(s / 86400)}d`;
 }
-function ago2(ts, now) {
+function ago3(ts, now) {
   if (!ts)
     return "";
   const s = Math.max(0, Math.round((now - ts) / 1000));
@@ -24180,7 +24479,7 @@ init_proxy();
 import { spawn as spawn10 } from "node:child_process";
 var KINDS = ["local", "preview", "pr", "link", "shared"];
 var clean4 = (s) => s.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/[<>]/g, (c) => c === "<" ? "\u2039" : "\u203a");
-function ago3(ts, now) {
+function ago4(ts, now) {
   if (!ts)
     return "never";
   const s = Math.max(0, Math.round((now - ts) / 1000));
@@ -24191,7 +24490,7 @@ function line(u, state, now = Date.now()) {
   const shown = shownUrl(u, state);
   const also = shown !== u.url ? ` (${u.url})` : "";
   const what = u.kind === "local" && u.source === "output" ? "local, found in output" : KIND_WORD[u.kind];
-  const health = u.kind === "shared" ? u.alive ? "open" : `ended${u.state ? "" : ` ${ago3(u.deadSince, now)}`}` : u.kind === "link" || u.source === "output" && u.kind !== "local" && u.kind !== "pr" ? "not checked" : u.alive ? u.lastCheck ? `answering, checked ${ago3(u.lastCheck, now)}` : "not checked yet" : `dead since ${ago3(u.deadSince, now)}`;
+  const health = u.kind === "shared" ? u.alive ? "open" : `ended${u.state ? "" : ` ${ago4(u.deadSince, now)}`}` : u.kind === "link" || u.source === "output" && u.kind !== "local" && u.kind !== "pr" ? "not checked" : u.alive ? u.lastCheck ? `answering, checked ${ago4(u.lastCheck, now)}` : "not checked yet" : `dead since ${ago4(u.deadSince, now)}`;
   return `  ${clean4(u.label)} \u2014 ${clean4(shown)}${clean4(also)} \u00b7 ${what}${u.state ? ` \u00b7 ${clean4(u.state.toLowerCase())}` : ""} \u00b7 ${health}`;
 }
 var asKind = (k) => typeof k === "string" && KINDS.includes(k) ? k : undefined;
@@ -24938,10 +25237,11 @@ var ACTIONS4 = [
   "stop",
   "cleanup",
   "disk",
-  "open"
+  "open",
+  "tidy"
 ];
-var description3 = `The user's sessions and what they run. Actions: spawn (new agents on a task, each in its own worktree and terminal tab, in this session's thread; "put two more on auth"); show / popout (a background agent in a tab); close; resume (a past session; find searches them); rename; background; sessions (what is running, here and on the user's other machines); steer (tell another of the user's sessions something, in the user's words); main (make this the main session, on false to stop); restore (reopen sessions from before a restart: "restore them"); gather ("bring my other sessions into crosstalk": ones started before it); serve (a long-running command as a service that outlives this session: use it, not a backgrounded Bash call, for dev servers and watchers; start the server on $PORT; services lists them and, with name and tail, reads a log; stop ends one); cleanup (merged worktrees); disk (Claude Code's leftovers); open (a thread's or session's worktree in the editor).
-spawn, close, resume, rename, background, steer, restore and gather: ${ONLY_USER}. restore, gather, cleanup and disk only list without confirm: true; pass it only when the user agreed in their own words. close, background or rename of another session, and steer, are confirmed by the user on crosstalk's picker first (steer is refused without crosstalk's mod). Relay result text as it is.`;
+var description3 = `The user's sessions and what they run. Actions: spawn (new agents on a task, each in its own worktree and terminal tab, in this session's thread; "put two more on auth"); show / popout (a background agent in a tab); close; resume (a past session; find searches them); rename; background; sessions (what is running, here and on the user's other machines); steer (tell another of the user's sessions something, in the user's words); main (make this the main session, on false to stop); restore (after a restart: "restore them"); gather ("bring my other sessions into crosstalk": ones started before it); serve (a long-running command as a service that outlives this session: use it, not a backgrounded Bash call, for dev servers and watchers; start the server on $PORT; services lists them and, with name and tail, reads a log; stop ends one); tidy ("tidy up": idle sessions and empty tabs closed, similar ones folded into one); cleanup (merged worktrees); disk (Claude Code's leftovers); open (a thread's or session's worktree in the editor).
+spawn, close, tidy, resume, rename, background, steer, restore and gather: ${ONLY_USER}. restore, gather, cleanup and disk only list without confirm: true; pass it only when the user agreed in their own words. close, tidy, background or rename of another session, and steer, are confirmed by the user on crosstalk's picker first (steer is refused without crosstalk's mod). Relay result text as it is.`;
 var work = {
   actions: ACTIONS4,
   def: def("crosstalk_work", description3, ACTIONS4, {
@@ -24953,6 +25253,10 @@ var work = {
     machine: str2("Another of the user's own machines (from sessions), to do it there"),
     repo: str2("spawn, with machine: the repository there"),
     session: str2("A session's name, id, or a thread only it is in; rename defaults to this one"),
+    sessions: strs("tidy: close exactly these (names or ids), when the user named them"),
+    merge: bool("tidy: also merge Terminal's windows into tabs"),
+    fold: bool("tidy: false leaves similar sessions alone"),
+    tabs: bool("tidy: false leaves empty tabs alone"),
     services: oneOf(["keep", "stop"], "close: its services; default keep"),
     query: str2("find: words from what it was about"),
     text: str2("steer: what to tell it, in the user's words"),
@@ -25000,6 +25304,8 @@ var work = {
         return { name: "crosstalk_services", args: only(a, "name", "tail") };
       case "stop":
         return { name: "crosstalk_stop", args: only(a, "name") };
+      case "tidy":
+        return { name: "crosstalk_tidy", args: only(a, "sessions", "merge", "fold", "tabs") };
       case "cleanup":
         return { name: "crosstalk_cleanup", args: only(a, "confirm", "include") };
       case "disk":
@@ -25247,7 +25553,7 @@ var SESSIONS2 = sessionsDir2();
 import fs40 from "node:fs";
 import path46 from "node:path";
 import { execFileSync as execFileSync5 } from "node:child_process";
-var SHELLS = new Set(["sh", "bash", "dash", "zsh", "env", "fish"]);
+var SHELLS2 = new Set(["sh", "bash", "dash", "zsh", "env", "fish"]);
 function argvOf(pid) {
   if (!pid || pid <= 1)
     return null;
@@ -25286,7 +25592,7 @@ function hostArgv(registryPid) {
     const a = argvOf(pid);
     if (!a)
       return null;
-    if (!SHELLS.has(path46.basename(a[0] ?? "")))
+    if (!SHELLS2.has(path46.basename(a[0] ?? "")))
       return a;
     pid = parentOf(pid);
   }

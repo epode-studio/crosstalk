@@ -12047,6 +12047,99 @@ init_services();
 init_paths();
 init_postpone();
 import { spawn as spawnChild } from "node:child_process";
+
+// src/sessions/tidy.ts
+init_restore();
+init_gather();
+init_uistate();
+var SHELLS = new Set(["zsh", "-zsh", "bash", "-bash", "fish", "-fish", "sh", "-sh", "login", "nu", "pwsh"]);
+function appleCloseIdleTabScript(tty) {
+  return [
+    `if application "Terminal" is running then`,
+    `	tell application "Terminal"`,
+    `		repeat with w in windows`,
+    `			repeat with t in tabs of w`,
+    `				if (tty of t) is ${asq(tty)} then`,
+    `					if busy of t then return "busy"`,
+    `					do script "exit" in t`,
+    `					return "closed"`,
+    `				end if`,
+    `			end repeat`,
+    `		end repeat`,
+    `	end tell`,
+    `end if`,
+    `return ""`
+  ].join(`
+`);
+}
+var appleWindowCountScript = [`if application "Terminal" is running then`, `	tell application "Terminal" to return (count of windows) as text`, `end if`, `return "0"`].join(`
+`);
+var appleMergeScript = [
+  `tell application "Terminal" to activate`,
+  `delay 0.3`,
+  `tell application "System Events" to tell process "Terminal"`,
+  `	click menu item "Merge All Windows" of menu "Window" of menu bar 1`,
+  `end tell`,
+  `return "merged"`
+].join(`
+`);
+var tmuxBase = (t) => t.socket ? ["-S", t.socket] : [];
+function closeTabSteps(t, platform = process.platform) {
+  if (t.tmux?.pane) {
+    const base = tmuxBase(t.tmux);
+    return [
+      {
+        probe: { cmd: "tmux", args: [...base, "display-message", "-p", "-t", t.tmux.pane, "#{pane_current_command}"] },
+        close: { cmd: "tmux", args: [...base, "kill-pane", "-t", t.tmux.pane] },
+        closesIf: (out) => SHELLS.has(out.trim())
+      }
+    ];
+  }
+  if (kindOf(t) === "apple" && t.tty && platform === "darwin")
+    return [{ close: { cmd: "osascript", args: ["-"], input: appleCloseIdleTabScript(t.tty) }, closesIf: () => true }];
+  return [];
+}
+function closeTab(t, run, platform = process.platform) {
+  let closed = false;
+  for (const s of closeTabSteps(t, platform)) {
+    if (s.probe) {
+      const p = run(s.probe);
+      if (!p.ok || !s.closesIf(p.out))
+        continue;
+    }
+    const r = run(s.close);
+    if (r.ok && (s.probe || /closed/.test(r.out)))
+      closed = true;
+  }
+  return closed;
+}
+function leftoverTabs(recs, liveTtys) {
+  const seen = new Set;
+  const out = [];
+  for (const r of [...recs].filter((r) => r.endedAt).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0))) {
+    const key = r.terminal.tmux?.pane ? `tmux:${r.terminal.tmux.socket ?? ""}:${r.terminal.tmux.pane}` : r.terminal.tty;
+    if (!key || seen.has(key) || r.terminal.tty && liveTtys.has(r.terminal.tty))
+      continue;
+    if (!r.terminal.tmux?.pane && kindOf(r.terminal) !== "apple")
+      continue;
+    seen.add(key);
+    out.push(r);
+  }
+  return out;
+}
+function foldNote(f, s) {
+  const where = (s?.recap || s?.title || "").replace(/\s+/g, " ").trim();
+  const files = (s?.files ?? []).slice(-8);
+  return [
+    `${f.name} was folded into this session when tidying up (${f.why}).`,
+    where ? `Where it had got to: ${where.length > 1200 ? where.slice(0, 1199) + "\u2026" : where}` : "",
+    files.length ? `Files it worked on: ${files.join(", ")}` : "",
+    `Its conversation is archived; "resume ${f.name}" brings it back.`
+  ].filter(Boolean).join(`
+`);
+}
+
+// src/sessions/control.ts
 function liveDeps(env = process.env) {
   return {
     env,
@@ -12192,6 +12285,8 @@ async function perform(a, by, d, from) {
       return { ok: false, text: `\u25e2 crosstalk: ${bot}` };
     return spawnAgents({ task: a.task, name: a.name, count: a.count, cwd: a.cwd, by, env: d.env, peer: from });
   }
+  if (a.kind === "tidy")
+    return tidy(a, by, d, from);
   const lives = await liveSessions(d);
   const t = resolve(a.session, lives);
   if (!t.ok)
@@ -12249,9 +12344,78 @@ async function close(l, o, d, from) {
     sweep();
     mark(l.id, { archived: now });
   } catch {}
+  let tabGone = false;
+  if (o.tab !== false)
+    try {
+      tabGone = closeTab(l.terminal, d.run);
+    } catch {}
   const svcLine = o.services === "stop" ? stopped.length ? ` Stopped ${stopped.join(", ")}.` : "" : keepsLine(svc, false);
   const cut = busy.length ? ` What it was still running stopped with it (${what(busy).replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")}).` : "";
-  return { ok: true, text: `\u25e2 crosstalk: closed ${l.name}.${svcLine}${cut} It is archived, not lost: say "resume ${l.name}" to bring it back.`, closed: l.id };
+  return { ok: true, text: `\u25e2 crosstalk: closed ${l.name}${tabGone ? " and its tab" : ""}.${svcLine}${cut} It is archived, not lost: say "resume ${l.name}" to bring it back.`, closed: l.id, tabGone };
+}
+var list2 = (xs) => xs.length <= 6 ? xs.join(", ") : `${xs.slice(0, 5).join(", ")} and ${xs.length - 5} more`;
+async function tidy(a, by, d, from) {
+  const bot = refuseBot(from, "close sessions on this machine");
+  if (bot)
+    return { ok: false, text: `\u25e2 crosstalk: ${bot}` };
+  const lives = await liveSessions(d);
+  const done = [];
+  const notes = [];
+  const folded = [];
+  for (const f of a.folds) {
+    const t = resolve(f.id, lives);
+    const keep = resolve(f.into, lives);
+    if (!t.ok || !keep.ok || t.live.id === by)
+      continue;
+    let sum = null;
+    try {
+      const file = transcriptOf(t.live.id, t.live.cwd, d.env);
+      sum = file ? summarize(file) : null;
+    } catch {}
+    const r = await close(t.live, { by, services: "keep" }, d, from);
+    if (!r.ok) {
+      notes.push(r.text.replace(/^\u25e2 crosstalk: /, ""));
+      continue;
+    }
+    folded.push(`${t.live.name} into ${keep.live.name}`);
+    const text = foldNote(f, sum);
+    withStore((items, now) => upsert(items, { id: `fold:${t.live.id}`, kind: "message", sessionId: keep.live.id, from: "crosstalk", thread: keep.live.threads[0], text, auto: true, ts: now }, now));
+  }
+  for (const id of a.sessions) {
+    const t = resolve(id, lives);
+    if (!t.ok)
+      continue;
+    if (t.live.id === by)
+      continue;
+    const r = await close(t.live, { by, services: "keep" }, d, from);
+    if (r.ok)
+      done.push(t.live.name);
+    else
+      notes.push(r.text.replace(/^\u25e2 crosstalk: /, ""));
+  }
+  let tabs = 0;
+  if (a.tabs) {
+    const recs = readAll();
+    const live = new Set((await liveSessions(d)).map((l) => l.terminal.tty).filter((t) => !!t));
+    for (const r of leftoverTabs(recs, live))
+      try {
+        if (closeTab(r.terminal, d.run))
+          tabs++;
+      } catch {}
+  }
+  let merged = false;
+  if (a.merge && process.platform === "darwin") {
+    const r = d.run({ cmd: "osascript", args: ["-"], input: appleMergeScript });
+    merged = r.ok;
+    if (!r.ok)
+      notes.push(`Terminal's windows were not merged (${r.out.split(`
+`).pop()}); Window \u25b8 Merge All Windows does it by hand.`);
+  }
+  const parts = [folded.length ? `folded ${list2(folded)}` : "", done.length ? `closed ${list2(done)}` : "", tabs ? `${tabs} empty tab${tabs === 1 ? "" : "s"}` : "", merged ? "merged Terminal's windows into tabs" : ""].filter(Boolean);
+  const head = parts.length ? `\u25e2 crosstalk: ${parts.join(", ")}.` : "\u25e2 crosstalk: nothing needed closing.";
+  const tail = done.length || folded.length ? ` Each is archived: say "resume <name>" to bring one back.` : "";
+  return { ok: true, text: [head + tail, ...notes.map((n) => `  ${n}`)].join(`
+`), closed: done };
 }
 function freeTmuxName(base, has) {
   const b = slug(base, 24) || "session";

@@ -17102,6 +17102,20 @@ function describeHits(hits, now = Date.now()) {
 `);
 }
 
+// src/sessions/tidy.ts
+var SHELLS = new Set(["zsh", "-zsh", "bash", "-bash", "fish", "-fish", "sh", "-sh", "login", "nu", "pwsh"]);
+var appleWindowCountScript = [`if application "Terminal" is running then`, `	tell application "Terminal" to return (count of windows) as text`, `end if`, `return "0"`].join(`
+`);
+var appleMergeScript = [
+  `tell application "Terminal" to activate`,
+  `delay 0.3`,
+  `tell application "System Events" to tell process "Terminal"`,
+  `	click menu item "Merge All Windows" of menu "Window" of menu bar 1`,
+  `end tell`,
+  `return "merged"`
+].join(`
+`);
+
 // src/sessions/control.ts
 function liveDeps(env = process.env) {
   return {
@@ -17153,7 +17167,7 @@ async function liveSessions(d, recs = readAll(), alive = recAlive) {
     };
   });
 }
-var YES4 = { close: "Close", background: "Send it", rename: "Rename", move: "Move", remote: "Do it", resume: "Resume it", spawn: "Start it" };
+var YES4 = { close: "Close", background: "Send it", rename: "Rename", move: "Move", remote: "Do it", resume: "Resume it", spawn: "Start it", tidy: "Tidy up" };
 var NO3 = "Cancel";
 function interruptsLine(busy) {
   if (!busy.length)
@@ -17164,6 +17178,8 @@ function questionFor(a, target, svc = [], busy = []) {
   const n = target?.name ?? ("session" in a ? a.session : "");
   if (a.kind === "resume")
     return `Resume ${n}?`;
+  if (a.kind === "tidy")
+    return tidyQuestion(a);
   if (a.kind === "spawn")
     return `Start ${a.count && a.count > 1 ? `${a.count} agents` : "an agent"} in ${path80.basename(a.cwd)}: "${a.task.length > 120 ? a.task.slice(0, 119) + "\u2026" : a.task}"?`;
   switch (a.kind) {
@@ -17204,6 +17220,24 @@ function raise(o, now = Date.now()) {
   writePending({ id, by: o.by, cwd: o.cwd, action: o.action, at: now, yes, ...o.from ? { from: o.from } : {} });
   withStore2((items, t) => upsert3(items, { id, kind: "session", sessionId: o.by, question: o.question, options: [yes, NO3], ...o.from ? { from: o.from } : {}, ts: now }, t));
   return id;
+}
+var list3 = (xs) => xs.length <= 6 ? xs.join(", ") : `${xs.slice(0, 5).join(", ")} and ${xs.length - 5} more`;
+function tidyQuestion(a) {
+  const parts = [];
+  const into = new Map;
+  for (const f of a.folds)
+    into.set(f.intoName, [...into.get(f.intoName) ?? [], f.name]);
+  for (const [k, v] of into)
+    parts.push(`fold ${list3(v)} into ${k}`);
+  if (a.names.length)
+    parts.push(`${a.names.length} idle session${a.names.length === 1 ? "" : "s"} (${list3(a.names)})`);
+  if (a.tabs)
+    parts.push(`${a.tabs} empty tab${a.tabs === 1 ? "" : "s"} left by ended sessions`);
+  const first = parts[0] ?? "";
+  const what = parts.length ? `${first.startsWith("fold") ? "F" + first.slice(1) : `Close ${first}`}${parts.slice(1).map((p, i) => (i === parts.length - 2 ? " and " : ", ") + (p.startsWith("fold") ? p : `close ${p}`)).join("")}` : "";
+  const merge = a.merge ? what ? ", then merge Terminal's windows into tabs" : "Merge Terminal's windows into tabs" : "";
+  const keep = a.names.length || a.folds.length ? ` Each is archived and can be resumed; dev servers keep running.${a.folds.length ? " A folded session's last state goes to the one it joins." : ""}` : "";
+  return `${what}${merge}?${keep}`;
 }
 function freeTmuxName(base, has) {
   const b = slug2(base, 24) || "session";
@@ -20679,7 +20713,7 @@ function routeQuestionFor(u) {
     sessions: [...sessions.values()].map((s) => s.name)
   };
 }
-var statusOf = (sessionId) => listLocalSessions().find((s) => s.sessionId === sessionId)?.status ?? "unknown";
+var statusOf2 = (sessionId) => listLocalSessions().find((s) => s.sessionId === sessionId)?.status ?? "unknown";
 var held = loadQueue();
 var subscribers = new Map;
 var noticeTimes = [];
@@ -21136,7 +21170,7 @@ function onEnvelope(peerLabel, env, ctx) {
     persistParked();
     return log(`no local session registered yet; parked message from ${peerLabel}`);
   }
-  const decision = { ...triage(level, env.intent, env.kind, statusOf(target.sessionId), muted) };
+  const decision = { ...triage(level, env.intent, env.kind, statusOf2(target.sessionId), muted) };
   if (decision.action === "drop")
     return log(`dropped ${env.kind} from ${peerLabel}: ${decision.why}`);
   const h = {
@@ -21617,7 +21651,7 @@ async function handle(req, sock) {
         };
       const source = String(req.source ?? "local").slice(0, 24);
       const intent = req.intent ?? "fyi";
-      const decision = triage("notify", intent, "message", statusOf(target.sessionId));
+      const decision = triage("notify", intent, "message", statusOf2(target.sessionId));
       const h = {
         id: crypto32.randomUUID(),
         from: source,
@@ -22562,7 +22596,7 @@ coord = new Coordinator({
   peers: () => loadPeers(),
   send: (label, env) => sendEnvelope(label, env),
   sessions: () => sessions,
-  status: statusOf,
+  status: statusOf2,
   presence: () => peerPresence,
   holdLocal: (sid, h, slices) => {
     hold(sid, h, slices);
@@ -22609,7 +22643,7 @@ attention = createAttention({
   root: rootFrom2(import.meta.url),
   log,
   sessions: () => sessions,
-  status: statusOf,
+  status: statusOf2,
   modLive: (sid) => modLive(sessions.get(sid)),
   repoOf: (sid) => {
     const reg = sessions.get(sid);

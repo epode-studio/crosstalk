@@ -51,6 +51,7 @@ import { spawn as spawnChild } from "node:child_process"
 import { dirOf, shim } from "../paths.ts"
 import * as PP from "../services/postpone.ts"
 import type { Activity } from "../services/procs.ts"
+import * as TD from "./tidy.ts"
 
 export type Out = { ok: boolean; text: string; pending?: boolean; [k: string]: unknown }
 type Ask = (req: Record<string, unknown>, timeoutMs?: number) => Promise<any>
@@ -181,6 +182,8 @@ export type Action =
   // Asked from another of your machines, put to you on this one (remote.ts):
   | { kind: "resume"; session: string }
   | { kind: "spawn"; task: string; name?: string; cwd: string; count?: number }
+  // Tidy up: several sessions, the empty tabs ended ones left, and optionally Terminal's windows merged.
+  | { kind: "tidy"; sessions: string[]; names: string[]; folds: TD.Fold[]; tabs: number; merge: boolean }
 
 /** An action asked of another of your machines (remote.ts carries it). */
 export type RemoteAct =
@@ -189,7 +192,7 @@ export type RemoteAct =
   | { kind: "resume"; session: string }
   | { kind: "spawn"; task: string; name?: string; repo?: string; count?: number }
 
-export const YES: Record<Action["kind"], string> = { close: "Close", background: "Send it", rename: "Rename", move: "Move", remote: "Do it", resume: "Resume it", spawn: "Start it" }
+export const YES: Record<Action["kind"], string> = { close: "Close", background: "Send it", rename: "Rename", move: "Move", remote: "Do it", resume: "Resume it", spawn: "Start it", tidy: "Tidy up" }
 export const NO = "Cancel"
 
 const VERBS: Record<Action["kind"] | RemoteAct["kind"], RegExp> = {
@@ -200,6 +203,7 @@ const VERBS: Record<Action["kind"] | RemoteAct["kind"], RegExp> = {
   resume: /\b(resume|reopen|open|bring|continue)\b/i,
   spawn: /\b(start|spawn|put|get|run|spin|agent)\b/i,
   remote: /./,
+  tidy: /\b(tidy|tidying|clean|cleanup|close|clear|declutter|overwhelm\w*|tabs?)\b/i,
 }
 
 /** What the person is asked, in words. */
@@ -212,6 +216,7 @@ export function interruptsLine(busy: Activity[]): string {
 export function questionFor(a: Action, target?: Live, svc: { name: string }[] = [], busy: Activity[] = []): string {
   const n = target?.name ?? ("session" in a ? a.session : "")
   if (a.kind === "resume") return `Resume ${n}?`
+  if (a.kind === "tidy") return tidyQuestion(a)
   if (a.kind === "spawn") return `Start ${a.count && a.count > 1 ? `${a.count} agents` : "an agent"} in ${path.basename(a.cwd)}: "${a.task.length > 120 ? a.task.slice(0, 119) + "…" : a.task}"?`
   switch (a.kind) {
     case "close":
@@ -257,6 +262,8 @@ export function typedAsks(prompt: { text: string; at: number } | null, a: Action
   const t = prompt.text
   const verb = a.kind === "remote" ? VERBS[a.req.kind] : VERBS[a.kind]
   if (!verb.test(t)) return false
+  // Tidying names no one session: asking for it in words is enough.
+  if (a.kind === "tidy") return true
   const names = target ? [target.name, ...target.threads, target.id.slice(0, 8)] : "session" in a ? [a.session] : []
   if (a.kind === "remote") {
     if (!has(t, a.machine)) return false
@@ -375,6 +382,7 @@ export async function perform(a: Action, by: string, d: Deps, from?: string): Pr
     if (bot) return { ok: false, text: `◢ crosstalk: ${bot}` }
     return spawn.spawnAgents({ task: a.task, name: a.name, count: a.count, cwd: a.cwd, by, env: d.env, peer: from })
   }
+  if (a.kind === "tidy") return tidy(a, by, d, from)
   const lives = await liveSessions(d)
   const t = resolve(a.session, lives)
   if (!t.ok) return t
@@ -399,7 +407,7 @@ function verified(l: Live, d: Deps): string | null {
   return null
 }
 
-export async function close(l: Live, o: { by?: string; services?: "keep" | "stop" }, d: Deps, from?: string): Promise<Out> {
+export async function close(l: Live, o: { by?: string; services?: "keep" | "stop"; tab?: boolean }, d: Deps, from?: string): Promise<Out> {
   const bot = refuseBot(from, "end a session on this machine")
   if (bot) return { ok: false, text: `◢ crosstalk: ${bot}` }
   if (l.id === o.by) return { ok: false, text: "◢ crosstalk: that is this session. To end it, type /exit here." }
@@ -426,9 +434,116 @@ export async function close(l: Live, o: { by?: string; services?: "keep" | "stop
     I.sweep()
     I.mark(l.id, { archived: now })
   } catch {}
+  // The shell it leaves behind goes too, when nothing else runs in that tab.
+  let tabGone = false
+  if (o.tab !== false)
+    try {
+      tabGone = TD.closeTab(l.terminal, d.run)
+    } catch {}
   const svcLine = o.services === "stop" ? (stopped.length ? ` Stopped ${stopped.join(", ")}.` : "") : keepsLine(svc, false)
   const cut = busy.length ? ` What it was still running stopped with it (${PP.what(busy).replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")}).` : ""
-  return { ok: true, text: `◢ crosstalk: closed ${l.name}.${svcLine}${cut} It is archived, not lost: say "resume ${l.name}" to bring it back.`, closed: l.id }
+  return { ok: true, text: `◢ crosstalk: closed ${l.name}${tabGone ? " and its tab" : ""}.${svcLine}${cut} It is archived, not lost: say "resume ${l.name}" to bring it back.`, closed: l.id, tabGone }
+}
+
+// --- tidy up -----------------------------------------------------------------------
+
+export const tidyIdleMin = () => TD.IDLE_MIN()
+
+const list = (xs: string[]) => (xs.length <= 6 ? xs.join(", ") : `${xs.slice(0, 5).join(", ")} and ${xs.length - 5} more`)
+
+export function tidyQuestion(a: Extract<Action, { kind: "tidy" }>): string {
+  const parts: string[] = []
+  // Folded first: "fold auth-2 into auth", by what they share.
+  const into = new Map<string, string[]>()
+  for (const f of a.folds) into.set(f.intoName, [...(into.get(f.intoName) ?? []), f.name])
+  for (const [k, v] of into) parts.push(`fold ${list(v)} into ${k}`)
+  if (a.names.length) parts.push(`${a.names.length} idle session${a.names.length === 1 ? "" : "s"} (${list(a.names)})`)
+  if (a.tabs) parts.push(`${a.tabs} empty tab${a.tabs === 1 ? "" : "s"} left by ended sessions`)
+  const first = parts[0] ?? ""
+  const what = parts.length ? `${first.startsWith("fold") ? "F" + first.slice(1) : `Close ${first}`}${parts.slice(1).map((p, i) => (i === parts.length - 2 ? " and " : ", ") + (p.startsWith("fold") ? p : `close ${p}`)).join("")}` : ""
+  const merge = a.merge ? (what ? ", then merge Terminal's windows into tabs" : "Merge Terminal's windows into tabs") : ""
+  const keep = a.names.length || a.folds.length ? ` Each is archived and can be resumed; dev servers keep running.${a.folds.length ? " A folded session's last state goes to the one it joins." : ""}` : ""
+  return `${what}${merge}?${keep}`
+}
+
+/** What tidying would do now: the offer, the empty tabs, Terminal's window count. */
+export async function tidyPlan(o: { by: string; sessions?: string[]; d: Deps }): Promise<{ offers: TD.Offer[]; folds: TD.Fold[]; named: Live[]; missing: string[]; tabs: Rec[]; windows: number }> {
+  const lives = await liveSessions(o.d)
+  const recs = R.readAll()
+  const named: Live[] = []
+  const missing: string[] = []
+  for (const ref of o.sessions ?? []) {
+    const t = resolve(ref, lives)
+    if (t.ok && t.live.id !== o.by) named.push(t.live)
+    else if (!t.ok) missing.push(ref)
+  }
+  const status = TD.statusOf()
+  const folds = o.sessions?.length ? [] : TD.similar({ lives, recs, status, waiting: TD.waitingFor, self: o.by })
+  const folded = new Set(folds.map((f) => f.id))
+  const offers = o.sessions?.length ? [] : TD.suggest({ lives, recs, status, waiting: TD.waitingFor, self: o.by, now: o.d.now() }).filter((x) => !folded.has(x.id) && !folds.some((f) => f.into === x.id))
+  const tabs = TD.leftoverTabs(recs, new Set(lives.map((l) => l.terminal.tty).filter((t): t is string => !!t)))
+  let windows = 0
+  if (process.platform === "darwin") {
+    const r = o.d.run({ cmd: "osascript", args: ["-"], input: TD.appleWindowCountScript })
+    windows = r.ok ? Number(r.out.trim()) || 0 : 0
+  }
+  return { offers, folds, named, missing, tabs, windows }
+}
+
+async function tidy(a: Extract<Action, { kind: "tidy" }>, by: string, d: Deps, from?: string): Promise<Out> {
+  const bot = refuseBot(from, "close sessions on this machine")
+  if (bot) return { ok: false, text: `◢ crosstalk: ${bot}` }
+  const lives = await liveSessions(d)
+  const done: string[] = []
+  const notes: string[] = []
+  const folded: string[] = []
+  for (const f of a.folds) {
+    const t = resolve(f.id, lives)
+    const keep = resolve(f.into, lives)
+    if (!t.ok || !keep.ok || t.live.id === by) continue
+    // Read before it closes: what it had got to, for the one it joins.
+    let sum: ReturnType<typeof T.summarize> = null
+    try {
+      const file = T.transcriptOf(t.live.id, t.live.cwd, d.env)
+      sum = file ? T.summarize(file) : null
+    } catch {}
+    const r = await close(t.live, { by, services: "keep" }, d, from)
+    if (!r.ok) {
+      notes.push(r.text.replace(/^◢ crosstalk: /, ""))
+      continue
+    }
+    folded.push(`${t.live.name} into ${keep.live.name}`)
+    const text = TD.foldNote(f, sum)
+    // About the kept session's own work, so the mod hands it to its agent without asking.
+    ui.withStore((items, now) => ui.upsert(items, { id: `fold:${t.live.id}`, kind: "message", sessionId: keep.live.id, from: "crosstalk", thread: keep.live.threads[0], text, auto: true, ts: now }, now))
+  }
+  for (const id of a.sessions) {
+    const t = resolve(id, lives)
+    if (!t.ok) continue // ended since: nothing to do
+    if (t.live.id === by) continue
+    const r = await close(t.live, { by, services: "keep" }, d, from)
+    if (r.ok) done.push(t.live.name)
+    else notes.push(r.text.replace(/^◢ crosstalk: /, ""))
+  }
+  let tabs = 0
+  if (a.tabs) {
+    const recs = R.readAll()
+    const live = new Set((await liveSessions(d)).map((l) => l.terminal.tty).filter((t): t is string => !!t))
+    for (const r of TD.leftoverTabs(recs, live))
+      try {
+        if (TD.closeTab(r.terminal, d.run)) tabs++
+      } catch {}
+  }
+  let merged = false
+  if (a.merge && process.platform === "darwin") {
+    const r = d.run({ cmd: "osascript", args: ["-"], input: TD.appleMergeScript })
+    merged = r.ok
+    if (!r.ok) notes.push(`Terminal's windows were not merged (${r.out.split("\n").pop()}); Window ▸ Merge All Windows does it by hand.`)
+  }
+  const parts = [folded.length ? `folded ${list(folded)}` : "", done.length ? `closed ${list(done)}` : "", tabs ? `${tabs} empty tab${tabs === 1 ? "" : "s"}` : "", merged ? "merged Terminal's windows into tabs" : ""].filter(Boolean)
+  const head = parts.length ? `◢ crosstalk: ${parts.join(", ")}.` : "◢ crosstalk: nothing needed closing."
+  const tail = done.length || folded.length ? ` Each is archived: say "resume <name>" to bring one back.` : ""
+  return { ok: true, text: [head + tail, ...notes.map((n) => `  ${n}`)].join("\n"), closed: done }
 }
 
 /** A tmux session name in crosstalk's server that nobody has. */

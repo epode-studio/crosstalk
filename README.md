@@ -192,7 +192,13 @@ terminal app you already use and turns it into the workspace.
   background keep running when you close the window. "Show me auth" opens one.
 - **Close one cleanly.** "Close billing" ends it as if you had quit it, once
   you say yes on the picker. Its dev server keeps running unless you say
-  otherwise. It is archived, not lost, so a restart never offers it back.
+  otherwise. It is archived, not lost, so a restart never offers it back. Its
+  tab goes with it.
+- **Tidy up.** "I'm overwhelmed" or "tidy up" puts one question to you: close
+  the sessions you have left idle, fold sessions doing the same work into one
+  (the one kept is told where the others had got to), and close the empty
+  tabs ended sessions left behind. "And merge my windows" makes them tabs of
+  one window. Nothing busy is touched, and anything closed can be resumed.
 - **Find and resume past work.** "Find the one where I fixed the token refresh"
   searches what every past agent was about: its thread, recap, files, title and
   branch, including Claude Code's own history. "Resume it" reopens it with its

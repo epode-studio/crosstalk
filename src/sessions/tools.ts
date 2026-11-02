@@ -65,6 +65,30 @@ export async function callTool(name: string, a: any, o: { sessionId: string; cwd
       if (!t.ok) return text(t)
       return text(await C.gate({ by: o.sessionId, cwd: o.cwd, action: { kind: "move", session: t.live.id, thread: String(a.thread ?? "") }, target: t.live }, d))
     }
+    case "crosstalk_tidy": {
+      const names = Array.isArray(a.sessions) ? a.sessions.map(String).filter(Boolean).slice(0, 50) : []
+      const plan = await C.tidyPlan({ by: o.sessionId, sessions: names.length ? names : undefined, d })
+      const close = names.length ? plan.named : plan.offers
+      const merge = a.merge === true && plan.windows > 1
+      const action = {
+        kind: "tidy" as const,
+        sessions: close.map((x) => x.id),
+        names: close.map((x) => x.name),
+        folds: a.fold === false ? [] : plan.folds,
+        tabs: a.tabs === false ? 0 : plan.tabs.length,
+        merge,
+      }
+      const missing = plan.missing.length ? ` No open session called ${plan.missing.join(", ")}.` : ""
+      if (!action.sessions.length && !action.folds.length && !action.tabs && !action.merge) {
+        const hint = plan.windows > 1 && a.merge !== true ? ` Terminal has ${plan.windows} windows: say "merge my windows" to make them tabs of one.` : ""
+        return text({ ok: true, text: `◢ crosstalk: nothing to tidy. No session has been idle for ${C.tidyIdleMin()} minutes or shares work with another, and no tab is left empty.${missing}${hint}` })
+      }
+      const out = await C.gate({ by: o.sessionId, cwd: o.cwd, action }, d)
+      const why = plan.offers.length && !names.length ? `\nIdle: ${plan.offers.map((x) => `${x.name} (${x.why})`).join(", ")}.` : ""
+      const folds = action.folds.length ? `\nSimilar: ${action.folds.map((f) => `${f.name} → ${f.intoName} (${f.why})`).join(", ")}.` : ""
+      const win = plan.windows > 1 && !merge ? `\nTerminal has ${plan.windows} windows; with merge: true they become tabs of one, if your user wants that.` : ""
+      return text({ ...out, text: `${out.text}${why}${folds}${win}${missing}` })
+    }
     case "crosstalk_popout":
       return text(C.popout({ name: String(a.name ?? ""), cwd: o.cwd, by: o.sessionId || undefined, env: d.env }))
     default:
