@@ -21,20 +21,51 @@ right person, the wrong chat.
 And crosstalk can only talk to sessions you already started. It cannot start
 one, reopen one, or bring a question from one to where you are looking.
 
-## Four nouns
+## Three nouns
+
+Everything a person meets is one of three things. Everything else is machinery,
+named only in "how it works".
 
 | Noun | What it is |
 |---|---|
-| **People** | Everyone you trust: your repo's collaborators, plus anyone you verified with four words. |
-| **Threads** | A piece of work and the conversation about it, shared with some of those people. One file in the repo. |
-| **Features** | The shippable parts of a thread. Each is everyday or risky, and may have a flag. |
-| **Questions** | The only way crosstalk ever asks anything of a person. |
+| **People** | Everyone you trust: your repos' collaborators, your own machines, and anyone outside your repos you verified with four words. |
+| **Threads** | A piece of work. It knows things, it has features to ship, and it has things running and places to look. |
+| **Questions** | The only way crosstalk asks anything of a person: one mechanism, answered with a picker, a typed `@thread`, or plain words. |
 
-Sessions, recaps, reviewers, footprints and relays exist, but they are
-machinery. Nobody needs to know about them to use crosstalk.
+**Inside a thread**, four parts, and no others:
 
-Words used everywhere, in docs, tool output and the statusline: these four and
-nothing else.
+| Part | Holds | Was |
+|---|---|---|
+| **Notes** | What the thread knows, one list with kinds: decision, fact, task, rule, recap | decisions, facts, tasks, rules, recaps |
+| **Features** | What ships: risk, flag and stage, evidence, review | features |
+| **Running** | What it runs and where to look: servers, links, previews, PRs, shares, screenshots | services, URLs, previews, PRs, shares, screenshots, ports |
+| **History** | Everything it once had in Running and Notes, searchable | links history |
+
+**Machinery** (never a noun in the UI): sessions and workers, worktrees and
+ports, the proxy, the relay, keys, flags providers, reviewer agents, the main
+session. People say "put two more on auth", not "spawn a session".
+
+**Messages** are what people say to each other in a thread. They are not a
+fourth noun: a message either informs (read it when you like) or asks (it is a
+question).
+
+**Rooms are gone.** The four words remain for people outside your repos.
+
+**Eight tools**, each with an action, instead of one per feature:
+
+| Tool | For |
+|---|---|
+| `thread` | read a thread; add a note; change a feature or status; move or leave |
+| `say` | tell or ask people; reply; hand a message to the agent |
+| `work` | start, stop, resume, background, rename workers; start and stop servers |
+| `look` | what's running and where: links, open, screenshots, share, QR, history |
+| `ship` | ready, review, evidence, flags, incidents |
+| `people` | trust, mute, join with words, link machines |
+| `answer` | answer a question |
+| `doctor` | what is wrong and how to fix it |
+
+Every tool description is loaded into every session on every turn, so fewer,
+broader tools cost less context and are easier for an agent to choose between.
 
 ## Principles
 
