@@ -203,7 +203,7 @@ const VERBS: Record<Action["kind"] | RemoteAct["kind"], RegExp> = {
   resume: /\b(resume|reopen|open|bring|continue)\b/i,
   spawn: /\b(start|spawn|put|get|run|spin|agent)\b/i,
   remote: /./,
-  tidy: /\b(tidy|tidying|clean|cleanup|close|clear|declutter|overwhelm\w*|tabs?)\b/i,
+  tidy: /\b(tidy|tidying|clean|cleanup|close|clear|declutter|fold|merge|overwhelm\w*|tabs?)\b/i,
 }
 
 /** What the person is asked, in words. */

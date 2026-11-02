@@ -64,12 +64,16 @@ describe("similar sessions", () => {
 })
 
 describe("tabs", () => {
-  test("Terminal.app: only a tab running nothing but its shell, by its tty, never launching Terminal", () => {
+  test("Terminal.app: a Claude tab running nothing, by its tty, closed with Cmd-W only once it is in front", () => {
     const s = TD.appleCloseIdleTabScript("/dev/ttys004")
-    expect(s.startsWith(`if application "Terminal" is running then`)).toBe(true)
+    expect(s.startsWith(`if application "Terminal" is not running then return ""`)).toBe(true)
     expect(s).toContain(`if (tty of t) is "/dev/ttys004" then`)
-    expect(s.indexOf(`if busy of t then return "busy"`)).toBeLessThan(s.indexOf(`do script "exit" in t`))
-    expect(s).not.toContain("System Events")
+    const key = s.indexOf(`keystroke "w" using command down`)
+    expect(s.indexOf(`if busy of t then return "busy"`)).toBeLessThan(key)
+    expect(s.indexOf(`does not contain "Claude Code" then return "not-claude"`)).toBeLessThan(key)
+    expect(s.indexOf(`if not frontmost then return "not-front"`)).toBeLessThan(key)
+    expect(s.indexOf(`(tty of selected tab of front window) is not "/dev/ttys004" then return "not-front"`)).toBeLessThan(key)
+    expect(s).not.toContain(`do script "exit"`) // a profile may keep the tab open after the shell exits
   })
   test("tmux: the pane is killed only when a bare shell runs in it", () => {
     const t = { tmux: { pane: "%7", socket: "/tmp/tmux-501/default" } }

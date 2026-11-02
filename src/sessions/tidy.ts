@@ -10,9 +10,10 @@
 //              same checks as a single close.
 //   tabs       the shell left behind when a session ends ("…e Code — -zsh"):
 //              in Terminal.app the tab whose tty a crosstalk session ended on
-//              in the last day and which runs nothing now; in tmux the pane,
-//              when what runs in it is a bare shell. A tab running anything
-//              is never closed. Other terminals keep their tabs.
+//              in the last day, which runs nothing now and shows Claude Code's
+//              banner, closed with Cmd-W (appleCloseIdleTabScript); in tmux
+//              the pane, when what runs in it is a bare shell. A tab running
+//              anything is never closed. Other terminals keep their tabs.
 //   windows    with `merge`, Terminal.app's Window > Merge All Windows, so
 //              every window becomes a tab of one (System Events, which
 //              restore already needs).
@@ -85,27 +86,61 @@ export const statusOf = () => {
 // --- tabs -----------------------------------------------------------------------------
 
 /**
- * Terminal.app: close the tab on this tty when nothing runs in it but its
- * shell, by typing `exit` to that shell (`do script … in`, no keystrokes, no
- * Accessibility). Returns "closed", "busy" or "" when there is no such tab.
- * Never launches Terminal.
+ * Terminal.app: close the tab on this tty, the way a person would: select it,
+ * bring its window and Terminal to the front, and press Cmd-W.
+ *
+ * Typing `exit` to the shell is not enough: whether Terminal then closes the
+ * tab is a profile setting ("When the shell exits"), and many keep it open.
+ *
+ * Only a tab that is a Claude session's: it shows Claude Code's banner in its
+ * scrollback (a tty can be reused by a new tab later). It waits up to three
+ * seconds for what the session started (caffeinate, MCP servers) to go, and
+ * leaves a tab still running anything, so Terminal never asks about closing
+ * running processes. Cmd-W is sent only once Terminal is in front with that
+ * very tab selected. Returns "closed", "busy", "not-claude", "not-front" or ""
+ * when there is no such tab. Never launches Terminal.
  */
 export function appleCloseIdleTabScript(tty: string): string {
+  const q = R.asq(tty)
   return [
-    `if application "Terminal" is running then`,
-    `\ttell application "Terminal"`,
-    `\t\trepeat with w in windows`,
-    `\t\t\trepeat with t in tabs of w`,
-    `\t\t\t\tif (tty of t) is ${R.asq(tty)} then`,
-    `\t\t\t\t\tif busy of t then return "busy"`,
-    `\t\t\t\t\tdo script "exit" in t`,
-    `\t\t\t\t\treturn "closed"`,
-    `\t\t\t\tend if`,
-    `\t\t\tend repeat`,
+    `if application "Terminal" is not running then return ""`,
+    `set found to false`,
+    `tell application "Terminal"`,
+    `\trepeat with w in windows`,
+    `\t\trepeat with t in tabs of w`,
+    `\t\t\tif (tty of t) is ${q} then`,
+    `\t\t\t\trepeat 15 times`,
+    `\t\t\t\t\tif not (busy of t) then exit repeat`,
+    `\t\t\t\t\tdelay 0.2`,
+    `\t\t\t\tend repeat`,
+    `\t\t\t\tif busy of t then return "busy"`,
+    `\t\t\t\tif (history of t) does not contain "Claude Code" then return "not-claude"`,
+    `\t\t\t\tset selected of t to true`,
+    `\t\t\t\tset index of w to 1`,
+    `\t\t\t\tset found to true`,
+    `\t\t\t\texit repeat`,
+    `\t\t\tend if`,
     `\t\tend repeat`,
-    `\tend tell`,
-    `end if`,
-    `return ""`,
+    `\t\tif found then exit repeat`,
+    `\tend repeat`,
+    `\tif not found then return ""`,
+    `\tactivate`,
+    `end tell`,
+    `repeat 10 times`,
+    `\tif frontmost of application "Terminal" then exit repeat`,
+    `\ttry`,
+    `\t\ttell application "System Events" to set frontmost of process "Terminal" to true`,
+    `\tend try`,
+    `\tdelay 0.2`,
+    `end repeat`,
+    `tell application "Terminal"`,
+    `\tif not frontmost then return "not-front"`,
+    `\tif (tty of selected tab of front window) is not ${q} then return "not-front"`,
+    `\tif busy of selected tab of front window then return "busy"`,
+    `end tell`,
+    `tell application "System Events" to keystroke "w" using command down`,
+    `delay 0.3`,
+    `return "closed"`,
   ].join("\n")
 }
 
