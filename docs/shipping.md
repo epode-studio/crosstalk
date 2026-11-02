@@ -32,10 +32,23 @@ code. The design is in [next-generation.md](design/next-generation.md),
    questions (marked as data), the commit range, and earlier rounds' findings
    with the author's answers. Never the author's conversation. It ends with
    `VERDICT: approve|changes` and `FINDINGS:`, and its wrapper hands the answer
-   to `crosstalk review --run <id> --output <file>`. A reviewer that has
-   crosstalk's tools may call `crosstalk_review` itself. No verdict counts as
-   changes; silence is never a sign-off. A reviewer that never answers is
-   counted as "changes, nothing reviewed" after two hours.
+   to `crosstalk review --run <id> --secret-file <run folder>/secret --output
+   <file in the run folder>`. A reviewer that has crosstalk's tools may call
+   `crosstalk_review` itself, from its own copy. Nobody else can hand in a
+   verdict: the run id alone is refused. No verdict counts as changes; silence
+   is never a sign-off, and an answer approves only if every `VERDICT:` line
+   in it approves. A reviewer that never answers is counted as "changes,
+   nothing reviewed" after two hours. A claude reviewer may read files and run
+   a few exact git commands (`git log --oneline <base>..HEAD`, `git diff
+   <base>...HEAD`, …), nothing else. Reviewers, and the repo's own commands,
+   get an allowlisted environment: no flag provider's variables and nothing
+   named like a secret (`*_TOKEN`, `*_API_KEY`, `*_SECRET`, …), only a
+   reviewer client's own login.
+
+   Only the commit the reviewers were given is checked, previewed and merged.
+   A branch that moves after that is reviewed again on the next
+   `crosstalk_ready`, and past `building` a feature's branch cannot be
+   repointed.
 4. **Iterate.** Findings go to the author's session as a crosstalk message
    (read with `crosstalk_read`, framed as other agents' words). The author
    fixes, commits and calls `crosstalk_ready {feature, response}`. After
@@ -78,9 +91,22 @@ answered by a person only:
 - `crosstalk ship answer <id> "<option>"` typed in a terminal.
 
 An agent's `crosstalk_thread {answer}` is refused, `crosstalk ship answer`
-run from inside an agent (where `CLAUDECODE` is set) is refused, and no
-standing rule answers them. This guards against an agent answering by
-accident; it is not a security boundary against code running as you.
+and `crosstalk ui act` on a shipping picker run from inside an agent (where
+`CLAUDECODE` is set) are refused, and no standing rule answers them. This
+guards against an agent answering by accident; it is not a security boundary
+against code running as you.
+
+The first question in each repository is whether crosstalk may run its
+commands at all: `test:` (or the test script it finds), `preview:`,
+`preview_check:`, `preview_teardown:` and `metrics:`. They run unsandboxed,
+as you, so nothing of a repository's runs until a person at this machine says
+"Run them" (never a person on another machine). The yes is kept for that
+repository and that set of commands; a changed `.crosstalk/ship` is asked again.
+
+Lowering a risk is only ever this question too. A feature's `risk` written as
+"everyday" by an edit (`crosstalk_thread`, another spelling of its name, a
+remove and re-add, a peer's replica) does not count: once crosstalk has seen a
+feature risky, it stays risky until a person's answer clears it.
 
 ### From another person's machine
 
@@ -474,7 +500,10 @@ rises above 1.
   step is asked, with the metrics recorded as evidence at that stage, so the
   question carries them. Without any metrics, an everyday flag stays where it
   is and the author's agent is told once to turn it up with `crosstalk_flag`; a
-  risky one waits for evidence from the author as before.
+  risky one waits for evidence from the author as before. An everyday flag
+  also holds when there is nothing to compare: no baseline from before the
+  step, a metric that stopped being reported, or a `metrics:` command that
+  failed.
 
 ## Production feeds threads
 
@@ -503,6 +532,10 @@ server that turns POSTed JSON into `crosstalk incident`:
 ```
 CROSSTALK_INCIDENT_TOKEN=some-secret bun scripts/incident-webhook.ts 8790
 ```
+
+It does not start without the token, every request must carry it (`?token=`
+or an `x-crosstalk-token` header), and a request a browser sent (one with an
+`Origin` header) is refused.
 
 - **Sentry:** an internal integration (or an alert rule's webhook action)
   pointed at `http://<reachable host>:8790/?token=some-secret`. The event's

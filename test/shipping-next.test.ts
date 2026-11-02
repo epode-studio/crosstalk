@@ -404,6 +404,7 @@ function engineWith(o: { port?: MemPort; identity?: any; peers?: Peer[] } = {}) 
     detect: () => ({ claude: "/stub/claude", codex: "/stub/codex" }),
     gh: false,
     log: () => {},
+    allowed: () => true,
     now: () => Date.now() + clock.offset,
     identity: () => o.identity ?? null,
     peers: () => o.peers ?? [],
@@ -437,7 +438,7 @@ describe("the engine: preview, dark, metrics, auto-kill", () => {
     port.sessions.set("s", { sessionId: "s", name: "pay", cwd: wt, root: wt, branch: "crosstalk/pay" })
     expect(await e.feature("s", { name: "pay v2" })).toMatchObject({ risk: "risky", flag: "pay-v2" })
     await e.ready("s", { feature: "pay v2" })
-    for (const l of launches) await e.review({ run: l.run, verdict: "approve", findings: "none" })
+    for (const l of launches) await e.review({ run: l.run, secret: l.secret, verdict: "approve", findings: "none" })
     // The preview ran with the flag forced on, its check got the URL, and it is evidence.
     const f = () => port.get(t.id)!.features["pay-v2"]
     expect(f().ship?.state).toBe("needs-evidence")
@@ -504,7 +505,7 @@ describe("the engine: preview, dark, metrics, auto-kill", () => {
     port.placed.set("s", t.id)
     port.sessions.set("s", { sessionId: "s", name: "x", cwd: wt, root: wt, branch: "crosstalk/x" })
     await e.ready("s", { feature: "x" })
-    for (const l of launches) await e.review({ run: l.run, verdict: "approve", findings: "none" })
+    for (const l of launches) await e.review({ run: l.run, secret: l.secret, verdict: "approve", findings: "none" })
     expect(port.get(t.id)!.features["x"].ship?.state).toBe("red")
     expect(woke.at(-1)!.text).toContain("login button missing")
   })
@@ -521,7 +522,7 @@ describe("the engine: preview, dark, metrics, auto-kill", () => {
     port.sessions.set("s", { sessionId: "s", name: "banner", cwd: wt, root: wt, branch: "crosstalk/banner" })
     await e.feature("s", { name: "banner", flag: "banner" })
     await e.ready("s", { feature: "banner" })
-    await e.review({ run: launches[0].run, verdict: "approve", findings: "none" })
+    await e.review({ run: launches[0].run, secret: launches[0].secret, verdict: "approve", findings: "none" })
     expect(flagsOn(dir).banner).toBe("internal")
     clock.offset = 59 * 60_000
     await e.watch()
@@ -536,7 +537,7 @@ describe("the engine: preview, dark, metrics, auto-kill", () => {
     port.sessions.set("s", { sessionId: "s", name: "banner", cwd: wt2, root: wt2, branch: "crosstalk/promo" })
     await e.feature("s", { name: "promo", flag: "promo", branch: "crosstalk/promo" })
     await e.ready("s", { feature: "promo" })
-    await e.review({ run: launches.at(-1).run, verdict: "approve", findings: "none" })
+    await e.review({ run: launches.at(-1).run, secret: launches.at(-1).secret, verdict: "approve", findings: "none" })
     expect(flagsOn(dir).promo).toBe("internal")
     clock.offset = 5 * HOUR
     await e.watch()

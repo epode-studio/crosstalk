@@ -117,3 +117,6 @@ export const flagName = (feature: string) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48) || "feature"
+
+/** A name a flag may have: it reaches provider APIs, the flags file and `{flag}` in a repo's commands. */
+export const validFlagName = (s: string) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(s)

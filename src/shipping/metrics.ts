@@ -85,6 +85,24 @@ export function regressions(baseline: Metrics | undefined, now: Metrics, rules: 
   return out
 }
 
+/**
+ * What cannot be compared, so "nothing regressed" would mean nothing: no
+ * baseline at all, a baseline metric that is no longer reported, or a new
+ * metric with nothing before it (shadow and exposure counts aside: they are
+ * judged on their own). An automatic step waits while there is any.
+ */
+export function gaps(baseline: Metrics | undefined, now: Metrics | undefined): string[] {
+  if (!now || !Object.keys(now).length) return ["there are no metrics now"]
+  const health = (k: string) => !/^(shadow_|exposures)/.test(k)
+  if (!baseline || !Object.keys(baseline).filter(health).length) return Object.keys(now).some(health) ? ["there is no baseline from before the step"] : []
+  const out: string[] = []
+  const gone = Object.keys(baseline).filter((k) => health(k) && !(k in now))
+  const fresh = Object.keys(now).filter((k) => health(k) && !(k in baseline))
+  if (gone.length) out.push(`no longer reported: ${gone.join(", ")}`)
+  if (fresh.length) out.push(`no baseline for: ${fresh.join(", ")}`)
+  return out
+}
+
 /** Metrics as a person reads them: "errors 3 (was 2), latency_p95 120 (was 118)". */
 export function describeMetrics(now: Metrics | undefined, baseline?: Metrics): string {
   if (!now || !Object.keys(now).length) return "no metrics"

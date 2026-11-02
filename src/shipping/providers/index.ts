@@ -89,8 +89,16 @@ export class WithDark implements FlagProvider {
       if (main !== undefined && main !== "off") await this.inner.set(flag, "off", why)
       return `${flag} is dark in ${this.name}: ${darkFlag(flag)} is on, so the new path runs in shadow, and ${flag} is off, so nobody gets its result (${shadow})`
     }
-    if ((await this.companion(flag)) === "on") await this.inner.set(darkFlag(flag), "off", `${why} (${flag} leaves dark)`)
-    return this.inner.set(flag, stage, why)
+    // The flag itself first: a kill that fails on the companion must not leave the flag on.
+    const said = await this.inner.set(flag, stage, why)
+    if ((await this.companion(flag)) === "on") {
+      try {
+        await this.inner.set(darkFlag(flag), "off", `${why} (${flag} leaves dark)`)
+      } catch (e) {
+        throw new Error(`${flag} is ${stage} in ${this.name}, but its companion ${darkFlag(flag)} could not be turned off: ${(e as Error).message}`)
+      }
+    }
+    return said
   }
 }
 

@@ -17,6 +17,7 @@ import { P, loadIdentity, loadPeers } from "../config.ts"
 import * as ui from "../uistate.ts"
 import * as cleanup from "../cleanup.ts"
 import type { ThreadService } from "../threads/service.ts"
+import * as M from "../threads/model.ts"
 import { ShipEngine, type Out, type Question, type ThreadPort } from "./engine.ts"
 import { cliCommand } from "./reviewer.ts"
 import { refuseBot } from "../ui-extra/bots.ts"
@@ -164,7 +165,8 @@ export function createShipping(o: {
       case "ready":
         return engine.ready(sid, { thread: req.thread, feature: req.feature ?? req.name, response: req.response })
       case "review":
-        return engine.review({ run: req.run, verdict: req.verdict, findings: req.findings, output: req.output })
+        // Only the run's wrapper (its secret) or the reviewer's own session (in the run's copy) counts.
+        return engine.review({ run: req.run, verdict: req.verdict, findings: req.findings, output: req.output, secret: typeof req.secret === "string" ? req.secret : undefined, sid })
       case "evidence":
         return engine.evidence(sid, req)
       case "flag":
@@ -212,10 +214,13 @@ export function createShipping(o: {
     const qid = typeof req.answer?.id === "string" ? req.answer.id : undefined
     if (qid && (engine.question(qid) || o.threads.all().some((t) => t.questions[qid]?.ship)))
       return { stop: { ok: false, error: "that is a shipping question, and a person answers it themselves: in crosstalk's picker, or with `crosstalk ship answer` in a terminal" }, req }
+    // Matched the way the thread keys features (by slug), removed ones included:
+    // "Login V2", or a remove and re-add, is the same risky feature.
     if (req.feature?.name && req.feature.risk === "everyday" && !req.feature.remove) {
       const t = o.threads.find(sid, req.thread)
-      const f = t && Object.values(t.features).find((x) => !x.gone && (x.name === req.feature.name || x.id === req.feature.name))
-      if (f?.risk === "risky") {
+      const name = String(req.feature.name)
+      const f = t && (t.features[M.slug(name, 60)] ?? Object.values(t.features).find((x) => x.name === name || x.id === name || x.name.toLowerCase() === name.toLowerCase()))
+      if (t && f && (f.risk === "risky" || engine.isRisky(t, f))) {
         const r = await engine.feature(sid, { thread: t!.id, name: f.name, risk: "everyday", why: req.feature.why })
         return { stop: { ok: r.ok, note: r.text, ...(r.question ? { question: r.question } : {}) }, req }
       }
