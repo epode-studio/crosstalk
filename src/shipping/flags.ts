@@ -1,6 +1,8 @@
 // Flags instead of staging. Merged means in main and off; shipped means on.
 //
-// A stage is one of: off, internal (your own accounts), N% (of everyone), on.
+// A stage is one of: off, dark (the new path runs in shadow next to the old
+// one, for everyone, and its results are thrown away: only mismatches are
+// reported), internal (your own accounts), N% (of everyone), on.
 //
 // The built-in flags file, `.crosstalk/flags`, is for teams with no provider.
 // The app reads it at deploy, so turning a flag off takes as long as a deploy.
@@ -14,7 +16,7 @@
 //
 // crosstalk changes it with a commit on the default branch (merge.ts).
 
-export type Stage = "off" | "internal" | "on" | `${number}%`
+export type Stage = "off" | "dark" | "internal" | "on" | `${number}%`
 
 export const FLAGS_FILE = ".crosstalk/flags"
 
@@ -27,6 +29,7 @@ export function parseStage(v: unknown): Stage | undefined {
   if (["off", "false", "disabled", "0", "0%"].includes(s)) return "off"
   if (["on", "true", "enabled", "100", "100%", "everyone"].includes(s)) return "on"
   if (["internal", "dogfood", "team"].includes(s)) return "internal"
+  if (["dark", "shadow"].includes(s)) return "dark"
   const m = /^(\d{1,3}(?:\.\d+)?)\s*%?$/.exec(s)
   if (m) {
     const n = Number(m[1])
@@ -37,15 +40,16 @@ export function parseStage(v: unknown): Stage | undefined {
   return undefined
 }
 
-/** How far out a stage is: off 0, internal 0.5, N% N, on 100. */
+/** How far out a stage is: off 0, dark 0.25, internal 0.5, N% N, on 100. */
 export function order(s: Stage): number {
   if (s === "off") return 0
+  if (s === "dark") return 0.25
   if (s === "internal") return 0.5
   if (s === "on") return 100
   return Number(s.slice(0, -1))
 }
 
-export const percent = (s: Stage) => (s === "on" ? 100 : s === "off" || s === "internal" ? 0 : Number(s.slice(0, -1)))
+export const percent = (s: Stage) => (s === "on" ? 100 : s === "off" || s === "dark" || s === "internal" ? 0 : Number(s.slice(0, -1)))
 
 /** The step after this one on the ramp, or undefined at the end. */
 export function nextStage(current: Stage, ramp: string[]): Stage | undefined {
@@ -95,7 +99,7 @@ export function parseFlags(text: string): FlagsFile {
 export function renderFlags(f: FlagsFile): string {
   const names = Object.keys(f.flags).sort()
   if (f.form === "json") return JSON.stringify(Object.fromEntries(names.map((n) => [n, f.flags[n]])), null, 2) + "\n"
-  const head = f.header.length ? f.header : ["# Feature flags, read by the app at deploy. crosstalk changes this with a commit.", "# Each line: name: off | internal | N% | on"]
+  const head = f.header.length ? f.header : ["# Feature flags, read by the app at deploy. crosstalk changes this with a commit.", "# Each line: name: off | dark | internal | N% | on"]
   return [...head, ...names.map((n) => `${n}: ${f.flags[n]}`)].join("\n") + "\n"
 }
 

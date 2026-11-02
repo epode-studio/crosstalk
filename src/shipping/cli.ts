@@ -2,7 +2,8 @@
 //
 //   crosstalk ship status [--thread X]           where each feature stands
 //   crosstalk ship questions                     what is waiting on a person
-//   crosstalk ship answer <id> <option>          answer one (a person, in a terminal)
+//   crosstalk ship answer <id> <option>          answer one (a person, in a terminal; also one asked on another machine)
+//   crosstalk ship watch                         check every ramping flag's metrics now
 //   crosstalk ship <action> --json '{...}'       feature | ready | evidence | flag, as the tools take them
 //   crosstalk review --run <id> (--output <file> | --verdict approve|changes --findings "...")
 //   crosstalk incident --source <s> --title <t> [--details <d>] [--flag <f>] [--files a,b] [--sha <sha>]
@@ -62,6 +63,8 @@ export async function shipCmd(argv: string[]) {
       return send({ action: "status", thread: flag(argv, "--thread") })
     case "questions":
       return send({ action: "questions" })
+    case "watch":
+      return send({ action: "watch" })
     case "answer": {
       const [id, ...rest] = pos
       if (!id || !rest.length) {

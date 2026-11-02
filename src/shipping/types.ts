@@ -57,8 +57,12 @@ export type FeatureShip = {
   signoff?: Signoff[]
   evidence?: Evidence[]
   merged?: { sha: string; at: number; files: string[]; shas: string[]; how: string; pr?: string }
-  /** Where its flag stands: off, internal, N% or on. */
+  /** Where its flag stands: off, dark, internal, N% or on. */
   stage?: string
+  /** Its preview deploy (preview.ts): where, whether its check passed, and whether it has been taken down. */
+  preview?: { url?: string; ok: boolean; at: number; sha?: string; check?: string; down?: boolean }
+  /** The last metrics read for its flag, and the baseline from before the step. */
+  metrics?: { at: number; stage: string; now: Record<string, number>; baseline?: Record<string, number> }
   /** Risky paths a person cleared when they made it everyday: only a new one makes it risky again. */
   cleared?: string[]
   /** One line on what happened last, for the status tool. */

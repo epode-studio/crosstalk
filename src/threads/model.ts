@@ -62,6 +62,10 @@ export type Question = {
   at: number
   answer?: string
   answeredBy?: string
+  /** A shipping question (src/shipping/remote.ts): what a person on another machine needs to answer it. */
+  ship?: { kind: string; feature: string; options: string[]; asker: string; stage?: string }
+  /** A person's answer to a shipping question from another machine, signed with their key. */
+  vote?: { pick: string; fp: string; label: string; at: number; sig: string }
 }
 export type Decision = { text: string; who: string; at: number; rationale?: string; session?: string }
 export type Fact = { text: string; who: string; at: number }
