@@ -12,7 +12,8 @@
 //
 // Everything printed is for the mod alone. None of it is model context.
 
-import { daemonRunning, request } from "./client.ts"
+import { daemonRunning, ensureDaemon, request } from "./client.ts"
+import * as firstuse from "./repotrust/firstuse.ts"
 import * as restore from "./restore.ts"
 import * as ui from "./uistate.ts"
 import * as gather from "./gather.ts"
@@ -144,6 +145,13 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
       if (id.startsWith("restore:")) return print(restoreAct(session, id, action, value, root))
       if (id.startsWith("gather:")) return print(gatherAct(session, id, action, value, root))
       if (id.startsWith("cleanup:")) return print(cleanup.act(session, id, action, value))
+      // First use in a repo works with no identity and no daemon: a yes makes both.
+      if (id.startsWith("connect:")) {
+        if (action === "raised" || action === "later") return print(ui.withStore((items, now) => ui.act(items, id, action, now)))
+        const yes = action !== "mute" && (value ?? "").trim() === firstuse.CONNECT
+        const out = await firstuse.connect({ slug: id.slice("connect:".length), yes, ensureDaemon: () => ensureDaemon(root), request })
+        return print({ ok: out.ok, text: out.text, item: ui.snapshot()[id] })
+      }
       if (id.startsWith("gather-note:")) {
         const n = gather.takeNote(session, id)
         return print(n ? { ok: true, text: n.text } : { ok: false, error: "already shown" })

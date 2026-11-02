@@ -15,6 +15,9 @@ export type Kind =
   | "task"
   | "task_sync"
   | "thread"
+  | "heads-up"
+  | "conflict"
+  | "rules"
 
 export type Slice = {
   kind: "diff" | "file" | "turns" | "text"
@@ -67,6 +70,10 @@ export type Envelope = {
   threads?: string[]
   /** A thread's state and content key, on kind "thread" (src/threads/service.ts). */
   threadSync?: unknown
+  /** A heads-up or a conflict about an edit, on kind "heads-up" and "conflict" (src/warn/service.ts). */
+  warn?: unknown
+  /** A repo's standing rules and their key, on kind "rules" (src/rules/doc.ts). */
+  rules?: unknown
 }
 
 export type FootprintSummary = { repo?: string; branch?: string; paths?: string[] }

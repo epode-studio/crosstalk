@@ -27,6 +27,7 @@ import * as gather from "./gather.ts"
 import * as ui from "./uistate.ts"
 import * as terminalTools from "./terminal/tools.ts"
 import * as shipTools from "./shipping/tools.ts"
+import * as nextTools from "./nexttools.ts"
 import { rootFrom } from "./paths.ts"
 import { channelVerdict, hostArgv } from "./channels.ts"
 
@@ -395,6 +396,8 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     ...terminalTools.TOOLS,
     // Shipping: review, evidence, merge, flags, incidents (src/shipping/).
     ...shipTools.TOOLS,
+    // The main session, standing rules, conflicts, first use in a repo.
+    ...nextTools.TOOLS,
     {
       name: "crosstalk_thread_read",
       description:
@@ -669,6 +672,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       default:
         return (
           (await shipTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
+          (await nextTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD, root: rootFrom(import.meta.url) })) ??
           terminalTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD }) ??
           err(`unknown tool ${req.params.name}`)
         )

@@ -59,6 +59,13 @@ export type Deps = {
   network?: boolean
   fadeDays?: number
   now?: () => number
+  /**
+   * Another file on the ref that is not a thread (RULES.md, src/rules/doc.ts):
+   * read when the ref is merged, written with every commit.
+   */
+  extra?: { file: string; read: (repo: string, text: string) => void; render: (repo: string) => string | undefined }
+  /** Threads that changed, after each save: what a standing rule may answer (src/coordinator.ts). */
+  onFlush?: (ids: string[]) => void
 }
 
 /** Where a local session was placed. `name` is how its thread entry is keyed, the same way a peer sees it in presence. */
@@ -122,6 +129,8 @@ export class ThreadService {
   private clones = new Map<string, Set<string>>()
   /** Clones whose local ref has been read since this process started. */
   private readLocal = new Set<string>()
+  /** Sessions kept out of every thread: the main session (src/main.ts). */
+  private outside = new Set<string>()
   readonly me: string
   readonly label: string
 
@@ -303,6 +312,27 @@ export class ThreadService {
       }))
   }
 
+  /** The fingerprints of everyone in any thread of a repo: who its rules are sealed to. */
+  peopleIn(repo: string): string[] {
+    const out = new Set<string>()
+    for (const t of Object.values(this.st.threads)) if (t.meta.value.repo === repo) for (const p of M.people(t)) out.add(p)
+    return [...out]
+  }
+
+  /** Something else on this repo's ref changed (RULES.md): commit and push it soon. */
+  touchRepo(repo: string) {
+    this.schedule(repo)
+  }
+
+  /** Keep a session out of every thread, or let it be placed again. */
+  setOutside(sessionId: string, on: boolean) {
+    if (on) this.outside.add(sessionId)
+    else this.outside.delete(sessionId)
+    const s = this.locals.get(sessionId)
+    if (s) this.place(s)
+    this.flush()
+  }
+
   // --- local sessions ----------------------------------------------------------
 
   /** Place a local session from its footprint. Cheap when nothing changed, which is most calls. */
@@ -347,6 +377,16 @@ export class ThreadService {
   }
 
   private place(s: LocalSession): void {
+    if (this.outside.has(s.sessionId)) {
+      const rec = this.st.placed[s.sessionId]
+      for (const id of rec?.threads ?? []) {
+        const t = this.st.threads[this.resolve(id)]
+        if (t && M.remove(t, "sessions", `${this.me}:${rec?.name ?? s.name}`, this.me, this.now())) this.touched.add(t.id)
+      }
+      if (rec) rec.threads = []
+      delete this.st.questions[s.sessionId]
+      return
+    }
     if (!s.repo) return
     if (s.root) {
       // The first clone seen is the one the ref is written in; every clone
@@ -859,6 +899,11 @@ export class ThreadService {
         this.broadcast(t, skip)
         if (M.committedDigest(t) !== this.st.committed[id]) this.schedule(t.meta.value.repo)
       }
+      try {
+        this.d.onFlush?.(ids)
+      } catch (e) {
+        this.d.log(`threads: ${(e as Error).message}`)
+      }
     } else this.save()
   }
 
@@ -943,6 +988,11 @@ export class ThreadService {
     const { files } = S.readRef(root, ref)
     const peers = Object.values(this.d.peers())
     for (const [name, text] of Object.entries(files)) {
+      if (this.d.extra && name === this.d.extra.file) {
+        this.d.extra.read(repo, text)
+        if (this.st.opaque[repo]) delete this.st.opaque[repo][name]
+        continue
+      }
       if (name === S.RULES_FILE) {
         ;(this.st.opaque[repo] ??= {})[name] = text
         continue
@@ -979,6 +1029,8 @@ export class ThreadService {
   /** Every file for this repo's ref, rendered from this replica. */
   private render(repo: string): Record<string, string> {
     const out: Record<string, string> = { ...(this.st.opaque[repo] ?? {}) }
+    const extra = this.d.extra?.render(repo)
+    if (extra && this.d.extra) out[this.d.extra.file] = extra
     const taken = new Set(Object.keys(out))
     const byFp = new Map(Object.values(this.d.peers()).map((p) => [p.fingerprint, p]))
     for (const t of Object.values(this.st.threads).sort((a, b) => a.meta.value.createdAt - b.meta.value.createdAt || (a.id < b.id ? -1 : 1))) {

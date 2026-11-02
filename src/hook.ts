@@ -24,6 +24,8 @@ import * as restore from "./restore.ts"
 import * as ui from "./uistate.ts"
 import * as gather from "./gather.ts"
 import * as termHook from "./terminal/hook.ts"
+import * as firstuse from "./repotrust/firstuse.ts"
+import { editReport } from "./warn/edit.ts"
 
 const input = await new Promise<string>((resolve) => {
   let raw = ""
@@ -280,6 +282,25 @@ const chromeOut = (hookSpecific?: Record<string, unknown>) => {
   return out
 }
 
+/**
+ * First use in a GitHub repo (src/repotrust/firstuse.ts): "Connect with your
+ * team in <repo>?", once per repo, from the first interactive session. Asked
+ * before the identity check, because a machine with no identity yet is exactly
+ * the one that needs asking. Nothing is pushed before a yes.
+ */
+if (
+  restoreClient === "claude" &&
+  sessionId &&
+  isSessionStart &&
+  !/^(clear|compact)$/.test(String(hook.source ?? "")) &&
+  !/^sdk/i.test(process.env.CLAUDE_CODE_ENTRYPOINT ?? "")
+) {
+  try {
+    const m = (await firstuse.surface(cwd, sessionId)).systemMessage
+    if (m) systemMessage = systemMessage ? `${systemMessage}\n${m}` : m
+  } catch {}
+}
+
 /** Nothing to do until there is a room. */
 if (!loadIdentity() || !sessionId) {
   process.stdout.write(
@@ -422,6 +443,15 @@ if (!DELIVERS.test(eventName)) say()
 // would spend the message on an answer nobody reads. The daemon hands it over
 // once per session, so it does not matter which event gets there first.
 if (!isSessionStart) await registerSession()
+
+// An edit: which top-level symbols changed, and the diff, for any other thread
+// whose footprint includes the file (src/warn/). Cheap: one file and git.
+if (/^PostToolUse$/.test(eventName)) {
+  try {
+    const rep = editReport({ cwd, tool: String(hook.tool_name ?? ""), input: hook.tool_input })
+    if (rep) await request({ op: "edited", sessionId, cwd, edit: rep }, 4000).catch(() => null)
+  } catch {}
+}
 
 /**
  * The session's threads, for Claude Code only (the one client known to take

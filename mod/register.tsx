@@ -12,6 +12,10 @@
 //                  Remove them / Not now
 //   thread         "which thread is api part of?": the threads, New thread, No thread
 //   thread note    "auth and auth-ui combined…": a toast
+//   rule           "You answered … twice. Always do this?": Always do this / Not now
+//   connect        "Connect with your team in <repo>?": Connect / Not in this repo
+//   conflict       "auth and billing cannot agree who changes parse()": the threads
+//   main           the status line of a main session counts every session
 //   own thread     a message about this session's own thread is handed to the
 //                  agent by itself (as data), when the prompt is empty and idle
 //   status line    ◢ <threads or repo> · <n> waiting
@@ -55,6 +59,8 @@ let label = ''
 let repo = ''
 /** This session's threads, from the daemon: what the status line leads with. */
 let threadNames: string[] = []
+/** Set while this is the main session: totals across every session. */
+let mainTotals: { sessions: number; threads: number; waiting: number } | null = null
 let interactive = false
 let busy = false
 let asking = false
@@ -113,6 +119,9 @@ function header(it: Item): string {
   if (it.kind === 'cleanup') return 'Clean up'
   if (it.kind === 'thread') return 'Thread'
   if (it.kind === 'ship') return 'Ship'
+  if (it.kind === 'rule') return 'Rule'
+  if (it.kind === 'connect') return 'Connect'
+  if (it.kind === 'conflict') return 'Conflict'
   return cut(it.thread ? `${it.from} · ${it.thread}` : it.from ?? 'crosstalk', 12)
 }
 
@@ -121,7 +130,11 @@ async function showStatus($: EngineInterface, open: Item[]) {
   const threads = [...new Set(open.filter(isCard).map(i => i.thread).filter((t): t is string => !!t))]
   const where = threadNames.length ? threadNames.slice(0, 3).join(' · ') : threads.length ? threads.slice(0, 3).join(', ') : repo
   // Nothing waiting and no room: say nothing, rather than a line in every session.
-  const text = open.length || label ? `◢ ${where || 'crosstalk'} · ${open.length} waiting` : undefined
+  const text = mainTotals
+    ? `◢ main · ${mainTotals.sessions} session${mainTotals.sessions === 1 ? '' : 's'} · ${mainTotals.threads} thread${mainTotals.threads === 1 ? '' : 's'} · ${Math.max(mainTotals.waiting, open.length)} waiting`
+    : open.length || label
+      ? `◢ ${where || 'crosstalk'} · ${open.length} waiting`
+      : undefined
   if (text !== lastStatus) $.ui.status(text)
   lastStatus = text
 }
@@ -139,7 +152,14 @@ function tabStatus($: EngineInterface, event: string) {
 }
 
 async function received($: EngineInterface, line: string) {
-  let w: { items?: Item[]; label?: string; note?: { id: string; text: string }; threads?: string[]; threadNotes?: { id: string; text: string }[] }
+  let w: {
+    items?: Item[]
+    label?: string
+    note?: { id: string; text: string }
+    threads?: string[]
+    threadNotes?: { id: string; text: string }[]
+    main?: { sessions: number; threads: number; waiting: number }
+  }
   try {
     w = JSON.parse(line)
   } catch {
@@ -148,6 +168,7 @@ async function received($: EngineInterface, line: string) {
   lastLineAt = await $.clock.now()
   label = w.label ?? ''
   threadNames = Array.isArray(w.threads) ? w.threads.filter((t): t is string => typeof t === 'string') : []
+  mainTotals = w.main && typeof w.main.sessions === 'number' ? w.main : null
   for (const n of w.threadNotes ?? [])
     if (!toasted.has(n.id)) {
       toasted.add(n.id)
@@ -258,6 +279,8 @@ async function raise($: EngineInterface, it: Item) {
       answer = await $.ui.ask(it.question ?? 'crosstalk has a shipping question', { options: it.options ?? ['Not yet'], header: header(it) })
     else if (it.kind === 'thread')
       answer = await $.ui.ask(it.question ?? 'Which thread is this session part of?', { options: it.options ?? ['New thread', 'No thread'], header: header(it) })
+    else if (it.kind === 'rule' || it.kind === 'connect' || it.kind === 'conflict')
+      answer = await $.ui.ask(it.question ?? 'crosstalk has a question', { options: it.options ?? ['Not now'], header: header(it) })
     else {
       const what = it.kind === 'ask' ? 'asks' : 'says'
       const options = it.kind === 'ask' ? ['Answer', 'Hand to agent', 'Later', 'Mute'] : ['Hand to agent', 'Reply', 'Mute', 'Later']
@@ -304,6 +327,11 @@ async function answered($: EngineInterface, it: Item, answer: string) {
   if (it.kind === 'ship') {
     const r = await step($, it, 'answer', answer)
     await receipt($, `ship-${it.id}`, r.text ?? r.error ?? 'crosstalk: the shipping question did not answer')
+    return
+  }
+  if (it.kind === 'rule' || it.kind === 'connect' || it.kind === 'conflict') {
+    const r = await step($, it, 'answer', answer)
+    $.ui.toast(oneLine((r.text ?? r.error ?? 'crosstalk did not answer').replace(/^◢ crosstalk: /, '')))
     return
   }
   if (it.kind === 'thread') {
@@ -539,6 +567,17 @@ export const register: Register = on => {
                 <Text dimColor>
                   {' '}
                   · which thread is this session part of?{later(it)}
+                </Text>
+              </Text>
+            )
+          if (it.kind === 'rule' || it.kind === 'connect' || it.kind === 'conflict')
+            return (
+              <Text key={it.id} wrap="truncate">
+                <Text color={THREAD} bold>◢ {it.kind}</Text>
+                <Text dimColor>
+                  {' '}
+                  · {it.kind === 'rule' ? 'always answer this way?' : it.kind === 'connect' ? `connect with your team in ${it.thread ?? 'this repo'}?` : `who changes ${it.thread ?? 'it'}?`}
+                  {later(it)}
                 </Text>
               </Text>
             )

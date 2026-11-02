@@ -103,7 +103,7 @@ FA=$(fp "$A"); FB=$(fp "$B"); FA2=$(fp "$A2")
 start() { # home login machine key
   (unset SSH_AUTH_SOCK; CROSSTALK_HOME="$1" CROSSTALK_GITHUB_URL="http://127.0.0.1:$STUB_PORT" \
     CROSSTALK_GITHUB_LOGIN="$2" CROSSTALK_MACHINE="$3" CROSSTALK_SSH_KEY="$4" \
-    CROSSTALK_REPOTRUST_ANY_REMOTE=1 CROSSTALK_KEYS_MIN_MS=0 CROSSTALK_REPOTRUST_MIN_MS=0 \
+    CROSSTALK_REPOTRUST_ANY_REMOTE=1 CROSSTALK_REPOTRUST_AUTO=1 CROSSTALK_KEYS_MIN_MS=0 CROSSTALK_REPOTRUST_MIN_MS=0 \
     exec nohup bun src/daemon.ts >>"$1/daemon.log" 2>&1) &
   for _ in $(seq 1 40); do [ -S "$1/daemon.sock" ] && break; sleep 0.2; done
 }
