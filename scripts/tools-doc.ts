@@ -45,6 +45,7 @@ const GROUPS: [string, string, string[]][] = [
   ["Decisions", "What was settled, written where the code lives.", ["crosstalk_decide"]],
   ["Threads", "A piece of work and the conversation about it, found from what each session works on.", ["crosstalk_thread_read", "crosstalk_thread"]],
   ["No commands", "What used to need a slash command, from plain words (src/ui-extra/).", ["crosstalk_room", "crosstalk_mute", "crosstalk_trust", "crosstalk_doctor", "crosstalk_link"]],
+  ["Services", "Long-running processes that outlive the session, on the worktree's own ports (docs/services.md).", ["crosstalk_serve", "crosstalk_services", "crosstalk_stop"]],
   ["Looking around", "A thread beside the chat, a worktree in the editor, what happened, what shipped.", ["crosstalk_pane", "crosstalk_open", "crosstalk_digest", "crosstalk_standup"]],
 ]
 

@@ -18,6 +18,7 @@ import * as restore from "./restore.ts"
 import * as ui from "./uistate.ts"
 import * as gather from "./gather.ts"
 import * as cleanup from "./cleanup.ts"
+import * as Svc from "./services/service.ts"
 import * as extra from "./ui-extra/uicli.ts"
 
 type Out = Record<string, unknown>
@@ -85,6 +86,7 @@ function tendGather(session: string) {
 async function watch(session: string, interval: number) {
   let last = ""
   let lastRestoreCheck = 0
+  let ports: string | undefined
   const parent = process.ppid
   for (;;) {
     // The session that started this is gone: so is the reason to run.
@@ -105,8 +107,12 @@ async function watch(session: string, interval: number) {
         // Finished agent worktrees: offered once, checked at most every ten minutes.
         cleanup.surface(session, cleanup.offerOnce(), true)
       } catch {}
+      // This worktree's services' ports, for the status line (`auth · :4100`).
+      try {
+        ports = Svc.badge(Svc.forSession(session).map((s) => ({ listening: s.ports }))) || undefined
+      } catch {}
     }
-    const w = { ...(await waiting(session, true)), note: gather.peekNote(session) ?? undefined }
+    const w = { ...(await waiting(session, true)), note: gather.peekNote(session) ?? undefined, ...(ports ? { ports } : {}) }
     const line = JSON.stringify(w)
     if (line !== last) {
       last = line

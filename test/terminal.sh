@@ -162,6 +162,11 @@ echo two >"$WT1/b.txt" && git -C "$WT1" add b.txt && git -C "$WT1" commit -qm "a
 echo three >"$WT2/c.txt" && git -C "$WT2" add c.txt && git -C "$WT2" commit -qm "auth-2 work"
 git -C "$REPO" merge -q --no-ff -m "merge auth-1" crosstalk/auth-1
 git -C "$REPO" worktree add -q "$TMP/code/theirs" -b theirs
+# Nothing in use is removed (docs/services.md): auth-1's session ends first, its window closed.
+LIST=$(cd "$REPO" && ct cleanup)
+has "$LIST" "auth-1 (a process is running in it" "while auth-1's tab still runs in it, it is kept"
+for P in $(tmux list-panes -s -t =work -F '#{pane_id} #{pane_current_path}' | grep -F "$WT1" | cut -d' ' -f1); do tmux kill-pane -t "$P"; done
+for _ in $(seq 1 25); do (cd "$REPO" && ct cleanup) | grep -q "auth-1 (a process is running in it" || break; sleep 0.2; done
 OUT=$(json hook_event_name=SessionStart session_id=other-sess "cwd=$REPO" source=startup | bun "$ROOT/src/hook.ts")
 has "$OUT" "agent worktree is done with" "the next session offers once"
 has "$OUT" "auth-1" "naming the merged one"

@@ -9,13 +9,30 @@
 //   name       a spawned agent's session takes its name, through sessionTitle,
 //              never the terminal title
 //   cleanup    on a session start, the offer to remove finished worktrees
+//   services   on a session start, which crosstalk services still run in this
+//              worktree (the person's systemMessage, and a line for the agent
+//              as data) and the worktree's own ports; their ports after the
+//              session's title, `auth · :4100` (docs/services.md)
 
 import * as S from "./status.ts"
 import * as ui from "../uistate.ts"
 import * as spawn from "../spawn.ts"
 import * as cleanup from "../cleanup.ts"
+import * as Svc from "../services/service.ts"
+import * as Pt from "../services/ports.ts"
 
-export type Chrome = { terminalSequence?: string; sessionTitle?: string; systemMessage?: string }
+export type Chrome = {
+  terminalSequence?: string
+  sessionTitle?: string
+  systemMessage?: string
+  /** For the agent, at SessionStart: the worktree's ports and its running services, as data. */
+  context?: string
+  /** The ports of this worktree's running services, `:4100`, for after the title. */
+  badge?: string
+}
+
+/** `auth · :4100`: a title with its services' ports after it, the number and nothing more. */
+export const withBadge = (title: string | undefined, badge: string | undefined) => (title && badge ? `${title} · ${badge.replace(/[^0-9: …]/g, "")}` : title)
 
 /**
  * A spawned agent's title, `auth · auth-2`. Control characters are stripped
@@ -51,6 +68,23 @@ export function fromHook(o: { event: string; sessionId: string; cwd: string; hoo
     } catch {}
     try {
       out.systemMessage = cleanup.surface(o.sessionId, cleanup.offerOnce()).systemMessage
+    } catch {}
+  }
+  if (o.isSessionStart && !o.env.CROSSTALK_NO_SERVICES) {
+    try {
+      const b = Svc.brief(o.cwd)
+      // After a compaction or /clear the agent has lost the line; the person was told already.
+      if (b.systemMessage && !/^(clear|compact)$/.test(String(o.hook?.source ?? ""))) out.systemMessage = [out.systemMessage, b.systemMessage].filter(Boolean).join("\n")
+      if (b.context) out.context = b.context
+      if (b.badge) out.badge = b.badge
+    } catch {}
+  } else if (/^UserPromptSubmit$/.test(o.event) && !o.env.CROSSTALK_NO_SERVICES) {
+    try {
+      // Cheap: a readdir, and one git and one tmux call only when crosstalk runs services at all.
+      if (Svc.readAll().some((s) => !s.stoppedAt)) {
+        const b = Svc.badge(Svc.running(Pt.rootOf(o.cwd)))
+        if (b) out.badge = b
+      }
     } catch {}
   }
   return out

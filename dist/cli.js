@@ -186,9 +186,9 @@ async function ensureDaemon(root = rootFrom(import.meta.url)) {
 }
 
 // src/spawn.ts
-import fs5 from "node:fs";
-import path7 from "node:path";
-import { spawnSync as spawnSync7 } from "node:child_process";
+import fs11 from "node:fs";
+import path13 from "node:path";
+import { spawnSync as spawnSync11 } from "node:child_process";
 
 // src/restore.ts
 import fs3 from "node:fs";
@@ -1373,21 +1373,1130 @@ function focusSession(o) {
 import crypto from "node:crypto";
 
 // src/gather.ts
+import fs10 from "node:fs";
+import path12 from "node:path";
+import { spawn as spawn4, spawnSync as spawnSync10 } from "node:child_process";
+
+// src/services/procs.ts
 import fs4 from "node:fs";
 import path6 from "node:path";
-import { spawn as spawn3, spawnSync as spawnSync6 } from "node:child_process";
+import { spawnSync as spawnSync6 } from "node:child_process";
+var run = (cmd, args, timeout = 5000) => {
+  try {
+    const r = spawnSync6(cmd, args, { encoding: "utf8", timeout, maxBuffer: 32 * 1024 * 1024 });
+    if (r.error || r.status !== 0 && !r.stdout)
+      return null;
+    return r.stdout ?? "";
+  } catch {
+    return null;
+  }
+};
+function parsePs(text) {
+  const out = [];
+  for (const l of text.split(`
+`)) {
+    const m = /^\s*(\d+)\s+(\d+)\s?(.*)$/.exec(l);
+    if (m)
+      out.push({ pid: Number(m[1]), ppid: Number(m[2]), args: m[3].trim() });
+  }
+  return out;
+}
+function psTable() {
+  return parsePs(run("ps", ["-Ao", "pid=,ppid=,args="]) ?? "");
+}
+function descendants(pid, table) {
+  const kids = new Map;
+  for (const p of table)
+    if (p.pid !== p.ppid)
+      (kids.get(p.ppid) ?? kids.set(p.ppid, []).get(p.ppid)).push(p);
+  const out = [];
+  const seen = new Set([pid]);
+  const queue = [pid];
+  while (queue.length) {
+    for (const k of kids.get(queue.shift()) ?? []) {
+      if (seen.has(k.pid))
+        continue;
+      seen.add(k.pid);
+      out.push(k);
+      queue.push(k.pid);
+    }
+  }
+  return out;
+}
+var tree = (pid, table) => [pid, ...descendants(pid, table).map((p) => p.pid)];
+function parseSs(text) {
+  const out = [];
+  for (const l of text.split(`
+`)) {
+    const cols = l.trim().split(/\s+/);
+    if (cols.length < 5)
+      continue;
+    const local = cols[0] === "LISTEN" ? cols[3] : cols[2];
+    const port = Number(/:(\d+)$/.exec(local ?? "")?.[1]);
+    if (!port)
+      continue;
+    for (const m of l.matchAll(/pid=(\d+)/g))
+      out.push({ pid: Number(m[1]), port });
+  }
+  return out;
+}
+function parseLsof(text) {
+  const out = [];
+  let pid = 0;
+  for (const l of text.split(`
+`)) {
+    if (l.startsWith("p"))
+      pid = Number(l.slice(1)) || 0;
+    else if (l.startsWith("n") && pid) {
+      const port = Number(/:(\d+)$/.exec(l)?.[1]);
+      if (port)
+        out.push({ pid, port });
+    }
+  }
+  return out;
+}
+var dedupe = (ls) => [...new Map(ls.map((l) => [`${l.pid}:${l.port}`, l])).values()];
+function listeners(platform = process.platform) {
+  if (process.env.CROSSTALK_NO_LISTENERS)
+    return [];
+  if (platform === "linux") {
+    const ss = run("ss", ["-ltnpH"]);
+    if (ss !== null) {
+      const got = parseSs(ss);
+      if (got.length || !ss.trim())
+        return dedupe(got);
+    }
+  }
+  const lsof = run("lsof", ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn"]);
+  return lsof === null ? [] : dedupe(parseLsof(lsof));
+}
+function parseLsofCwd(text) {
+  const out = new Map;
+  let pid = 0;
+  for (const l of text.split(`
+`)) {
+    if (l.startsWith("p"))
+      pid = Number(l.slice(1)) || 0;
+    else if (l.startsWith("n") && pid)
+      out.set(pid, l.slice(1));
+  }
+  return out;
+}
+function cwds(platform = process.platform) {
+  const out = new Map;
+  if (platform === "linux") {
+    try {
+      for (const p of fs4.readdirSync("/proc")) {
+        if (!/^\d+$/.test(p))
+          continue;
+        try {
+          out.set(Number(p), fs4.readlinkSync(`/proc/${p}/cwd`));
+        } catch {}
+      }
+      return out;
+    } catch {}
+  }
+  const lsof = run("lsof", ["-d", "cwd", "-Fpn"], 15000);
+  return lsof === null ? out : parseLsofCwd(lsof);
+}
+var under = (p, dir) => {
+  const a = path6.resolve(p);
+  const b = path6.resolve(dir);
+  return a === b || a.startsWith(b + path6.sep);
+};
+var SHELL2 = /^-?(sh|bash|zsh|dash|fish|ksh|tcsh|csh)$/;
+var prog = (args) => path6.basename(args.trim().split(/\s+/)[0] ?? "");
+var isShell = (p) => SHELL2.test(prog(p.args));
+function activity(claudePid, o) {
+  const ours = o.ours ?? (() => false);
+  const exclude = o.exclude ?? new Set;
+  const ports = new Map;
+  for (const l of o.listeners)
+    (ports.get(l.pid) ?? ports.set(l.pid, []).get(l.pid)).push(l.port);
+  const kids = new Map;
+  for (const p of o.table)
+    if (p.pid !== p.ppid)
+      (kids.get(p.ppid) ?? kids.set(p.ppid, []).get(p.ppid)).push(p);
+  const out = [];
+  const walk = (p, depth) => {
+    if (exclude.has(p.pid) || ours(p.args) || depth > 64)
+      return;
+    const listening = ports.get(p.pid) ?? [];
+    if (!isShell(p) || listening.length)
+      out.push({ pid: p.pid, args: p.args, ports: [...new Set(listening)].sort((a, b) => a - b) });
+    for (const k of kids.get(p.pid) ?? [])
+      walk(k, depth + 1);
+  };
+  for (const child of kids.get(claudePid) ?? []) {
+    if (!isShell(child) || exclude.has(child.pid) || ours(child.args))
+      continue;
+    for (const k of kids.get(child.pid) ?? [])
+      walk(k, 1);
+    if (ports.get(child.pid)?.length)
+      out.push({ pid: child.pid, args: child.args, ports: ports.get(child.pid) });
+  }
+  return out;
+}
+var oursBy = (root) => (args) => args.includes(path6.join(root, "bin", "crosstalk")) || args.includes(path6.join(root, "dist")) || args.includes(path6.join(root, "src")) || /(^|\/)crosstalk(\s|$)/.test(args.split(/\s+/)[0] ?? "");
+
+// src/services/service.ts
+import fs9 from "node:fs";
+import path11 from "node:path";
+import { spawn as spawn3, spawnSync as spawnSync9 } from "node:child_process";
+
+// src/cleanup.ts
+import fs8 from "node:fs";
+import path10 from "node:path";
+import { spawnSync as spawnSync8 } from "node:child_process";
+
+// src/uistate.ts
+import fs6 from "node:fs";
+import path8 from "node:path";
+
+// src/metrics/log.ts
+import fs5 from "node:fs";
+import path7 from "node:path";
+var file = () => path7.join(process.env.CROSSTALK_HOME ?? ROOT, "metrics.jsonl");
+var MAX_BYTES = 8 * 1024 * 1024;
+var off = () => process.env.CROSSTALK_NO_METRICS === "1";
+function record(e) {
+  if (off())
+    return;
+  try {
+    const f = file();
+    fs5.mkdirSync(path7.dirname(f), { recursive: true, mode: 448 });
+    fs5.appendFileSync(f, JSON.stringify(e) + `
+`, { mode: 384 });
+    const size = fs5.statSync(f).size;
+    if (size > MAX_BYTES) {
+      const lines = fs5.readFileSync(f, "utf8").split(`
+`).filter(Boolean);
+      const tmp = `${f}.${process.pid}.tmp`;
+      fs5.writeFileSync(tmp, lines.slice(Math.floor(lines.length / 2)).join(`
+`) + `
+`, { mode: 384 });
+      fs5.renameSync(tmp, f);
+    }
+  } catch {}
+}
+var QUESTION_KINDS = new Set(["route", "gather", "team", "cleanup", "thread", "ship", "rule", "connect", "conflict", "disk", "install", "restore"]);
+
+// src/uistate.ts
+var FINAL = new Set(["answered", "handed", "muted"]);
+var file2 = () => path8.join(P.root, "ui.json");
+var lockDir = () => path8.join(P.root, "ui.lock");
+var markers = () => path8.join(P.root, "ui-mod");
+var safe2 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
+var WEEK = 7 * 24 * 60 * 60 * 1000;
+function read() {
+  try {
+    const f = JSON.parse(fs6.readFileSync(file2(), "utf8"));
+    if (f && f.v === 1 && f.items && typeof f.items === "object")
+      return f;
+  } catch {}
+  return { v: 1, items: {} };
+}
+function write(f) {
+  fs6.mkdirSync(P.root, { recursive: true, mode: 448 });
+  const tmp = `${file2()}.${process.pid}.tmp`;
+  fs6.writeFileSync(tmp, JSON.stringify(f, null, 2), { mode: 384 });
+  fs6.renameSync(tmp, file2());
+}
+var sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+class StoreBusy extends Error {
+  constructor(holder) {
+    super(`crosstalk's ui store is locked${holder ? ` by process ${holder}` : ""}; try again`);
+    this.name = "StoreBusy";
+  }
+}
+var lockWaitMs = Number(process.env.CROSSTALK_UI_LOCK_WAIT_MS ?? 2000);
+var LOCK_MAX_AGE_MS = 1e4;
+var LOCK_UNOWNED_MS = 1000;
+var ownerFile = () => path8.join(lockDir(), "pid");
+var alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+};
+function takeLock() {
+  try {
+    fs6.mkdirSync(lockDir());
+  } catch {
+    return false;
+  }
+  try {
+    fs6.writeFileSync(ownerFile(), String(process.pid), { mode: 384 });
+  } catch {}
+  return true;
+}
+function holderOf() {
+  try {
+    const pid = Number(fs6.readFileSync(ownerFile(), "utf8"));
+    return pid > 0 ? pid : undefined;
+  } catch {
+    return;
+  }
+}
+function breakIfStale() {
+  let age;
+  try {
+    age = Date.now() - fs6.statSync(lockDir()).mtimeMs;
+  } catch {
+    return true;
+  }
+  const pid = holderOf();
+  const stale = age > LOCK_MAX_AGE_MS || (pid ? pid !== process.pid && !alive(pid) : age > LOCK_UNOWNED_MS);
+  if (!stale)
+    return false;
+  const aside = `${lockDir()}.stale.${process.pid}.${Date.now()}`;
+  try {
+    fs6.renameSync(lockDir(), aside);
+  } catch {
+    return true;
+  }
+  const moved = (() => {
+    try {
+      return Number(fs6.readFileSync(path8.join(aside, "pid"), "utf8")) || undefined;
+    } catch {
+      return;
+    }
+  })();
+  if (moved !== pid)
+    try {
+      fs6.renameSync(aside, lockDir());
+      return false;
+    } catch {}
+  try {
+    fs6.rmSync(aside, { recursive: true, force: true });
+  } catch {}
+  return true;
+}
+var depth = 0;
+function withStore(fn) {
+  fs6.mkdirSync(P.root, { recursive: true, mode: 448 });
+  let held = false;
+  if (depth === 0) {
+    const until = Date.now() + lockWaitMs;
+    for (;; ) {
+      if (takeLock()) {
+        held = true;
+        break;
+      }
+      if (breakIfStale())
+        continue;
+      if (Date.now() >= until)
+        throw new StoreBusy(holderOf());
+      sleepSync(Math.min(10, Math.max(1, until - Date.now())));
+    }
+  }
+  depth++;
+  try {
+    const f = read();
+    const was = JSON.stringify(f);
+    const now = Date.now();
+    const out = fn(f.items, now);
+    for (const [id, it] of Object.entries(f.items))
+      if (FINAL.has(it.state) && now - it.updatedAt > WEEK || now - it.updatedAt > 4 * WEEK)
+        delete f.items[id];
+    if (JSON.stringify(f) !== was)
+      write(f);
+    return out;
+  } finally {
+    depth--;
+    const h = held ? holderOf() : undefined;
+    if (held && (h === undefined || h === process.pid))
+      try {
+        fs6.rmSync(lockDir(), { recursive: true, force: true });
+      } catch {}
+  }
+}
+function snapshot() {
+  return read().items;
+}
+function upsert(items, it, now) {
+  const before = items[it.id];
+  if (!before) {
+    if (QUESTION_KINDS.has(it.kind))
+      record({ k: "asked", at: now, id: it.id, kind: it.kind, ...it.thread ? { thread: it.thread } : {} });
+    return items[it.id] = { ...it, state: "pending", createdAt: now, updatedAt: now };
+  }
+  if (FINAL.has(before.state))
+    return before;
+  const moved = before.sessionId !== it.sessionId;
+  items[it.id] = {
+    ...before,
+    ...it,
+    state: before.state,
+    raisedAt: moved ? undefined : before.raisedAt,
+    createdAt: before.createdAt,
+    updatedAt: moved ? now : before.updatedAt
+  };
+  return items[it.id];
+}
+function act(items, id, action, now, answer) {
+  const it = items[id];
+  if (!it)
+    return { ok: false, error: `nothing waiting with id ${id}` };
+  if (FINAL.has(it.state))
+    return { ok: false, error: `already ${it.state}`, item: it };
+  const next = { ...it, updatedAt: now };
+  switch (action) {
+    case "raised":
+      next.raisedAt = now;
+      break;
+    case "later":
+      next.state = "later";
+      next.raisedAt = now;
+      break;
+    case "hand":
+      if (it.kind !== "message" && it.kind !== "ask")
+        return { ok: false, error: `a ${it.kind} cannot be handed over`, item: it };
+      next.state = "handed";
+      break;
+    case "mute":
+      next.state = "muted";
+      break;
+    case "answer":
+      next.state = "answered";
+      if (answer !== undefined)
+        next.answer = answer;
+      if (QUESTION_KINDS.has(it.kind))
+        record({ k: "answered", at: now, id, kind: it.kind, openMs: now - (it.raisedAt ?? it.createdAt), ...it.thread ? { thread: it.thread } : {} });
+      break;
+    default:
+      return { ok: false, error: `unknown action ${action}`, item: it };
+  }
+  items[id] = next;
+  return { ok: true, item: next };
+}
+function settle(items, id, state, now) {
+  const it = items[id];
+  if (it && !FINAL.has(it.state))
+    items[id] = { ...it, state, updatedAt: now };
+}
+function openFor(items, sessionId) {
+  return Object.values(items).filter((i) => i.sessionId === sessionId && !FINAL.has(i.state)).sort((a, b) => a.createdAt - b.createdAt);
+}
+var MARKER_MS = 10 * 60 * 1000;
+function markModActive(sessionId) {
+  fs6.mkdirSync(markers(), { recursive: true, mode: 448 });
+  fs6.writeFileSync(path8.join(markers(), safe2(sessionId)), String(Date.now()), { mode: 384 });
+}
+function modActive(sessionId, now = Date.now()) {
+  try {
+    return now - fs6.statSync(path8.join(markers(), safe2(sessionId))).mtimeMs < MARKER_MS;
+  } catch {
+    return false;
+  }
+}
+function pruneMarkers(now = Date.now()) {
+  try {
+    for (const f of fs6.readdirSync(markers())) {
+      const p = path8.join(markers(), f);
+      try {
+        if (now - fs6.statSync(p).mtimeMs > WEEK)
+          fs6.unlinkSync(p);
+      } catch {}
+    }
+  } catch {}
+}
+var restoreId = (sessionId) => `restore:${sessionId}`;
+var gatherId = (sessionId) => `gather:${sessionId}`;
+var GATHER_OPTIONS = ["Bring them in", "Not now"];
+function gatherSurface(sessionId, offer, mod = modActive(sessionId)) {
+  if (!offer)
+    return {};
+  if (!mod)
+    return { systemMessage: offer.text };
+  try {
+    return {
+      item: withStore((items, now) => upsert(items, {
+        id: gatherId(sessionId),
+        kind: "gather",
+        sessionId,
+        count: offer.count,
+        names: offer.names,
+        question: offer.question,
+        options: GATHER_OPTIONS
+      }, now))
+    };
+  } catch {
+    return { systemMessage: offer.text };
+  }
+}
+
+// src/services/ports.ts
+import fs7 from "node:fs";
+import path9 from "node:path";
+import { spawnSync as spawnSync7 } from "node:child_process";
+var SIZE = 10;
+var START = () => Number(process.env.CROSSTALK_PORT_START ?? 4100);
+var MAX = 65000;
+var file3 = () => path9.join(P.root, "ports.json");
+function load() {
+  try {
+    const s = JSON.parse(fs7.readFileSync(file3(), "utf8"));
+    return { blocks: s && typeof s.blocks === "object" ? s.blocks : {} };
+  } catch {
+    return { blocks: {} };
+  }
+}
+function save(s) {
+  fs7.mkdirSync(P.root, { recursive: true, mode: 448 });
+  const tmp = `${file3()}.${process.pid}.tmp`;
+  fs7.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs7.renameSync(tmp, file3());
+}
+var sleepSync2 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function locked(fn) {
+  fs7.mkdirSync(P.root, { recursive: true, mode: 448 });
+  const lock = `${file3()}.lock`;
+  let held = false;
+  for (let i = 0;i < 200 && !held; i++) {
+    try {
+      fs7.mkdirSync(lock);
+      held = true;
+    } catch {
+      try {
+        if (Date.now() - fs7.statSync(lock).mtimeMs > 5000)
+          fs7.rmdirSync(lock);
+      } catch {}
+      sleepSync2(10);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    if (held)
+      try {
+        fs7.rmdirSync(lock);
+      } catch {}
+  }
+}
+var range = (base, size = SIZE) => Array.from({ length: size }, (_, i) => base + i);
+function pickBase(o) {
+  const size = o.size ?? SIZE;
+  const max = o.max ?? MAX;
+  for (let base = o.start ?? START();base + size - 1 <= max; base += size) {
+    if (o.taken.some((t) => Math.abs(t - base) < size))
+      continue;
+    if (range(base, size).some((p) => o.inUse.has(p)))
+      continue;
+    return base;
+  }
+  return null;
+}
+function rootOf(cwd) {
+  let dir = path9.resolve(cwd);
+  try {
+    dir = fs7.realpathSync(dir);
+  } catch {}
+  const r = spawnSync7("git", ["-C", dir, "rev-parse", "--show-toplevel"], { encoding: "utf8", timeout: 5000 });
+  const top = r.status === 0 ? r.stdout.trim() : "";
+  if (!top)
+    return dir;
+  try {
+    return fs7.realpathSync(top);
+  } catch {
+    return top;
+  }
+}
+function blockFor(root, o = {}) {
+  const have = load().blocks[root];
+  if (have)
+    return { base: have.base, ports: range(have.base) };
+  return locked(() => {
+    const s = load();
+    const again = s.blocks[root];
+    if (again)
+      return { base: again.base, ports: range(again.base) };
+    for (const [r] of Object.entries(s.blocks))
+      if (!fs7.existsSync(r))
+        delete s.blocks[r];
+    const inUse = (o.inUse ?? (() => new Set(listeners().map((l) => l.port))))();
+    const base = pickBase({ taken: Object.values(s.blocks).map((b) => b.base), inUse });
+    if (base === null)
+      return null;
+    s.blocks[root] = { base, at: o.now ?? Date.now() };
+    save(s);
+    return { base, ports: range(base) };
+  });
+}
+function release(root) {
+  locked(() => {
+    const s = load();
+    if (!s.blocks[root])
+      return;
+    delete s.blocks[root];
+    save(s);
+  });
+}
+
+// src/cleanup.ts
+var svcLabel = (s) => {
+  const b = badge([{ listening: s.listening, ports: s.ports }]);
+  return b ? `${s.name} \u00b7 ${b}` : s.name;
+};
+function select(recs, p) {
+  const out = [];
+  for (const r of recs) {
+    if (r.removedAt || !p.exists(r.worktree))
+      continue;
+    if (!p.ended(r))
+      continue;
+    if (!p.clean(r.worktree, r.links))
+      continue;
+    if (p.inUse?.(r.worktree))
+      continue;
+    const svcs = (p.services?.(r.worktree) ?? []).map(svcLabel);
+    const extra = svcs.length ? { services: svcs } : {};
+    if (!p.branchExists(r.repo, r.branch))
+      out.push({ rec: r, why: "deleted", ...extra });
+    else if (p.merged(r.repo, r.branch, r.base))
+      out.push({ rec: r, why: "merged", ...extra });
+  }
+  return out;
+}
+function defaultBranch(repo, g = git) {
+  const o = g(repo, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
+  if (o.ok && o.out)
+    return o.out.replace(/^origin\//, "");
+  for (const b of ["main", "master", "trunk"])
+    if (g(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]).ok)
+      return b;
+  const h = g(repo, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+  return h.ok && h.out ? h.out : null;
+}
+function inUseBy(worktree, o = {}) {
+  const real = (() => {
+    try {
+      return fs8.realpathSync(worktree);
+    } catch {
+      return path10.resolve(worktree);
+    }
+  })();
+  const cwds2 = o.cwds ?? cwds();
+  const exclude = o.exclude ?? (readAll2().length ? servicePids() : new Set);
+  const self = new Set([process.pid, process.ppid]);
+  const table = o.table;
+  for (const [pid, cwd] of cwds2) {
+    if (self.has(pid) || exclude.has(pid))
+      continue;
+    if (!under(cwd, real) && !under(cwd, worktree))
+      continue;
+    const args = table?.find((p) => p.pid === pid)?.args ?? psTable().find((p) => p.pid === pid)?.args ?? `pid ${pid}`;
+    return `a process is running in it (${args.split(/\s+/).slice(0, 3).join(" ")}, pid ${pid})`;
+  }
+  return null;
+}
+function liveProbe(g = git) {
+  const defaults = new Map;
+  const def = (repo) => {
+    if (!defaults.has(repo))
+      defaults.set(repo, defaultBranch(repo, g));
+    return defaults.get(repo);
+  };
+  return {
+    exists: (p) => fs8.existsSync(p),
+    clean: (w, ignore) => {
+      const r = g(w, ["status", "--porcelain", "--untracked-files=all"]);
+      if (!r.ok)
+        return false;
+      const skip = new Set(ignore);
+      return r.out.split(`
+`).filter(Boolean).every((l) => l.startsWith("?? ") && skip.has(l.slice(3).replace(/\/$/, "")));
+    },
+    branchExists: (repo, b) => g(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]).ok,
+    merged: (repo, b, base) => {
+      const d = def(repo);
+      if (!d || d === b)
+        return false;
+      const tip = g(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]);
+      if (!tip.ok || base && tip.out === base)
+        return false;
+      const ahead = g(repo, ["rev-list", "--count", `${d}..${b}`]);
+      if (!ahead.ok || ahead.out !== "0") {
+        const remote = g(repo, ["rev-list", "--count", `origin/${d}..${b}`]);
+        if (!remote.ok || remote.out !== "0") {
+          const cherry = g(repo, ["cherry", d, b]);
+          if (!cherry.ok || !cherry.out || !cherry.out.split(`
+`).every((l) => l.startsWith("-")))
+            return false;
+        }
+      }
+      return true;
+    },
+    ended: (r) => {
+      if (r.background && r.tmux && tmuxHas(r.tmux))
+        return false;
+      const live = readAll().some((x) => !x.endedAt && path10.resolve(x.cwd).startsWith(path10.resolve(r.worktree)) && recAlive(x));
+      return !live;
+    },
+    inUse: (w) => inUseBy(w),
+    services: (w) => runningIn(w)
+  };
+}
+function foreign(repos, mine, p, g = git) {
+  const out = [];
+  for (const repo of repos)
+    for (const w of worktrees(repo, g).slice(1)) {
+      if (w.bare || mine.has(path10.resolve(w.path)) || !p.exists(w.path))
+        continue;
+      if (!w.branch || !p.clean(w.path, []))
+        continue;
+      if (p.merged(repo, w.branch))
+        out.push({ path: w.path, branch: w.branch, repo });
+    }
+  return out;
+}
+function sizeKb(p) {
+  const r = spawnSync8("du", ["-sk", p], { encoding: "utf8", timeout: 60000 });
+  return Number((r.stdout ?? "").split(/\s/)[0]) || 0;
+}
+var human = (kb) => kb >= 1024 * 1024 ? `${(kb / 1024 / 1024).toFixed(1)} GB` : kb >= 1024 ? `${Math.round(kb / 1024)} MB` : `${kb} KB`;
+var liveGuard = () => ({ services: (w) => runningIn(w), inUse: (w) => inUseBy(w) });
+function removeOne(o, g = git, guard = liveGuard()) {
+  const svcs = guard.services(o.worktree);
+  if (svcs.length)
+    return { path: o.worktree, kb: 0, ok: false, why: `a crosstalk service is running in it (${svcs.map((s) => s.name).join(", ")})` };
+  const busy = guard.inUse(o.worktree);
+  if (busy)
+    return { path: o.worktree, kb: 0, ok: false, why: busy };
+  const kb = sizeKb(o.worktree);
+  for (const l of o.links) {
+    const p = path10.join(o.worktree, l);
+    try {
+      if (fs8.lstatSync(p).isSymbolicLink())
+        fs8.unlinkSync(p);
+    } catch {}
+  }
+  const r = g(o.repo, ["worktree", "remove", o.worktree]);
+  if (!r.ok) {
+    for (const l of o.links)
+      try {
+        fs8.symlinkSync(path10.join(o.repo, l), path10.join(o.worktree, l), "dir");
+      } catch {}
+    return { path: o.worktree, kb: 0, ok: false, why: r.out.split(`
+`).pop() };
+  }
+  g(o.repo, ["worktree", "prune"]);
+  if (o.ours && o.branch)
+    g(o.repo, ["branch", "-d", o.branch]);
+  try {
+    release(fs8.existsSync(o.worktree) ? fs8.realpathSync(o.worktree) : path10.resolve(o.worktree));
+  } catch {}
+  return { path: o.worktree, kb, ok: true };
+}
+var cleanupId = (sessionId) => `cleanup:${sessionId}`;
+var CLEANUP_OPTIONS = ["Remove them", "Not now"];
+function offerFor(c) {
+  const fresh = c.filter((x) => !x.rec.offeredAt);
+  if (!fresh.length)
+    return null;
+  const n = c.length;
+  const names = c.slice(0, 4).map((x) => x.rec.name).concat(n > 4 ? ["\u2026"] : []);
+  const svcs = c.flatMap((x) => x.services ?? []);
+  const stops = svcs.length ? ` ${svcs.length === 1 ? "Its service" : "Their services"} (${svcs.join(", ")}) stop${svcs.length === 1 ? "s" : ""} first.` : "";
+  const question = `${n} agent worktree${n === 1 ? " is" : "s are"} done with: ${n === 1 ? "its" : "their"} work is merged and ${n === 1 ? "its session has" : "their sessions have"} ended.${stops} Remove ${n === 1 ? "it" : "them"}?`;
+  return { count: n, names, question, text: `\u25e2 crosstalk: ${question} (${names.join(", ")}) Say "clean up the worktrees" to do it.` };
+}
+var stamp = () => path10.join(P.root, "cleanup-stamp");
+var CHECK_EVERY_MS = () => Number(process.env.CROSSTALK_CLEANUP_EVERY_MS ?? 10 * 60 * 1000);
+function offerOnce(o = {}) {
+  const recs = readSpawned().filter((r) => !r.removedAt);
+  if (!recs.length)
+    return null;
+  if (!o.force) {
+    try {
+      if (Date.now() - fs8.statSync(stamp()).mtimeMs < CHECK_EVERY_MS())
+        return null;
+    } catch {}
+    fs8.mkdirSync(P.root, { recursive: true, mode: 448 });
+    fs8.writeFileSync(stamp(), String(Date.now()), { mode: 384 });
+  }
+  const c = select(recs, o.probe ?? liveProbe());
+  const offer = offerFor(c);
+  if (!offer)
+    return null;
+  const now = Date.now();
+  for (const x of c)
+    if (!x.rec.offeredAt)
+      writeSpawned({ ...x.rec, offeredAt: now });
+  return offer;
+}
+function surface(sessionId, offer, mod = modActive(sessionId)) {
+  if (!offer)
+    return {};
+  if (!mod)
+    return { systemMessage: offer.text };
+  try {
+    withStore((items, now) => upsert(items, { id: cleanupId(sessionId), kind: "cleanup", sessionId, count: offer.count, names: offer.names, question: offer.question, options: CLEANUP_OPTIONS }, now));
+    return {};
+  } catch {
+    return { systemMessage: offer.text };
+  }
+}
+function run2(o) {
+  const g = o.git ?? git;
+  const guard = o.guard ?? liveGuard();
+  const stop = o.stop ?? stopIn;
+  const p = o.probe ?? liveProbe(g);
+  const recs = readSpawned().filter((r) => !r.removedAt);
+  const mine = select(recs, p);
+  const repos = [...new Set([...recs.map((r) => r.repo), ...o.cwd ? [worktrees(o.cwd, g)[0]?.path].filter((x) => !!x) : []])];
+  const others = foreign(repos, new Set(recs.map((r) => path10.resolve(r.worktree))), p, g);
+  const still = recs.filter((r) => !mine.some((m) => m.rec.id === r.id) && p.exists(r.worktree));
+  if (!o.confirm) {
+    const lines = [];
+    if (!mine.length && !others.length)
+      lines.push("\u25e2 crosstalk: no worktree is ready to remove.");
+    if (mine.length) {
+      lines.push(`\u25e2 crosstalk: ${mine.length} worktree${mine.length === 1 ? "" : "s"} crosstalk made can go (merged or branch deleted, session ended):`);
+      for (const m of mine)
+        lines.push(`  ${m.rec.name.padEnd(16)} ${m.rec.worktree}  (${m.why === "merged" ? "merged" : "branch deleted"}${m.services?.length ? `; its services ${m.services.join(", ")} stop first` : ""})`);
+    }
+    if (others.length) {
+      lines.push(`Merged worktrees crosstalk did not make, removed only if you name them:`);
+      for (const w of others)
+        lines.push(`  ${w.path}  (${w.branch})`);
+    }
+    if (still.length)
+      lines.push(`Still in use or not merged: ${still.map((r) => {
+        const why = p.inUse?.(r.worktree);
+        return why ? `${r.name} (${why})` : r.name;
+      }).join(", ")}.`);
+    return { ok: true, text: lines.join(`
+`), removed: [] };
+  }
+  const stopped = [];
+  const stopFirst = (w) => {
+    if (!guard.services(w).length)
+      return;
+    const r = stop(w);
+    stopped.push(...r.stopped);
+  };
+  const removed = [];
+  for (const m of mine) {
+    stopFirst(m.rec.worktree);
+    const r = removeOne({ repo: m.rec.repo, worktree: m.rec.worktree, links: m.rec.links, branch: m.rec.branch, ours: true }, g, guard);
+    removed.push(r);
+    if (r.ok)
+      writeSpawned({ ...m.rec, removedAt: Date.now() });
+  }
+  const asked = new Set((o.include ?? []).map((x) => path10.resolve(x)));
+  for (const w of others)
+    if (asked.has(path10.resolve(w.path))) {
+      stopFirst(w.path);
+      removed.push(removeOne({ repo: w.repo, worktree: w.path, links: [], ours: false }, g, guard));
+    }
+  const unknown = [...asked].filter((a) => !others.some((w) => path10.resolve(w.path) === a));
+  const ok = removed.filter((r) => r.ok);
+  const kb = ok.reduce((s, r) => s + r.kb, 0);
+  const parts = [ok.length ? `\u25e2 crosstalk: removed ${ok.length} worktree${ok.length === 1 ? "" : "s"}, freeing ${human(kb)}.` : "\u25e2 crosstalk: removed no worktree."];
+  if (stopped.length)
+    parts.push(`  stopped ${stopped.length === 1 ? "its service" : "their services"} first: ${stopped.join(", ")}`);
+  for (const r of removed.filter((x) => !x.ok))
+    parts.push(`  kept ${r.path}: ${r.why}`);
+  if (unknown.length)
+    parts.push(`  left alone, not a merged clean worktree: ${unknown.join(", ")}`);
+  return { ok: removed.every((r) => r.ok), text: parts.join(`
+`), removed };
+}
+var removeYes = (action, value) => action === "answer" && (value ?? "").trim() === CLEANUP_OPTIONS[0];
+function act2(session, id, action, value) {
+  if (action === "raised" || action === "later")
+    return withStore((items, now) => act(items, id, action, now));
+  const v = (value ?? "").trim();
+  const no = !removeYes(action, value);
+  const claim = withStore((items, now) => act(items, id, "answer", now, v || (no ? "Not now" : "Remove them")));
+  if (!claim.ok)
+    return claim;
+  if (no)
+    return { ok: true, item: claim.item, text: `Kept them. Say "clean up the worktrees" any time.` };
+  const out = run2({ confirm: true });
+  return { ok: out.ok, item: claim.item, text: out.text };
+}
+
+// src/shipping/git.ts
+var KEEP = new Set([
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "LANG",
+  "LANGUAGE",
+  "TERM",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "TZ",
+  "CI",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "ALL_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+  "all_proxy",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "NODE_EXTRA_CA_CERTS",
+  "REQUESTS_CA_BUNDLE",
+  "GIT_AUTHOR_NAME",
+  "GIT_AUTHOR_EMAIL",
+  "GIT_COMMITTER_NAME",
+  "GIT_COMMITTER_EMAIL"
+]);
+var WHO = {
+  GIT_AUTHOR_NAME: process.env.CROSSTALK_GIT_NAME ?? "crosstalk",
+  GIT_AUTHOR_EMAIL: process.env.CROSSTALK_GIT_EMAIL ?? "crosstalk@localhost",
+  GIT_COMMITTER_NAME: process.env.CROSSTALK_GIT_NAME ?? "crosstalk",
+  GIT_COMMITTER_EMAIL: process.env.CROSSTALK_GIT_EMAIL ?? "crosstalk@localhost"
+};
+
+// src/services/service.ts
+var TMUX_SESSION = "crosstalk-services";
+var dir2 = () => path11.join(P.root, "services");
+var fileOf2 = (id) => path11.join(dir2(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+var statusFile = (id) => path11.join(dir2(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.exit`);
+function readAll2() {
+  let names;
+  try {
+    names = fs9.readdirSync(dir2()).filter((f) => f.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const f of names)
+    try {
+      const s = JSON.parse(fs9.readFileSync(path11.join(dir2(), f), "utf8"));
+      if (s?.id && s.root && s.name)
+        out.push(s);
+    } catch {}
+  return out.sort((a, b) => a.startedAt - b.startedAt);
+}
+function write2(s) {
+  fs9.mkdirSync(dir2(), { recursive: true, mode: 448 });
+  const tmp = `${fileOf2(s.id)}.${process.pid}.tmp`;
+  fs9.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs9.renameSync(tmp, fileOf2(s.id));
+}
+var tmux = (args) => {
+  try {
+    const r = spawnSync9("tmux", ["-L", TMUX_SOCKET, ...args], { encoding: "utf8", timeout: 1e4, env: cleanEnv(process.env) });
+    return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.status === 0 ? "" : r.stderr ?? ""}`.trim() };
+  } catch (e) {
+    return { ok: false, out: String(e) };
+  }
+};
+function tmuxWindows(t = tmux) {
+  const r = t(["list-windows", "-t", `=${TMUX_SESSION}`, "-F", "#{window_id} #{pane_pid}"]);
+  const out = new Map;
+  if (!r.ok)
+    return out;
+  for (const l of r.out.split(`
+`)) {
+    const [w, p] = l.trim().split(" ");
+    if (w?.startsWith("@"))
+      out.set(w, Number(p));
+  }
+  return out;
+}
+function aliveProc(pid, start) {
+  if (!pidAlive(pid, start))
+    return false;
+  const r = spawnSync9("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+  if (r.status !== 0)
+    return r.error ? true : false;
+  return !r.stdout.trim().startsWith("Z");
+}
+var sleepSync3 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+var liveLook = () => {
+  let w;
+  let t;
+  let l;
+  return { windows: () => w ??= tmuxWindows(), table: () => t ??= psTable(), listeners: () => l ??= listeners(), alive: aliveProc };
+};
+function headPid(s, look) {
+  if (s.stoppedAt)
+    return null;
+  if (s.backend === "tmux")
+    return s.window && look.windows().has(s.window) && (!s.panePid || look.windows().get(s.window) === s.panePid) ? look.windows().get(s.window) : null;
+  return s.pid && look.alive(s.pid, s.pidStart) ? s.pid : null;
+}
+function pidsOf(s, look) {
+  const h = headPid(s, look);
+  if (!h)
+    return [];
+  const ids = new Set(tree(h, look.table()));
+  if (s.backend === "process" && s.pid) {
+    for (const p of look.table())
+      if (p.ppid === s.pid)
+        for (const x of tree(p.pid, look.table()))
+          ids.add(x);
+  }
+  return [...ids];
+}
+function state(s, look, withPorts = true) {
+  const h = headPid(s, look);
+  let exit;
+  try {
+    exit = fs9.readFileSync(statusFile(s.id), "utf8").trim();
+  } catch {}
+  const st = s.stoppedAt ? "stopped" : h ? "running" : "exited";
+  const pids = withPorts && h ? new Set(pidsOf(s, look)) : new Set;
+  const listening = [...new Set(look.listeners().filter((l) => pids.has(l.pid)).map((l) => l.port))].sort((a, b) => a - b);
+  return { ...s, state: st, ...exit !== undefined && st === "exited" ? { exit } : {}, listening };
+}
+function list(o = {}) {
+  const look = o.look ?? liveLook();
+  const out = [];
+  for (const s of readAll2()) {
+    if (o.root && s.root !== o.root)
+      continue;
+    const l = state(s, look, o.ports !== false);
+    if (o.ports !== false && l.state === "running" && JSON.stringify(l.listening) !== JSON.stringify(s.ports ?? []))
+      write2({ ...s, ports: l.listening });
+    out.push(l);
+  }
+  return out;
+}
+function running(root, look = liveLook()) {
+  const recs = readAll2().filter((s) => !s.stoppedAt && (!root || s.root === root));
+  if (!recs.length)
+    return [];
+  return recs.map((s) => state(s, look, false)).filter((s) => s.state === "running");
+}
+function servicePids(look = liveLook()) {
+  const out = new Set;
+  for (const s of readAll2())
+    for (const p of pidsOf(s, look))
+      out.add(p);
+  return out;
+}
+var portsOf = (s) => s.listening.length ? s.listening : s.ports ?? [];
+var url = (port) => `http://localhost:${port}`;
+var badge = (svcs) => {
+  const ports = [...new Set(svcs.flatMap(portsOf))].sort((a, b) => a - b);
+  return ports.length ? ports.slice(0, 3).map((p) => `:${p}`).join(" ") + (ports.length > 3 ? " \u2026" : "") : "";
+};
+var STOP_MS = () => Number(process.env.CROSSTALK_SERVICE_STOP_MS ?? 8000);
+function signal(pids, sig) {
+  for (const p of pids)
+    try {
+      process.kill(p, sig);
+    } catch {}
+}
+function stopOne(s, o = {}) {
+  const fresh = o.look ?? liveLook;
+  const wait = o.waitMs ?? STOP_MS();
+  const gone = () => !pidsOf(s, fresh()).some((p) => aliveProc(p));
+  const until = (ms) => {
+    for (const end = Date.now() + ms;Date.now() < end; sleepSync3(100))
+      if (gone())
+        return true;
+    return gone();
+  };
+  const pids = pidsOf(s, fresh());
+  if (s.backend === "process" && s.pid)
+    try {
+      process.kill(-s.pid, "SIGTERM");
+    } catch {}
+  signal(pids, "SIGTERM");
+  let ok = !pids.length || until(wait);
+  if (!ok) {
+    if (s.backend === "tmux" && s.window)
+      tmux(["kill-window", "-t", s.window]);
+    else if (s.pid)
+      try {
+        process.kill(-s.pid, "SIGHUP");
+      } catch {}
+    signal(pidsOf(s, fresh()), "SIGHUP");
+    ok = until(Math.max(1000, wait / 2));
+  }
+  if (s.backend === "tmux" && s.window)
+    tmux(["kill-window", "-t", s.window]);
+  if (ok)
+    write2({ ...s, stoppedAt: Date.now() });
+  return ok;
+}
+function stopIn(worktree) {
+  const root = path11.resolve(worktree);
+  let real = root;
+  try {
+    real = fs9.realpathSync(root);
+  } catch {}
+  const look = liveLook();
+  const out = { stopped: [], left: [] };
+  for (const s of readAll2()) {
+    if (!(under(s.root, real) || under(s.root, root)) || !headPid(s, look))
+      continue;
+    (stopOne(s) ? out.stopped : out.left).push(s.name);
+  }
+  return out;
+}
+function runningIn(worktree, look = liveLook()) {
+  const root = path11.resolve(worktree);
+  let real = root;
+  try {
+    real = fs9.realpathSync(root);
+  } catch {}
+  return readAll2().filter((s) => under(s.root, real) || under(s.root, root)).map((s) => state(s, look, false)).filter((s) => s.state === "running");
+}
+var lastDetect = 0;
+var shownCache = null;
+var roots = new Map;
+function forSession(sessionId, o = {}) {
+  if (!readAll2().some((s) => !s.stoppedAt))
+    return [];
+  const cwd = o.cwd ?? (sessionId ? readOne(sessionId)?.cwd : undefined) ?? process.cwd();
+  const now = o.now ?? Date.now();
+  if (shownCache && shownCache.cwd === cwd && now - shownCache.at < 3000)
+    return shownCache.value;
+  const root = roots.get(cwd) ?? roots.set(cwd, rootOf(cwd)).get(cwd);
+  const detect = now - lastDetect > 1e4;
+  if (detect)
+    lastDetect = now;
+  const live = detect ? list({ root }).filter((s) => s.state === "running") : running(root);
+  const value = live.map((s) => {
+    const ports = portsOf(s);
+    return { name: s.name, ports, ...ports.length ? { url: url(ports[0]) } : {} };
+  });
+  shownCache = { cwd, at: now, value };
+  return value;
+}
+
+// src/services/postpone.ts
+function liveActivity(pid, root = rootFrom(import.meta.url)) {
+  if (process.env.CROSSTALK_NO_POSTPONE || !pid)
+    return [];
+  const table = psTable();
+  if (!table.some((p) => p.ppid === pid && isShell(p)))
+    return [];
+  const look = liveLook();
+  const exclude = readAll2().length ? servicePids({ ...look, table: () => table }) : new Set;
+  return activity(pid, { table, listeners: [], exclude, ours: oursBy(root) });
+}
+
+// src/gather.ts
 var registryDir = () => sessionsDir();
 function readRegistry(dir = registryDir(), alive = (p) => pidAlive(p)) {
   let files;
   try {
-    files = fs4.readdirSync(dir).filter((f) => /^\d+\.json$/.test(f));
+    files = fs10.readdirSync(dir).filter((f) => /^\d+\.json$/.test(f));
   } catch {
     return [];
   }
   const out = [];
   for (const f of files) {
     try {
-      const e = JSON.parse(fs4.readFileSync(path6.join(dir, f), "utf8"));
+      const e = JSON.parse(fs10.readFileSync(path12.join(dir, f), "utf8"));
       const pid = Number(e.pid ?? f.slice(0, -5));
       if (!pid || typeof e.sessionId !== "string" || !e.sessionId)
         continue;
@@ -1426,7 +2535,7 @@ function isClaudeArgs(args) {
   const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
   if (!parts.length)
     return false;
-  const base = (x) => path6.basename(x);
+  const base = (x) => path12.basename(x);
   if (base(parts[0]) === "claude")
     return true;
   if (!/^(node|bun|deno|sh|bash|zsh)$/.test(base(parts[0])))
@@ -1436,7 +2545,7 @@ function isClaudeArgs(args) {
 }
 function registryPids(dir = registryDir()) {
   try {
-    return new Set(fs4.readdirSync(dir).filter((f) => /^\d+\.json$/.test(f)).map((f) => Number(f.slice(0, -5))));
+    return new Set(fs10.readdirSync(dir).filter((f) => /^\d+\.json$/.test(f)).map((f) => Number(f.slice(0, -5))));
   } catch {
     return new Set;
   }
@@ -1445,7 +2554,7 @@ function ps2(pid, field) {
   if (!pid || pid < 1)
     return null;
   try {
-    const r = spawnSync6("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    const r = spawnSync10("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
     if (r.status !== 0)
       return null;
     return r.stdout.trim() || null;
@@ -1468,12 +2577,12 @@ function parseEnv(text, sep) {
 }
 function procEnv(pid) {
   try {
-    return parseEnv(fs4.readFileSync(`/proc/${pid}/environ`, "utf8"), /\0/);
+    return parseEnv(fs10.readFileSync(`/proc/${pid}/environ`, "utf8"), /\0/);
   } catch {}
   if (process.platform !== "darwin")
     return null;
   try {
-    const r = spawnSync6("ps", ["-wwE", "-o", "command=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    const r = spawnSync10("ps", ["-wwE", "-o", "command=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
     if (r.status !== 0)
       return null;
     return parseEnv(r.stdout.trim(), /\s+/);
@@ -1482,7 +2591,7 @@ function procEnv(pid) {
   }
 }
 function tmuxPanes() {
-  const r = spawnSync6("tmux", ["list-panes", "-a", "-F", "#{pane_tty}\t#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{socket_path}"], { encoding: "utf8", timeout: 2000 });
+  const r = spawnSync10("tmux", ["list-panes", "-a", "-F", "#{pane_tty}\t#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{socket_path}"], { encoding: "utf8", timeout: 2000 });
   if (r.status !== 0)
     return [];
   return r.stdout.trim().split(`
@@ -1506,16 +2615,17 @@ function liveSys2() {
     appleLocate: (tty) => {
       if (process.platform !== "darwin")
         return null;
-      const r = spawnSync6("osascript", ["-"], { input: appleLocateIfRunning(tty), encoding: "utf8", timeout: 2500 });
+      const r = spawnSync10("osascript", ["-"], { input: appleLocateIfRunning(tty), encoding: "utf8", timeout: 2500 });
       const [w, n] = (r.stdout ?? "").trim().split(" ").map(Number);
       return r.status === 0 && w && n ? { window: w, tab: n } : null;
     },
     kill: (pid, sig) => process.kill(pid, sig),
     run: (s) => {
-      const r = spawnSync6(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 30000 });
+      const r = spawnSync10(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 30000 });
       return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
     },
-    sleep: (ms) => new Promise((r) => setTimeout(r, ms))
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    activity: (pid) => liveActivity(pid)
   };
 }
 function terminalOf(tty, env, sys, panes) {
@@ -1551,7 +2661,7 @@ function terminalOf(tty, env, sys, panes) {
   return t;
 }
 var RECHECK_MS = 10 * 60 * 1000;
-function snapshot(o) {
+function snapshot2(o) {
   const { sys } = o;
   const now = sys.now();
   const byId = new Map(o.records.map((r) => [r.sessionId, r]));
@@ -1605,7 +2715,7 @@ function snapshot(o) {
   return out;
 }
 function watch(self, sys = liveSys2()) {
-  const recs = snapshot({
+  const recs = snapshot2({
     self,
     registry: readRegistry(registryDir(), (p) => sys.alive(p)),
     records: readAll(),
@@ -1618,50 +2728,50 @@ function watch(self, sys = liveSys2()) {
   return recs;
 }
 var WATCH_EVERY_MS = () => Number(process.env.CROSSTALK_WATCH_EVERY_MS ?? 60000);
-var stampFile = () => path6.join(P.root, "watch-stamp");
+var stampFile = () => path12.join(P.root, "watch-stamp");
 function watchThrottled(self, now = Date.now()) {
   try {
-    if (now - fs4.statSync(stampFile()).mtimeMs < WATCH_EVERY_MS())
+    if (now - fs10.statSync(stampFile()).mtimeMs < WATCH_EVERY_MS())
       return false;
   } catch {}
   try {
-    fs4.mkdirSync(P.root, { recursive: true, mode: 448 });
-    fs4.writeFileSync(stampFile(), String(now), { mode: 384 });
+    fs10.mkdirSync(P.root, { recursive: true, mode: 448 });
+    fs10.writeFileSync(stampFile(), String(now), { mode: 384 });
     watch(self);
     return true;
   } catch {
     return false;
   }
 }
-var stateFile2 = () => path6.join(P.root, "gather-state.json");
+var stateFile2 = () => path12.join(P.root, "gather-state.json");
 function loadState2() {
   try {
-    return JSON.parse(fs4.readFileSync(stateFile2(), "utf8"));
+    return JSON.parse(fs10.readFileSync(stateFile2(), "utf8"));
   } catch {
     return {};
   }
 }
 function saveState2(s) {
-  fs4.mkdirSync(P.root, { recursive: true, mode: 448 });
+  fs10.mkdirSync(P.root, { recursive: true, mode: 448 });
   const tmp = `${stateFile2()}.${process.pid}.tmp`;
-  fs4.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
-  fs4.renameSync(tmp, stateFile2());
+  fs10.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs10.renameSync(tmp, stateFile2());
 }
-var sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-function locked(fn) {
-  const lock = path6.join(P.root, "gather.lock");
-  fs4.mkdirSync(P.root, { recursive: true, mode: 448 });
+var sleepSync4 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function locked2(fn) {
+  const lock = path12.join(P.root, "gather.lock");
+  fs10.mkdirSync(P.root, { recursive: true, mode: 448 });
   let held = false;
   for (let i = 0;i < 100 && !held; i++) {
     try {
-      fs4.mkdirSync(lock);
+      fs10.mkdirSync(lock);
       held = true;
     } catch {
       try {
-        if (Date.now() - fs4.statSync(lock).mtimeMs > 1e4)
-          fs4.rmdirSync(lock);
+        if (Date.now() - fs10.statSync(lock).mtimeMs > 1e4)
+          fs10.rmdirSync(lock);
       } catch {}
-      sleepSync(10);
+      sleepSync4(10);
     }
   }
   if (!held)
@@ -1670,7 +2780,7 @@ function locked(fn) {
     return fn();
   } finally {
     try {
-      fs4.rmdirSync(lock);
+      fs10.rmdirSync(lock);
     } catch {}
   }
 }
@@ -1690,7 +2800,7 @@ function candidates(recs, o) {
   return recs.filter((r) => r.adopted === "watched" && !r.endedAt && r.interactive !== false && r.sessionId !== o.self && !(o.selfPids ?? []).includes(r.pid) && r.gather?.state !== "done" && o.alive(r)).sort((a, b) => a.startedAt - b.startedAt);
 }
 var offerQuestion = (n) => `${n} Claude session${n === 1 ? "" : "s"} started before crosstalk. Bring ${n === 1 ? "it" : "them"} in? Idle ones restart in their tab with their conversation.`;
-function offerFor(cands, state) {
+function offerFor2(cands, state) {
   const asked = new Set(state.offered?.ids ?? []);
   if (!cands.length || cands.every((r) => asked.has(r.sessionId)))
     return null;
@@ -1703,14 +2813,14 @@ function offerFor(cands, state) {
     text: `\u25e2 crosstalk: ${offerQuestion(n)} (${names.join(", ")}) Say "bring them in" to do it.`
   };
 }
-var label2 = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path6.basename(r.cwd) || r.sessionId.slice(0, 8);
-function offerOnce(self) {
+var label2 = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path12.basename(r.cwd) || r.sessionId.slice(0, 8);
+function offerOnce2(self) {
   const cands = candidates(readAll(), { self, selfPids: ancestors(), alive: recAlive });
-  if (!offerFor(cands, loadState2()))
+  if (!offerFor2(cands, loadState2()))
     return null;
-  return locked(() => {
+  return locked2(() => {
     const s = loadState2();
-    const offer = offerFor(cands, s);
+    const offer = offerFor2(cands, s);
     if (!offer)
       return null;
     saveState2({ ...s, offered: { at: Date.now(), by: self, ids: [...new Set([...s.offered?.ids ?? [], ...cands.map((r) => r.sessionId)])] } });
@@ -1720,7 +2830,7 @@ function offerOnce(self) {
 function takeNote(session, id) {
   if (!loadState2().notes?.some((n) => (!session || !n.session || n.session === session) && (!id || n.id === id)))
     return null;
-  return locked(() => {
+  return locked2(() => {
     const s = loadState2();
     const i = (s.notes ?? []).findIndex((n) => (!session || !n.session || n.session === session) && (!id || n.id === id));
     if (i === -1)
@@ -1734,26 +2844,26 @@ function peekNote(session) {
   const n = loadState2().notes?.find((x) => !x.session || x.session === session);
   return n ? { id: n.id, text: n.text } : null;
 }
-var job = () => path6.join(P.root, "gather-job.json");
+var job = () => path12.join(P.root, "gather-job.json");
 function loadJob() {
   try {
-    return JSON.parse(fs4.readFileSync(job(), "utf8"));
+    return JSON.parse(fs10.readFileSync(job(), "utf8"));
   } catch {
     return null;
   }
 }
 function saveJob(j) {
-  fs4.mkdirSync(P.root, { recursive: true, mode: 448 });
+  fs10.mkdirSync(P.root, { recursive: true, mode: 448 });
   const tmp = `${job()}.${process.pid}.tmp`;
-  fs4.writeFileSync(tmp, JSON.stringify(j, null, 2), { mode: 384 });
-  fs4.renameSync(tmp, job());
+  fs10.writeFileSync(tmp, JSON.stringify(j, null, 2), { mode: 384 });
+  fs10.renameSync(tmp, job());
 }
 var UNTIL_MS = () => Number(process.env.CROSSTALK_GATHER_UNTIL_MS ?? 2 * 60 * 60 * 1000);
 function startWaiter2(root) {
   if (process.env.CROSSTALK_NO_WAITER)
     return;
   try {
-    const child = spawn3(shim(root ?? rootFrom(import.meta.url)), ["gather", "--finish"], { detached: true, stdio: "ignore" });
+    const child = spawn4(shim(root ?? rootFrom(import.meta.url)), ["gather", "--finish"], { detached: true, stdio: "ignore" });
     child.unref();
   } catch {}
 }
@@ -1779,7 +2889,7 @@ function start(o) {
   });
   for (const r of cands)
     writeRec({ ...r, gather: { state: "queued", at: Date.now() } });
-  locked(() => {
+  locked2(() => {
     const s = loadState2();
     saveState2({ ...s, offered: { at: Date.now(), by: o.self, ids: [...new Set([...s.offered?.ids ?? [], ...pending])] } });
   });
@@ -1928,29 +3038,29 @@ var DEP_DIRS = ["node_modules", ".venv", "venv"];
 var MAX_AGENTS = 8;
 var BRANCH_PREFIX = "crosstalk/";
 var TMUX_SOCKET = "crosstalk";
-var dir2 = () => path7.join(P.root, "spawned");
-var fileOf2 = (id) => path7.join(dir2(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+var dir3 = () => path13.join(P.root, "spawned");
+var fileOf3 = (id) => path13.join(dir3(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
 function readSpawned() {
   let names;
   try {
-    names = fs5.readdirSync(dir2()).filter((f) => f.endsWith(".json"));
+    names = fs11.readdirSync(dir3()).filter((f) => f.endsWith(".json"));
   } catch {
     return [];
   }
   const out = [];
   for (const f of names)
     try {
-      const r = JSON.parse(fs5.readFileSync(path7.join(dir2(), f), "utf8"));
+      const r = JSON.parse(fs11.readFileSync(path13.join(dir3(), f), "utf8"));
       if (r?.id && r.worktree)
         out.push(r);
     } catch {}
   return out.sort((a, b) => a.createdAt - b.createdAt);
 }
 function writeSpawned(r) {
-  fs5.mkdirSync(dir2(), { recursive: true, mode: 448 });
-  const tmp = `${fileOf2(r.id)}.${process.pid}.tmp`;
-  fs5.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 384 });
-  fs5.renameSync(tmp, fileOf2(r.id));
+  fs11.mkdirSync(dir3(), { recursive: true, mode: 448 });
+  const tmp = `${fileOf3(r.id)}.${process.pid}.tmp`;
+  fs11.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 384 });
+  fs11.renameSync(tmp, fileOf3(r.id));
 }
 var STOP = new Set("a an the on to for and of in with at by from into onto this that it its be is are please can could would you start put get run spin up fire one two three four five six seven eight more another new agent agents session sessions claude someone somebody work working".split(" "));
 function nameFromTask(task) {
@@ -1979,8 +3089,8 @@ function worktreeHome(o) {
   for (const w of o.worktrees.slice(1)) {
     if (w.bare || !w.path)
       continue;
-    const d = path7.dirname(w.path);
-    if (d === path7.dirname(o.main) && !/worktree/i.test(path7.basename(w.path)))
+    const d = path13.dirname(w.path);
+    if (d === path13.dirname(o.main) && !/worktree/i.test(path13.basename(w.path)))
       continue;
     counts.set(d, (counts.get(d) ?? 0) + 1);
   }
@@ -1988,28 +3098,28 @@ function worktreeHome(o) {
   for (const [d, n] of counts)
     if (!best || n > counts.get(best))
       best = d;
-  return best ?? path7.join(o.home, "worktrees", repoName(o.main));
+  return best ?? path13.join(o.home, "worktrees", repoName(o.main));
 }
 function planSpawn(o) {
   const main = o.worktrees[0]?.path ?? o.top;
   const where = worktreeHome({ main, worktrees: o.worktrees, home: o.home });
-  const rel = path7.relative(o.top, o.cwd);
-  const sub = rel && !rel.startsWith("..") && !path7.isAbsolute(rel) ? rel : "";
+  const rel = path13.relative(o.top, o.cwd);
+  const sub = rel && !rel.startsWith("..") && !path13.isAbsolute(rel) ? rel : "";
   const count = Math.max(1, Math.min(MAX_AGENTS, Math.floor(o.count || 1)));
   const names = namesFor({
     count,
     name: o.name,
     task: o.task,
-    taken: (n) => o.exists(path7.join(where, n)) || o.branchExists(BRANCH_PREFIX + n)
+    taken: (n) => o.exists(path13.join(where, n)) || o.branchExists(BRANCH_PREFIX + n)
   });
   return names.map((name) => {
-    const worktree = path7.join(where, name);
-    const cwd = sub ? path7.join(worktree, sub) : worktree;
-    const links = DEP_DIRS.filter((d) => o.exists(path7.join(main, d))).map((d) => [path7.join(main, d), path7.join(worktree, d)]);
+    const worktree = path13.join(where, name);
+    const cwd = sub ? path13.join(worktree, sub) : worktree;
+    const links = DEP_DIRS.filter((d) => o.exists(path13.join(main, d))).map((d) => [path13.join(main, d), path13.join(worktree, d)]);
     return { name, branch: BRANCH_PREFIX + name, worktree, cwd, links, tab: { cwd, argv: [o.claude, o.prompt ?? o.task], name, ...o.thread ? { thread: o.thread } : {} } };
   });
 }
-var tmuxConf = () => path7.join(P.root, "tmux.conf");
+var tmuxConf = () => path13.join(P.root, "tmux.conf");
 var TMUX_CONF = [
   `# crosstalk's own tmux server (tmux -L crosstalk), for agents it runs in the background.`,
   `set -g status-left '#[bold]\u25e2 crosstalk#[default] #S  '`,
@@ -2023,12 +3133,12 @@ var TMUX_CONF = [
 ].join(`
 `);
 function ensureConf() {
-  fs5.mkdirSync(P.root, { recursive: true, mode: 448 });
+  fs11.mkdirSync(P.root, { recursive: true, mode: 448 });
   try {
-    if (fs5.readFileSync(tmuxConf(), "utf8") === TMUX_CONF)
+    if (fs11.readFileSync(tmuxConf(), "utf8") === TMUX_CONF)
       return;
   } catch {}
-  fs5.writeFileSync(tmuxConf(), TMUX_CONF, { mode: 384 });
+  fs11.writeFileSync(tmuxConf(), TMUX_CONF, { mode: 384 });
 }
 function cleanEnv(env) {
   const e = { ...env };
@@ -2041,19 +3151,19 @@ var backgroundSteps = (p) => [
 ];
 var attachArgv2 = (name) => ["env", "-u", "TMUX", "-u", "TMUX_PANE", "tmux", "-L", TMUX_SOCKET, "attach-session", "-t", `=${name}`];
 function tmuxHas(name, env = process.env) {
-  return spawnSync7("tmux", ["-L", TMUX_SOCKET, "has-session", "-t", `=${name}`], { stdio: "ignore", timeout: 3000, env: cleanEnv(env) }).status === 0;
+  return spawnSync11("tmux", ["-L", TMUX_SOCKET, "has-session", "-t", `=${name}`], { stdio: "ignore", timeout: 3000, env: cleanEnv(env) }).status === 0;
 }
-function run(s, env) {
-  const r = spawnSync7(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 60000, env });
+function run3(s, env) {
+  const r = spawnSync11(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 60000, env });
   return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
 }
 function which2(bin, env) {
-  for (const d of (env.PATH ?? "").split(path7.delimiter)) {
+  for (const d of (env.PATH ?? "").split(path13.delimiter)) {
     if (!d)
       continue;
-    const p = path7.join(d, bin);
+    const p = path13.join(d, bin);
     try {
-      fs5.accessSync(p, fs5.constants.X_OK);
+      fs11.accessSync(p, fs11.constants.X_OK);
       return p;
     } catch {}
   }
@@ -2062,18 +3172,18 @@ function which2(bin, env) {
 function excludeLinks(commonDir, names) {
   if (!names.length)
     return;
-  const f = path7.join(commonDir, "info", "exclude");
+  const f = path13.join(commonDir, "info", "exclude");
   let text = "";
   try {
-    text = fs5.readFileSync(f, "utf8");
+    text = fs11.readFileSync(f, "utf8");
   } catch {}
   const have = new Set(text.split(`
 `).map((l) => l.trim()));
   const add = names.map((n) => `/${n}`).filter((l) => !have.has(l));
   if (!add.length)
     return;
-  fs5.mkdirSync(path7.dirname(f), { recursive: true });
-  fs5.writeFileSync(f, `${text}${text && !text.endsWith(`
+  fs11.mkdirSync(path13.dirname(f), { recursive: true });
+  fs11.writeFileSync(f, `${text}${text && !text.endsWith(`
 `) ? `
 ` : ""}# crosstalk: dependency folders shared from the main checkout
 ${add.join(`
@@ -2149,7 +3259,7 @@ function spawnAgents(o) {
     worktrees: wts,
     home: P.root,
     claude: which2("claude", env) ?? "claude",
-    exists: (p) => fs5.existsSync(p),
+    exists: (p) => fs11.existsSync(p),
     branchExists: (b) => g(main, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]).ok,
     prompt,
     thread: o.thread?.name
@@ -2157,25 +3267,28 @@ function spawnAgents(o) {
   const made = [];
   const notes = [];
   for (const p of plans) {
-    fs5.mkdirSync(path7.dirname(p.worktree), { recursive: true });
+    fs11.mkdirSync(path13.dirname(p.worktree), { recursive: true });
     const add = g(main, ["worktree", "add", "--quiet", "-b", p.branch, p.worktree, base.out]);
     if (!add.ok) {
       notes.push(`could not make a copy for ${p.name}: ${add.out.split(`
 `).pop()}`);
       continue;
     }
+    try {
+      blockFor(fs11.realpathSync(p.worktree));
+    } catch {}
     const linked = [];
     for (const [from, to] of p.links) {
       try {
-        if (fs5.existsSync(to))
+        if (fs11.existsSync(to))
           continue;
-        fs5.symlinkSync(from, to, "dir");
-        linked.push(path7.basename(to));
+        fs11.symlinkSync(from, to, "dir");
+        linked.push(path13.basename(to));
       } catch {}
     }
     if (common.ok)
       excludeLinks(common.out, linked);
-    fs5.mkdirSync(p.cwd, { recursive: true });
+    fs11.mkdirSync(p.cwd, { recursive: true });
     const rec = {
       id: `${repoName(main)}--${p.name}`,
       name: p.name,
@@ -2204,7 +3317,7 @@ function spawnAgents(o) {
     const failed = [];
     for (const p of started) {
       const st = bgStep({ claude: claudeBin, name: p.name, task: prompt, cwd: p.cwd });
-      const r = spawnSync7(st.cmd, st.args, { cwd: st.cwd, encoding: "utf8", timeout: 60000, env: { ...env, ...st.env } });
+      const r = spawnSync11(st.cmd, st.args, { cwd: st.cwd, encoding: "utf8", timeout: 60000, env: { ...env, ...st.env } });
       if (r.status !== 0)
         failed.push(`${p.name} (${`${r.stderr ?? ""}${r.error ?? ""}`.trim().split(`
 `).pop()})`);
@@ -2218,7 +3331,7 @@ function spawnAgents(o) {
     ensureConf();
     const failed = [];
     for (const p of started) {
-      const r = run(backgroundSteps(p)[0], cleanEnv(env));
+      const r = run3(backgroundSteps(p)[0], cleanEnv(env));
       if (!r.ok)
         failed.push(`${p.name} (${r.out.split(`
 `).pop()})`);
@@ -2232,9 +3345,9 @@ function spawnAgents(o) {
     const r = openForRepo(started.map((p) => p.tab), { cwd: o.cwd, envVars: env, git: g, by: o.by, thread: o.thread?.name, byInThread: !!o.thread?.asking });
     if (r.opened.kind === "manual" || !r.ok) {
       ok = r.opened.kind === "manual";
-      fs5.mkdirSync(P.root, { recursive: true, mode: 448 });
-      const file = path7.join(P.root, "spawn-commands.sh");
-      fs5.writeFileSync(file, `#!/bin/sh
+      fs11.mkdirSync(P.root, { recursive: true, mode: 448 });
+      const file = path13.join(P.root, "spawn-commands.sh");
+      fs11.writeFileSync(file, `#!/bin/sh
 # New agents crosstalk could not open a tab for. Each line is one tab.
 ${r.opened.typed.join(`
 `)}
@@ -2332,33 +3445,33 @@ async function attnCmd(argv) {
 }
 
 // src/config.ts
-import fs6 from "node:fs";
+import fs12 from "node:fs";
 import os4 from "node:os";
-import path8 from "node:path";
+import path14 from "node:path";
 import { execFileSync as execFileSync2 } from "node:child_process";
-var ROOT2 = process.env.CROSSTALK_HOME ?? path8.join(os4.homedir(), ".claude", "crosstalk");
+var ROOT2 = process.env.CROSSTALK_HOME ?? path14.join(os4.homedir(), ".claude", "crosstalk");
 var P2 = {
   root: ROOT2,
-  identity: path8.join(ROOT2, "identity.json"),
-  peers: path8.join(ROOT2, "peers.json"),
-  relay: path8.join(ROOT2, "relay.json"),
-  queue: path8.join(ROOT2, "queue.json"),
-  parked: path8.join(ROOT2, "parked.json"),
-  sessions: path8.join(ROOT2, "sessions.json"),
-  outbox: path8.join(ROOT2, "outbox.json"),
-  usage: path8.join(ROOT2, "usage.json"),
-  routes: path8.join(ROOT2, "routes.json"),
-  unrouted: path8.join(ROOT2, "unrouted.json"),
-  daemonSock: path8.join(ROOT2, "daemon.sock"),
-  daemonLock: path8.join(ROOT2, "daemon.lock"),
-  log: path8.join(ROOT2, "daemon.log")
+  identity: path14.join(ROOT2, "identity.json"),
+  peers: path14.join(ROOT2, "peers.json"),
+  relay: path14.join(ROOT2, "relay.json"),
+  queue: path14.join(ROOT2, "queue.json"),
+  parked: path14.join(ROOT2, "parked.json"),
+  sessions: path14.join(ROOT2, "sessions.json"),
+  outbox: path14.join(ROOT2, "outbox.json"),
+  usage: path14.join(ROOT2, "usage.json"),
+  routes: path14.join(ROOT2, "routes.json"),
+  unrouted: path14.join(ROOT2, "unrouted.json"),
+  daemonSock: path14.join(ROOT2, "daemon.sock"),
+  daemonLock: path14.join(ROOT2, "daemon.lock"),
+  log: path14.join(ROOT2, "daemon.log")
 };
 function ensureRoot2() {
-  fs6.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+  fs12.mkdirSync(ROOT2, { recursive: true, mode: 448 });
 }
 function readJson2(file, fallback) {
   try {
-    return JSON.parse(fs6.readFileSync(file, "utf8"));
+    return JSON.parse(fs12.readFileSync(file, "utf8"));
   } catch {
     return fallback;
   }
@@ -2366,8 +3479,8 @@ function readJson2(file, fallback) {
 function writeJson2(file, value) {
   ensureRoot2();
   const tmp = `${file}.tmp`;
-  fs6.writeFileSync(tmp, JSON.stringify(value, null, 2), { mode: 384 });
-  fs6.renameSync(tmp, file);
+  fs12.writeFileSync(tmp, JSON.stringify(value, null, 2), { mode: 384 });
+  fs12.renameSync(tmp, file);
 }
 var KEYCHAIN_SERVICE2 = "crosstalk-identity";
 var keychain2 = {
@@ -2411,10 +3524,10 @@ var loadIdentity2 = () => {
   return onDisk;
 };
 var identityUnreadable2 = () => {
-  if (!fs6.existsSync(P2.identity))
+  if (!fs12.existsSync(P2.identity))
     return false;
   try {
-    return !JSON.parse(fs6.readFileSync(P2.identity, "utf8"));
+    return !JSON.parse(fs12.readFileSync(P2.identity, "utf8"));
   } catch {
     return true;
   }
@@ -4998,8 +6111,8 @@ function expandAddress(token, port) {
 
 // src/client.ts
 import net2 from "node:net";
-import fs7 from "node:fs";
-import { spawn as spawn4 } from "node:child_process";
+import fs13 from "node:fs";
+import { spawn as spawn5 } from "node:child_process";
 function request2(req, timeoutMs = 130000) {
   return new Promise((resolve, reject) => {
     const sock = net2.createConnection(P.daemonSock);
@@ -5042,9 +6155,9 @@ function request2(req, timeoutMs = 130000) {
 }
 function daemonRunning2() {
   try {
-    const pid = Number(fs7.readFileSync(P.daemonLock, "utf8"));
+    const pid = Number(fs13.readFileSync(P.daemonLock, "utf8"));
     process.kill(pid, 0);
-    return fs7.existsSync(P.daemonSock);
+    return fs13.existsSync(P.daemonSock);
   } catch {
     return false;
   }
@@ -5054,9 +6167,9 @@ async function ensureDaemon2(root = rootFrom(import.meta.url)) {
     return true;
   let child;
   try {
-    fs7.mkdirSync(P.root, { recursive: true, mode: 448 });
-    const out = fs7.openSync(P.log, "a");
-    child = spawn4(shim(root), ["daemon"], {
+    fs13.mkdirSync(P.root, { recursive: true, mode: 448 });
+    const out = fs13.openSync(P.log, "a");
+    child = spawn5(shim(root), ["daemon"], {
       detached: true,
       stdio: ["ignore", out, out]
     });
@@ -5077,11 +6190,11 @@ async function ensureDaemon2(root = rootFrom(import.meta.url)) {
 }
 
 // src/tunnel.ts
-import { spawn as spawn5, execFileSync as execFileSync4 } from "node:child_process";
-import fs8 from "node:fs";
-import path9 from "node:path";
-var BIN_DIR = path9.join(ROOT, "bin");
-var LOCAL_BIN = path9.join(BIN_DIR, "cloudflared");
+import { spawn as spawn6, execFileSync as execFileSync4 } from "node:child_process";
+import fs14 from "node:fs";
+import path15 from "node:path";
+var BIN_DIR = path15.join(ROOT, "bin");
+var LOCAL_BIN = path15.join(BIN_DIR, "cloudflared");
 function onPath() {
   for (const candidate of [LOCAL_BIN, "cloudflared"]) {
     try {
@@ -5095,9 +6208,9 @@ async function ensureCloudflared() {
   return onPath();
 }
 async function openTunnel(bin, port, logPath, timeoutMs = 60000) {
-  fs8.writeFileSync(logPath, "");
-  const out = fs8.openSync(logPath, "a");
-  const child = spawn5(bin, ["tunnel", "--no-autoupdate", "--config", "/dev/null", "--url", `http://127.0.0.1:${port}`], {
+  fs14.writeFileSync(logPath, "");
+  const out = fs14.openSync(logPath, "a");
+  const child = spawn6(bin, ["tunnel", "--no-autoupdate", "--config", "/dev/null", "--url", `http://127.0.0.1:${port}`], {
     detached: true,
     stdio: ["ignore", out, out]
   });
@@ -5120,7 +6233,7 @@ async function openTunnel(bin, port, logPath, timeoutMs = 60000) {
   let found = null;
   while (Date.now() < deadline) {
     try {
-      found = fs8.readFileSync(logPath, "utf8").match(/https:\/\/([a-z0-9-]+)\.trycloudflare\.com/i);
+      found = fs14.readFileSync(logPath, "utf8").match(/https:\/\/([a-z0-9-]+)\.trycloudflare\.com/i);
     } catch {}
     if (found)
       break;
@@ -5128,7 +6241,7 @@ async function openTunnel(bin, port, logPath, timeoutMs = 60000) {
   }
   if (!found) {
     stop();
-    const asked = fs8.readFileSync(logPath, "utf8").includes("Requesting new quick Tunnel");
+    const asked = fs14.readFileSync(logPath, "utf8").includes("Requesting new quick Tunnel");
     throw new Error(asked ? `Cloudflare would not issue a tunnel. See ${logPath}
 
 ` + `It logged the request and never answered with a hostname, which is what
@@ -5156,18 +6269,18 @@ async function openTunnel(bin, port, logPath, timeoutMs = 60000) {
 }
 
 // src/usage.ts
-import fs9 from "node:fs";
-import path10 from "node:path";
-var FILE = path10.join(ROOT, "usage.json");
-function load() {
+import fs15 from "node:fs";
+import path16 from "node:path";
+var FILE = path16.join(ROOT, "usage.json");
+function load2() {
   try {
-    return JSON.parse(fs9.readFileSync(FILE, "utf8"));
+    return JSON.parse(fs15.readFileSync(FILE, "utf8"));
   } catch {
     return {};
   }
 }
 var estTokens = (chars) => Math.round(chars / 4);
-function summarise(u = load()) {
+function summarise(u = load2()) {
   const rows = Object.entries(u).map(([peer, p]) => ({
     peer,
     sent: p.sentMessages,
@@ -5189,8 +6302,8 @@ function summarise(u = load()) {
 }
 
 // src/trust.ts
-import fs10 from "node:fs";
-import path11 from "node:path";
+import fs16 from "node:fs";
+import path17 from "node:path";
 var LEVELS = ["mute", "notify", "ask", "handoff", "deliver"];
 var isLevel = (s) => LEVELS.includes(s);
 var DESCRIPTION = {
@@ -5200,7 +6313,7 @@ var DESCRIPTION = {
   handoff: "also a work item with state and files",
   deliver: "also their words inside your turn"
 };
-var FILE2 = path11.join(ROOT, "trust.json");
+var FILE2 = path17.join(ROOT, "trust.json");
 var DEFAULT_TRUST = {
   rooms: {},
   people: {},
@@ -5208,9 +6321,9 @@ var DEFAULT_TRUST = {
   muted: {}
 };
 var ROOM_DEFAULT = "notify";
-function load2() {
+function load3() {
   try {
-    const raw = JSON.parse(fs10.readFileSync(FILE2, "utf8"));
+    const raw = JSON.parse(fs16.readFileSync(FILE2, "utf8"));
     return {
       rooms: raw.rooms ?? {},
       people: raw.people ?? {},
@@ -5221,46 +6334,46 @@ function load2() {
     return { ...DEFAULT_TRUST, rooms: {}, people: {}, muted: {} };
   }
 }
-function save(t) {
-  fs10.mkdirSync(ROOT, { recursive: true, mode: 448 });
+function save2(t) {
+  fs16.mkdirSync(ROOT, { recursive: true, mode: 448 });
   const tmp = `${FILE2}.tmp`;
-  fs10.writeFileSync(tmp, JSON.stringify(t, null, 2), { mode: 384 });
-  fs10.renameSync(tmp, FILE2);
+  fs16.writeFileSync(tmp, JSON.stringify(t, null, 2), { mode: 384 });
+  fs16.renameSync(tmp, FILE2);
 }
 
 // src/paths.ts
-import path12 from "node:path";
+import path18 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
-var dirOf2 = (metaUrl) => path12.dirname(fileURLToPath2(metaUrl));
-var rootFrom2 = (metaUrl) => path12.join(dirOf2(metaUrl), "..");
-var shim2 = (root) => path12.join(root, "bin", "crosstalk");
+var dirOf2 = (metaUrl) => path18.dirname(fileURLToPath2(metaUrl));
+var rootFrom2 = (metaUrl) => path18.join(dirOf2(metaUrl), "..");
+var shim2 = (root) => path18.join(root, "bin", "crosstalk");
 
 // src/registry.ts
 import os6 from "node:os";
-import path13 from "node:path";
-var claudeConfigDir2 = (env = process.env) => env.CLAUDE_CONFIG_DIR || path13.join(os6.homedir(), ".claude");
-var sessionsDir2 = (env = process.env) => path13.join(claudeConfigDir2(env), "sessions");
+import path19 from "node:path";
+var claudeConfigDir2 = (env = process.env) => env.CLAUDE_CONFIG_DIR || path19.join(os6.homedir(), ".claude");
+var sessionsDir2 = (env = process.env) => path19.join(claudeConfigDir2(env), "sessions");
 var SESSIONS2 = sessionsDir2();
 
 // src/restore.ts
-import fs11 from "node:fs";
+import fs17 from "node:fs";
 import os7 from "node:os";
-import path14 from "node:path";
-import { spawn as spawn6, spawnSync as spawnSync8 } from "node:child_process";
-var dir3 = () => path14.join(P.root, "open");
-var safe2 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
-var fileOf3 = (id) => path14.join(dir3(), `${safe2(id)}.json`);
-function readAll2() {
+import path20 from "node:path";
+import { spawn as spawn7, spawnSync as spawnSync12 } from "node:child_process";
+var dir4 = () => path20.join(P.root, "open");
+var safe3 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
+var fileOf4 = (id) => path20.join(dir4(), `${safe3(id)}.json`);
+function readAll3() {
   let names;
   try {
-    names = fs11.readdirSync(dir3()).filter((f) => f.endsWith(".json"));
+    names = fs17.readdirSync(dir4()).filter((f) => f.endsWith(".json"));
   } catch {
     return [];
   }
   const out = [];
   for (const f of names) {
     try {
-      const r = JSON.parse(fs11.readFileSync(path14.join(dir3(), f), "utf8"));
+      const r = JSON.parse(fs17.readFileSync(path20.join(dir4(), f), "utf8"));
       if (r && typeof r.sessionId === "string")
         out.push(r);
     } catch {}
@@ -5269,33 +6382,33 @@ function readAll2() {
 }
 function readOne2(id) {
   try {
-    return JSON.parse(fs11.readFileSync(fileOf3(id), "utf8"));
+    return JSON.parse(fs17.readFileSync(fileOf4(id), "utf8"));
   } catch {
     return null;
   }
 }
 function writeRec2(r) {
-  fs11.mkdirSync(dir3(), { recursive: true, mode: 448 });
-  const tmp = `${fileOf3(r.sessionId)}.${process.pid}.tmp`;
-  fs11.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 384 });
-  fs11.renameSync(tmp, fileOf3(r.sessionId));
+  fs17.mkdirSync(dir4(), { recursive: true, mode: 448 });
+  const tmp = `${fileOf4(r.sessionId)}.${process.pid}.tmp`;
+  fs17.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 384 });
+  fs17.renameSync(tmp, fileOf4(r.sessionId));
 }
 function removeRec2(id) {
   try {
-    fs11.unlinkSync(fileOf3(id));
+    fs17.unlinkSync(fileOf4(id));
   } catch {}
 }
-var stateFile3 = () => path14.join(P.root, "restore-state.json");
+var stateFile3 = () => path20.join(P.root, "restore-state.json");
 function loadState3() {
   try {
-    return JSON.parse(fs11.readFileSync(stateFile3(), "utf8"));
+    return JSON.parse(fs17.readFileSync(stateFile3(), "utf8"));
   } catch {
     return {};
   }
 }
 function saveState3(s) {
-  fs11.mkdirSync(P.root, { recursive: true, mode: 448 });
-  fs11.writeFileSync(stateFile3(), JSON.stringify(s, null, 2), { mode: 384 });
+  fs17.mkdirSync(P.root, { recursive: true, mode: 448 });
+  fs17.writeFileSync(stateFile3(), JSON.stringify(s, null, 2), { mode: 384 });
 }
 var DAY2 = 24 * 60 * 60 * 1000;
 var WINDOW_MS2 = DAY2;
@@ -5338,7 +6451,7 @@ function ps3(pid, field) {
   if (!pid || pid < 1)
     return null;
   try {
-    const r = spawnSync8("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    const r = spawnSync12("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
     if (r.status !== 0)
       return null;
     return r.stdout.trim() || null;
@@ -5384,7 +6497,7 @@ function captureTerminal2(env, pid, probe) {
   if (env.TMUX && env.TMUX_PANE) {
     t.tmux = { pane: env.TMUX_PANE, socket: env.TMUX.split(",")[0] };
     if (probe) {
-      const r = spawnSync8("tmux", ["display", "-p", "-t", env.TMUX_PANE, "#{session_name}\t#{window_index}\t#{pane_index}"], { encoding: "utf8", timeout: 2000, env });
+      const r = spawnSync12("tmux", ["display", "-p", "-t", env.TMUX_PANE, "#{session_name}\t#{window_index}\t#{pane_index}"], { encoding: "utf8", timeout: 2000, env });
       const [s, w, p] = (r.stdout ?? "").trim().split("\t");
       if (r.status === 0 && s)
         Object.assign(t.tmux, { session: s, window: Number(w), paneIndex: Number(p) });
@@ -5403,7 +6516,7 @@ function captureTerminal2(env, pid, probe) {
   if (env.TERM_PROGRAM === "Apple_Terminal" || env.TERM_SESSION_ID && !t.iterm) {
     t.apple = { sessionId: env.TERM_SESSION_ID };
     if (probe && t.tty && process.platform === "darwin" && env.TERM_PROGRAM === "Apple_Terminal") {
-      const r = spawnSync8("osascript", ["-"], { input: appleLocateScript2(t.tty), encoding: "utf8", timeout: 2500 });
+      const r = spawnSync12("osascript", ["-"], { input: appleLocateScript2(t.tty), encoding: "utf8", timeout: 2500 });
       const [w, n] = (r.stdout ?? "").trim().split(" ").map(Number);
       if (r.status === 0 && w && n)
         Object.assign(t.apple, { window: w, tab: n });
@@ -5461,7 +6574,7 @@ function appName2(t) {
   }
 }
 var CROSSTALK_TMUX2 = "crosstalk";
-var isCrosstalkSocket2 = (s) => !!s && path14.basename(s) === CROSSTALK_TMUX2;
+var isCrosstalkSocket2 = (s) => !!s && path20.basename(s) === CROSSTALK_TMUX2;
 function anchorFor3(repo, o) {
   if (o.asking && kindOf2(o.asking.terminal) && o.keyOf(o.asking.cwd) === repo)
     return o.asking.terminal;
@@ -5798,7 +6911,7 @@ function accessibilityGranted2() {
   const forced = process.env.CROSSTALK_FAKE_ACCESSIBILITY;
   if (forced)
     return forced === "yes";
-  const r = spawnSync8("osascript", ["-l", "JavaScript", "-e", JXA_AX2], { encoding: "utf8", timeout: 3000 });
+  const r = spawnSync12("osascript", ["-l", "JavaScript", "-e", JXA_AX2], { encoding: "utf8", timeout: 3000 });
   const out = (r.stdout ?? "").trim();
   return out === "yes" ? true : out === "no" ? false : null;
 }
@@ -5808,7 +6921,7 @@ String($.AEDeterminePermissionToAutomateTarget(d.aeDesc, 0x2A2A2A2A, 0x2A2A2A2A,
 function automationGranted() {
   if (process.platform !== "darwin")
     return null;
-  const r = spawnSync8("osascript", ["-l", "JavaScript", "-e", JXA_AUTOMATION], { encoding: "utf8", timeout: 3000 });
+  const r = spawnSync12("osascript", ["-l", "JavaScript", "-e", JXA_AUTOMATION], { encoding: "utf8", timeout: 3000 });
   const code = Number((r.stdout ?? "").trim());
   if (r.status !== 0 || Number.isNaN(code))
     return null;
@@ -5823,20 +6936,20 @@ function automationGranted() {
 function openSettings2(pane) {
   if (process.env.CROSSTALK_NO_OPEN)
     return;
-  spawnSync8("open", [SETTINGS_URL2[pane]], { timeout: 5000 });
+  spawnSync12("open", [SETTINGS_URL2[pane]], { timeout: 5000 });
 }
 function notify(text) {
   if (process.platform !== "darwin" || process.env.CROSSTALK_NO_OPEN)
     return;
-  spawnSync8("osascript", ["-e", `display notification ${asq2(text)} with title "crosstalk"`], { timeout: 5000 });
+  spawnSync12("osascript", ["-e", `display notification ${asq2(text)} with title "crosstalk"`], { timeout: 5000 });
 }
 function which3(bin) {
-  for (const d of (process.env.PATH ?? "").split(path14.delimiter)) {
+  for (const d of (process.env.PATH ?? "").split(path20.delimiter)) {
     if (!d)
       continue;
-    const p = path14.join(d, bin);
+    const p = path20.join(d, bin);
     try {
-      fs11.accessSync(p, fs11.constants.X_OK);
+      fs17.accessSync(p, fs17.constants.X_OK);
       return p;
     } catch {}
   }
@@ -5848,17 +6961,17 @@ function liveEnv2(env, tabs) {
     current: captureTerminal2(env, process.pid, true),
     has: (b) => !!which3(b),
     which: which3,
-    tmuxHasSession: (name, socket) => spawnSync8("tmux", [...socket ? ["-L", socket] : [], "has-session", "-t", `=${name}`], { stdio: "ignore", timeout: 2000, env: socket ? { ...env, TMUX: "" } : env }).status === 0,
+    tmuxHasSession: (name, socket) => spawnSync12("tmux", [...socket ? ["-L", socket] : [], "has-session", "-t", `=${name}`], { stdio: "ignore", timeout: 2000, env: socket ? { ...env, TMUX: "" } : env }).status === 0,
     tabs,
     repoOf: (cwd) => repoKey(cwd),
-    anchorFor: (repo) => anchorFor3(repo, { recs: readAll2(), keyOf: (cwd) => repoKey(cwd), alive: recAlive2 }),
-    threadAnchor: (repo, thread, near) => withWindowId2(threadAnchorFor3(repo, thread, { recs: readAll2(), keyOf: (cwd) => repoKey(cwd), alive: recAlive2, near, indexOf: (t) => tmuxWindowIndex2(t, env) }), env)
+    anchorFor: (repo) => anchorFor3(repo, { recs: readAll3(), keyOf: (cwd) => repoKey(cwd), alive: recAlive2 }),
+    threadAnchor: (repo, thread, near) => withWindowId2(threadAnchorFor3(repo, thread, { recs: readAll3(), keyOf: (cwd) => repoKey(cwd), alive: recAlive2, near, indexOf: (t) => tmuxWindowIndex2(t, env) }), env)
   };
 }
 function tmuxWindowOf2(t, env = process.env) {
   if (!t.tmux?.pane)
     return;
-  const r = spawnSync8("tmux", [...t.tmux.socket ? ["-S", t.tmux.socket] : [], "display-message", "-p", "-t", t.tmux.pane, "#{window_index}\t#{window_id}"], { encoding: "utf8", timeout: 2000, env });
+  const r = spawnSync12("tmux", [...t.tmux.socket ? ["-S", t.tmux.socket] : [], "display-message", "-p", "-t", t.tmux.pane, "#{window_index}\t#{window_id}"], { encoding: "utf8", timeout: 2000, env });
   const [i, id] = (r.status === 0 ? String(r.stdout).trim() : "").split("\t");
   const n = Number(i);
   return i && Number.isFinite(n) && id?.startsWith("@") ? { index: n, id } : undefined;
@@ -5870,12 +6983,12 @@ function withWindowId2(t, env = process.env) {
   const w = tmuxWindowOf2(t, env);
   return w ? { ...t, tmux: { ...t.tmux, windowId: w.id, window: w.index } } : t;
 }
-var label3 = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path14.basename(r.cwd) || r.sessionId.slice(0, 8);
+var label3 = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path20.basename(r.cwd) || r.sessionId.slice(0, 8);
 var names3 = (rs, max = 4) => rs.slice(0, max).map(label3).join(", ") + (rs.length > max ? ", \u2026" : "");
-var commandsFile2 = () => path14.join(P.root, "restore-commands.sh");
+var commandsFile2 = () => path20.join(P.root, "restore-commands.sh");
 function ctxNow2() {
   const now = Date.now();
-  return { now, boot: bootTime2(process.env, now), all: readAll2(), alive: recAlive2 };
+  return { now, boot: bootTime2(process.env, now), all: readAll3(), alive: recAlive2 };
 }
 function describe(self, env = process.env, dry = false) {
   const lost = lostSessions2(ctxNow2(), self);
@@ -5913,27 +7026,27 @@ function forget2(self) {
     restored: []
   };
 }
-var pendingFile2 = () => path14.join(P.root, "restore-pending.json");
+var pendingFile2 = () => path20.join(P.root, "restore-pending.json");
 function claimPending2() {
   const mine = `${pendingFile2()}.${process.pid}`;
   try {
-    fs11.renameSync(pendingFile2(), mine);
+    fs17.renameSync(pendingFile2(), mine);
   } catch {
     return null;
   }
   try {
-    return JSON.parse(fs11.readFileSync(mine, "utf8"));
+    return JSON.parse(fs17.readFileSync(mine, "utf8"));
   } catch {
     return null;
   } finally {
     try {
-      fs11.unlinkSync(mine);
+      fs17.unlinkSync(mine);
     } catch {}
   }
 }
 var tabsFor2 = (o) => o.userAction ? o.tabs ?? true : false;
 function runStep3(s) {
-  const r = spawnSync8(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 60000 });
+  const r = spawnSync12(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 60000 });
   return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
 }
 function restore2(o, only) {
@@ -5957,8 +7070,8 @@ function restore2(o, only) {
       saveState3({ ...state, settingsOpened: { ...state.settingsOpened, accessibility: Date.now() } });
     }
     const p = { ids: lost.map((r) => r.sessionId), current: e.current, until: Date.now() + WAIT_MS2(), self: o.self };
-    fs11.mkdirSync(P.root, { recursive: true, mode: 448 });
-    fs11.writeFileSync(pendingFile2(), JSON.stringify(p), { mode: 384 });
+    fs17.mkdirSync(P.root, { recursive: true, mode: 448 });
+    fs17.writeFileSync(pendingFile2(), JSON.stringify(p), { mode: 384 });
     startWaiter3(o.root);
     const [steps, cmd] = permissionSteps2("accessibility", app);
     return {
@@ -6019,8 +7132,8 @@ function restore2(o, only) {
     writeRec2(r);
   if (rest.length) {
     const lines = rest.map(typed2);
-    fs11.mkdirSync(P.root, { recursive: true, mode: 448 });
-    fs11.writeFileSync(commandsFile2(), `#!/bin/sh
+    fs17.mkdirSync(P.root, { recursive: true, mode: 448 });
+    fs17.writeFileSync(commandsFile2(), `#!/bin/sh
 # Sessions crosstalk could not reopen by itself. Each line is one tab.
 ${lines.join(`
 `)}
@@ -6051,7 +7164,7 @@ function startWaiter3(root) {
   if (process.env.CROSSTALK_NO_WAITER)
     return;
   try {
-    const child = spawn6(shim(root ?? rootFrom(import.meta.url)), ["restore", "--finish"], {
+    const child = spawn7(shim(root ?? rootFrom(import.meta.url)), ["restore", "--finish"], {
       detached: true,
       stdio: "ignore"
     });
@@ -6061,7 +7174,7 @@ function startWaiter3(root) {
 async function finishWhenPermitted() {
   let p = null;
   try {
-    p = JSON.parse(fs11.readFileSync(pendingFile2(), "utf8"));
+    p = JSON.parse(fs17.readFileSync(pendingFile2(), "utf8"));
   } catch {}
   if (!p)
     return "nothing pending";
@@ -6069,7 +7182,7 @@ async function finishWhenPermitted() {
     if (accessibilityGranted2() === true)
       break;
     await new Promise((r) => setTimeout(r, POLL_MS));
-    if (!fs11.existsSync(pendingFile2()))
+    if (!fs17.existsSync(pendingFile2()))
       return "taken over";
   }
   const mine = claimPending2();
@@ -6095,21 +7208,21 @@ function termEnv(t) {
 }
 
 // src/gather.ts
-import fs12 from "node:fs";
-import path15 from "node:path";
-import { spawn as spawn7, spawnSync as spawnSync9 } from "node:child_process";
+import fs18 from "node:fs";
+import path21 from "node:path";
+import { spawn as spawn8, spawnSync as spawnSync13 } from "node:child_process";
 var registryDir2 = () => sessionsDir();
 function readRegistry2(dir = registryDir2(), alive = (p) => pidAlive(p)) {
   let files;
   try {
-    files = fs12.readdirSync(dir).filter((f) => /^\d+\.json$/.test(f));
+    files = fs18.readdirSync(dir).filter((f) => /^\d+\.json$/.test(f));
   } catch {
     return [];
   }
   const out = [];
   for (const f of files) {
     try {
-      const e = JSON.parse(fs12.readFileSync(path15.join(dir, f), "utf8"));
+      const e = JSON.parse(fs18.readFileSync(path21.join(dir, f), "utf8"));
       const pid = Number(e.pid ?? f.slice(0, -5));
       if (!pid || typeof e.sessionId !== "string" || !e.sessionId)
         continue;
@@ -6148,7 +7261,7 @@ function isClaudeArgs2(args) {
   const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
   if (!parts.length)
     return false;
-  const base = (x) => path15.basename(x);
+  const base = (x) => path21.basename(x);
   if (base(parts[0]) === "claude")
     return true;
   if (!/^(node|bun|deno|sh|bash|zsh)$/.test(base(parts[0])))
@@ -6158,7 +7271,7 @@ function isClaudeArgs2(args) {
 }
 function registryPids2(dir = registryDir2()) {
   try {
-    return new Set(fs12.readdirSync(dir).filter((f) => /^\d+\.json$/.test(f)).map((f) => Number(f.slice(0, -5))));
+    return new Set(fs18.readdirSync(dir).filter((f) => /^\d+\.json$/.test(f)).map((f) => Number(f.slice(0, -5))));
   } catch {
     return new Set;
   }
@@ -6167,7 +7280,7 @@ function ps4(pid, field) {
   if (!pid || pid < 1)
     return null;
   try {
-    const r = spawnSync9("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    const r = spawnSync13("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
     if (r.status !== 0)
       return null;
     return r.stdout.trim() || null;
@@ -6190,12 +7303,12 @@ function parseEnv2(text, sep) {
 }
 function procEnv2(pid) {
   try {
-    return parseEnv2(fs12.readFileSync(`/proc/${pid}/environ`, "utf8"), /\0/);
+    return parseEnv2(fs18.readFileSync(`/proc/${pid}/environ`, "utf8"), /\0/);
   } catch {}
   if (process.platform !== "darwin")
     return null;
   try {
-    const r = spawnSync9("ps", ["-wwE", "-o", "command=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    const r = spawnSync13("ps", ["-wwE", "-o", "command=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
     if (r.status !== 0)
       return null;
     return parseEnv2(r.stdout.trim(), /\s+/);
@@ -6204,7 +7317,7 @@ function procEnv2(pid) {
   }
 }
 function tmuxPanes2() {
-  const r = spawnSync9("tmux", ["list-panes", "-a", "-F", "#{pane_tty}\t#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{socket_path}"], { encoding: "utf8", timeout: 2000 });
+  const r = spawnSync13("tmux", ["list-panes", "-a", "-F", "#{pane_tty}\t#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{socket_path}"], { encoding: "utf8", timeout: 2000 });
   if (r.status !== 0)
     return [];
   return r.stdout.trim().split(`
@@ -6228,16 +7341,17 @@ function liveSys3() {
     appleLocate: (tty) => {
       if (process.platform !== "darwin")
         return null;
-      const r = spawnSync9("osascript", ["-"], { input: appleLocateIfRunning2(tty), encoding: "utf8", timeout: 2500 });
+      const r = spawnSync13("osascript", ["-"], { input: appleLocateIfRunning2(tty), encoding: "utf8", timeout: 2500 });
       const [w, n] = (r.stdout ?? "").trim().split(" ").map(Number);
       return r.status === 0 && w && n ? { window: w, tab: n } : null;
     },
     kill: (pid, sig) => process.kill(pid, sig),
     run: (s) => {
-      const r = spawnSync9(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 30000 });
+      const r = spawnSync13(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 30000 });
       return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
     },
-    sleep: (ms) => new Promise((r) => setTimeout(r, ms))
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    activity: (pid) => liveActivity(pid)
   };
 }
 function terminalOf2(tty, env, sys, panes) {
@@ -6273,7 +7387,7 @@ function terminalOf2(tty, env, sys, panes) {
   return t;
 }
 var RECHECK_MS2 = 10 * 60 * 1000;
-function snapshot2(o) {
+function snapshot3(o) {
   const { sys } = o;
   const now = sys.now();
   const byId = new Map(o.records.map((r) => [r.sessionId, r]));
@@ -6327,7 +7441,7 @@ function snapshot2(o) {
   return out;
 }
 function watch2(self, sys = liveSys3()) {
-  const recs = snapshot2({
+  const recs = snapshot3({
     self,
     registry: readRegistry2(registryDir2(), (p) => sys.alive(p)),
     records: readAll(),
@@ -6339,35 +7453,35 @@ function watch2(self, sys = liveSys3()) {
     writeRec(r);
   return recs;
 }
-var stateFile4 = () => path15.join(P.root, "gather-state.json");
+var stateFile4 = () => path21.join(P.root, "gather-state.json");
 function loadState4() {
   try {
-    return JSON.parse(fs12.readFileSync(stateFile4(), "utf8"));
+    return JSON.parse(fs18.readFileSync(stateFile4(), "utf8"));
   } catch {
     return {};
   }
 }
 function saveState4(s) {
-  fs12.mkdirSync(P.root, { recursive: true, mode: 448 });
+  fs18.mkdirSync(P.root, { recursive: true, mode: 448 });
   const tmp = `${stateFile4()}.${process.pid}.tmp`;
-  fs12.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
-  fs12.renameSync(tmp, stateFile4());
+  fs18.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs18.renameSync(tmp, stateFile4());
 }
-var sleepSync2 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-function locked2(fn) {
-  const lock = path15.join(P.root, "gather.lock");
-  fs12.mkdirSync(P.root, { recursive: true, mode: 448 });
+var sleepSync5 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function locked3(fn) {
+  const lock = path21.join(P.root, "gather.lock");
+  fs18.mkdirSync(P.root, { recursive: true, mode: 448 });
   let held = false;
   for (let i = 0;i < 100 && !held; i++) {
     try {
-      fs12.mkdirSync(lock);
+      fs18.mkdirSync(lock);
       held = true;
     } catch {
       try {
-        if (Date.now() - fs12.statSync(lock).mtimeMs > 1e4)
-          fs12.rmdirSync(lock);
+        if (Date.now() - fs18.statSync(lock).mtimeMs > 1e4)
+          fs18.rmdirSync(lock);
       } catch {}
-      sleepSync2(10);
+      sleepSync5(10);
     }
   }
   if (!held)
@@ -6376,7 +7490,7 @@ function locked2(fn) {
     return fn();
   } finally {
     try {
-      fs12.rmdirSync(lock);
+      fs18.rmdirSync(lock);
     } catch {}
   }
 }
@@ -6395,9 +7509,9 @@ function ancestors2(pid = process.pid, sys = { ps: ps4 }) {
 function candidates2(recs, o) {
   return recs.filter((r) => r.adopted === "watched" && !r.endedAt && r.interactive !== false && r.sessionId !== o.self && !(o.selfPids ?? []).includes(r.pid) && r.gather?.state !== "done" && o.alive(r)).sort((a, b) => a.startedAt - b.startedAt);
 }
-var label4 = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path15.basename(r.cwd) || r.sessionId.slice(0, 8);
+var label4 = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path21.basename(r.cwd) || r.sessionId.slice(0, 8);
 function addNote(session, text) {
-  locked2(() => {
+  locked3(() => {
     const s = loadState4();
     const now = Date.now();
     const notes = (s.notes ?? []).filter((n) => now - n.at < 24 * 60 * 60 * 1000);
@@ -6473,19 +7587,19 @@ async function endGracefully2(pid, pidStart, sys, waits = [1e4, 5000, 5000]) {
   }
   return state() === "gone";
 }
-var job2 = () => path15.join(P.root, "gather-job.json");
+var job2 = () => path21.join(P.root, "gather-job.json");
 function loadJob2() {
   try {
-    return JSON.parse(fs12.readFileSync(job2(), "utf8"));
+    return JSON.parse(fs18.readFileSync(job2(), "utf8"));
   } catch {
     return null;
   }
 }
 function saveJob2(j) {
-  fs12.mkdirSync(P.root, { recursive: true, mode: 448 });
+  fs18.mkdirSync(P.root, { recursive: true, mode: 448 });
   const tmp = `${job2()}.${process.pid}.tmp`;
-  fs12.writeFileSync(tmp, JSON.stringify(j, null, 2), { mode: 384 });
-  fs12.renameSync(tmp, job2());
+  fs18.writeFileSync(tmp, JSON.stringify(j, null, 2), { mode: 384 });
+  fs18.renameSync(tmp, job2());
 }
 var UNTIL_MS2 = () => Number(process.env.CROSSTALK_GATHER_UNTIL_MS ?? 2 * 60 * 60 * 1000);
 var POLL_MS2 = () => Number(process.env.CROSSTALK_GATHER_POLL_MS ?? 2000);
@@ -6501,11 +7615,13 @@ async function restartOne(id, o) {
     return "gone";
   if (reg.status !== "idle")
     return "wait";
+  if (sys.activity?.(rec.pid).length)
+    return "wait";
   const args = sys.ps(rec.pid, "args") ?? "";
   if (!isClaudeArgs2(args))
     return { failed: "its process is not claude" };
   const parent = Number(sys.ps(rec.pid, "ppid"));
-  const parentComm = path15.basename(sys.ps(parent, "comm") ?? "");
+  const parentComm = path21.basename(sys.ps(parent, "comm") ?? "");
   const inShell = SHELL.test(parentComm);
   const cmd = typed(rec);
   let term = rec.terminal;
@@ -6543,7 +7659,7 @@ function startWaiter4(root) {
   if (process.env.CROSSTALK_NO_WAITER)
     return;
   try {
-    const child = spawn7(shim(root ?? rootFrom(import.meta.url)), ["gather", "--finish"], { detached: true, stdio: "ignore" });
+    const child = spawn8(shim(root ?? rootFrom(import.meta.url)), ["gather", "--finish"], { detached: true, stdio: "ignore" });
     child.unref();
   } catch {}
 }
@@ -6582,7 +7698,7 @@ function start2(o) {
   });
   for (const r of cands)
     writeRec({ ...r, gather: { state: "queued", at: Date.now() } });
-  locked2(() => {
+  locked3(() => {
     const s = loadState4();
     saveState4({ ...s, offered: { at: Date.now(), by: o.self, ids: [...new Set([...s.offered?.ids ?? [], ...pending])] } });
   });
@@ -6611,14 +7727,14 @@ function receipt(j) {
   return parts.join(" ") || "No session needed bringing in.";
 }
 async function finish2(sys = liveSys3()) {
-  const lock = path15.join(P.root, "gather-runner.pid");
+  const lock = path21.join(P.root, "gather-runner.pid");
   try {
-    const other = Number(fs12.readFileSync(lock, "utf8"));
+    const other = Number(fs18.readFileSync(lock, "utf8"));
     if (other && other !== process.pid && pidAlive(other))
       return "already running";
   } catch {}
-  fs12.mkdirSync(P.root, { recursive: true, mode: 448 });
-  fs12.writeFileSync(lock, String(process.pid), { mode: 384 });
+  fs18.mkdirSync(P.root, { recursive: true, mode: 448 });
+  fs18.writeFileSync(lock, String(process.pid), { mode: 384 });
   try {
     for (;; ) {
       const j = loadJob2();
@@ -6637,7 +7753,7 @@ async function finish2(sys = liveSys3()) {
           notify2(text);
         }
         try {
-          fs12.unlinkSync(job2());
+          fs18.unlinkSync(job2());
         } catch {}
         return text;
       }
@@ -6668,20 +7784,20 @@ async function finish2(sys = liveSys3()) {
     }
   } finally {
     try {
-      if (Number(fs12.readFileSync(lock, "utf8")) === process.pid)
-        fs12.unlinkSync(lock);
+      if (Number(fs18.readFileSync(lock, "utf8")) === process.pid)
+        fs18.unlinkSync(lock);
     } catch {}
   }
 }
 function notify2(text) {
   if (process.platform !== "darwin" || process.env.CROSSTALK_NO_OPEN)
     return;
-  spawnSync9("osascript", ["-e", `display notification ${asq(text)} with title "crosstalk"`], { timeout: 5000 });
+  spawnSync13("osascript", ["-e", `display notification ${asq(text)} with title "crosstalk"`], { timeout: 5000 });
 }
 
 // src/repotrust/firstuse.ts
-import fs15 from "node:fs";
-import path19 from "node:path";
+import fs19 from "node:fs";
+import path23 from "node:path";
 
 // src/net.ts
 import os8 from "node:os";
@@ -6717,288 +7833,8 @@ function userName2() {
   return "me";
 }
 
-// src/uistate.ts
-import fs14 from "node:fs";
-import path17 from "node:path";
-
-// src/metrics/log.ts
-import fs13 from "node:fs";
-import path16 from "node:path";
-var file = () => path16.join(process.env.CROSSTALK_HOME ?? ROOT, "metrics.jsonl");
-var MAX_BYTES = 8 * 1024 * 1024;
-var off = () => process.env.CROSSTALK_NO_METRICS === "1";
-function record(e) {
-  if (off())
-    return;
-  try {
-    const f = file();
-    fs13.mkdirSync(path16.dirname(f), { recursive: true, mode: 448 });
-    fs13.appendFileSync(f, JSON.stringify(e) + `
-`, { mode: 384 });
-    const size = fs13.statSync(f).size;
-    if (size > MAX_BYTES) {
-      const lines = fs13.readFileSync(f, "utf8").split(`
-`).filter(Boolean);
-      const tmp = `${f}.${process.pid}.tmp`;
-      fs13.writeFileSync(tmp, lines.slice(Math.floor(lines.length / 2)).join(`
-`) + `
-`, { mode: 384 });
-      fs13.renameSync(tmp, f);
-    }
-  } catch {}
-}
-var QUESTION_KINDS = new Set(["route", "gather", "team", "cleanup", "thread", "ship", "rule", "connect", "conflict", "disk", "install", "restore"]);
-
-// src/uistate.ts
-var FINAL = new Set(["answered", "handed", "muted"]);
-var file2 = () => path17.join(P.root, "ui.json");
-var lockDir = () => path17.join(P.root, "ui.lock");
-var markers = () => path17.join(P.root, "ui-mod");
-var safe3 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
-var WEEK = 7 * 24 * 60 * 60 * 1000;
-function read() {
-  try {
-    const f = JSON.parse(fs14.readFileSync(file2(), "utf8"));
-    if (f && f.v === 1 && f.items && typeof f.items === "object")
-      return f;
-  } catch {}
-  return { v: 1, items: {} };
-}
-function write(f) {
-  fs14.mkdirSync(P.root, { recursive: true, mode: 448 });
-  const tmp = `${file2()}.${process.pid}.tmp`;
-  fs14.writeFileSync(tmp, JSON.stringify(f, null, 2), { mode: 384 });
-  fs14.renameSync(tmp, file2());
-}
-var sleepSync3 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-
-class StoreBusy extends Error {
-  constructor(holder) {
-    super(`crosstalk's ui store is locked${holder ? ` by process ${holder}` : ""}; try again`);
-    this.name = "StoreBusy";
-  }
-}
-var lockWaitMs = Number(process.env.CROSSTALK_UI_LOCK_WAIT_MS ?? 2000);
-var LOCK_MAX_AGE_MS = 1e4;
-var LOCK_UNOWNED_MS = 1000;
-var ownerFile = () => path17.join(lockDir(), "pid");
-var alive = (pid) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return e.code === "EPERM";
-  }
-};
-function takeLock() {
-  try {
-    fs14.mkdirSync(lockDir());
-  } catch {
-    return false;
-  }
-  try {
-    fs14.writeFileSync(ownerFile(), String(process.pid), { mode: 384 });
-  } catch {}
-  return true;
-}
-function holderOf() {
-  try {
-    const pid = Number(fs14.readFileSync(ownerFile(), "utf8"));
-    return pid > 0 ? pid : undefined;
-  } catch {
-    return;
-  }
-}
-function breakIfStale() {
-  let age;
-  try {
-    age = Date.now() - fs14.statSync(lockDir()).mtimeMs;
-  } catch {
-    return true;
-  }
-  const pid = holderOf();
-  const stale = age > LOCK_MAX_AGE_MS || (pid ? pid !== process.pid && !alive(pid) : age > LOCK_UNOWNED_MS);
-  if (!stale)
-    return false;
-  const aside = `${lockDir()}.stale.${process.pid}.${Date.now()}`;
-  try {
-    fs14.renameSync(lockDir(), aside);
-  } catch {
-    return true;
-  }
-  const moved = (() => {
-    try {
-      return Number(fs14.readFileSync(path17.join(aside, "pid"), "utf8")) || undefined;
-    } catch {
-      return;
-    }
-  })();
-  if (moved !== pid)
-    try {
-      fs14.renameSync(aside, lockDir());
-      return false;
-    } catch {}
-  try {
-    fs14.rmSync(aside, { recursive: true, force: true });
-  } catch {}
-  return true;
-}
-var depth = 0;
-function withStore(fn) {
-  fs14.mkdirSync(P.root, { recursive: true, mode: 448 });
-  let held = false;
-  if (depth === 0) {
-    const until = Date.now() + lockWaitMs;
-    for (;; ) {
-      if (takeLock()) {
-        held = true;
-        break;
-      }
-      if (breakIfStale())
-        continue;
-      if (Date.now() >= until)
-        throw new StoreBusy(holderOf());
-      sleepSync3(Math.min(10, Math.max(1, until - Date.now())));
-    }
-  }
-  depth++;
-  try {
-    const f = read();
-    const was = JSON.stringify(f);
-    const now = Date.now();
-    const out = fn(f.items, now);
-    for (const [id, it] of Object.entries(f.items))
-      if (FINAL.has(it.state) && now - it.updatedAt > WEEK || now - it.updatedAt > 4 * WEEK)
-        delete f.items[id];
-    if (JSON.stringify(f) !== was)
-      write(f);
-    return out;
-  } finally {
-    depth--;
-    const h = held ? holderOf() : undefined;
-    if (held && (h === undefined || h === process.pid))
-      try {
-        fs14.rmSync(lockDir(), { recursive: true, force: true });
-      } catch {}
-  }
-}
-function snapshot3() {
-  return read().items;
-}
-function upsert(items, it, now) {
-  const before = items[it.id];
-  if (!before) {
-    if (QUESTION_KINDS.has(it.kind))
-      record({ k: "asked", at: now, id: it.id, kind: it.kind, ...it.thread ? { thread: it.thread } : {} });
-    return items[it.id] = { ...it, state: "pending", createdAt: now, updatedAt: now };
-  }
-  if (FINAL.has(before.state))
-    return before;
-  const moved = before.sessionId !== it.sessionId;
-  items[it.id] = {
-    ...before,
-    ...it,
-    state: before.state,
-    raisedAt: moved ? undefined : before.raisedAt,
-    createdAt: before.createdAt,
-    updatedAt: moved ? now : before.updatedAt
-  };
-  return items[it.id];
-}
-function act(items, id, action, now, answer) {
-  const it = items[id];
-  if (!it)
-    return { ok: false, error: `nothing waiting with id ${id}` };
-  if (FINAL.has(it.state))
-    return { ok: false, error: `already ${it.state}`, item: it };
-  const next = { ...it, updatedAt: now };
-  switch (action) {
-    case "raised":
-      next.raisedAt = now;
-      break;
-    case "later":
-      next.state = "later";
-      next.raisedAt = now;
-      break;
-    case "hand":
-      if (it.kind !== "message" && it.kind !== "ask")
-        return { ok: false, error: `a ${it.kind} cannot be handed over`, item: it };
-      next.state = "handed";
-      break;
-    case "mute":
-      next.state = "muted";
-      break;
-    case "answer":
-      next.state = "answered";
-      if (answer !== undefined)
-        next.answer = answer;
-      if (QUESTION_KINDS.has(it.kind))
-        record({ k: "answered", at: now, id, kind: it.kind, openMs: now - (it.raisedAt ?? it.createdAt), ...it.thread ? { thread: it.thread } : {} });
-      break;
-    default:
-      return { ok: false, error: `unknown action ${action}`, item: it };
-  }
-  items[id] = next;
-  return { ok: true, item: next };
-}
-function settle(items, id, state, now) {
-  const it = items[id];
-  if (it && !FINAL.has(it.state))
-    items[id] = { ...it, state, updatedAt: now };
-}
-function openFor(items, sessionId) {
-  return Object.values(items).filter((i) => i.sessionId === sessionId && !FINAL.has(i.state)).sort((a, b) => a.createdAt - b.createdAt);
-}
-var MARKER_MS = 10 * 60 * 1000;
-function markModActive(sessionId) {
-  fs14.mkdirSync(markers(), { recursive: true, mode: 448 });
-  fs14.writeFileSync(path17.join(markers(), safe3(sessionId)), String(Date.now()), { mode: 384 });
-}
-function modActive(sessionId, now = Date.now()) {
-  try {
-    return now - fs14.statSync(path17.join(markers(), safe3(sessionId))).mtimeMs < MARKER_MS;
-  } catch {
-    return false;
-  }
-}
-function pruneMarkers(now = Date.now()) {
-  try {
-    for (const f of fs14.readdirSync(markers())) {
-      const p = path17.join(markers(), f);
-      try {
-        if (now - fs14.statSync(p).mtimeMs > WEEK)
-          fs14.unlinkSync(p);
-      } catch {}
-    }
-  } catch {}
-}
-var restoreId = (sessionId) => `restore:${sessionId}`;
-var gatherId = (sessionId) => `gather:${sessionId}`;
-var GATHER_OPTIONS = ["Bring them in", "Not now"];
-function gatherSurface(sessionId, offer, mod = modActive(sessionId)) {
-  if (!offer)
-    return {};
-  if (!mod)
-    return { systemMessage: offer.text };
-  try {
-    return {
-      item: withStore((items, now) => upsert(items, {
-        id: gatherId(sessionId),
-        kind: "gather",
-        sessionId,
-        count: offer.count,
-        names: offer.names,
-        question: offer.question,
-        options: GATHER_OPTIONS
-      }, now))
-    };
-  } catch {
-    return { systemMessage: offer.text };
-  }
-}
-
 // src/repotrust/gitref.ts
-import path18 from "node:path";
+import path22 from "node:path";
 
 // src/repotrust/statement.ts
 import { execFile } from "node:child_process";
@@ -7009,7 +7845,7 @@ function quietEnv() {
   delete env.DISPLAY;
   return env;
 }
-function run2(file, args, o = {}) {
+function run4(file, args, o = {}) {
   return new Promise((resolve) => {
     const child = execFile(file, args, { cwd: o.cwd, env: o.env ?? quietEnv(), timeout: o.timeoutMs ?? 15000, maxBuffer: 4 << 20, encoding: "utf8" }, (err, stdout, stderr) => {
       const code = err ? typeof err.code === "number" ? err.code : 1 : 0;
@@ -7024,7 +7860,7 @@ var LOCAL_PREFIX = "refs/crosstalk/keys/";
 var FETCHED_PREFIX = "refs/crosstalk/remote/keys/";
 var REFSPEC = `+${LOCAL_PREFIX}*:${FETCHED_PREFIX}*`;
 var MAX_BLOB = 16 * 1024;
-var git2 = (cwd, args, o = {}) => run2("git", args, { cwd, input: o.input, env: o.env ?? quietEnv(), timeoutMs: o.timeoutMs ?? 15000 });
+var git2 = (cwd, args, o = {}) => run4("git", args, { cwd, input: o.input, env: o.env ?? quietEnv(), timeoutMs: o.timeoutMs ?? 15000 });
 function githubSlug(url) {
   const m = url.match(/^(?:ssh:\/\/)?git@github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i) ?? url.match(/^(?:https?|git):\/\/(?:[^@/]+@)?github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i);
   return m ? `${m[1]}/${m[2]}`.toLowerCase() : null;
@@ -7045,7 +7881,7 @@ async function findRepo(cwd) {
     const url = u.stdout.trim();
     if (u.code !== 0 || !url)
       continue;
-    const slug = githubSlug(url) ?? (process.env.CROSSTALK_REPOTRUST_ANY_REMOTE === "1" ? `local/${path18.basename(url).replace(/\.git$/, "").toLowerCase()}` : null);
+    const slug = githubSlug(url) ?? (process.env.CROSSTALK_REPOTRUST_ANY_REMOTE === "1" ? `local/${path22.basename(url).replace(/\.git$/, "").toLowerCase()}` : null);
     if (slug)
       return { top: dir, remote, url, slug };
   }
@@ -7063,7 +7899,7 @@ async function ownLogin(cwd) {
     return loginMemo.login;
   let found = null;
   for (const keyName of ["crosstalk.login", "github.user"]) {
-    const r = await run2("git", ["config", "--get", keyName], { cwd, timeoutMs: 3000 });
+    const r = await run4("git", ["config", "--get", keyName], { cwd, timeoutMs: 3000 });
     const v = r.stdout.trim().toLowerCase();
     if (r.code === 0 && isLogin(v)) {
       found = v;
@@ -7071,7 +7907,7 @@ async function ownLogin(cwd) {
     }
   }
   if (!found) {
-    const r = await run2("gh", ["api", "user", "--jq", ".login"], { cwd, timeoutMs: 8000 });
+    const r = await run4("gh", ["api", "user", "--jq", ".login"], { cwd, timeoutMs: 8000 });
     const v = r.stdout.trim().toLowerCase();
     if (r.code === 0 && isLogin(v))
       found = v;
@@ -7082,30 +7918,30 @@ async function ownLogin(cwd) {
 
 // src/repotrust/firstuse.ts
 var CONNECT = "Connect";
-var FILE3 = () => path19.join(ROOT, "repotrust", "firstuse.json");
-function load3() {
+var FILE3 = () => path23.join(ROOT, "repotrust", "firstuse.json");
+function load4() {
   try {
-    const s = JSON.parse(fs15.readFileSync(FILE3(), "utf8"));
+    const s = JSON.parse(fs19.readFileSync(FILE3(), "utf8"));
     if (s?.v === 1 && s.repos)
       return s;
   } catch {}
   return { v: 1, repos: {} };
 }
-function save2(s) {
-  fs15.mkdirSync(path19.dirname(FILE3()), { recursive: true, mode: 448 });
+function save3(s) {
+  fs19.mkdirSync(path23.dirname(FILE3()), { recursive: true, mode: 448 });
   const tmp = `${FILE3()}.${process.pid}.tmp`;
-  fs15.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
-  fs15.renameSync(tmp, FILE3());
+  fs19.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs19.renameSync(tmp, FILE3());
 }
 var off2 = () => process.env.CROSSTALK_NO_REPOTRUST === "1";
 var connectId = (slug) => `connect:${slug}`;
-function openAsks(s = load3()) {
+function openAsks(s = load4()) {
   return Object.entries(s.repos).filter(([, e]) => e.state === "asked").sort((a, b) => b[1].at - a[1].at).map(([slug]) => slug);
 }
 async function record2(slug, yes, now = Date.now()) {
-  const s = load3();
+  const s = load4();
   s.repos[slug] = { ...s.repos[slug], state: yes ? "yes" : "no", at: now };
-  save2(s);
+  save3(s);
   try {
     withStore((items, t) => settle(items, connectId(slug), "answered", t));
   } catch {}
@@ -7133,7 +7969,7 @@ async function connect(o) {
   const r = await record2(slug, o.yes);
   if (!o.yes)
     return r;
-  cwd ??= load3().repos[slug]?.cwd;
+  cwd ??= load4().repos[slug]?.cwd;
   const up = await o.ensureDaemon();
   if (!up)
     return { ok: false, text: `${r.created ? `Made you "${r.created}" on this machine. ` : ""}Connected in ${slug}, but the crosstalk daemon did not start, so nothing is published yet.` };
@@ -7143,233 +7979,6 @@ async function connect(o) {
     ok: true,
     text: `${r.created ? `Made you "${r.created}" on this machine. ` : ""}Connected in ${slug}${own ? `: ${own}` : ""}.`
   };
-}
-
-// src/cleanup.ts
-import fs16 from "node:fs";
-import path20 from "node:path";
-import { spawnSync as spawnSync10 } from "node:child_process";
-function select(recs, p) {
-  const out = [];
-  for (const r of recs) {
-    if (r.removedAt || !p.exists(r.worktree))
-      continue;
-    if (!p.ended(r))
-      continue;
-    if (!p.clean(r.worktree, r.links))
-      continue;
-    if (!p.branchExists(r.repo, r.branch))
-      out.push({ rec: r, why: "deleted" });
-    else if (p.merged(r.repo, r.branch, r.base))
-      out.push({ rec: r, why: "merged" });
-  }
-  return out;
-}
-function defaultBranch(repo, g = git) {
-  const o = g(repo, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
-  if (o.ok && o.out)
-    return o.out.replace(/^origin\//, "");
-  for (const b of ["main", "master", "trunk"])
-    if (g(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]).ok)
-      return b;
-  const h = g(repo, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
-  return h.ok && h.out ? h.out : null;
-}
-function liveProbe(g = git) {
-  const defaults = new Map;
-  const def = (repo) => {
-    if (!defaults.has(repo))
-      defaults.set(repo, defaultBranch(repo, g));
-    return defaults.get(repo);
-  };
-  return {
-    exists: (p) => fs16.existsSync(p),
-    clean: (w, ignore) => {
-      const r = g(w, ["status", "--porcelain", "--untracked-files=all"]);
-      if (!r.ok)
-        return false;
-      const skip = new Set(ignore);
-      return r.out.split(`
-`).filter(Boolean).every((l) => l.startsWith("?? ") && skip.has(l.slice(3).replace(/\/$/, "")));
-    },
-    branchExists: (repo, b) => g(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]).ok,
-    merged: (repo, b, base) => {
-      const d = def(repo);
-      if (!d || d === b)
-        return false;
-      const tip = g(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]);
-      if (!tip.ok || base && tip.out === base)
-        return false;
-      const ahead = g(repo, ["rev-list", "--count", `${d}..${b}`]);
-      if (!ahead.ok || ahead.out !== "0") {
-        const remote = g(repo, ["rev-list", "--count", `origin/${d}..${b}`]);
-        if (!remote.ok || remote.out !== "0") {
-          const cherry = g(repo, ["cherry", d, b]);
-          if (!cherry.ok || !cherry.out || !cherry.out.split(`
-`).every((l) => l.startsWith("-")))
-            return false;
-        }
-      }
-      return true;
-    },
-    ended: (r) => {
-      if (r.background && r.tmux && tmuxHas(r.tmux))
-        return false;
-      const live = readAll().some((x) => !x.endedAt && path20.resolve(x.cwd).startsWith(path20.resolve(r.worktree)) && recAlive(x));
-      return !live;
-    }
-  };
-}
-function foreign(repos, mine, p, g = git) {
-  const out = [];
-  for (const repo of repos)
-    for (const w of worktrees(repo, g).slice(1)) {
-      if (w.bare || mine.has(path20.resolve(w.path)) || !p.exists(w.path))
-        continue;
-      if (!w.branch || !p.clean(w.path, []))
-        continue;
-      if (p.merged(repo, w.branch))
-        out.push({ path: w.path, branch: w.branch, repo });
-    }
-  return out;
-}
-function sizeKb(p) {
-  const r = spawnSync10("du", ["-sk", p], { encoding: "utf8", timeout: 60000 });
-  return Number((r.stdout ?? "").split(/\s/)[0]) || 0;
-}
-var human = (kb) => kb >= 1024 * 1024 ? `${(kb / 1024 / 1024).toFixed(1)} GB` : kb >= 1024 ? `${Math.round(kb / 1024)} MB` : `${kb} KB`;
-function removeOne(o, g = git) {
-  const kb = sizeKb(o.worktree);
-  for (const l of o.links) {
-    const p = path20.join(o.worktree, l);
-    try {
-      if (fs16.lstatSync(p).isSymbolicLink())
-        fs16.unlinkSync(p);
-    } catch {}
-  }
-  const r = g(o.repo, ["worktree", "remove", o.worktree]);
-  if (!r.ok) {
-    for (const l of o.links)
-      try {
-        fs16.symlinkSync(path20.join(o.repo, l), path20.join(o.worktree, l), "dir");
-      } catch {}
-    return { path: o.worktree, kb: 0, ok: false, why: r.out.split(`
-`).pop() };
-  }
-  g(o.repo, ["worktree", "prune"]);
-  if (o.ours && o.branch)
-    g(o.repo, ["branch", "-d", o.branch]);
-  return { path: o.worktree, kb, ok: true };
-}
-var cleanupId = (sessionId) => `cleanup:${sessionId}`;
-var CLEANUP_OPTIONS = ["Remove them", "Not now"];
-function offerFor2(c) {
-  const fresh = c.filter((x) => !x.rec.offeredAt);
-  if (!fresh.length)
-    return null;
-  const n = c.length;
-  const names = c.slice(0, 4).map((x) => x.rec.name).concat(n > 4 ? ["\u2026"] : []);
-  const question = `${n} agent worktree${n === 1 ? " is" : "s are"} done with: ${n === 1 ? "its" : "their"} work is merged and ${n === 1 ? "its session has" : "their sessions have"} ended. Remove ${n === 1 ? "it" : "them"}?`;
-  return { count: n, names, question, text: `\u25e2 crosstalk: ${question} (${names.join(", ")}) Say "clean up the worktrees" to do it.` };
-}
-var stamp = () => path20.join(P.root, "cleanup-stamp");
-var CHECK_EVERY_MS = () => Number(process.env.CROSSTALK_CLEANUP_EVERY_MS ?? 10 * 60 * 1000);
-function offerOnce2(o = {}) {
-  const recs = readSpawned().filter((r) => !r.removedAt);
-  if (!recs.length)
-    return null;
-  if (!o.force) {
-    try {
-      if (Date.now() - fs16.statSync(stamp()).mtimeMs < CHECK_EVERY_MS())
-        return null;
-    } catch {}
-    fs16.mkdirSync(P.root, { recursive: true, mode: 448 });
-    fs16.writeFileSync(stamp(), String(Date.now()), { mode: 384 });
-  }
-  const c = select(recs, o.probe ?? liveProbe());
-  const offer = offerFor2(c);
-  if (!offer)
-    return null;
-  const now = Date.now();
-  for (const x of c)
-    if (!x.rec.offeredAt)
-      writeSpawned({ ...x.rec, offeredAt: now });
-  return offer;
-}
-function surface(sessionId, offer, mod = modActive(sessionId)) {
-  if (!offer)
-    return {};
-  if (!mod)
-    return { systemMessage: offer.text };
-  try {
-    withStore((items, now) => upsert(items, { id: cleanupId(sessionId), kind: "cleanup", sessionId, count: offer.count, names: offer.names, question: offer.question, options: CLEANUP_OPTIONS }, now));
-    return {};
-  } catch {
-    return { systemMessage: offer.text };
-  }
-}
-function run3(o) {
-  const g = o.git ?? git;
-  const p = o.probe ?? liveProbe(g);
-  const recs = readSpawned().filter((r) => !r.removedAt);
-  const mine = select(recs, p);
-  const repos = [...new Set([...recs.map((r) => r.repo), ...o.cwd ? [worktrees(o.cwd, g)[0]?.path].filter((x) => !!x) : []])];
-  const others = foreign(repos, new Set(recs.map((r) => path20.resolve(r.worktree))), p, g);
-  const still = recs.filter((r) => !mine.some((m) => m.rec.id === r.id) && p.exists(r.worktree));
-  if (!o.confirm) {
-    const lines = [];
-    if (!mine.length && !others.length)
-      lines.push("\u25e2 crosstalk: no worktree is ready to remove.");
-    if (mine.length) {
-      lines.push(`\u25e2 crosstalk: ${mine.length} worktree${mine.length === 1 ? "" : "s"} crosstalk made can go (merged or branch deleted, session ended):`);
-      for (const m of mine)
-        lines.push(`  ${m.rec.name.padEnd(16)} ${m.rec.worktree}  (${m.why === "merged" ? "merged" : "branch deleted"})`);
-    }
-    if (others.length) {
-      lines.push(`Merged worktrees crosstalk did not make, removed only if you name them:`);
-      for (const w of others)
-        lines.push(`  ${w.path}  (${w.branch})`);
-    }
-    if (still.length)
-      lines.push(`Still in use or not merged: ${still.map((r) => r.name).join(", ")}.`);
-    return { ok: true, text: lines.join(`
-`), removed: [] };
-  }
-  const removed = [];
-  for (const m of mine) {
-    const r = removeOne({ repo: m.rec.repo, worktree: m.rec.worktree, links: m.rec.links, branch: m.rec.branch, ours: true }, g);
-    removed.push(r);
-    if (r.ok)
-      writeSpawned({ ...m.rec, removedAt: Date.now() });
-  }
-  const asked = new Set((o.include ?? []).map((x) => path20.resolve(x)));
-  for (const w of others)
-    if (asked.has(path20.resolve(w.path)))
-      removed.push(removeOne({ repo: w.repo, worktree: w.path, links: [], ours: false }, g));
-  const unknown = [...asked].filter((a) => !others.some((w) => path20.resolve(w.path) === a));
-  const ok = removed.filter((r) => r.ok);
-  const kb = ok.reduce((s, r) => s + r.kb, 0);
-  const parts = [ok.length ? `\u25e2 crosstalk: removed ${ok.length} worktree${ok.length === 1 ? "" : "s"}, freeing ${human(kb)}.` : "\u25e2 crosstalk: removed no worktree."];
-  for (const r of removed.filter((x) => !x.ok))
-    parts.push(`  kept ${r.path}: ${r.why}`);
-  if (unknown.length)
-    parts.push(`  left alone, not a merged clean worktree: ${unknown.join(", ")}`);
-  return { ok: removed.every((r) => r.ok), text: parts.join(`
-`), removed };
-}
-var removeYes = (action, value) => action === "answer" && (value ?? "").trim() === CLEANUP_OPTIONS[0];
-function act2(session, id, action, value) {
-  if (action === "raised" || action === "later")
-    return withStore((items, now) => act(items, id, action, now));
-  const v = (value ?? "").trim();
-  const no = !removeYes(action, value);
-  const claim = withStore((items, now) => act(items, id, "answer", now, v || (no ? "Not now" : "Remove them")));
-  if (!claim.ok)
-    return claim;
-  if (no)
-    return { ok: true, item: claim.item, text: `Kept them. Say "clean up the worktrees" any time.` };
-  const out = run3({ confirm: true });
-  return { ok: out.ok, item: claim.item, text: out.text };
 }
 
 // src/ui-extra/pure.ts
@@ -7416,12 +8025,12 @@ function matchOption(typed, options) {
 }
 
 // src/ui-extra/threadfile.ts
-import fs17 from "node:fs";
-import path21 from "node:path";
-var threadsFile = () => path21.join(P.root, "threads.json");
+import fs20 from "node:fs";
+import path24 from "node:path";
+var threadsFile = () => path24.join(P.root, "threads.json");
 function readThreads(file = threadsFile()) {
   try {
-    const raw = JSON.parse(fs17.readFileSync(file, "utf8"));
+    const raw = JSON.parse(fs20.readFileSync(file, "utf8"));
     const threads = {};
     for (const [id, t] of Object.entries(raw?.threads ?? {})) {
       const ok = parseThread(t);
@@ -7499,7 +8108,12 @@ function pane(o) {
     const names = Object.values(st.threads).filter((x) => !x.meta.value.combinedInto).map((x) => x.meta.value.name);
     return { ok: false, error: o.thread ? `no thread called "${o.thread}"` : "no thread yet", threads: names };
   }
-  return { ok: true, pane: paneModel(t, o.items ?? snapshot3()) };
+  const model = paneModel(t, o.items ?? snapshot());
+  let services = [];
+  try {
+    services = o.services ?? forSession(o.sessionId);
+  } catch {}
+  return { ok: true, pane: services.length ? { ...model, services } : model };
 }
 async function watchPane(o) {
   const write = o.write ?? ((s) => void process.stdout.write(s));
@@ -7522,17 +8136,17 @@ async function watchPane(o) {
 }
 
 // src/ui-extra/digest.ts
-import fs18 from "node:fs";
-import path22 from "node:path";
+import fs21 from "node:fs";
+import path25 from "node:path";
 var HOUR = 60 * 60000;
 var DAY3 = 24 * HOUR;
 var cut = (s, n = 140) => {
   const t = s.replace(/\s+/g, " ").trim();
   return t.length > n ? t.slice(0, n - 1) + "\u2026" : t;
 };
-function ruleNotes(file = path22.join(P.root, "rules.json")) {
+function ruleNotes(file = path25.join(P.root, "rules.json")) {
   try {
-    const h = JSON.parse(fs18.readFileSync(file, "utf8"));
+    const h = JSON.parse(fs21.readFileSync(file, "utf8"));
     const out = new Set;
     for (const list of Object.values(h?.digest ?? {}))
       for (const n of list ?? [])
@@ -7629,13 +8243,13 @@ function bandLine(ev, rules, since, now) {
   const threads = new Set(ev.map((e) => e.thread)).size;
   return `\u25e2 ${when(since, now).replace(/^in the /, "")}: ${parts.join(", ")}${threads ? ` in ${threads} thread${threads === 1 ? "" : "s"}` : ""} \u00b7 say "what happened?" for the digest`;
 }
-var shownFile = () => path22.join(P.root, "ui-extra", "digest-shown.json");
+var shownFile = () => path25.join(P.root, "ui-extra", "digest-shown.json");
 var BAND_EVERY_MS = 2 * HOUR;
 function bandForSession(sessionId, o = {}) {
   const now = o.now ?? Date.now();
   let shown = {};
   try {
-    shown = JSON.parse(fs18.readFileSync(shownFile(), "utf8"));
+    shown = JSON.parse(fs21.readFileSync(shownFile(), "utf8"));
   } catch {}
   const last = shown[sessionId];
   if (last && now - last < (o.everyMs ?? BAND_EVERY_MS))
@@ -7649,8 +8263,8 @@ function bandForSession(sessionId, o = {}) {
   for (const [k, v] of Object.entries(shown))
     if (now - v > 7 * DAY3)
       delete shown[k];
-  fs18.mkdirSync(path22.dirname(shownFile()), { recursive: true, mode: 448 });
-  fs18.writeFileSync(shownFile(), JSON.stringify(shown), { mode: 384 });
+  fs21.mkdirSync(path25.dirname(shownFile()), { recursive: true, mode: 448 });
+  fs21.writeFileSync(shownFile(), JSON.stringify(shown), { mode: 384 });
   return line;
 }
 
@@ -7673,8 +8287,8 @@ function act3(id, action, value) {
 }
 
 // src/trust.ts
-import path23 from "node:path";
-var FILE4 = path23.join(ROOT, "trust.json");
+import path26 from "node:path";
+var FILE4 = path26.join(ROOT, "trust.json");
 
 // src/ui-extra/mute.ts
 var HOUR2 = 60 * 60000;
@@ -7721,7 +8335,7 @@ async function openItems(session) {
       if (r?.ok)
         return r.items;
     } catch {}
-  return openFor(snapshot3(), session);
+  return openFor(snapshot(), session);
 }
 async function at(session, text, root) {
   const a = parseAt(text);
@@ -7817,11 +8431,11 @@ async function waiting(session, mod) {
         };
     } catch {}
   }
-  return { items: openFor(snapshot3(), session), daemon: false };
+  return { items: openFor(snapshot(), session), daemon: false };
 }
 function settleRestore(session) {
   const id = restoreId(session);
-  const it = snapshot3()[id];
+  const it = snapshot()[id];
   if (!it || FINAL.has(it.state))
     return;
   if (lostSessions(ctxNow(), session).length)
@@ -7833,9 +8447,9 @@ function tendGather(session) {
     return;
   watchThrottled(session);
   const id = gatherId(session);
-  const it = snapshot3()[id];
+  const it = snapshot()[id];
   if (!it) {
-    gatherSurface(session, offerOnce(session), true);
+    gatherSurface(session, offerOnce2(session), true);
     return;
   }
   if (FINAL.has(it.state))
@@ -7847,6 +8461,7 @@ function tendGather(session) {
 async function watch3(session, interval) {
   let last = "";
   let lastRestoreCheck = 0;
+  let ports;
   const parent = process.ppid;
   for (;; ) {
     try {
@@ -7863,10 +8478,13 @@ async function watch3(session, interval) {
         tendGather(session);
       } catch {}
       try {
-        surface(session, offerOnce2(), true);
+        surface(session, offerOnce(), true);
+      } catch {}
+      try {
+        ports = badge(forSession(session).map((s) => ({ listening: s.ports }))) || undefined;
       } catch {}
     }
-    const w = { ...await waiting(session, true), note: peekNote(session) ?? undefined };
+    const w = { ...await waiting(session, true), note: peekNote(session) ?? undefined, ...ports ? { ports } : {} };
     const line = JSON.stringify(w);
     if (line !== last) {
       last = line;
@@ -7938,7 +8556,7 @@ async function uiCmd(argv, root) {
           return print(withStore((items, now) => act(items, id, action, now)));
         const yes = action !== "mute" && (value ?? "").trim() === CONNECT;
         const out = await connect({ slug: id.slice("connect:".length), yes, ensureDaemon: () => ensureDaemon(root), request });
-        return print({ ok: out.ok, text: out.text, item: snapshot3()[id] });
+        return print({ ok: out.ok, text: out.text, item: snapshot()[id] });
       }
       const done = act4(session, id, action, value);
       if (done)
@@ -7965,9 +8583,9 @@ async function uiCmd(argv, root) {
 }
 
 // src/terminal/status.ts
-import fs19 from "node:fs";
-import path24 from "node:path";
-import { spawn as spawn8, spawnSync as spawnSync11 } from "node:child_process";
+import fs22 from "node:fs";
+import path27 from "node:path";
+import { spawn as spawn9, spawnSync as spawnSync14 } from "node:child_process";
 
 // src/attention/osc7501.ts
 var enabled = (env = process.env) => env.CROSSTALK_OSC7501 === "1";
@@ -8096,37 +8714,37 @@ function appleTint(original, state, amount = 0.25) {
   const target = COLOUR[state].map((n) => n * 257);
   return original.map((o, i) => Math.round(o + (target[i] - o) * amount));
 }
-var dir4 = () => path24.join(P.root, "tabs");
+var dir5 = () => path27.join(P.root, "tabs");
 var safe4 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
-var fileOf4 = (id) => path24.join(dir4(), `${safe4(id)}.json`);
+var fileOf5 = (id) => path27.join(dir5(), `${safe4(id)}.json`);
 function readTab(id) {
   try {
-    return JSON.parse(fs19.readFileSync(fileOf4(id), "utf8"));
+    return JSON.parse(fs22.readFileSync(fileOf5(id), "utf8"));
   } catch {
     return null;
   }
 }
 function writeTab(f) {
-  fs19.mkdirSync(dir4(), { recursive: true, mode: 448 });
-  const tmp = `${fileOf4(f.sessionId)}.${process.pid}.tmp`;
-  fs19.writeFileSync(tmp, JSON.stringify(f), { mode: 384 });
-  fs19.renameSync(tmp, fileOf4(f.sessionId));
+  fs22.mkdirSync(dir5(), { recursive: true, mode: 448 });
+  const tmp = `${fileOf5(f.sessionId)}.${process.pid}.tmp`;
+  fs22.writeFileSync(tmp, JSON.stringify(f), { mode: 384 });
+  fs22.renameSync(tmp, fileOf5(f.sessionId));
 }
-var sleepSync4 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+var sleepSync6 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 function withFile(id, fn) {
-  fs19.mkdirSync(dir4(), { recursive: true, mode: 448 });
-  const lock = `${fileOf4(id)}.lock`;
+  fs22.mkdirSync(dir5(), { recursive: true, mode: 448 });
+  const lock = `${fileOf5(id)}.lock`;
   let held = false;
   for (let i = 0;i < 50 && !held; i++) {
     try {
-      fs19.mkdirSync(lock);
+      fs22.mkdirSync(lock);
       held = true;
     } catch {
       try {
-        if (Date.now() - fs19.statSync(lock).mtimeMs > 5000)
-          fs19.rmdirSync(lock);
+        if (Date.now() - fs22.statSync(lock).mtimeMs > 5000)
+          fs22.rmdirSync(lock);
       } catch {}
-      sleepSync4(5);
+      sleepSync6(5);
     }
   }
   try {
@@ -8134,7 +8752,7 @@ function withFile(id, fn) {
   } finally {
     if (held)
       try {
-        fs19.rmdirSync(lock);
+        fs22.rmdirSync(lock);
       } catch {}
   }
 }
@@ -8166,7 +8784,7 @@ function startApplier(id, root) {
     return;
   }
   try {
-    const child = spawn8(shim(root), ["term", "apply", "--session", id], { detached: true, stdio: "ignore" });
+    const child = spawn9(shim(root), ["term", "apply", "--session", id], { detached: true, stdio: "ignore" });
     child.on("error", () => {});
     child.unref();
   } catch {}
@@ -8174,19 +8792,19 @@ function startApplier(id, root) {
 var liveSys4 = () => ({
   platform: process.platform,
   run: (s) => {
-    const r = spawnSync11(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 5000 });
+    const r = spawnSync14(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 5000 });
     return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}`.trim() };
   },
   writeTty: (p, data) => {
     let fd = -1;
     try {
-      fd = fs19.openSync(p, fs19.constants.O_WRONLY | fs19.constants.O_NOCTTY | fs19.constants.O_NONBLOCK);
-      return fs19.writeSync(fd, data) === Buffer.byteLength(data);
+      fd = fs22.openSync(p, fs22.constants.O_WRONLY | fs22.constants.O_NOCTTY | fs22.constants.O_NONBLOCK);
+      return fs22.writeSync(fd, data) === Buffer.byteLength(data);
     } catch {
       return false;
     } finally {
       if (fd >= 0)
-        fs19.closeSync(fd);
+        fs22.closeSync(fd);
     }
   },
   term: (id) => readOne(id)?.terminal ?? null
@@ -8219,19 +8837,19 @@ function applyOnce(id, state, f, sys) {
   return { ok, appleOriginal };
 }
 async function applyLoop(id, sys = liveSys4(), sleep = (ms) => new Promise((r) => setTimeout(r, ms))) {
-  const lock = `${fileOf4(id)}.applier`;
+  const lock = `${fileOf5(id)}.applier`;
   const take = () => {
     try {
-      fs19.mkdirSync(dir4(), { recursive: true, mode: 448 });
-      fs19.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
+      fs22.mkdirSync(dir5(), { recursive: true, mode: 448 });
+      fs22.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
       return true;
     } catch {
       try {
-        const other = Number(fs19.readFileSync(lock, "utf8"));
+        const other = Number(fs22.readFileSync(lock, "utf8"));
         if (other && pidAlive(other) && other !== process.pid)
           return false;
-        fs19.unlinkSync(lock);
-        fs19.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
+        fs22.unlinkSync(lock);
+        fs22.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
         return true;
       } catch {
         return false;
@@ -8260,7 +8878,7 @@ async function applyLoop(id, sys = liveSys4(), sleep = (ms) => new Promise((r) =
             return;
           if (state === "off" && cur.want === "off") {
             try {
-              fs19.unlinkSync(fileOf4(id));
+              fs22.unlinkSync(fileOf5(id));
             } catch {}
             return;
           }
@@ -8269,8 +8887,8 @@ async function applyLoop(id, sys = liveSys4(), sleep = (ms) => new Promise((r) =
       }
     } finally {
       try {
-        if (Number(fs19.readFileSync(lock, "utf8")) === process.pid)
-          fs19.unlinkSync(lock);
+        if (Number(fs22.readFileSync(lock, "utf8")) === process.pid)
+          fs22.unlinkSync(lock);
       } catch {}
     }
     if (decide(readTab(id), Date.now(), 0).act === "idle")
@@ -8323,7 +8941,7 @@ async function termCmd(argv, root) {
     return void console.log(await applyLoop(session));
   if (sub === "status") {
     const current = readTab(session)?.want;
-    const pending = flag2(argv, "--pending") !== undefined ? Number(flag2(argv, "--pending")) : pendingFor(session, snapshot3);
+    const pending = flag2(argv, "--pending") !== undefined ? Number(flag2(argv, "--pending")) : pendingFor(session, snapshot);
     const asked = flag2(argv, "--state");
     const event = flag2(argv, "--event");
     let state = null;
@@ -8371,14 +8989,14 @@ async function showCmd(argv) {
     process.exitCode = 1;
 }
 async function cleanupCmd(argv) {
-  const out = run3({ confirm: argv.includes("--yes") || argv.includes("-y"), include: flags(argv, "--include"), cwd: process.cwd() });
+  const out = run2({ confirm: argv.includes("--yes") || argv.includes("-y"), include: flags(argv, "--include"), cwd: process.cwd() });
   console.log(out.text);
   if (!out.ok)
     process.exitCode = 1;
 }
 
 // src/shipping/cli.ts
-import fs20 from "node:fs";
+import fs23 from "node:fs";
 var flag3 = (argv, f) => {
   const i = argv.indexOf(f);
   return i === -1 ? undefined : argv[i + 1];
@@ -8416,7 +9034,7 @@ var json = (argv) => {
   if (j)
     return JSON.parse(j);
   if (argv.includes("--stdin"))
-    return JSON.parse(fs20.readFileSync(0, "utf8"));
+    return JSON.parse(fs23.readFileSync(0, "utf8"));
   return {};
 };
 async function shipCmd(argv) {
@@ -8464,7 +9082,7 @@ async function reviewCmd(argv) {
   let secret;
   if (sf)
     try {
-      secret = fs20.readFileSync(sf, "utf8").trim();
+      secret = fs23.readFileSync(sf, "utf8").trim();
     } catch {}
   return send({ action: "review", run, output: flag3(argv, "--output"), verdict: flag3(argv, "--verdict"), findings: flag3(argv, "--findings"), ...secret ? { secret } : {} });
 }
@@ -8489,10 +9107,10 @@ async function incidentCmd(argv) {
 }
 
 // src/cli.ts
-import fs21 from "fs";
-import path25 from "path";
+import fs24 from "fs";
+import path28 from "path";
 import os9 from "os";
-import { spawn as spawn9, execFileSync as execFileSync6 } from "child_process";
+import { spawn as spawn10, execFileSync as execFileSync6 } from "child_process";
 var argv = process.argv.slice(2);
 var cmd = argv[0] ?? "status";
 var VALUE_FLAGS = new Set([
@@ -8550,8 +9168,8 @@ var positional3 = (() => {
   return out;
 })();
 var ROOT_DIR = rootFrom2(import.meta.url);
-var RELAY_PID = path25.join(ROOT2, "relay.pid");
-var TUNNEL_PID = path25.join(ROOT2, "tunnel.pid");
+var RELAY_PID = path28.join(ROOT2, "relay.pid");
+var TUNNEL_PID = path28.join(ROOT2, "tunnel.pid");
 var httpBase = (ws = loadRelay().url) => ws.replace(/^ws/, "http").replace(/\/ws$/, "");
 var die = (m) => {
   console.error(m);
@@ -8581,7 +9199,7 @@ function identityOrCreate() {
 }
 var relayPid = () => {
   try {
-    const pid = Number(fs21.readFileSync(RELAY_PID, "utf8"));
+    const pid = Number(fs24.readFileSync(RELAY_PID, "utf8"));
     process.kill(pid, 0);
     return pid;
   } catch {
@@ -8616,14 +9234,14 @@ async function startRelay(port = Number(flag4("--port", "8787"))) {
     if (await relayReachable(url))
       return url;
   }
-  const out = fs21.openSync(path25.join(ROOT2, "relay.log"), "a");
-  const child = spawn9(shim2(ROOT_DIR), ["relay-server", "--host", "0.0.0.0", "--port", String(port)], {
+  const out = fs24.openSync(path28.join(ROOT2, "relay.log"), "a");
+  const child = spawn10(shim2(ROOT_DIR), ["relay-server", "--host", "0.0.0.0", "--port", String(port)], {
     detached: true,
     stdio: ["ignore", out, out]
   });
   child.unref();
-  fs21.mkdirSync(ROOT2, { recursive: true, mode: 448 });
-  fs21.writeFileSync(RELAY_PID, String(child.pid), { mode: 384 });
+  fs24.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+  fs24.writeFileSync(RELAY_PID, String(child.pid), { mode: 384 });
   const url = `ws://${addr.host}:${port}`;
   saveRelay(url);
   for (let i = 0;i < 40; i++) {
@@ -8642,14 +9260,14 @@ Or drop --public and use --host, which runs the relay on this machine for
 anyone on the same network.`);
     console.log("opening a public tunnel, this takes a few seconds");
     try {
-      const t = await openTunnel(bin, port, path25.join(ROOT2, "tunnel.log"));
-      fs21.writeFileSync(TUNNEL_PID, String(t.pid), { mode: 384 });
+      const t = await openTunnel(bin, port, path28.join(ROOT2, "tunnel.log"));
+      fs24.writeFileSync(TUNNEL_PID, String(t.pid), { mode: 384 });
       saveRelay(`wss://${t.host}`);
       console.log(`relay reachable at ${t.url}`);
       return `wss://${t.host}`;
     } catch (e) {
       die(`the tunnel did not come up: ${e.message}
-See ${path25.join(ROOT2, "tunnel.log")}`);
+See ${path28.join(ROOT2, "tunnel.log")}`);
     }
   }
   console.log(`relay running on ${url}   (${addr.kind}, ${addr.note})`);
@@ -8666,10 +9284,10 @@ async function relay() {
     if (!pid)
       return console.log("no relay started by crosstalk is running");
     process.kill(pid, "SIGTERM");
-    fs21.rmSync(RELAY_PID, { force: true });
+    fs24.rmSync(RELAY_PID, { force: true });
     try {
-      process.kill(Number(fs21.readFileSync(TUNNEL_PID, "utf8")), "SIGTERM");
-      fs21.rmSync(TUNNEL_PID, { force: true });
+      process.kill(Number(fs24.readFileSync(TUNNEL_PID, "utf8")), "SIGTERM");
+      fs24.rmSync(TUNNEL_PID, { force: true });
       console.log("tunnel closed");
     } catch {}
     return console.log("relay stopped");
@@ -8920,7 +9538,7 @@ async function doctor() {
   const rows = [];
   const id = loadIdentity2();
   const socket = process.env.CLAUDE_CODE_MESSAGING_SOCKET;
-  rows.push(["runtime", true, `${path25.basename(process.execPath)} ${process.version ?? ""}`.trim()]);
+  rows.push(["runtime", true, `${path28.basename(process.execPath)} ${process.version ?? ""}`.trim()]);
   rows.push([
     "identity",
     !!id,
@@ -8933,7 +9551,7 @@ async function doctor() {
   ]);
   rows.push([
     "inbox socket",
-    socket ? fs21.existsSync(socket) : null,
+    socket ? fs24.existsSync(socket) : null,
     socket ?? "not provided; sessions without a Claude Code socket receive notices through hooks"
   ]);
   rows.push([
@@ -8944,7 +9562,7 @@ async function doctor() {
   const sessionsDir = sessionsDir2();
   let visible = 0;
   try {
-    visible = fs21.readdirSync(sessionsDir).filter((f) => f.endsWith(".json")).length;
+    visible = fs24.readdirSync(sessionsDir).filter((f) => f.endsWith(".json")).length;
   } catch {}
   rows.push(["session registry", visible > 0 ? true : null, `${visible} Claude Code entries in ${sessionsDir}`]);
   {
@@ -9061,7 +9679,7 @@ async function daemon() {
   const sub = positional3[0] ?? "start";
   if (sub === "stop" || sub === "restart") {
     try {
-      process.kill(Number(fs21.readFileSync(P2.daemonLock, "utf8")), "SIGTERM");
+      process.kill(Number(fs24.readFileSync(P2.daemonLock, "utf8")), "SIGTERM");
       console.log("daemon stopped");
     } catch {
       console.log("daemon was not running");
@@ -9217,7 +9835,7 @@ usage: /crosstalk:rename <current> <new>
   delete peers[a];
   peers[b] = { ...peer, label: b };
   savePeers(peers);
-  const t = load2();
+  const t = load3();
   if (t.people[a]) {
     t.people[b] = t.people[a];
     delete t.people[a];
@@ -9226,33 +9844,33 @@ usage: /crosstalk:rename <current> <new>
     t.muted[b] = t.muted[a];
     delete t.muted[a];
   }
-  save(t);
+  save2(t);
   try {
-    const uPath = path25.join(ROOT2, "usage.json");
-    const u = JSON.parse(fs21.readFileSync(uPath, "utf8"));
+    const uPath = path28.join(ROOT2, "usage.json");
+    const u = JSON.parse(fs24.readFileSync(uPath, "utf8"));
     if (u[a]) {
       u[b] = u[a];
       delete u[a];
-      fs21.writeFileSync(uPath, JSON.stringify(u, null, 2), { mode: 384 });
+      fs24.writeFileSync(uPath, JSON.stringify(u, null, 2), { mode: 384 });
     }
   } catch {}
   try {
-    const qPath = path25.join(ROOT2, "queue.json");
-    const q = JSON.parse(fs21.readFileSync(qPath, "utf8"));
+    const qPath = path28.join(ROOT2, "queue.json");
+    const q = JSON.parse(fs24.readFileSync(qPath, "utf8"));
     let touched = 0;
     for (const msgs of Object.values(q))
       for (const m of msgs)
         if (m.from === a)
           m.from = b, touched++;
     if (touched)
-      fs21.writeFileSync(qPath, JSON.stringify(q, null, 2), { mode: 384 });
+      fs24.writeFileSync(qPath, JSON.stringify(q, null, 2), { mode: 384 });
   } catch {}
   console.log(`"${a}" is "${b}" now, still ${peer.fingerprint}.`);
   if (daemonRunning2())
     console.log("Restart the daemon so it picks this up: crosstalk daemon restart");
 }
 async function trustCmd() {
-  const t = load2();
+  const t = load3();
   const level = positional3.find((a) => isLevel(a));
   const who = positional3.find((a) => a !== level);
   const room = flag4("--in");
@@ -9289,23 +9907,23 @@ async function trustCmd() {
     die(`give a level: ${LEVELS.join(", ")}`);
   if (!who) {
     t.default = level;
-    save(t);
+    save2(t);
     return console.log(`anyone in a room with you, by default: ${level}`);
   }
   const isPerson = !!loadPeers2()[who];
   if (room) {
     t.people[who] = level;
     t.rooms[room] = t.rooms[room] ?? ROOM_DEFAULT;
-    save(t);
+    save2(t);
     return console.log(`${who} is "${level}" (pinned, so it applies in #${room} too)`);
   }
   if (isPerson) {
     t.people[who] = level;
-    save(t);
+    save2(t);
     return console.log(`${who}: ${level}`);
   }
   t.rooms[who.replace(/^#/, "")] = level;
-  save(t);
+  save2(t);
   console.log(`#${who.replace(/^#/, "")}: ${level} for everyone in it`);
 }
 async function post() {
@@ -9479,8 +10097,8 @@ you are sure.`);
     }
     if (!bundle)
       die("the other machine never sent anything. Start again.");
-    fs21.mkdirSync(ROOT2, { recursive: true, mode: 448 });
-    const write = (name, value) => fs21.writeFileSync(path25.join(ROOT2, name), JSON.stringify(value, null, 2), { mode: 384 });
+    fs24.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+    const write = (name, value) => fs24.writeFileSync(path28.join(ROOT2, name), JSON.stringify(value, null, 2), { mode: 384 });
     write("identity.json", { ...bundle.identity, machine: machineName() });
     write("peers.json", bundle.peers ?? {});
     if (bundle.rooms)
@@ -9513,12 +10131,12 @@ and a message reaches whichever machine you are sitting at.`);
     peers: loadPeers2(),
     rooms: (() => {
       try {
-        return JSON.parse(fs21.readFileSync(path25.join(ROOT2, "rooms.json"), "utf8"));
+        return JSON.parse(fs24.readFileSync(path28.join(ROOT2, "rooms.json"), "utf8"));
       } catch {
         return {};
       }
     })(),
-    trust: load2(),
+    trust: load3(),
     relay: loadRelay()
   };
   const z = zlib.gzipSync(Buffer.from(JSON.stringify(bundle), "utf8")).toString("base64");
@@ -9563,13 +10181,13 @@ two machines and nowhere else.`);
 async function installAgy() {
   const root = rootFrom2(import.meta.url);
   const bin = shim2(root);
-  const dir = path25.join(os9.homedir(), ".gemini", "config");
-  const file = path25.join(dir, "hooks.json");
-  fs21.mkdirSync(dir, { recursive: true });
+  const dir = path28.join(os9.homedir(), ".gemini", "config");
+  const file = path28.join(dir, "hooks.json");
+  fs24.mkdirSync(dir, { recursive: true });
   let all = {};
-  if (fs21.existsSync(file)) {
+  if (fs24.existsSync(file)) {
     try {
-      all = JSON.parse(fs21.readFileSync(file, "utf8"));
+      all = JSON.parse(fs24.readFileSync(file, "utf8"));
     } catch {
       die(`${file} is not valid JSON. Fix or move it, then run this again.`);
     }
@@ -9579,7 +10197,7 @@ async function installAgy() {
       { type: "command", command: `"${bin}" hook PreInvocation`, timeout: 20 }
     ]
   };
-  fs21.writeFileSync(file, JSON.stringify(all, null, 2) + `
+  fs24.writeFileSync(file, JSON.stringify(all, null, 2) + `
 `);
   console.log(`hooks    ${file}`);
   try {
@@ -9602,13 +10220,13 @@ If \`crosstalk facts\` looks unscoped, launch agy with --add-dir "$PWD".`);
 }
 async function installQwen() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path25.join(os9.homedir(), ".qwen");
-  const file = path25.join(dir, "settings.json");
-  fs21.mkdirSync(dir, { recursive: true });
+  const dir = path28.join(os9.homedir(), ".qwen");
+  const file = path28.join(dir, "settings.json");
+  fs24.mkdirSync(dir, { recursive: true });
   let cfg = {};
-  if (fs21.existsSync(file)) {
+  if (fs24.existsSync(file)) {
     try {
-      cfg = JSON.parse(fs21.readFileSync(file, "utf8"));
+      cfg = JSON.parse(fs24.readFileSync(file, "utf8"));
     } catch {
       die(`${file} is not valid JSON. Fix or move it, then run this again.`);
     }
@@ -9619,17 +10237,17 @@ async function installQwen() {
     const others = (cfg.hooks[event] ?? []).filter((g) => !JSON.stringify(g).includes("crosstalk"));
     cfg.hooks[event] = [...others, entry];
   }
-  fs21.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
+  fs24.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
 `);
   console.log(`hooks    ${file}`);
   registerMcp("qwen", ["mcp", "add", "crosstalk", bin, "server"], bin);
 }
 async function installKimi() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path25.join(os9.homedir(), ".kimi-code");
-  const file = path25.join(dir, "config.toml");
-  fs21.mkdirSync(dir, { recursive: true });
-  const existing = fs21.existsSync(file) ? fs21.readFileSync(file, "utf8") : "";
+  const dir = path28.join(os9.homedir(), ".kimi-code");
+  const file = path28.join(dir, "config.toml");
+  fs24.mkdirSync(dir, { recursive: true });
+  const existing = fs24.existsSync(file) ? fs24.readFileSync(file, "utf8") : "";
   const kept = existing.replace(/\n*# crosstalk\n(?:\[\[hooks\]\][^[]*)+/g, `
 `);
   const blocks = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"].map((event) => `[[hooks]]
@@ -9638,20 +10256,20 @@ command = "${bin} hook --client kimi"
 timeout = 20
 `).join(`
 `);
-  fs21.writeFileSync(file, `${kept.trimEnd()}
+  fs24.writeFileSync(file, `${kept.trimEnd()}
 
 # crosstalk
 ${blocks}`);
   console.log(`hooks    ${file}`);
-  console.log(`tools    add the MCP server in ${path25.join(dir, "mcp.json")}`);
+  console.log(`tools    add the MCP server in ${path28.join(dir, "mcp.json")}`);
 }
 async function installHermes() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path25.join(os9.homedir(), ".hermes");
-  const file = path25.join(dir, "config.yaml");
-  if (!fs21.existsSync(file))
+  const dir = path28.join(os9.homedir(), ".hermes");
+  const file = path28.join(dir, "config.yaml");
+  if (!fs24.existsSync(file))
     die(`no ${file}. Run hermes once first, then run this again.`);
-  const existing = fs21.readFileSync(file, "utf8");
+  const existing = fs24.readFileSync(file, "utf8");
   if (existing.includes("crosstalk hook"))
     die(`${file} already has crosstalk hooks. Remove them by hand to reinstall.`);
   if (/^hooks:/m.test(existing))
@@ -9664,7 +10282,7 @@ hooks:
   pre_llm_call:
     - command: "${bin} hook pre_llm_call"
       timeout: 20`);
-  fs21.writeFileSync(file, `${existing.trimEnd()}
+  fs24.writeFileSync(file, `${existing.trimEnd()}
 
 # crosstalk
 hooks:
@@ -9684,19 +10302,19 @@ terminal and answer yes twice, or run it with --accept-hooks. Check with:
 }
 async function installGoose() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path25.join(os9.homedir(), ".agents", "plugins", "crosstalk");
-  fs21.mkdirSync(path25.join(dir, "hooks"), { recursive: true });
-  fs21.writeFileSync(path25.join(dir, "plugin.json"), JSON.stringify({
+  const dir = path28.join(os9.homedir(), ".agents", "plugins", "crosstalk");
+  fs24.mkdirSync(path28.join(dir, "hooks"), { recursive: true });
+  fs24.writeFileSync(path28.join(dir, "plugin.json"), JSON.stringify({
     name: "crosstalk",
     version: "0.1.0",
     description: "Messages from other people's coding agents, delivered into this session."
   }, null, 2) + `
 `);
   const group = (command) => ({ hooks: [{ type: "command", command }] });
-  fs21.writeFileSync(path25.join(dir, "hooks", "hooks.json"), JSON.stringify({ hooks: { SessionStart: [group(`"${bin}" hook`)], Stop: [group(`"${bin}" hook`)] } }, null, 2) + `
+  fs24.writeFileSync(path28.join(dir, "hooks", "hooks.json"), JSON.stringify({ hooks: { SessionStart: [group(`"${bin}" hook`)], Stop: [group(`"${bin}" hook`)] } }, null, 2) + `
 `);
-  console.log(`hooks    ${path25.join(dir, "hooks", "hooks.json")}`);
-  const gooseConf = path25.join(os9.homedir(), ".config", "goose", "config.yaml");
+  console.log(`hooks    ${path28.join(dir, "hooks", "hooks.json")}`);
+  const gooseConf = path28.join(os9.homedir(), ".config", "goose", "config.yaml");
   const entry = [
     `  crosstalk:`,
     `    enabled: true`,
@@ -9710,12 +10328,12 @@ async function installGoose() {
 `);
   let conf = "";
   try {
-    conf = fs21.readFileSync(gooseConf, "utf8");
+    conf = fs24.readFileSync(gooseConf, "utf8");
   } catch {}
   if (conf.includes(`cmd: ${bin}`)) {
     console.log(`tools    already in ${gooseConf}`);
   } else if (/^extensions:\n/m.test(conf)) {
-    fs21.writeFileSync(gooseConf, conf.replace(/^extensions:\n/m, `extensions:
+    fs24.writeFileSync(gooseConf, conf.replace(/^extensions:\n/m, `extensions:
 ${entry}
 `));
     console.log(`tools    ${gooseConf}`);
@@ -9725,8 +10343,8 @@ ${entry}
 ${entry}
 `);
   } else {
-    fs21.mkdirSync(path25.dirname(gooseConf), { recursive: true });
-    fs21.writeFileSync(gooseConf, `${conf.trimEnd()}
+    fs24.mkdirSync(path28.dirname(gooseConf), { recursive: true });
+    fs24.writeFileSync(gooseConf, `${conf.trimEnd()}
 
 extensions:
 ${entry}
@@ -9741,13 +10359,13 @@ set of facts on start.`);
 }
 async function installCursor() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path25.join(os9.homedir(), ".cursor");
-  const file = path25.join(dir, "hooks.json");
-  fs21.mkdirSync(dir, { recursive: true });
+  const dir = path28.join(os9.homedir(), ".cursor");
+  const file = path28.join(dir, "hooks.json");
+  fs24.mkdirSync(dir, { recursive: true });
   let cfg = { version: 1, hooks: {} };
-  if (fs21.existsSync(file)) {
+  if (fs24.existsSync(file)) {
     try {
-      cfg = JSON.parse(fs21.readFileSync(file, "utf8"));
+      cfg = JSON.parse(fs24.readFileSync(file, "utf8"));
     } catch {
       die(`${file} is not valid JSON. Fix or move it, then run this again.`);
     }
@@ -9758,10 +10376,10 @@ async function installCursor() {
     const others = (cfg.hooks[step] ?? []).filter((h) => !String(h?.command ?? "").includes("crosstalk"));
     cfg.hooks[step] = [...others, { type: "command", command: `"${bin}" hook` }];
   }
-  fs21.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
+  fs24.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
 `);
   console.log(`hooks    ${file}`);
-  console.log(`tools    add the MCP server in ${path25.join(dir, "mcp.json")}`);
+  console.log(`tools    add the MCP server in ${path28.join(dir, "mcp.json")}`);
   console.log(`
 Cursor drops any injected text over 10,000 characters rather than shortening
 it, so crosstalk trims to fit and says so where it cut.`);
@@ -9774,19 +10392,19 @@ var CODEX_EVENT_KEY = {
   Stop: "stop"
 };
 function codexHooksNeedingTrust() {
-  const file = path25.join(os9.homedir(), ".codex", "hooks.json");
-  const conf = path25.join(os9.homedir(), ".codex", "config.toml");
-  if (!fs21.existsSync(file))
+  const file = path28.join(os9.homedir(), ".codex", "hooks.json");
+  const conf = path28.join(os9.homedir(), ".codex", "config.toml");
+  if (!fs24.existsSync(file))
     return [];
   let hooks;
   try {
-    hooks = JSON.parse(fs21.readFileSync(file, "utf8")).hooks ?? {};
+    hooks = JSON.parse(fs24.readFileSync(file, "utf8")).hooks ?? {};
   } catch {
     return [];
   }
   let toml = "";
   try {
-    toml = fs21.readFileSync(conf, "utf8");
+    toml = fs24.readFileSync(conf, "utf8");
   } catch {}
   const untrusted = [];
   for (const [event, groups] of Object.entries(hooks)) {
@@ -9807,13 +10425,13 @@ function codexHooksNeedingTrust() {
 }
 async function installCodex() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path25.join(os9.homedir(), ".codex");
-  const file = path25.join(dir, "hooks.json");
-  fs21.mkdirSync(dir, { recursive: true });
+  const dir = path28.join(os9.homedir(), ".codex");
+  const file = path28.join(dir, "hooks.json");
+  fs24.mkdirSync(dir, { recursive: true });
   let cfg = {};
-  if (fs21.existsSync(file)) {
+  if (fs24.existsSync(file)) {
     try {
-      cfg = JSON.parse(fs21.readFileSync(file, "utf8"));
+      cfg = JSON.parse(fs24.readFileSync(file, "utf8"));
     } catch {
       die(`${file} is not valid JSON. Fix or move it, then run this again.`);
     }
@@ -9823,7 +10441,7 @@ async function installCodex() {
     const others = (cfg.hooks[event] ?? []).filter((g) => !JSON.stringify(g).includes("crosstalk"));
     cfg.hooks[event] = [...others, { hooks: [{ type: "command", command: `"${bin}" hook` }] }];
   }
-  fs21.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
+  fs24.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
 `);
   console.log(`hooks    ${file}`);
   console.log(`
@@ -9845,22 +10463,22 @@ function registerMcp(cli, args, bin) {
 }
 async function installPath() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path25.join(os9.homedir(), ".local", "bin");
-  const link = path25.join(dir, "crosstalk");
-  fs21.mkdirSync(dir, { recursive: true });
+  const dir = path28.join(os9.homedir(), ".local", "bin");
+  const link = path28.join(dir, "crosstalk");
+  fs24.mkdirSync(dir, { recursive: true });
   let existing = "";
   try {
-    existing = fs21.readlinkSync(link);
+    existing = fs24.readlinkSync(link);
   } catch {
-    if (fs21.existsSync(link))
+    if (fs24.existsSync(link))
       die(`${link} already exists and is not a link. Move it, then run this again.`);
   }
   if (existing && existing !== bin)
     console.log(`replacing a link to ${existing}`);
   try {
-    fs21.unlinkSync(link);
+    fs24.unlinkSync(link);
   } catch {}
-  fs21.symlinkSync(bin, link);
+  fs24.symlinkSync(bin, link);
   console.log(`linked   ${link} -> ${bin}`);
   const onPath = (process.env.PATH ?? "").split(":").includes(dir);
   console.log(onPath ? `

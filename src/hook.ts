@@ -283,8 +283,13 @@ const chromeOut = (hookSpecific?: Record<string, unknown>) => {
   const out: Record<string, unknown> = {}
   if (chrome.terminalSequence) out.terminalSequence = chrome.terminalSequence
   // A spawned agent's own name wins; otherwise the thread's title (src/threads).
-  const named = chrome.sessionTitle && /^(SessionStart|UserPromptSubmit)$/.test(eventName) ? chrome.sessionTitle : sessionTitle
+  const named = termHook.withBadge(chrome.sessionTitle && /^(SessionStart|UserPromptSubmit)$/.test(eventName) ? chrome.sessionTitle : sessionTitle, chrome.badge)
   const title = named ? { sessionTitle: named } : {}
+  // The worktree's ports and its running services, for the agent at SessionStart (src/services/).
+  if (chrome.context && isSessionStart) {
+    const extra = hookSpecific?.additionalContext
+    hookSpecific = { ...(hookSpecific ?? {}), additionalContext: [chrome.context, extra].filter(Boolean).join("\n\n") }
+  }
   if (hookSpecific || Object.keys(title).length) out.hookSpecificOutput = { hookEventName: eventName, ...(hookSpecific ?? {}), ...title }
   return out
 }

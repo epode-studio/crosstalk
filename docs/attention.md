@@ -55,6 +55,11 @@ respawned in the same pane with `remain-on-exit` holding it open. The next
 session to register in that folder is put in the same threads. Where the tab
 cannot be typed into, nothing is ended.
 
+While something the session started still runs (a dev server from a
+backgrounded Bash call, a watcher), nothing is ended: the fresh start waits,
+silently, and if the context fills up meanwhile Claude Code compacts as usual
+([services.md](services.md)).
+
 ## Staffing
 
 A thread with a session active in it is stuck when a blocking question has

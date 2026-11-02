@@ -31,6 +31,7 @@ import { focusSession } from "./attention/show.ts"
 import * as St from "./attention/staffing.ts"
 import type { View } from "./attention/dispose.ts"
 import { request } from "./client.ts"
+import * as Pt from "./services/ports.ts"
 
 export const DEP_DIRS = ["node_modules", ".venv", "venv"]
 export const MAX_AGENTS = 8
@@ -404,6 +405,10 @@ export function spawnAgents(o: {
       notes.push(`could not make a copy for ${p.name}: ${add.out.split("\n").pop()}`)
       continue
     }
+    // Its own block of ports, from the start (src/services/ports.ts).
+    try {
+      Pt.blockFor(fs.realpathSync(p.worktree))
+    } catch {}
     const linked: string[] = []
     for (const [from, to] of p.links) {
       try {

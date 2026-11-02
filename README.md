@@ -502,6 +502,11 @@ The measure is time from idea to merge, and how few of your minutes it took.
   in its tab, with its conversation. [How](docs/restore.md).
 - **Sessions you already had open** when you installed crosstalk are brought in
   once you say yes.
+- **Dev servers outlive the session.** Agents run them with `crosstalk_serve`,
+  in crosstalk's background tmux, on their worktree's own ports, so parallel
+  worktrees never fight over :3000; the next session is told what is running
+  where, and a session is never restarted, or a worktree removed, under
+  something still running. [How](docs/services.md).
 - **Attach the thing, not a description of it.** "Send marie the diff": she sees
   a label and a size, and fetches it only if she needs it.
 - **No commands to learn.** Say it to any agent: "marie gave me words:
@@ -622,6 +627,7 @@ Permission relay across people is not implemented and never will be.
 - [Architecture](docs/architecture.md), how the pieces fit and what happens when a machine sleeps
 
 - [Restore after a restart](docs/restore.md), getting every session back in its tab after a restart or crash
+- [Services](docs/services.md), dev servers and watchers that outlive sessions, on each worktree's own ports
 
 - [The next generation](docs/design/next-generation.md), the design this README describes, and what is still open
 

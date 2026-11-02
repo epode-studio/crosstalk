@@ -101,6 +101,10 @@ in the thread the same way, with staffing's own brief.
 
 ## Background agents
 
+Dev servers and watchers an agent starts go in the same tmux server, as
+services that outlive the session, on the worktree's own ports
+([services.md](services.md)).
+
 `background: true` ("in the background", "without a window") runs the agent in crosstalk's own
 tmux server, `tmux -L crosstalk`, with one tmux session per agent. Closing every window leaves
 it running. To watch it, say "show me auth" (`crosstalk_show`, or `crosstalk show auth`). That
@@ -153,6 +157,11 @@ while you work in it would be a surprise. So crosstalk only places new tabs. A w
 already mixes repositories stays mixed.
 
 ## Cleaning up worktrees
+
+Nothing in use is removed: a worktree with a process working in it is kept,
+and one with a crosstalk service running in it (`crosstalk_serve`) is removed
+only after the person's yes, which stops the service first
+([services.md](services.md)).
 
 A worktree crosstalk made is finished when both of these are true:
 

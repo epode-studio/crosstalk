@@ -8,7 +8,10 @@
 //                 had sessions in, whose branch is merged into the default
 //                 branch or gone (its HEAD then already in the default
 //                 branch), with no change and nothing untracked, and that no
-//                 live session or process is in
+//                 live session or process is in (by working directory, which
+//                 covers one listening from inside it) and no crosstalk
+//                 service runs in (docs/services.md): those stop only with
+//                 their thread's cleanup
 //   transcripts   ~/.claude/projects/<project>/<session>.jsonl, and the
 //                 session's folder beside it, untouched for 30 days, whose
 //                 working directory no longer exists
@@ -25,6 +28,7 @@ import path from "node:path"
 import { execFile } from "node:child_process"
 import { git as liveGit, worktrees, type Git } from "../terminal/repo.ts"
 import { claudeDir } from "../metrics/transcripts.ts"
+import { cwds as procCwds } from "../services/procs.ts"
 
 export const DAY = 24 * 60 * 60_000
 export const OLD_DAYS = () => Number(process.env.CROSSTALK_DISK_OLD_DAYS ?? 30)
@@ -66,6 +70,8 @@ export type Env = {
   sizeKb: (p: string) => Promise<number>
   /** The thread a branch of a repo belongs to, when crosstalk knows it. */
   threadOf?: (repoRoot: string, branch: string) => string | undefined
+  /** crosstalk services (crosstalk_serve) running in a worktree: it is kept while any is. */
+  services?: (worktree: string) => { name: string }[]
 }
 
 export const isClaudeWorktree = (p: string) => /[\\/]\.claude[\\/]worktrees[\\/]/.test(path.resolve(p) + path.sep)
@@ -206,6 +212,11 @@ export async function scan(e: Env): Promise<Report> {
         keep("a session is working in it")
         continue
       }
+      const svcs = e.services?.(w.path) ?? []
+      if (svcs.length) {
+        keep(`a crosstalk service is running in it (${svcs.map((x) => x.name).join(", ")})`)
+        continue
+      }
       if (!clean(w.path, g)) {
         keep("it has changes")
         continue
@@ -300,18 +311,12 @@ export function free(confirmed: Item[], fresh: Report, g: Git = liveGit): Freed[
 
 export const human = (kb: number) => (kb >= 1024 * 1024 ? `${(kb / 1024 / 1024).toFixed(1).replace(/\.0$/, "")} GB` : kb >= 1024 ? `${Math.round(kb / 1024)} MB` : `${kb} KB`)
 
-/** Live working directories: Claude Code's registry, crosstalk's restore records and, on Linux, every process's cwd. */
+/** Live working directories: Claude Code's registry, crosstalk's restore records and every process's cwd (/proc on Linux, lsof elsewhere). */
 export function liveCwds(o: { registry?: { cwd: string }[]; records?: { cwd: string }[] } = {}): string[] {
   const out = new Set<string>([...(o.registry ?? []), ...(o.records ?? [])].map((r) => r.cwd).filter(Boolean))
-  if (process.platform === "linux")
-    try {
-      for (const pid of fs.readdirSync("/proc")) {
-        if (!/^\d+$/.test(pid)) continue
-        try {
-          out.add(fs.readlinkSync(`/proc/${pid}/cwd`))
-        } catch {}
-      }
-    } catch {}
+  try {
+    for (const c of procCwds().values()) out.add(c)
+  } catch {}
   return [...out]
 }
 
