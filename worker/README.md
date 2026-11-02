@@ -37,7 +37,7 @@ have Cloudflare comparing a tag it has already run against different contents.
 Then point crosstalk at it, on both machines:
 
 ```
-/crosstalk:room new --relay wss://crosstalk-relay.<your-subdomain>.workers.dev
+/crosstalk:join --relay wss://crosstalk-relay.<your-subdomain>.workers.dev
 ```
 
 Set `CROSSTALK_DEFAULT_RELAY` to that URL and invites become four words with

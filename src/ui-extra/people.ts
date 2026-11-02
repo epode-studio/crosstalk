@@ -1,7 +1,7 @@
-// Rooms, links, trust and muting in plain words: what /crosstalk:room,
-// /crosstalk:link, /crosstalk:trust and /crosstalk:mute did, for the
-// crosstalk_people actions room, link, trust and mute. The slash commands stay for
-// scripts and people who like them.
+// Joining with words, links, trust and muting in plain words: what the old
+// room, link, trust and mute slash commands did, for the
+// crosstalk_people actions room, link, trust and mute. `crosstalk room`, `link`, `trust` and `mute` stay in the CLI for
+// scripts.
 //
 // The words. Four words (or six, for a link) are a secret said aloud once, so
 // they go to the person and no further than they must:
@@ -27,7 +27,7 @@ import { runCli, startCli } from "./run.ts"
 export type Out = { ok: boolean; text: string }
 
 const INVITE = /^ {4}(\d{3,6}-[a-z]+(?:-[a-z]+)+(?: at \S+)?)\s*$/m
-const LINK = /^ {4}\/crosstalk:link (\d{3,6}-[a-z]+(?:-[a-z]+)+(?: at \S+)?)\s*$/m
+const LINK = /^ {4}\/crosstalk:join link (\d{3,6}-[a-z]+(?:-[a-z]+)+(?: at \S+)?)\s*$/m
 
 export const DONE = "Done"
 export const CANCEL = "Cancel it"
@@ -92,7 +92,7 @@ async function roomOut(a: Record<string, any>, o: { sessionId: string; root: str
     const args = ["room", "new", ...(a.label ? ["--label", String(a.label)] : []), ...(a.relay ? ["--relay", String(a.relay)] : [])]
     const log = path.join(P.root, "ui-extra", `room-${Date.now()}.log`)
     const r = await startCli(o.root, args, { log, until: INVITE })
-    if (!r.ok || !r.match) return { ok: false, text: `could not start a room: ${r.out.split("\n").filter(Boolean).slice(-2).join(" ") || "no answer"}` }
+    if (!r.ok || !r.match) return { ok: false, text: `could not get words: ${r.out.split("\n").filter(Boolean).slice(-2).join(" ") || "no answer"}` }
     const words = r.match[1]
     if (o.mod && o.sessionId) {
       showWords(o.sessionId, {
@@ -103,12 +103,12 @@ async function roomOut(a: Record<string, any>, o: { sessionId: string; root: str
       })
       return {
         ok: true,
-        text: "Started a room. The invite words are on the user's screen, in crosstalk's picker, and deliberately not here. Tell the user to read them to the other person, whose agent joins with them. They work once, for fifteen minutes; crosstalk_people action \"peers\" shows the person once they are in.",
+        text: "Made four words. The words are on the user's screen, in crosstalk's picker, and deliberately not here. Tell the user to read them to the other person, whose agent joins with them. They work once, for fifteen minutes; crosstalk_people action \"peers\" shows the person once they are in.",
       }
     }
     return once(words, {
       ok: true,
-      text: `Started a room. Show the user these words exactly once, as written, and never repeat them in a later reply: ${words}\nThey read them aloud to the other person, who tells their own agent "join crosstalk with <the words>". They work once and expire in fifteen minutes; crosstalk_people action "peers" shows the person once they are in.`,
+      text: `Made four words. Show the user these words exactly once, as written, and never repeat them in a later reply: ${words}\nThey read them aloud to the other person, who tells their own agent "join crosstalk with <the words>". They work once and expire in fifteen minutes; crosstalk_people action "peers" shows the person once they are in.`,
     })
   }
   if (action === "join") {
@@ -129,7 +129,7 @@ async function roomOut(a: Record<string, any>, o: { sessionId: string; root: str
     case "create": {
       if (!name) return { ok: false, text: "name the room" }
       const r = await request({ op: "room_create", name })
-      return r.ok ? { ok: true, text: `Created #${r.room}. Invite people you already share a room with (op "invite").` } : { ok: false, text: r.error }
+      return r.ok ? { ok: true, text: `Created #${r.room}. Invite people you already joined with words (op "invite").` } : { ok: false, text: r.error }
     }
     case "invite": {
       if (!name || !people.length) return { ok: false, text: "say which room and who" }
@@ -138,7 +138,7 @@ async function roomOut(a: Record<string, any>, o: { sessionId: string; root: str
         const r = await request({ op: "room_invite", room: name, peer: p })
         said.push(r.ok ? `invited ${r.invited} to #${r.room}` : `${p}: ${r.error}`)
       }
-      return { ok: true, text: `${said.join("; ")}. Each of them accepts before anything from the room reaches them.` }
+      return { ok: true, text: `${said.join("; ")}. Each of them accepts before anything from these people reaches them.` }
     }
     case "accept":
     case "decline":
@@ -154,7 +154,7 @@ async function roomOut(a: Record<string, any>, o: { sessionId: string; root: str
       if (!r.ok) return { ok: false, text: r.error }
       return {
         ok: true,
-        text: `Removed ${r.removed} from #${name}; the room has a new key.${r.unreachable?.length ? ` Could not hand it to ${r.unreachable.join(", ")}: someone with a direct channel to them has to pass it on.` : ""}`,
+        text: `Removed ${r.removed} from #${name}; what they share has a new key.${r.unreachable?.length ? ` Could not hand it to ${r.unreachable.join(", ")}: someone with a direct channel to them has to pass it on.` : ""}`,
       }
     }
     default:
@@ -205,7 +205,7 @@ export async function trustTool(a: Record<string, any>): Promise<Out> {
   if (!who) {
     t.default = level
     trust.save(t)
-    return { ok: true, text: `Anyone in a room with you, by default: ${level} (${trust.DESCRIPTION[level]}).` }
+    return { ok: true, text: `Anyone you joined with words, by default: ${level} (${trust.DESCRIPTION[level]}).` }
   }
   const room = a.room ? String(a.room).replace(/^#/, "") : undefined
   if (room || loadPeers()[who]) {

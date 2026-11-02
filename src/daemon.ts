@@ -69,7 +69,7 @@ import { startHistory } from "./urls/history/sync.ts"
 
 const identity = loadIdentity()
 if (!identity) {
-  console.error("crosstalk: no identity. Run /crosstalk:room new first.")
+  console.error("crosstalk: no identity. Run /crosstalk:join first.")
   process.exit(1)
 }
 
@@ -891,7 +891,7 @@ function notifyInvitation(room: rooms.Room) {
       peer: room.pending!.invitedBy,
       peerSession: `#${room.name}`,
       intent: "fyi",
-      kind: `room invitation (with ${others.join(", ") || "nobody else yet"}); accept with /crosstalk:room accept ${room.name}`,
+      kind: `room invitation (with ${others.join(", ") || "nobody else yet"}); accept by telling your agent to accept ${room.name}`,
     },
   ).catch(() => {})
 }
@@ -1026,7 +1026,7 @@ function onEnvelope(
         correlation: env.correlation,
         text: ctx?.strangerInRoom
           ? "Refused: we share a room but no direct channel, and a question from someone without one is capped at a notice. Send a message instead."
-          : `Refused: you are at "${level}" here, and a question needs "ask". They can raise it with /crosstalk:trust. Send a message instead.`,
+          : `Refused: you are at "${level}" here, and a question needs "ask". They can raise it by telling their agent to let you ask them questions. Send a message instead.`,
       })
     return
   }
@@ -1703,7 +1703,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       ]
       if (req.write) {
         const room = rooms.normalise(String(req.room ?? roomNames[0] ?? ""))
-        if (!room) return { ok: false, error: "no room to put work in; run /crosstalk:room new first" }
+        if (!room) return { ok: false, error: "no room to put work in; run /crosstalk:join first" }
         const now = Date.now()
         let op: tasks.TaskOp
         if (req.write === "add") {
@@ -1794,7 +1794,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       ]
       if (req.write) {
         const room = rooms.normalise(String(req.room ?? roomNames[0] ?? ""))
-        if (!room) return { ok: false, error: "no room to write to; run /crosstalk:room new first" }
+        if (!room) return { ok: false, error: "no room to write to; run /crosstalk:join first" }
         const now = Date.now()
         let op: facts.Op
         if (req.write === "add") {

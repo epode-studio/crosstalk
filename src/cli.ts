@@ -122,7 +122,7 @@ function refuseIfIdentityDamaged() {
 async function ready() {
   refuseIfIdentityDamaged()
   if (!loadIdentity())
-    die("crosstalk is not set up yet.\n\n  /crosstalk:room new     start a room, and read the words to someone")
+    die("crosstalk is not set up yet.\n\n  /crosstalk:join     get four words to read to someone outside your repos")
   if (!(await ensureDaemon(ROOT_DIR)))
     die("the daemon would not start. See ~/.claude/crosstalk/daemon.log")
 }
@@ -175,7 +175,7 @@ function identityOrCreate() {
   const id = { ...newIdentity(label), machine: machineName() }
   saveIdentity(id)
   console.log(`you are "${label}" on "${id.machine}"   ${fingerprint(id.ed.pub)}`)
-  console.log(`change it any time with /crosstalk:rename me <name>`)
+  console.log(`change it any time with crosstalk rename me <name>`)
   return id
 }
 
@@ -315,7 +315,7 @@ function adoptPeer(peer: ReturnType<typeof asPeer>): string {
       label = `${peer.label}-${i}`
     }
     console.log(
-      `\nYou already have a "${peer.label}" (${peers[peer.label].fingerprint}), so this one is "${label}".\nRename it with /crosstalk:rename ${label} <name>.`,
+      `\nYou already have a "${peer.label}" (${peers[peer.label].fingerprint}), so this one is "${label}".\nRename it with crosstalk rename ${label} <name>.`,
     )
   }
 
@@ -402,7 +402,7 @@ yours. If both cross over, nobody is in the middle.
 They start at "ask": they can put a line on your screen, and their agent can ask
 yours a question. Their words never enter your session unless you raise them.
 
-  /crosstalk:trust`)
+  crosstalk trust`)
     return
   }
 
@@ -413,7 +413,7 @@ yours a question. Their words never enter your session unless you raise them.
   // said nothing, and quietly handed out the hosted relay instead.
   const url = has("--host") || has("--public") ? await startRelay() : loadRelay().url
   if (!(await relayReachable(url)))
-    die(`no relay at ${httpBase(url)}.\n\nRun this instead and crosstalk will host one for you:\n  /crosstalk:room new --host`)
+    die(`no relay at ${httpBase(url)}.\n\nRun this instead and crosstalk will host one for you:\n  /crosstalk:join --host`)
 
   const slotRes = await fetch(`${httpBase(url)}/slot`, { method: "POST" }).catch(() => null)
   if (!slotRes?.ok) die("the relay would not give out a slot. Try again in a moment.")
@@ -433,7 +433,7 @@ Tell them this:
 
     ${invite}
 
-They run  /crosstalk:room join ${invite}
+They run  /crosstalk:join ${invite}
 
 Say it out loud, or send it somewhere you already trust. The number is public;
 the words are the secret. They work once and expire in fifteen minutes.
@@ -475,7 +475,7 @@ yours. If both cross over, nobody is in the middle.
 They start at "ask": a line on your screen, and their agent may ask yours a
 question. Nothing they do puts their words inside your turn.
 
-  /crosstalk:trust`)
+  crosstalk trust`)
 }
 
 // --- everything else -------------------------------------------------------------
@@ -487,7 +487,7 @@ async function peers() {
   console.log(`  you   ${r.me.label}   relay ${r.relay}`)
   for (const s of r.me.sessions) console.log(`        ${s.name}  ${s.cwd}  ${s.status}`)
   if (!r.peers.length) {
-    console.log(`\n  Nobody yet. Run /crosstalk:room new and read the words to someone.\n`)
+    console.log(`\n  Nobody yet. Run /crosstalk:join and read the words to someone, or work in a repo you share.\n`)
     return
   }
   for (const p of r.peers) {
@@ -530,7 +530,7 @@ Token figures are a rough estimate from message length, for orientation only.\n`
 async function status() {
   const id = loadIdentity()
   if (identityUnreadable()) return refuseIfIdentityDamaged()
-  if (!id) return console.log("crosstalk: not set up. Run /crosstalk:room new.")
+  if (!id) return console.log("crosstalk: not set up. Run /crosstalk:join.")
   heading()
   console.log(`  identity  ${id.label}  ${fingerprint(id.ed.pub)}`)
   console.log(`  relay     ${loadRelay().url}`)
@@ -555,7 +555,7 @@ async function doctor() {
       ? `${id.label}  ${fingerprint(id.ed.pub)}`
       : identityUnreadable()
         ? `${P.identity} will not parse. Restore it from a backup rather than starting again.`
-        : "none, run /crosstalk:room new",
+        : "none, run /crosstalk:join",
   ])
   rows.push([
     "peers",
@@ -746,7 +746,7 @@ async function room() {
     const direct = r.direct ?? []
     if (!r.rooms.length && !direct.length) {
       console.log(
-        "\nYou are not in anything yet.\n\n  /crosstalk:room new             start one, and read the words to someone\n  /crosstalk:room join <words>    join one you were read\n  /crosstalk:room create platform  one for a whole team, any size\n",
+        "\nYou are not in anything yet.\n\n  /crosstalk:join                 get four words to read to someone\n  /crosstalk:join <words>         join people with the words you were read\n  crosstalk room create platform  one for a whole team, any size\n",
       )
       return
     }
@@ -761,7 +761,7 @@ async function room() {
       if (room.pending) {
         console.log(`  #${room.name}   INVITATION from ${room.pending.invitedBy}`)
         console.log(`      ${who}`)
-        console.log(`      accept:  /crosstalk:room accept ${room.name}`)
+        console.log(`      accept:  crosstalk room accept ${room.name}`)
       } else {
         console.log(`  #${room.name}`.padEnd(18) + who)
       }
@@ -774,14 +774,14 @@ async function room() {
 
   switch (verb) {
     case "create": {
-      const name = rest[0] ?? die("name the room: /crosstalk:room create platform")
+      const name = rest[0] ?? die("name the room: crosstalk room create platform")
       const r = await request({ op: "room_create", name })
-      say(r, `created #${r.room}. Invite someone you already share a room with:\n\n  /crosstalk:room invite ${r.room} <peer>\n`)
+      say(r, `created #${r.room}. Invite someone you already share a room with:\n\n  crosstalk room invite ${r.room} <peer>\n`)
       return
     }
     case "invite": {
       const [name, ...people] = rest
-      if (!name || !people.length) die("usage: /crosstalk:room invite platform marie jo")
+      if (!name || !people.length) die("usage: crosstalk room invite platform marie jo")
       for (const p of people) {
         const r = await request({ op: "room_invite", room: name, peer: p })
         r.ok ? console.log(`invited ${r.invited} to #${r.room}`) : console.error(`${p}: ${r.error}`)
@@ -792,7 +792,7 @@ async function room() {
     case "accept":
     case "decline":
     case "leave": {
-      const name = rest[0] ?? die(`usage: /crosstalk:room ${verb} platform`)
+      const name = rest[0] ?? die(`usage: crosstalk room ${verb} platform`)
       const r = await request({ op: `room_${verb}`, room: name })
       say(r, verb === "accept" ? `joined #${r.room}` : `left #${r.room}`)
       return
@@ -800,7 +800,7 @@ async function room() {
     case "kick":
     case "remove": {
       const [name, who] = rest
-      if (!name || !who) die("usage: /crosstalk:room kick platform marie")
+      if (!name || !who) die("usage: crosstalk room kick platform marie")
       const r = await request({ op: "room_kick", room: name, peer: who })
       if (!r.ok) die(r.error)
       console.log(`removed ${r.removed} from #${name} and rekeyed to epoch ${r.rekeyedTo}`)
@@ -811,7 +811,7 @@ async function room() {
       return
     }
     default:
-      die(`unknown: /crosstalk:room ${verb}\n\nTry: list, create, invite, accept, decline, leave, kick`)
+      die(`unknown: crosstalk room ${verb}\n\nTry: list, create, invite, accept, decline, leave, kick`)
   }
 }
 
@@ -837,7 +837,7 @@ async function rename() {
   // only affects how you introduce yourself to someone new.
   if (has("--me") || a === "me") {
     const to = (has("--me") ? a : b)?.trim()
-    if (!to) die("usage: /crosstalk:rename me <newname>")
+    if (!to) die("usage: crosstalk rename me <newname>")
     const id = loadIdentity()
     if (!id) die("no identity yet")
     const was = id.label
@@ -845,13 +845,13 @@ async function rename() {
     saveIdentity(id)
     console.log(`you are "${to}" now, was "${was}".`)
     console.log("People already in a room with you keep the name they gave you.")
-    if (daemonRunning()) console.log("Restart the daemon to advertise it: /crosstalk:status then crosstalk daemon restart")
+    if (daemonRunning()) console.log("Restart the daemon to advertise it: crosstalk daemon restart")
     return
   }
 
   if (!a || !b) {
     const peers = loadPeers()
-    console.log(`\nusage: /crosstalk:rename <current> <new>\n       /crosstalk:rename me <new>\n`)
+    console.log(`\nusage: crosstalk rename <current> <new>\n       crosstalk rename me <new>\n`)
     console.log(`known: ${Object.keys(peers).join(", ") || "nobody yet"}\n`)
     return
   }
@@ -921,9 +921,9 @@ async function trustCmd() {
     console.log("\n  levels, each including the ones before it\n")
     for (const l of trust.LEVELS) console.log(`    ${l.padEnd(10)}${trust.DESCRIPTION[l]}`)
     console.log(`
-  /crosstalk:trust marie ask          pin a person
-  /crosstalk:trust incident deliver   set a room, for everyone in it
-  /crosstalk:trust marie mute --in ideas
+  crosstalk trust marie ask          pin a person
+  crosstalk trust incident deliver   set a room, for everyone in it
+  crosstalk trust marie mute --in ideas
 `)
     return
   }
@@ -991,7 +991,7 @@ async function attention() {
   console.log(`
   Nothing here is capped. This is a record of who has been reaching you, so
   that if someone is reaching you too often you can say so, per person, with
-  /crosstalk:trust.
+  crosstalk trust.
 `)
 }
 
@@ -1022,7 +1022,7 @@ async function tasksCmd() {
     console.log(`
   Nothing on the list.
 
-    /crosstalk:tasks add "wire the upload retry" --for marie
+    crosstalk tasks add "wire the upload retry" --for marie
 `)
     return
   }
@@ -1064,8 +1064,8 @@ async function factsCmd() {
     console.log(`
   Nothing written down yet.
 
-    /crosstalk:facts add "the API returns snake_case"
-    /crosstalk:facts add "uploads chunk at 4KB" --in palpable-fw
+    crosstalk facts add "the API returns snake_case"
+    crosstalk facts add "uploads chunk at 4KB" --in palpable-fw
 `)
     return
   }
@@ -1157,7 +1157,7 @@ and a message reaches whichever machine you are sitting at.`)
     return
   }
 
-  if (!id) die("nothing to link yet. Run /crosstalk:room new first, or run this on the machine that already has your identity.")
+  if (!id) die("nothing to link yet. Run /crosstalk:join first, or run this on the machine that already has your identity.")
   const url0 = loadRelay().url
   const slotRes = await fetch(`${httpBase(url0)}/slot`, { method: "POST" }).catch(() => null)
   if (!slotRes?.ok) die("the relay would not give out a slot. Try again in a moment.")
@@ -1181,7 +1181,7 @@ and a message reaches whichever machine you are sitting at.`)
   console.log(`
 On your other machine, run:
 
-    /crosstalk:link ${slot}-${phrase}
+    /crosstalk:join link ${slot}-${phrase}
 
 Waiting…`)
 
@@ -1726,7 +1726,22 @@ async function team() {
   if (r.error) console.log(`\n${r.error}`)
 }
 
+/**
+ * `/crosstalk:join`: the four words, for people outside your repos. With none,
+ * words to read to someone; with the words you were read, joining them;
+ * `link <six words>` makes this machine another of yours. The one slash
+ * command for people, because words typed as a prompt would reach the model.
+ */
+async function join() {
+  if (positional[0] === "link") {
+    positional.shift()
+    return link()
+  }
+  return startRoom(positional.join(" ").trim())
+}
+
 const commands: Record<string, () => Promise<void>> = {
+  join,
   link,
   team,
   post,

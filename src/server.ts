@@ -169,7 +169,7 @@ function subscribe() {
 await mcp.connect(new StdioServerTransport())
 
 if (!loadIdentity()) {
-  console.error("crosstalk: no room yet. Run /crosstalk:room new.")
+  console.error("crosstalk: no room yet. Run /crosstalk:join.")
 } else {
   ensureDaemon()
     .then((up) => {
