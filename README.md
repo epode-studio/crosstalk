@@ -186,6 +186,25 @@ terminal app you already use and turns it into the workspace.
 - **Nothing is lost.** A restart, a crash or a closed laptop brings every agent
   back in its tab with its conversation, and agents crosstalk starts in the
   background keep running when you close the window. "Show me auth" opens one.
+- **Close one cleanly.** "Close billing" ends it as if you had quit it, once
+  you say yes on the picker. Its dev server keeps running unless you say
+  otherwise. It is archived, not lost, so a restart never offers it back.
+- **Find and resume past sessions.** "Find the session where I fixed the token
+  refresh" searches what every past session was about: its thread, recap,
+  files, title and branch, including sessions from Claude Code's own history.
+  "Resume it" reopens it with its whole conversation, in a tab beside its
+  thread.
+- **Rename and move.** "Call this one payments" renames the tab, the session
+  and its place in its threads. "This belongs in auth" moves the session into
+  that thread, and it stays there.
+- **Pop in and out.** "Send billing to the background" carries a tab's session
+  on out of sight, conversation and all, with its services untouched. "Pop
+  billing out" brings it back into a tab.
+- **Across your machines.** From your laptop, "what's running on my desk?",
+  "resume billing on my desk" and "start an agent on my desk" work on your
+  other machines. Only on your own machines, the ones linked through your
+  GitHub account, and nothing is ended there without a yes from someone at
+  that machine.
 - **Not just your agents.** Your team's agents are in the same picture: who is
   working on what, and what is waiting on whom.
 

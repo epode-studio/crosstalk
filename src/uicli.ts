@@ -19,6 +19,7 @@ import * as ui from "./uistate.ts"
 import * as gather from "./gather.ts"
 import * as cleanup from "./cleanup.ts"
 import * as extra from "./ui-extra/uicli.ts"
+import * as sessionCtl from "./sessions/control.ts"
 
 type Out = Record<string, unknown>
 
@@ -172,6 +173,12 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
       if (id.startsWith("restore:")) return print(restoreAct(session, id, action, value, root))
       if (id.startsWith("gather:")) return print(gatherAct(session, id, action, value, root))
       if (id.startsWith("cleanup:")) return print(cleanup.act(session, id, action, value))
+      // Close, background, rename, move, and actions from your other machines (src/sessions/control.ts):
+      // run from here, the mod's own process, and only on the person's pick, never an agent's shell.
+      if (id.startsWith("sess:")) {
+        if (action === "answer" && insideAgent()) return print({ ok: false, error: "this is for a person: answer it in crosstalk's picker" })
+        return print(await sessionCtl.act(session, id, action, value))
+      }
       // First use in a repo works with no identity and no daemon: a yes makes both.
       if (id.startsWith("connect:")) {
         if (action === "raised" || action === "later") return print(ui.withStore((items, now) => ui.act(items, id, action, now)))

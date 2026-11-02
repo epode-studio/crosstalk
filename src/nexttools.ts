@@ -5,6 +5,7 @@
 
 import { ensureDaemon, request } from "./client.ts"
 import * as firstuse from "./repotrust/firstuse.ts"
+import { otherMachines } from "./sessions/tools.ts"
 
 export const TOOLS = [
   {
@@ -16,8 +17,8 @@ export const TOOLS = [
   {
     name: "crosstalk_sessions",
     description:
-      "Every crosstalk session on this machine: its name, folder, threads, whether it is working, idle or waiting, and how many things wait on the user there. Call it when the user asks what is running (\"what's running?\", \"what are my sessions doing?\").",
-    inputSchema: { type: "object", properties: {} },
+      "Every crosstalk session on this machine, and on the user's other machines (their own, linked through their GitHub account): its name, folder, threads, whether it is working, idle or waiting, and how many things wait on the user there. Call it when the user asks what is running (\"what's running?\", \"what are my sessions doing?\", \"what's running on my desk?\"). With machine, only that machine's.",
+    inputSchema: { type: "object", properties: { machine: { type: "string", description: "One of the user's other machines; default: this one and every other" } } },
   },
   {
     name: "crosstalk_steer",
@@ -76,8 +77,13 @@ export async function callTool(name: string, a: any, o: { sessionId: string; cwd
     case "crosstalk_main":
       return reply(await request({ op: "main", ...base, on: a.on !== false }))
     case "crosstalk_sessions": {
-      const r = await request({ op: "sessions", ...base })
-      return r.ok ? ok({ main: r.main, sessions: r.sessions }) : err(r.error ?? "no answer")
+      const machine = typeof a.machine === "string" && a.machine.trim() ? a.machine.trim() : undefined
+      const r = machine ? { ok: true } : await request({ op: "sessions", ...base })
+      if (!r.ok) return err(r.error ?? "no answer")
+      // The user's other machines, over the sealed relay (src/sessions/remote.ts).
+      const others = await otherMachines({ sessionId: o.sessionId, machine })
+      if (machine) return others.ok ? ok({ machines: others.machines }) : err(others.error ?? "no answer")
+      return ok({ main: r.main, sessions: r.sessions, ...(others.machines?.length ? { otherMachines: others.machines } : {}) })
     }
     case "crosstalk_steer":
       return reply(await request({ op: "steer", ...base, session: a.session, text: a.text }))

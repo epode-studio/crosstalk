@@ -57,6 +57,7 @@ import { threadMuted } from "./ui-extra/mute.ts"
 import { createAttention } from "./attention/daemon.ts"
 import type { AttentionService } from "./attention/service.ts"
 import { spawnedAt } from "./spawn.ts"
+import { createSessionOps } from "./sessions/daemon.ts"
 
 const identity = loadIdentity()
 if (!identity) {
@@ -162,6 +163,8 @@ persistSessions()
 let coord: Coordinator
 // Recaps, disposable sessions, staffing, focus and notifications (src/attention/).
 let attention: AttentionService | undefined
+/** Rename, move, and your sessions on your other machines (src/sessions/). */
+let sessionOps: ReturnType<typeof createSessionOps> | undefined
 
 const threads = new ThreadService({
   tiebreak: (sid, cands, mode) => attention?.tiebreak(sid, cands, mode),
@@ -961,6 +964,9 @@ function onEnvelope(
 
   if (env.kind === "room_key") return acceptRoomKey(peerLabel, env)
 
+  // Your sessions across your own machines (src/sessions/remote.ts): own machines only.
+  if (sessionOps?.accept(peerLabel, env, !!ctx?.room)) return
+
   // Heads-ups, conflicts and standing rules (src/coordinator.ts): direct channels only.
   if (coord.accept(peerLabel, env, !!ctx?.room)) return
 
@@ -1510,7 +1516,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         pid: req.pid,
         // Claude Code's registry shows the title crosstalk gave the session
         // (`auth · api`); it is still called what it was called.
-        name: before?.title && req.name === before.title ? before.name : req.name,
+        name: sessionOps?.name(sessionId, before?.title && req.name === before.title ? before.name : req.name) ?? (before?.title && req.name === before.title ? before.name : req.name),
         title: before?.title,
         // A client that registers without one gets "", which matches no repo,
         // which is what an absent cwd already did.
@@ -2563,6 +2569,9 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       // Recaps, fresh sessions, staffing, focus and permission prompts.
       const a = await attention?.handle(req, resolveSession(req))
       if (a !== undefined) return a
+      // Rename, move, and your sessions on your other machines.
+      const so = await sessionOps?.handle(req)
+      if (so !== undefined) return so
       return { ok: false, error: `unknown op "${req.op}"` }
     }
   }
@@ -2630,6 +2639,19 @@ attention = createAttention({
     const reg = sessions.get(sid)
     return reg ? footprintOf(reg).repo : undefined
   },
+})
+sessionOps = createSessionOps({
+  identity,
+  machine: () => repotrust.thisMachine(identity!),
+  threads,
+  sessions: () => sessions,
+  peers: () => loadPeers(),
+  send: (label, env) => sendEnvelope(label, env),
+  log,
+  note: (id, text) => coord.note({ id, text }),
+  listLocal: () => coord.sessionsList(),
+  modLive: (sid) => modLive(sessions.get(sid)),
+  handle: (req) => handle(req as Req) as Promise<any>,
 })
 setInterval(() => attention?.tick(), Math.max(200, Number(process.env.CROSSTALK_ATTENTION_TICK_MS ?? 15_000)))
 

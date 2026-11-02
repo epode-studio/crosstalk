@@ -2,8 +2,8 @@
 // @bun
 
 // src/hook.ts
-import path23 from "path";
-import fs18 from "fs";
+import path26 from "path";
+import fs22 from "fs";
 
 // src/client.ts
 import net from "node:net";
@@ -432,6 +432,8 @@ function bootTime(env = process.env, now = Date.now()) {
   return now - os5.uptime() * 1000;
 }
 function endedNormally(r, all, boot) {
+  if (r.archived)
+    return true;
   if (!r.endedAt)
     return false;
   if (r.endReason !== "other")
@@ -3254,6 +3256,287 @@ async function fromHook2(o) {
   return out;
 }
 
+// src/sessions/names.ts
+import fs18 from "node:fs";
+import path23 from "node:path";
+var file5 = () => path23.join(P.root, "sessions", "names.json");
+function all() {
+  try {
+    const o = JSON.parse(fs18.readFileSync(file5(), "utf8"));
+    return o && typeof o === "object" ? o : {};
+  } catch {
+    return {};
+  }
+}
+var nameOf = (sessionId) => {
+  const n = all()[sessionId];
+  return typeof n === "string" && n ? n : undefined;
+};
+
+// src/sessions/index.ts
+import fs21 from "node:fs";
+import path25 from "node:path";
+
+// src/sessions/transcripts.ts
+import fs20 from "node:fs";
+import path24 from "node:path";
+
+// src/attention/recap.ts
+import fs19 from "node:fs";
+var TAIL_BYTES = 512 * 1024;
+var USER_MAX = 200;
+var ASSISTANT_MAX = 300;
+var RECAP_MAX = 600;
+function tail(file, bytes = TAIL_BYTES) {
+  if (!file)
+    return "";
+  let fd = -1;
+  try {
+    fd = fs19.openSync(file, "r");
+    const size = fs19.fstatSync(fd).size;
+    const start = Math.max(0, size - bytes);
+    const buf = Buffer.alloc(size - start);
+    fs19.readSync(fd, buf, 0, buf.length, start);
+    const text = buf.toString("utf8");
+    return start > 0 ? text.slice(text.indexOf(`
+`) + 1) : text;
+  } catch {
+    return "";
+  } finally {
+    if (fd >= 0)
+      fs19.closeSync(fd);
+  }
+}
+function lines(text) {
+  const out = [];
+  for (const l of text.split(`
+`)) {
+    if (!l.trim())
+      continue;
+    try {
+      out.push(JSON.parse(l));
+    } catch {}
+  }
+  return out;
+}
+function textOf(content) {
+  if (typeof content === "string")
+    return content;
+  if (!Array.isArray(content))
+    return "";
+  return content.filter((b) => b && typeof b === "object" && b.type === "text" && typeof b.text === "string").map((b) => b.text).join(`
+`);
+}
+var oneLine = (s) => s.replace(/\s+/g, " ").trim();
+var cut = (s, n) => s.length > n ? s.slice(0, n - 1).trimEnd() + "\u2026" : s;
+var NOT_TYPED = /^(<command-|<local-command|<system-reminder>|Caveat:|\[Request interrupted)/;
+function lastTurns(entries) {
+  let user;
+  let assistant;
+  for (let i = entries.length - 1;i >= 0 && (!user || !assistant); i--) {
+    const e = entries[i];
+    if (!e || e.isMeta || e.isSidechain)
+      continue;
+    const role = e.message?.role ?? e.type;
+    const text = oneLine(textOf(e.message?.content));
+    if (!text)
+      continue;
+    if (role === "assistant" && !assistant)
+      assistant = text;
+    else if (role === "user" && !user && !NOT_TYPED.test(text))
+      user = text;
+  }
+  return { user, assistant };
+}
+function extract(entries) {
+  const { user, assistant } = lastTurns(entries);
+  const parts = [user ? cut(user, USER_MAX) : "", assistant ? cut(assistant, ASSISTANT_MAX) : ""].filter(Boolean);
+  return cut(parts.join(" \u2014 "), RECAP_MAX);
+}
+var STOP2 = new Set(("a an the and or but of to in on at by for from with into onto over under is are was were be been being am it its this that these those " + "i you we they he she me my our your their them us so if then than as do does did done doing have has had having can could would should will " + "shall may might must not no yes ok okay please thanks thank just also very really let lets let's here there what which who whom when where why how " + "now all any some more most other such only own same too up down out off again further once about after before while because until both each few " + "file files code change changes changed make made use used using want need get got go going see look fix fixed fixing add added adding sure done").split(" "));
+
+// src/sessions/transcripts.ts
+var projectsDir = (env = process.env) => path24.join(claudeConfigDir2(env), "projects");
+var projectSlug = (cwd) => cwd.replace(/[^A-Za-z0-9]/g, "-");
+var HEAD_BYTES = 64 * 1024;
+var TAIL_BYTES2 = 256 * 1024;
+function head(file, bytes = HEAD_BYTES) {
+  let fd = -1;
+  try {
+    fd = fs20.openSync(file, "r");
+    const buf = Buffer.alloc(Math.min(bytes, fs20.fstatSync(fd).size));
+    fs20.readSync(fd, buf, 0, buf.length, 0);
+    const text = buf.toString("utf8");
+    return buf.length === bytes ? text.slice(0, text.lastIndexOf(`
+`) + 1) : text;
+  } catch {
+    return "";
+  } finally {
+    if (fd >= 0)
+      fs20.closeSync(fd);
+  }
+}
+function transcriptOf(sessionId, cwd, env = process.env) {
+  if (!/^[A-Za-z0-9._-]+$/.test(sessionId))
+    return null;
+  const root = projectsDir(env);
+  if (cwd) {
+    const f = path24.join(root, projectSlug(cwd), `${sessionId}.jsonl`);
+    if (fs20.existsSync(f))
+      return f;
+  }
+  try {
+    for (const d of fs20.readdirSync(root)) {
+      const f = path24.join(root, d, `${sessionId}.jsonl`);
+      if (fs20.existsSync(f))
+        return f;
+    }
+  } catch {}
+  return null;
+}
+var ts = (e) => {
+  const t = typeof e?.timestamp === "string" ? Date.parse(e.timestamp) : NaN;
+  return Number.isFinite(t) ? t : undefined;
+};
+function filesOf(e) {
+  const c = e?.message?.content;
+  if (!Array.isArray(c))
+    return [];
+  const out = [];
+  for (const b of c) {
+    if (b?.type !== "tool_use" || !b.input || typeof b.input !== "object")
+      continue;
+    for (const k of ["file_path", "notebook_path", "path"])
+      if (typeof b.input[k] === "string" && b.input[k].length < 1024)
+        out.push(b.input[k]);
+  }
+  return out;
+}
+function summarize(file) {
+  const first = lines(head(file));
+  const last = lines(tail(file, TAIL_BYTES2));
+  const all = [...first, ...last];
+  const withCwd = all.find((e) => typeof e?.cwd === "string" && e.cwd);
+  if (!withCwd)
+    return null;
+  const sessionId = String(withCwd.sessionId ?? path24.basename(file, ".jsonl"));
+  let title;
+  let summaryLine;
+  let branch;
+  for (const e of all) {
+    if (e?.type === "custom-title" && typeof e.customTitle === "string")
+      title = e.customTitle;
+    if (e?.type === "summary" && typeof e.summary === "string")
+      summaryLine = e.summary;
+    if (typeof e?.gitBranch === "string" && e.gitBranch && e.gitBranch !== "HEAD")
+      branch = e.gitBranch;
+  }
+  const files = [];
+  for (let i = last.length - 1;i >= 0 && files.length < 30; i--) {
+    if (last[i]?.isSidechain)
+      continue;
+    for (const f of filesOf(last[i]))
+      if (!files.includes(f))
+        files.push(f);
+  }
+  const cwd = String(withCwd.cwd);
+  const rel = files.map((f) => f.startsWith(cwd + path24.sep) ? f.slice(cwd.length + 1) : f);
+  let startedAt;
+  for (const e of first)
+    if (startedAt = ts(e))
+      break;
+  let endedAt;
+  for (let i = last.length - 1;i >= 0; i--)
+    if (endedAt = ts(last[i]))
+      break;
+  if (!endedAt)
+    try {
+      endedAt = fs20.statSync(file).mtimeMs;
+    } catch {}
+  const r = extract(last.filter((e) => !e?.isSidechain));
+  return {
+    sessionId,
+    cwd,
+    ...branch ? { branch } : {},
+    ...title || summaryLine ? { title: title ?? summaryLine } : {},
+    ...r ? { recap: r } : {},
+    files: rel,
+    ...startedAt ? { startedAt } : {},
+    ...endedAt ? { endedAt } : {},
+    file
+  };
+}
+
+// src/sessions/index.ts
+var file6 = () => path25.join(P.root, "sessions", "past.json");
+var KEEP_MS = 180 * 24 * 3600000;
+var MAX = 3000;
+function load2() {
+  try {
+    const f = JSON.parse(fs21.readFileSync(file6(), "utf8"));
+    if (f?.v === 1 && f.items && typeof f.items === "object")
+      return f.items;
+  } catch {}
+  return {};
+}
+function save2(items) {
+  const now = Date.now();
+  const kept = Object.values(items).filter((p) => now - (p.endedAt ?? p.startedAt ?? now) < KEEP_MS).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0)).slice(0, MAX);
+  fs21.mkdirSync(path25.dirname(file6()), { recursive: true, mode: 448 });
+  const tmp = `${file6()}.${process.pid}.tmp`;
+  fs21.writeFileSync(tmp, JSON.stringify({ v: 1, items: Object.fromEntries(kept.map((p) => [p.id, p])) }), { mode: 384 });
+  fs21.renameSync(tmp, file6());
+}
+function fromRec(r, before, sum) {
+  const threads = [...new Set([...before?.threads ?? [], ...r.thread ? [r.thread] : []])];
+  const name = r.name && !/^session-\d+$/.test(r.name) ? r.name : undefined;
+  return {
+    ...before,
+    id: r.sessionId,
+    cwd: r.cwd,
+    client: r.client,
+    ...name ?? sum?.title ?? before?.title ? { title: name ?? sum?.title ?? before?.title } : {},
+    ...sum?.branch ?? before?.branch ? { branch: sum?.branch ?? before?.branch } : {},
+    threads,
+    ...sum?.recap ?? before?.recap ? { recap: sum?.recap ?? before?.recap } : {},
+    files: sum?.files.length ? sum.files : before?.files ?? [],
+    startedAt: r.startedAt,
+    endedAt: r.endedAt ?? r.seenAt,
+    ...r.archived ? { archived: r.archived } : before?.archived ? { archived: before.archived } : {},
+    source: "crosstalk"
+  };
+}
+function sweep(o = {}) {
+  const alive = o.alive ?? recAlive2;
+  const items = load2();
+  let n = 0;
+  for (const r of readAll2()) {
+    if (r.interactive === false)
+      continue;
+    if (!r.endedAt && alive(r))
+      continue;
+    const before = items[r.sessionId];
+    const end = r.endedAt ?? r.seenAt;
+    if (before && before.source === "crosstalk" && (before.endedAt ?? 0) >= end && !!before.archived === !!r.archived)
+      continue;
+    const sum = r.client === "claude" ? safeSummary(transcriptOf(r.sessionId, r.cwd, o.env)) : null;
+    items[r.sessionId] = fromRec(r, before, sum);
+    n++;
+  }
+  if (n)
+    save2(items);
+  return n;
+}
+function safeSummary(f) {
+  if (!f)
+    return null;
+  try {
+    return summarize(f);
+  } catch {
+    return null;
+  }
+}
+
 // src/hook.ts
 var input = await new Promise((resolve) => {
   let raw = "";
@@ -3290,8 +3573,8 @@ function agyCwd() {
   if (Array.isArray(ws) && typeof ws[0] === "string" && ws[0])
     return ws[0];
   const here = process.cwd();
-  if (AGENT_DIRS.has(path23.basename(here)))
-    return path23.dirname(here);
+  if (AGENT_DIRS.has(path26.basename(here)))
+    return path26.dirname(here);
   return here;
 }
 var cwd = hook.cwd ?? hook.working_dir ?? hook.workspace_roots?.[0] ?? (isAgy ? agyCwd() : process.cwd());
@@ -3325,6 +3608,10 @@ if (restoreClient && sessionId && !process.env.CROSSTALK_NO_RESTORE) {
         source: hook.source,
         reason: hook.reason
       });
+    if (isSessionStart)
+      try {
+        sweep();
+      } catch {}
     if (isSessionStart && restoreClient === "claude" && !/^(clear|compact)$/.test(String(hook.source ?? "")))
       systemMessage = restoreSurface(sessionId, askOnceOffer(sessionId, captureTerminal(process.env, process.pid, false))).systemMessage;
   } catch {}
@@ -3365,7 +3652,8 @@ var chromeOut = (hookSpecific) => {
   const out = {};
   if (chrome.terminalSequence)
     out.terminalSequence = chrome.terminalSequence;
-  const named = chrome.sessionTitle && /^(SessionStart|UserPromptSubmit)$/.test(eventName) ? chrome.sessionTitle : sessionTitle;
+  const renamed = sessionId && /^(SessionStart|UserPromptSubmit)$/.test(eventName) ? nameOf(sessionId) : undefined;
+  const named = renamed ? sessionTitle ?? (threadNames?.length ? undefined : renamed) : chrome.sessionTitle && /^(SessionStart|UserPromptSubmit)$/.test(eventName) ? chrome.sessionTitle : sessionTitle;
   const title = named ? { sessionTitle: named } : {};
   if (hookSpecific || Object.keys(title).length)
     out.hookSpecificOutput = { hookEventName: eventName, ...hookSpecific ?? {}, ...title };
@@ -3415,10 +3703,10 @@ async function registerSession() {
   if (socket) {
     try {
       const dir = sessionsDir();
-      for (const f of fs18.readdirSync(dir)) {
+      for (const f of fs22.readdirSync(dir)) {
         if (!f.endsWith(".json"))
           continue;
-        const e = JSON.parse(fs18.readFileSync(path23.join(dir, f), "utf8"));
+        const e = JSON.parse(fs22.readFileSync(path26.join(dir, f), "utf8"));
         if (e.sessionId === sessionId) {
           name = e.name ?? name;
           break;
@@ -3426,7 +3714,7 @@ async function registerSession() {
       }
     } catch {}
   } else {
-    name = hook.thread_name ?? (path23.basename(cwd) || name);
+    name = hook.thread_name ?? (path26.basename(cwd) || name);
   }
   const registered = await request({
     op: "register",

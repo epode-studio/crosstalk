@@ -5,6 +5,7 @@
 import * as spawn from "../spawn.ts"
 import * as cleanup from "../cleanup.ts"
 import * as ui from "../uistate.ts"
+import { spawnOn } from "../sessions/tools.ts"
 
 export const TOOLS = [
   {
@@ -19,6 +20,8 @@ export const TOOLS = [
         name: { type: "string", description: "A short name for the agent(s), e.g. auth; several become auth-1, auth-2" },
         background: { type: "boolean", description: "true runs it in crosstalk's background tmux instead of a tab" },
         thread: { type: "string", description: "The crosstalk thread to start it in; default: this session's own thread, if it is in one" },
+        machine: { type: "string", description: "Another of the user's own machines (from crosstalk_sessions) to start it on instead of this one" },
+        repo: { type: "string", description: "With machine: the repository there to start it in, by name" },
       },
       required: ["task"],
     },
@@ -53,6 +56,8 @@ const text = (out: { ok: boolean; text: string }) => ({ content: [{ type: "text"
 export async function callTool(name: string, a: any, o: { sessionId: string; cwd: string }) {
   switch (name) {
     case "crosstalk_spawn":
+      // On another of the user's own machines (src/sessions/remote.ts).
+      if (typeof a.machine === "string" && a.machine.trim()) return spawnOn(a.machine.trim(), a, o)
       // From a session in a thread, the agents start in it, from its brief (src/spawn.ts).
       return text(
         await spawn.spawnFromSession({

@@ -697,6 +697,7 @@ Every part above has a first version on the branch, with its tests in
 | Trust through repository access, first use per repo | `src/repotrust/` | `docs/security.md` |
 | Threads, sealed, on their own ref; re-keying | `src/threads/` | `docs/architecture.md`, `docs/security.md` |
 | Terminal workspace: tab status, new agents, background agents, layout, cleanup | `src/terminal/`, `src/spawn.ts`, `src/cleanup.ts` | `docs/terminal.md` |
+| Wrangling every session: close and archive, find and resume past sessions (Claude Code's own history too), rename, move, background and pop out, across your own machines | `src/sessions/` | `docs/terminal.md` |
 | Main session, rules, agents warning each other | `src/main.ts`, `src/coordinator.ts`, `src/rules/`, `src/warn/` | `docs/tools.md` |
 | Recaps, fresh sessions, staffing, focus, notifications, phone, permission prompts | `src/attention/` | `docs/attention.md` |
 | No commands, bots, editor, digest, standup, PR text | `src/ui-extra/` | `docs/tools.md` |
@@ -713,6 +714,11 @@ thread is sealed to. Public threads put all of it in the PR. Decided 2026-11-02.
 - **On a Mac:** everything per terminal except restore (tested by hand in
   Terminal.app): tab tints, tab placement, focus, notifications that jump to a
   tab, iTerm2, kitty, WezTerm, Ghostty.
+- **The session manager on a Mac:** closing a session in Terminal.app or iTerm2, resuming
+  one into a tab there, and sending one from a tab to the background were tested only in
+  tmux on Linux, with a stub claude. Whether real Claude Code exits cleanly on SIGTERM
+  mid-turn, and what its SessionEnd hook reports then, was not checked. Across machines was
+  tested with two identities on one machine and one relay.
 - **Between two people on two machines:** threads, repo trust, rules, warnings
   and shipping questions answered from another machine were tested with two
   identities on one machine.
