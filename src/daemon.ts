@@ -42,6 +42,7 @@ import * as usage from "./usage.ts"
 import * as rooms from "./rooms.ts"
 import * as facts from "./facts.ts"
 import * as tasks from "./tasks.ts"
+import * as notesApi from "./notes.ts"
 import * as repotrust from "./repotrust/index.ts"
 import { consent as connectConsent } from "./repotrust/firstuse.ts"
 import type { Envelope, Frame, Intent, Kind, SessionPresence, Slice } from "./protocol.ts"
@@ -1688,9 +1689,9 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       const mine = self ? threads.idsFor(self.sessionId) : []
       if (req.write && (req.thread || (mine.length && !req.room))) {
         const inThread =
-          req.write === "add" || mine.some((id) => threads.thread(id)?.tasks[String(req.id)]) || req.thread
+          req.write === "add" || mine.some((id) => threadModel.noteOf(threads.thread(id), String(req.id), "task")) || req.thread
         if (inThread && (req.write === "add" || req.write === "claim" || req.write === "done")) {
-          const owner = req.thread ?? mine.find((id) => threads.thread(id)?.tasks[String(req.id)])
+          const owner = req.thread ?? mine.find((id) => threadModel.noteOf(threads.thread(id), String(req.id), "task"))
           const r = threads.task(self?.sessionId, { op: req.write, text: req.text, id: req.id, note: req.note, thread: owner })
           return r.ok ? { ok: true, thread: r.thread, op: req.write, id: r.id } : r
         }
@@ -1750,6 +1751,23 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       }
     }
 
+    case "notes": {
+      // Notes, one list: this session's threads' (or the one named), then the
+      // facts and tasks kept with the people joined with words, in the same shape.
+      const self = req.sessionId ? resolveSession(req) : undefined
+      const kinds = (Array.isArray(req.kinds) ? req.kinds : req.kind ? [req.kind] : []).filter((k: string) => threadModel.NOTE_KINDS.includes(k as threadModel.NoteKind)) as threadModel.NoteKind[]
+      const named = req.thread ? threads.find(self?.sessionId, String(req.thread)) : undefined
+      if (req.thread && !named) return { ok: false, error: `no thread called "${req.thread}"` }
+      const mine = named ? [named] : (self ? threads.idsFor(self.sessionId) : []).map((id) => threads.thread(id)).filter((t): t is threadModel.Thread => !!t)
+      const groupKinds = kinds.filter((k) => k === "fact" || k === "task")
+      const groups = req.thread || (kinds.length && !groupKinds.length) ? [] : [...Object.keys(loadPeers()), ...Object.values(rooms.load()).map((r) => r.name)]
+      return {
+        ok: true,
+        threads: mine.map((t) => t.meta.value.name),
+        notes: [...mine.flatMap((t) => notesApi.threadNotes(t, kinds)), ...notesApi.groupNotes(groups, { kinds: groupKinds })],
+      }
+    }
+
     case "facts": {
       // New facts from a session in a thread go to the thread; the room store
       // keeps working for everything else, and for anything named to a room.
@@ -1760,6 +1778,14 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         if (!text) return { ok: false, error: "a fact needs some text" }
         const r = threads.fact(self?.sessionId, { text, thread: req.thread })
         return r.ok ? { ok: true, thread: r.thread, op: "add", id: r.id } : r
+      }
+      // A fact in one of this session's threads is confirmed or corrected there.
+      if ((req.write === "confirm" || req.write === "supersede") && !req.room && threads.holding(self?.sessionId, String(req.id), "fact", req.thread)) {
+        const r =
+          req.write === "confirm"
+            ? threads.confirmFact(self?.sessionId, { id: String(req.id), thread: req.thread })
+            : threads.correctFact(self?.sessionId, { id: String(req.id), text: req.text, reason: req.reason, thread: req.thread })
+        return r.ok ? { ok: true, thread: r.thread, op: req.write, id: r.id } : r
       }
       const store = facts.load()
       const roomNames = [

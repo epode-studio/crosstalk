@@ -51,7 +51,7 @@ export function events(st: ThreadState, since: number): Event[] {
   for (const t of Object.values(st.threads)) {
     if (t.meta.value.combinedInto) continue
     const name = t.meta.value.name
-    for (const d of M.live(t, "decisions")) if (d.at >= since) out.push({ at: d.at, thread: name, kind: "decision", who: d.who, text: cut(d.text) })
+    for (const d of M.notes(t, "decision")) if (d.at >= since) out.push({ at: d.at, thread: name, kind: "decision", who: d.who, text: cut(d.text) })
     for (const f of M.live(t, "features")) {
       const m = f.ship?.merged
       if (m && m.at >= since)
@@ -61,13 +61,13 @@ export function events(st: ThreadState, since: number): Event[] {
         out.push({ at: Math.max(m?.at ?? 0, Math.min(t.touchedAt, Date.now())), thread: name, kind: "shipped", who: labelOf(st, f.by), text: `${f.name}: ${f.flag} is fully on` })
     }
     for (const q of M.live(t, "questions")) if (q.answer && q.at >= since) out.push({ at: q.at, thread: name, kind: "answered", who: q.answeredBy, text: `"${cut(q.text, 90)}": ${cut(q.answer, 80)}` })
-    for (const k of M.live(t, "tasks")) {
+    for (const k of M.notes(t, "task")) {
       if (k.at < since) continue
       if (/incident/i.test(k.text)) out.push({ at: k.at, thread: name, kind: "incident", who: k.who, text: cut(k.text) })
       else if (k.state === "done") out.push({ at: k.at, thread: name, kind: "done", who: k.doneBy ?? k.who, text: cut(k.text) })
     }
     if (/^incident-/.test(name) && t.meta.value.createdAt >= since && !out.some((e) => e.thread === name && e.kind === "incident"))
-      out.push({ at: t.meta.value.createdAt, thread: name, kind: "incident", text: cut(t.recap.value || name) })
+      out.push({ at: t.meta.value.createdAt, thread: name, kind: "incident", text: cut(M.recap(t) || name) })
   }
   return out.sort((a, b) => a.at - b.at)
 }

@@ -72,7 +72,7 @@ describe("re-key on leave", () => {
   svc.mutate(t.id, (th, by, now) => {
     M.put(th, "people", fb, { label: "ben" }, by, now)
     M.put(th, "people", fc, { label: "cat" }, by, now)
-    M.put(th, "decisions", "d_1", { text: "before cat left", who: "ana", at: now }, by, now)
+    M.put(th, "notes", "d_1", { kind: "decision", text: "before cat left", who: "ana", at: now }, by, now)
   })
   const render = () => (svc as any).render(repoName)[`${t.id}.md`] as string
   const opens = (id: Identity, text: string, oldKey?: Buffer) => {
@@ -93,14 +93,14 @@ describe("re-key on leave", () => {
     const catsKey = opens(cat, render()).key!
     const r = svc.removePerson(t.id, fc)
     expect(r).toMatchObject({ ok: true, rekeyed: true })
-    svc.mutate(t.id, (th, by, now) => M.put(th, "decisions", "d_2", { text: "after cat left", who: "ana", at: now }, by, now))
+    svc.mutate(t.id, (th, by, now) => M.put(th, "notes", "d_2", { kind: "decision", text: "after cat left", who: "ana", at: now }, by, now))
     const after = render()
     const c = opens(cat, after, catsKey)
     expect(c.key).toBeNull()
     expect(c.viaOld).toBeNull()
     expect(c.epoch).toBe(1)
     const b = opens(ben, after)
-    expect(M.view(b.viaWrap!).decisions.map((d) => d.text)).toEqual(["before cat left", "after cat left"])
+    expect(M.view(b.viaWrap!).notes.filter((n) => n.kind === "decision").map((d) => d.text)).toEqual(["before cat left", "after cat left"])
     expect(K.isRemoved(b.viaWrap!, fc)).toBe(true)
   })
 

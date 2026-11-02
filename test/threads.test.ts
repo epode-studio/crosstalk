@@ -16,7 +16,7 @@ import * as M from "../src/threads/model.ts"
 import * as F from "../src/threads/format.ts"
 import * as S from "../src/threads/store.ts"
 import * as I from "../src/threads/infer.ts"
-import { newKey, unwrapKey, wrapKey } from "../src/threads/seal.ts"
+import { newKey, sealSection, unwrapKey, wrapKey } from "../src/threads/seal.ts"
 import { ThreadService, NEW_THREAD, type LocalSession } from "../src/threads/service.ts"
 import { fingerprint, newIdentity } from "../src/crypto.ts"
 import type { Identity, Peer } from "../src/config.ts"
@@ -37,10 +37,10 @@ function sample(by = "aaaa", label = "paul"): M.Thread {
   M.put(t, "features", "tidy-token-parser", { name: "tidy token parser", risk: "everyday" }, by)
   M.setRecap(t, by, "Moving tokens to v2 format; v1 kept for one release.")
   M.put(t, "questions", "q_1", { text: "keep the v1 endpoint?", blocking: true, who: "paul", at: 3 }, by)
-  M.put(t, "decisions", "d_1", { text: "v1 tokens accepted until 0.2", who: "paul", at: Date.parse("2026-11-01") }, by)
-  M.put(t, "facts", "f_1", { text: "staging DB is shared with the demo env --> careful", who: "marie", at: 4 }, by)
-  M.put(t, "tasks", "t_1", { text: "remove v1 parser after 0.2", who: "paul", at: 5, state: "open" }, by)
-  M.put(t, "rules", "r_1", { text: "always keep one release of overlap", who: "paul", at: 6 }, by)
+  M.put(t, "notes", "d_1", { kind: "decision", text: "v1 tokens accepted until 0.2", who: "paul", at: Date.parse("2026-11-01") }, by)
+  M.put(t, "notes", "f_1", { kind: "fact", text: "staging DB is shared with the demo env --> careful", who: "marie", at: 4 }, by)
+  M.put(t, "notes", "t_1", { kind: "task", text: "remove v1 parser after 0.2", who: "paul", at: 5, state: "open" }, by)
+  M.put(t, "notes", "r_1", { kind: "rule", text: "always keep one release of overlap", who: "paul", at: 6 }, by)
   return t
 }
 
@@ -53,7 +53,8 @@ describe("format", () => {
     const text = F.renderPublic(t)
     expect(text).toContain("status: active")
     expect(text).toContain("people: [paul, marie]")
-    expect(text).toContain("## Decisions\n- 2026-11-01 · paul · v1 tokens accepted until 0.2")
+    expect(text).toContain("## Notes\n")
+    expect(text).toContain("- decision · 2026-11-01 · paul · v1 tokens accepted until 0.2")
     expect(text).toContain("- keep the v1 endpoint? (blocking)")
     expect(text).toContain("  - name: v2 token format\n    risk: risky\n    flag: auth-v2-tokens")
     const p = F.parse(text)
@@ -102,8 +103,8 @@ Moving tokens to v2 format; v1 kept for one release.
       { name: "v2 token format", risk: "risky", flag: "auth-v2-tokens" },
     ])
     expect(v.questions[0]).toMatchObject({ text: "keep the v1 endpoint?", blocking: true })
-    expect(v.decisions[0]).toMatchObject({ text: "v1 tokens accepted until 0.2", who: "paul" })
-    expect(v.tasks[0]).toMatchObject({ text: "remove v1 parser after 0.2", state: "open" })
+    expect(v.notes.find((n) => n.kind === "decision")).toMatchObject({ text: "v1 tokens accepted until 0.2", who: "paul" })
+    expect(v.notes.find((n) => n.kind === "task")).toMatchObject({ text: "remove v1 parser after 0.2", state: "open" })
     // Anything crosstalk knows outranks a hand edit: every stamp is zero.
     expect(p.thread.meta.l).toBe(0)
   })
@@ -146,10 +147,10 @@ describe("sealing", () => {
       return blobs.get(h)!
     }
     const before = F.renderSealed(t, sealing, []).split("\n")
-    M.put(t, "decisions", "d_2", { text: "drop v1 in 0.3", who: "marie", at: 9 }, "bbbb")
+    M.put(t, "notes", "d_2", { kind: "decision", text: "drop v1 in 0.3", who: "marie", at: 9 }, "bbbb")
     const after = F.renderSealed(t, sealing, []).split("\n")
     const changed = after.filter((l, i) => l !== before[i]).map((l) => l.split(":")[0])
-    expect(changed.sort()).toEqual(["clock", "decisions"])
+    expect(changed.sort()).toEqual(["clock", "notes"])
   })
 
   test("a public thread is plain text", () => {
@@ -170,15 +171,15 @@ describe("clocks and merge", () => {
     const a = structuredClone(base)
     const b = structuredClone(base)
     const c = structuredClone(base)
-    M.put(a, "decisions", "d_a", { text: "from a", who: "paul", at: 10 }, "aaaa")
-    M.put(b, "decisions", "d_b", { text: "from b", who: "marie", at: 11 }, "bbbb")
+    M.put(a, "notes", "d_a", { kind: "decision", text: "from a", who: "paul", at: 10 }, "aaaa")
+    M.put(b, "notes", "d_b", { kind: "decision", text: "from b", who: "marie", at: 11 }, "bbbb")
     M.setMeta(c, "cccc", { status: "waiting" })
     const ab = M.merge(a, b)
     expect(M.same(ab, M.merge(b, a))).toBe(true)
     expect(M.same(M.merge(ab, c), M.merge(a, M.merge(b, c)))).toBe(true)
     expect(M.same(M.merge(ab, ab), ab)).toBe(true)
     // Concurrent appends to one section both survive.
-    expect(M.ids(ab, "decisions")).toEqual(expect.arrayContaining(["d_1", "d_a", "d_b"]))
+    expect(M.ids(ab, "notes")).toEqual(expect.arrayContaining(["d_1", "d_a", "d_b"]))
   })
 
   test("a scalar section goes to the higher clock, ties to the higher author", () => {
@@ -199,9 +200,9 @@ describe("clocks and merge", () => {
   test("a removal wins over the stale add it replaced", () => {
     const a = sample("aaaa")
     const b = structuredClone(a)
-    M.remove(a, "tasks", "t_1", "aaaa")
-    expect(M.ids(M.merge(a, b), "tasks")).toEqual([])
-    expect(M.ids(M.merge(b, a), "tasks")).toEqual([])
+    M.remove(a, "notes", "t_1", "aaaa")
+    expect(M.notes(M.merge(a, b), "task")).toEqual([])
+    expect(M.notes(M.merge(b, a), "task")).toEqual([])
   })
 
   test("a repeated observation is not an edit", () => {
@@ -215,9 +216,9 @@ describe("clocks and merge", () => {
     const t = sample()
     const d = M.committedDigest(t)
     M.put(t, "files", "src/x.ts", { at: 1 }, "aaaa")
-    M.put(t, "facts", "f_9", { text: "x", who: "paul", at: 1 }, "aaaa")
+    M.put(t, "notes", "f_9", { kind: "fact", text: "x", who: "paul", at: 1 }, "aaaa")
     expect(M.committedDigest(t)).toBe(d)
-    M.put(t, "decisions", "d_9", { text: "y", who: "paul", at: 1 }, "aaaa")
+    M.put(t, "notes", "d_9", { kind: "decision", text: "y", who: "paul", at: 1 }, "aaaa")
     expect(M.committedDigest(t)).not.toBe(d)
   })
 
@@ -441,7 +442,7 @@ describe("service", () => {
     expect(ana.svc.decide("a", { text: "v1 accepted until 0.2" }).ok).toBe(true)
     settle(ana, ben)
     const t = ben.svc.thread(ben.svc.idsFor("b")[0])!
-    expect(M.view(t).decisions.map((d) => d.text)).toEqual(["v1 accepted until 0.2"])
+    expect(M.view(t).notes.filter((n) => n.kind === "decision").map((d) => d.text)).toEqual(["v1 accepted until 0.2"])
   })
 
   test("a different branch is a second thread, and converging files combine them", () => {
@@ -576,8 +577,8 @@ describe("service", () => {
     ana.svc.fade()
     const t = ana.svc.thread(id)!
     expect(t.meta.value.status).toBe("archived")
-    expect(M.view(t).decisions.map((d) => d.text)).toEqual(["keep it simple"])
-    expect(M.view(t).facts).toEqual([])
+    expect(M.view(t).notes.filter((n) => n.kind === "decision").map((d) => d.text)).toEqual(["keep it simple"])
+    expect(M.view(t).notes.filter((n) => n.kind === "fact")).toEqual([])
     ana.svc.observe(sess("s2", "old-work"))
     expect(ana.svc.idsFor("s2")).toEqual([id])
     expect(ana.svc.thread(id)!.meta.value.status).toBe("active")
@@ -631,7 +632,7 @@ describe("service and the ref", () => {
     fresh.observe({ ...sb, sessionId: "b2", branch: "elsewhere" })
     await fresh.syncAll()
     const t = fresh.find(undefined, "token-v2")!
-    expect(M.view(t).decisions.map((d) => d.text)).toEqual(["sealed decision text"])
+    expect(M.view(t).notes.filter((n) => n.kind === "decision").map((d) => d.text)).toEqual(["sealed decision text"])
   })
 
   test("a public thread is plain on the ref and summarised in THREADS.md, left unstaged", async () => {
@@ -653,5 +654,204 @@ describe("service and the ref", () => {
     expect(fs.readFileSync(path.join(ra, "THREADS.md"), "utf8")).toContain("**docs-site** · waiting · ana")
     expect(git(ra, "status", "--porcelain")).toBe("?? THREADS.md")
     expect(ana.svc.forSession("a", "a", true).notes.join("\n")).toContain("left unstaged")
+  })
+})
+
+// --- notes: version 1's separate sections, migrated on read -----------------------
+
+/** A thread as version 1 kept it: recap a value of its own, decisions, facts, tasks and rules four lists, no notes. */
+function toV1(t: M.Thread): any {
+  const o: any = JSON.parse(JSON.stringify(t))
+  o.v = 1
+  const r = o.notes[M.RECAP_ID]
+  o.recap = r ? { l: r.l, by: r.by, value: r.text } : { l: 1, by: t.meta.by, value: "" }
+  for (const [list, kind] of Object.entries(M.LEGACY_LISTS)) {
+    o[list] = {}
+    for (const [id, n] of Object.entries(o.notes as Record<string, any>))
+      if (n.kind === kind) {
+        const { kind: _k, ...rest } = n
+        o[list][id] = rest
+      }
+  }
+  delete o.notes
+  return o
+}
+
+/** renderSealed as version 1 wrote it: a line for the recap and for each of the four lists. */
+function sealedV1(t: M.Thread, key: Buffer, wraps: ReturnType<typeof wrapKey>): string {
+  const o = toV1(t)
+  const lines = ["---", F.HEADER, `id: ${t.id}`, "sealed: true", "keys:", ...wraps.map((w) => `  - ${w.to} ${w.from} ${w.k}`), "---"]
+  for (const s of ["meta", "recap", "people", "sessions", "files", "branches", "features", "questions", "decisions", "facts", "tasks", "rules", "links"])
+    lines.push(`${s}: ${sealSection(key, t.id, s, o[s] ?? {})}`)
+  lines.push(`clock: ${sealSection(key, t.id, "clock", { lamport: t.lamport, touchedAt: t.touchedAt })}`)
+  return lines.join("\n") + "\n"
+}
+
+/** A recap from version 1 carries no time: compare notes by kind and text. */
+const kinds = (t: M.Thread) => M.notes(t).map((n) => `${n.kind}:${n.text}`).sort()
+
+describe("notes migration", () => {
+  test("a version 1 thread from a peer or the state file opens as notes, ids and stamps kept", () => {
+    const t = sample()
+    const old = toV1(t)
+    expect(old.notes).toBeUndefined()
+    expect(old.decisions.d_1.text).toBe("v1 tokens accepted until 0.2")
+    expect(M.isLegacy(old)).toBe(true)
+    const back = M.parseThread(old)!
+    expect(back.v).toBe(2)
+    expect(M.isLegacy(back)).toBe(false)
+    expect(kinds(back)).toEqual(kinds(t))
+    expect(M.recap(back)).toBe("Moving tokens to v2 format; v1 kept for one release.")
+    expect(M.noteOf(back, "t_1", "task")).toMatchObject({ state: "open", l: t.notes.t_1!.l })
+    expect(M.noteOf(back, "d_1", "decision")).toEqual(t.notes.d_1 as any)
+    expect((back as any).decisions).toBeUndefined()
+  })
+
+  test("an old public file, with ## Decisions, ## Facts, ## Tasks and ## Rules and no state, opens and is written back as ## Notes", () => {
+    const text = `---
+crosstalk: thread/v1
+id: 0123456789abcdee
+name: auth
+status: active
+people: [paul]
+---
+
+## Recap
+Moving tokens to v2.
+
+## Decisions
+- 2026-11-01 · paul · v1 tokens accepted until 0.2
+
+## Facts
+- staging DB is shared
+
+## Tasks
+- [x] write the note
+- [ ] remove v1 parser
+
+## Rules
+- always keep one release of overlap
+`
+    const p = F.parse(text)
+    expect(p.kind).toBe("public")
+    if (p.kind !== "public") return
+    expect(M.recap(p.thread)).toBe("Moving tokens to v2.")
+    expect(kinds(p.thread)).toEqual([
+      "decision:v1 tokens accepted until 0.2",
+      "fact:staging DB is shared",
+      "recap:Moving tokens to v2.",
+      "rule:always keep one release of overlap",
+      "task:remove v1 parser",
+      "task:write the note",
+    ])
+    const out = F.renderPublic(p.thread)
+    expect(out).not.toMatch(/^## (Decisions|Facts|Tasks|Rules)$/m)
+    expect(out).toContain("## Notes\n")
+    expect(out).toContain("- decision · 2026-11-01 · paul · v1 tokens accepted until 0.2")
+    expect(out).toContain("- [x] write the note")
+    // And the new file reads back the same.
+    const again = F.parse(out)
+    expect(again.kind === "public" && M.same(again.thread, p.thread)).toBe(true)
+  })
+
+  test("an old public file with its exact state in version 1's shape opens as notes", () => {
+    const t = sample()
+    M.setMeta(t, "aaaa", { public: true })
+    const text = F.renderPublic(t).replace(/<!-- crosstalk:state\n[\s\S]*?\n-->/, () => `<!-- crosstalk:state\n${M.canonical(toV1(t)).replace(/-->/g, "--\\u003e")}\n-->`)
+    expect(text).toContain('"decisions":{')
+    const p = F.parse(text)
+    expect(p.kind).toBe("public")
+    if (p.kind === "public") {
+      expect(kinds(p.thread)).toEqual(kinds(t))
+      expect(Object.keys(p.thread.notes).sort()).toEqual(Object.keys(t.notes).sort())
+    }
+  })
+
+  test("a hand-written ## Notes section reads each line's kind", () => {
+    const p = F.parse(`---\ncrosstalk: thread/v1\nid: 0123456789abcded\nname: x\nstatus: active\n---\n\n## Notes\n- decision · 2026-11-02 · ana · ship it\n- fact · the DB is shared\n- [ ] tidy up\n- rule · no Friday deploys\n- something said plainly\n`)
+    expect(p.kind).toBe("public")
+    if (p.kind === "public")
+      expect(kinds(p.thread)).toEqual(["decision:ship it", "fact:something said plainly", "fact:the DB is shared", "rule:no Friday deploys", "task:tidy up"])
+  })
+
+  test("an old sealed file opens with the same key, and is sealed back with one notes line", () => {
+    const paul = newIdentity("paul")
+    const marie = newIdentity("marie")
+    const t = sample(fingerprint(paul.ed.pub))
+    const key = newKey()
+    const wraps = wrapKey(paul, key, [asPeer(marie)])
+    const text = sealedV1(t, key, wraps)
+    expect(text).toMatch(/^decisions: \S+$/m)
+    expect(text).not.toMatch(/^notes: /m)
+    const p = F.parse(text)
+    expect(p.kind).toBe("sealed")
+    if (p.kind !== "sealed") return
+    const opened = p.open(unwrapKey(marie, p.wraps, [asPeer(paul)])!)!
+    expect(opened).not.toBeNull()
+    expect(kinds(opened)).toEqual(kinds(t))
+    expect(Object.keys(opened.notes).sort()).toEqual(Object.keys(t.notes).sort())
+    const out = F.renderSealed(opened, key, wraps)
+    expect(out).toMatch(/^notes: \S+$/m)
+    for (const s of M.LEGACY_SECTIONS) expect(out).not.toMatch(new RegExp(`^${s}: `, "m"))
+    const p2 = F.parse(out)
+    expect(p2.kind === "sealed" && M.same(p2.open(key)!, opened)).toBe(true)
+  })
+
+  test("mixed versions merge item by item: whichever replica edited a note last wins, both sides' notes survive", () => {
+    const base = sample("aaaa")
+    // A replica that has updated: a new decision, and the task claimed.
+    const fresh = structuredClone(base)
+    M.note(fresh, { kind: "decision", text: "from the new replica", who: "paul", at: 20 }, "aaaa", 20, "d_new")
+    const task = M.noteOf(fresh, "t_1", "task")!
+    const { l: _l, by: _b, id: _i, gone: _g, ...data } = task
+    M.put(fresh, "notes", "t_1", { ...data, state: "claimed", claimedBy: "paul" }, "aaaa")
+    // One that has not: it adds a fact and rewrites the recap, in version 1's shape.
+    const stale = toV1(base)
+    stale.lamport += 10
+    stale.facts.f_old = { text: "from the old replica", who: "marie", at: 21, l: stale.lamport, by: "bbbb", id: "f_old" }
+    stale.recap = { l: stale.lamport + 1, by: "bbbb", value: "recap from the old replica" }
+    stale.lamport += 1
+    const old = M.parseThread(stale)!
+    const ab = M.merge(fresh, old)
+    expect(M.same(ab, M.merge(old, fresh))).toBe(true)
+    expect(kinds(ab)).toEqual(expect.arrayContaining(["decision:from the new replica", "fact:from the old replica", "recap:recap from the old replica"]))
+    expect(M.noteOf(ab, "t_1", "task")?.state).toBe("claimed")
+    // The merged thread is in the new shape.
+    expect(Object.keys(M.parseThread(JSON.parse(JSON.stringify(ab)))!)).not.toContain("decisions")
+  })
+
+  test("a service reading an old sealed thread off the ref writes it back as notes on its next commit", async () => {
+    const bare = path.join(TMP, "mig-remote.git")
+    const ra = path.join(TMP, "mig-a")
+    spawnSync("git", ["init", "-q", "--bare", "-b", "main", bare])
+    spawnSync("git", ["clone", "-q", bare, ra])
+    git(ra, "commit", "-q", "--allow-empty", "-m", "init")
+    git(ra, "push", "-q", "origin", "main")
+    const repo = bare.toLowerCase().replace(/\.git$/, "")
+    const [ana] = pair()
+    ;(ana.svc as any).d.network = true
+    const sa: LocalSession = { sessionId: "a", name: "a", cwd: ra, root: ra, repo, branch: "token-v2", paths: ["src/t.ts"] }
+    ana.svc.observe(sa)
+    ana.svc.decide("a", { text: "decided before the update" })
+    ana.svc.task("a", { op: "add", text: "a task from before" })
+    await ana.svc.sync(repo, true)
+    // Put the ref back to how version 1 wrote that thread.
+    const [name, file] = Object.entries(S.readRef(ra).files)[0]!
+    const p = F.parse(file)
+    if (p.kind !== "sealed") throw new Error("not sealed")
+    const key = unwrapKey(ana.id, p.wraps, [])!
+    const t = p.open(key)!
+    S.writeRef(ra, { [name]: sealedV1(t, key, p.wraps) }, "an old crosstalk")
+    expect(S.readRef(ra).files[name]).toMatch(/^decisions: /m)
+    // A fresh replica of ana (new state file) reads it, and the next commit writes notes.
+    const again = new ThreadService({ identity: ana.id, peers: () => ({}), send: () => {}, log: () => {}, file: path.join(TMP, "mig-fresh.json"), network: true })
+    again.observe(sa)
+    await again.syncAll()
+    const read = again.find(undefined, "token-v2")!
+    expect(kinds(read)).toEqual(["decision:decided before the update", "task:a task from before"])
+    await again.sync(repo, true)
+    const now = S.readRef(ra).files[name]!
+    expect(now).toMatch(/^notes: \S+$/m)
+    for (const s of M.LEGACY_SECTIONS) expect(now).not.toMatch(new RegExp(`^${s}: `, "m"))
   })
 })

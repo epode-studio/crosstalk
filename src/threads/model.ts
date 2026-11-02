@@ -9,9 +9,22 @@
 // same thing without a coordinator. So a thread is made of sections, and each
 // section merges on its own:
 //
-//   meta, recap     one value each, last writer wins
+//   meta            one value, last writer wins
 //   everything else a set of items keyed by id, last writer wins per item,
 //                   removal is a tombstone (`gone`) so it wins over a stale add
+//
+// What a person meets inside a thread is four parts (docs/design/next-generation.md,
+// "Three nouns"): Notes (`notes`, one list whose items carry a kind: decision,
+// fact, task, rule, recap), Features (`features`), Running (a projection over
+// what the daemon runs, src/threads/running.ts) and History (`links` and ended
+// notes, src/threads/history.ts). People, sessions, files, branches and
+// questions are the thread's own bookkeeping.
+//
+// Version 1 kept decisions, facts, tasks and rules as separate lists and the
+// recap as a value of its own. parseThread reads that shape too and folds it
+// into `notes`, keeping every item's id and stamp, so an old file, an old
+// sealed file or a frame from a replica that has not updated merges with a new
+// one item by item, and is written back in the new shape.
 //
 // "Last" is a Lamport clock: every edit stamps what it touches with one more
 // than the highest stamp this replica has seen, and ties go to the higher
@@ -68,34 +81,42 @@ export type Question = {
   /** A person's answer to a shipping question from another machine, signed with their key. */
   vote?: { pick: string; fp: string; label: string; at: number; sig: string }
 }
-export type Decision = { text: string; who: string; at: number; rationale?: string; session?: string }
-export type Fact = { text: string; who: string; at: number }
+/** What a thread knows: one list, each note one of these kinds. */
+export type NoteKind = "decision" | "fact" | "task" | "rule" | "recap"
+export const NOTE_KINDS: readonly NoteKind[] = ["decision", "fact", "task", "rule", "recap"]
+type NoteBase = { text: string; who: string; at: number }
 export type TaskState = "open" | "claimed" | "done"
-export type Task = { text: string; who: string; at: number; state: TaskState; claimedBy?: string; doneBy?: string; note?: string }
+export type Decision = NoteBase & { kind: "decision"; rationale?: string; session?: string }
+/** `confirmed`: who has since said it still holds; `supersededBy`: the fact that corrected it. */
+export type Fact = NoteBase & { kind: "fact"; confirmed?: { by: string; at: number }[]; supersededBy?: string; reason?: string }
+export type Task = NoteBase & { kind: "task"; state: TaskState; claimedBy?: string; doneBy?: string; note?: string }
 /**
- * A standing rule ("Answers become rules"). Another build decides what a rule
- * matches and does; the format only keeps a place for them. `when` describes
- * the kind of question, `then` the standing answer.
+ * A standing rule ("Answers become rules"). `when` describes the kind of
+ * question, `then` the standing answer, `sig` the author's signature
+ * (src/rules/doc.ts).
  */
-export type Rule = { text: string; who: string; at: number; when?: string; then?: string; sig?: string }
+export type Rule = NoteBase & { kind: "rule"; when?: string; then?: string; sig?: string }
+/** What the thread is doing, in a line or two. One per thread, id `recap`. */
+export type Recap = NoteBase & { kind: "recap" }
+export type Note = Decision | Fact | Task | Rule | Recap
+export type NoteOf<K extends NoteKind> = Extract<Note, { kind: K }>
+/** The recap's fixed id: one recap per thread, last writer wins, as when it was a value of its own. */
+export const RECAP_ID = "recap"
 /** Files and branches are sets of strings: the id is the value. */
 export type Mark = { at: number }
 
 export type Thread = {
-  v: 1
+  v: 2
   id: string
   meta: Scalar<Meta>
-  recap: Scalar<string>
   people: Items<Person>
   sessions: Items<SessionRef>
   files: Items<Mark>
   branches: Items<Mark>
   features: Items<Feature>
   questions: Items<Question>
-  decisions: Items<Decision>
-  facts: Items<Fact>
-  tasks: Items<Task>
-  rules: Items<Rule>
+  /** Notes: decisions, facts, tasks, rules and the recap, each with its kind. */
+  notes: Items<Note>
   /** Every link, preview and screenshot the thread had (src/urls/history/links.ts). */
   links: Items<Link>
   /** Highest Lamport value seen. Not a section: the max of two replicas. */
@@ -111,18 +132,23 @@ export const LISTS = [
   "branches",
   "features",
   "questions",
-  "decisions",
-  "facts",
-  "tasks",
-  "rules",
+  "notes",
   "links",
 ] as const
 export type ListName = (typeof LISTS)[number]
-export const SECTIONS = ["meta", "recap", ...LISTS] as const
+export const SECTIONS = ["meta", ...LISTS] as const
 export type SectionName = (typeof SECTIONS)[number]
 
-/** Sections whose change is worth a commit on the ref. The rest travels over the relay only. */
-export const COMMITTED: readonly SectionName[] = ["meta", "features", "decisions", "questions", "rules"]
+/** Version 1's sections, read by parseThread and format.ts and never written. */
+export const LEGACY_LISTS = { decisions: "decision", facts: "fact", tasks: "task", rules: "rule" } as const
+export const LEGACY_SECTIONS = ["recap", ...Object.keys(LEGACY_LISTS)] as const
+
+/**
+ * What is worth a commit on the ref: the meta, features and questions, and the
+ * decisions and rules among the notes. The rest travels over the relay only.
+ */
+export const COMMITTED: readonly SectionName[] = ["meta", "features", "questions", "notes"]
+const COMMITTED_NOTES: ReadonlySet<NoteKind> = new Set(["decision", "rule"])
 
 export const newThreadId = () => crypto.randomBytes(8).toString("hex")
 export const newItemId = (prefix: string) => `${prefix}_${crypto.randomBytes(5).toString("hex")}`
@@ -142,20 +168,16 @@ export function create(o: {
   const now = o.now ?? Date.now()
   const s: Stamp = { l: 1, by: o.by }
   return {
-    v: 1,
+    v: 2,
     id: o.id ?? newThreadId(),
     meta: { ...s, value: { name: o.name, status: "active", public: !!o.public, repo: o.repo, createdAt: now, createdBy: o.by } },
-    recap: { ...s, value: "" },
     people: { [o.by]: { ...s, id: o.by, label: o.label } },
     sessions: {},
     files: {},
     branches: {},
     features: {},
     questions: {},
-    decisions: {},
-    facts: {},
-    tasks: {},
-    rules: {},
+    notes: {},
     links: {},
     lamport: 1,
     touchedAt: now,
@@ -179,7 +201,6 @@ export function merge(a: Thread, b: Thread): Thread {
   const out: Thread = {
     ...a,
     meta: pick(a.meta, b.meta),
-    recap: pick(a.recap, b.recap),
     lamport: Math.max(a.lamport, b.lamport),
     touchedAt: Math.max(a.touchedAt, b.touchedAt),
   }
@@ -204,7 +225,10 @@ export function canonical(v: unknown): string {
 /** What the sections that earn a commit look like, to tell whether they changed. */
 export function committedDigest(t: Thread): string {
   const h = crypto.createHash("sha256")
-  for (const s of COMMITTED) h.update(s + canonical((t as any)[s]))
+  for (const s of COMMITTED) {
+    const v = s === "notes" ? Object.fromEntries(Object.entries(t.notes).filter(([, n]) => COMMITTED_NOTES.has(n.kind))) : (t as any)[s]
+    h.update(s + canonical(v))
+  }
   return h.digest("hex").slice(0, 16)
 }
 
@@ -224,18 +248,47 @@ export function setMeta(t: Thread, by: string, patch: Partial<Meta>, now = Date.
   return true
 }
 
+/** The thread's recap, or "" when it has none. */
+export function recap(t: Thread): string {
+  const r = t.notes[RECAP_ID]
+  return r && !r.gone && r.kind === "recap" ? r.text : ""
+}
+
 export function setRecap(t: Thread, by: string, text: string, now = Date.now()): boolean {
-  if (t.recap.value === text) return false
-  t.recap = { ...tick(t, by, now), value: text }
+  if (recap(t) === text) return false
+  t.notes[RECAP_ID] = { kind: "recap", text, who: "", at: now, ...tick(t, by, now), id: RECAP_ID }
   return true
 }
+
+/** The live notes, oldest first; of one kind when `kind` is given. An empty recap is no note. */
+export function notes<K extends NoteKind>(t: Thread, kind: K): Item<NoteOf<K>>[]
+export function notes(t: Thread, kind?: NoteKind | readonly NoteKind[]): Item<Note>[]
+export function notes(t: Thread, kind?: NoteKind | readonly NoteKind[]): Item<Note>[] {
+  const want = kind === undefined ? null : new Set(typeof kind === "string" ? [kind] : kind)
+  return live(t, "notes").filter((n) => (!want || want.has(n.kind)) && !(n.kind === "recap" && !n.text))
+}
+
+/** Add or replace a note. The id's prefix says its kind, as ids always have (d_, f_, t_, r_). */
+export function note(t: Thread, data: Note, by: string, now = Date.now(), id = newItemId(data.kind[0]!)): string {
+  put(t, "notes", id, data, by, now)
+  return id
+}
+
+/** One note by id, of a kind; undefined when gone or of another kind. */
+export function noteOf<K extends NoteKind>(t: Thread | undefined, id: string | undefined, kind: K): Item<NoteOf<K>> | undefined {
+  const n = t && id ? t.notes[id] : undefined
+  return n && !n.gone && n.kind === kind ? (n as Item<NoteOf<K>>) : undefined
+}
+
+/** An item without its stamp and id: what an edit writes. Distributes over a union (a note of each kind). */
+export type Data<T> = T extends unknown ? Omit<T, keyof Stamp | "id" | "gone"> : never
 
 /** Add or replace one item. No change, no stamp, so a repeated observation costs nothing. */
 export function put<K extends ListName>(
   t: Thread,
   list: K,
   id: string,
-  data: Omit<Thread[K][string], keyof Stamp | "id" | "gone">,
+  data: Data<Thread[K][string]>,
   by: string,
   now = Date.now(),
 ): boolean {
@@ -295,44 +348,75 @@ export function view(t: Thread) {
     files: ids(t, "files"),
     branches: ids(t, "branches"),
     features: live(t, "features").map((f) => ({ name: f.name, risk: f.risk, ...(f.flag ? { flag: f.flag } : {}) })),
-    recap: t.recap.value,
+    recap: recap(t),
     questions: live(t, "questions").map((q) => ({ id: q.id, text: q.text, blocking: !!q.blocking, who: q.who, ...(q.answer ? { answer: q.answer, answeredBy: q.answeredBy } : {}) })),
-    decisions: live(t, "decisions").map((d) => ({ id: d.id, text: d.text, who: d.who, at: d.at, ...(d.rationale ? { rationale: d.rationale } : {}) })),
-    facts: live(t, "facts").map((f) => ({ id: f.id, text: f.text, who: f.who, at: f.at })),
-    tasks: live(t, "tasks").map((k) => ({ id: k.id, text: k.text, who: k.who, state: k.state, ...(k.claimedBy ? { claimedBy: k.claimedBy } : {}), ...(k.note ? { note: k.note } : {}) })),
-    rules: live(t, "rules").map((r) => ({ id: r.id, text: r.text, who: r.who })),
+    notes: notes(t, ["decision", "fact", "task", "rule"]).map(noteView),
     touchedAt: t.touchedAt,
   }
 }
+
+/** A note as the tool and the summary show it: its kind and text, who and when, and its kind's own fields. */
+export type NoteView = { id: string; kind: NoteKind; text: string; who: string; at: number; state?: TaskState; claimedBy?: string; doneBy?: string; note?: string; rationale?: string; when?: string; then?: string; confirmed?: string[] }
+
+export function noteView(n: Item<Note>): NoteView {
+  const base = { id: n.id, kind: n.kind, text: n.text, who: n.who, at: n.at }
+  switch (n.kind) {
+    case "decision":
+      return { ...base, ...(n.rationale ? { rationale: n.rationale } : {}) }
+    case "task":
+      return { ...base, state: n.state, ...(n.claimedBy ? { claimedBy: n.claimedBy } : {}), ...(n.doneBy ? { doneBy: n.doneBy } : {}), ...(n.note ? { note: n.note } : {}) }
+    case "fact":
+      return { ...base, ...(n.confirmed?.length ? { confirmed: n.confirmed.map((c) => c.by) } : {}) }
+    case "rule":
+      return { ...base, ...(n.when ? { when: n.when } : {}), ...(n.then ? { then: n.then } : {}) }
+  }
+  return base
+}
+
 
 /** Accept a thread from a peer or a file only if it has the shape; anything else is absent. */
 export function parseThread(v: unknown): Thread | null {
   if (!v || typeof v !== "object") return null
   const o = v as any
-  if (o.v !== 1 || typeof o.id !== "string" || !/^[0-9a-f]{8,32}$/.test(o.id)) return null
+  if ((o.v !== 1 && o.v !== 2) || typeof o.id !== "string" || !/^[0-9a-f]{8,32}$/.test(o.id)) return null
   const stamp = (s: any) => s && typeof s.l === "number" && typeof s.by === "string"
   if (!stamp(o.meta) || !o.meta.value || typeof o.meta.value.name !== "string" || !STATUSES.includes(o.meta.value.status))
     return null
-  if (!stamp(o.recap) || typeof o.recap.value !== "string") return null
   const out: any = {
-    v: 1,
+    v: 2,
     id: o.id,
     meta: { l: o.meta.l, by: o.meta.by, value: { ...o.meta.value, name: slug(o.meta.value.name), public: !!o.meta.value.public, repo: String(o.meta.value.repo ?? "") } },
-    recap: { l: o.recap.l, by: o.recap.by, value: o.recap.value.slice(0, 4000) },
     lamport: Number(o.lamport) || 0,
     touchedAt: Number(o.touchedAt) || 0,
   }
-  for (const k of LISTS) {
-    const src = o[k] && typeof o[k] === "object" ? o[k] : {}
-    const items: Record<string, unknown> = {}
-    for (const [id, it] of Object.entries(src).slice(0, 2000))
+  const itemsOf = (src: any) => {
+    const items: Record<string, any> = {}
+    for (const [id, it] of Object.entries(src && typeof src === "object" ? src : {}).slice(0, 2000))
       if (stamp(it) && typeof id === "string" && id.length <= 300 && (it as any).id === id) items[id] = it
-    out[k] = items
+    return items
   }
-  for (const k of [out.meta, out.recap, ...LISTS.flatMap((k) => Object.values(out[k]))] as Stamp[])
-    out.lamport = Math.max(out.lamport, k.l)
+  for (const k of LISTS) out[k] = itemsOf(o[k])
+  // Notes: their kind must be one of ours. Then version 1's lists and recap
+  // fold in, item by item, the newer stamp winning where an id is in both: a
+  // replica that holds both shapes (one updated mid-thread) merges as one.
+  const notes: Record<string, any> = {}
+  for (const [id, n] of Object.entries(out.notes as Record<string, any>)) if (NOTE_KINDS.includes(n.kind)) notes[id] = n
+  const fold = (id: string, n: any) => {
+    if (!notes[id] || newer(n, notes[id])) notes[id] = n
+  }
+  for (const [list, kind] of Object.entries(LEGACY_LISTS))
+    for (const [id, it] of Object.entries(itemsOf(o[list]))) fold(id, { ...it, kind })
+  if (stamp(o.recap) && typeof o.recap.value === "string")
+    fold(RECAP_ID, { kind: "recap", text: o.recap.value, who: "", at: 0, l: o.recap.l, by: o.recap.by, id: RECAP_ID })
+  const r = notes[RECAP_ID]
+  if (r) notes[RECAP_ID] = { ...r, text: String(r.text ?? "").slice(0, 4000) }
+  out.notes = notes
+  for (const k of [out.meta, ...LISTS.flatMap((k) => Object.values(out[k]))] as Stamp[]) out.lamport = Math.max(out.lamport, k.l)
   return out as Thread
 }
+
+/** True when a value is in version 1's shape: it is written back as notes on the next commit. */
+export const isLegacy = (v: unknown) => !!v && typeof v === "object" && ((v as any).v === 1 || LEGACY_SECTIONS.some((k) => (v as any)[k] !== undefined))
 
 /** The fingerprints of everyone in a thread. */
 export const people = (t: Thread) => ids(t, "people")

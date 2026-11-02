@@ -40,7 +40,7 @@ function authThread(o: { public?: boolean } = {}) {
   const t = M.create({ id: "0123456789abcdef", name: "auth", repo: "github.com/acme/api", by: PAUL, label: "paul", now: T0 - 3 * 86400_000, public: o.public })
   M.put(t, "people", MARIE, { label: "marie" }, PAUL, T0)
   M.setRecap(t, PAUL, "Moving tokens to v2 format; v1 kept for one release.", T0)
-  M.put(t, "decisions", "d1", { text: "v1 tokens accepted until 0.2", who: "paul", at: T0 - 3600_000 }, PAUL, T0)
+  M.put(t, "notes", "d1", { kind: "decision", text: "v1 tokens accepted until 0.2", who: "paul", at: T0 - 3600_000 }, PAUL, T0)
   M.put(t, "questions", "q1", { text: "keep the v1 endpoint?", blocking: true, who: "marie", at: T0 - 7200_000 }, MARIE, T0)
   M.put(t, "questions", "q2", { text: "rename the cookie?", who: "marie", at: T0 - 1800_000, answer: "yes, xt_session", answeredBy: "paul" }, PAUL, T0)
   M.put(
@@ -64,8 +64,8 @@ function authThread(o: { public?: boolean } = {}) {
     T0,
   )
   M.put(t, "features", "tidy", { name: "tidy token parser", risk: "everyday" }, MARIE, T0)
-  M.put(t, "tasks", "k1", { text: "Find and fix the cause of the incident \"login 500s\" (sentry)", who: "crosstalk", at: T0 - 300_000, state: "open" }, PAUL, T0)
-  M.put(t, "tasks", "k2", { text: "write the migration note", who: "marie", at: T0 - 200_000, state: "done", doneBy: "marie" }, MARIE, T0)
+  M.put(t, "notes", "k1", { kind: "task", text: "Find and fix the cause of the incident \"login 500s\" (sentry)", who: "crosstalk", at: T0 - 300_000, state: "open" }, PAUL, T0)
+  M.put(t, "notes", "k2", { kind: "task", text: "write the migration note", who: "marie", at: T0 - 200_000, state: "done", doneBy: "marie" }, MARIE, T0)
   return t
 }
 

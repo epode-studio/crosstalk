@@ -240,11 +240,11 @@ describe("notifications", () => {
 function thread(name = "auth") {
   const t = M.create({ name, repo: "github.com/acme/api", by: "fp", label: "ana", now: Date.parse("2026-11-01T10:00:00Z") })
   M.setRecap(t, "fp", "Moving tokens to v2; v1 kept for one release.")
-  M.put(t, "decisions", "d1", { text: "v1 tokens accepted until 0.2", who: "paul", at: Date.parse("2026-11-01T11:00:00Z") }, "fp")
+  M.put(t, "notes", "d1", { kind: "decision", text: "v1 tokens accepted until 0.2", who: "paul", at: Date.parse("2026-11-01T11:00:00Z") }, "fp")
   M.put(t, "questions", "q1", { text: "keep the v1 endpoint?", blocking: true, who: "ana", at: 1 }, "fp")
   M.put(t, "questions", "q2", { text: "answered one", who: "ana", at: 2, answer: "yes" }, "fp")
-  M.put(t, "tasks", "k1", { text: "remove v1 parser after 0.2", who: "ana", at: 3, state: "open" }, "fp")
-  M.put(t, "tasks", "k2", { text: "done task", who: "ana", at: 4, state: "done" }, "fp")
+  M.put(t, "notes", "k1", { kind: "task", text: "remove v1 parser after 0.2", who: "ana", at: 3, state: "open" }, "fp")
+  M.put(t, "notes", "k2", { kind: "task", text: "done task", who: "ana", at: 4, state: "done" }, "fp")
   return t
 }
 
@@ -453,9 +453,9 @@ describe("the service", () => {
     expect(r.threads).toEqual(["billing"])
     expect(w.threads.question("s-q")).toBeUndefined()
     await new Promise((r) => setTimeout(r, 10))
-    expect(w.threads.find(undefined, "billing")!.recap.value).toContain("retry the failed invoice emails")
+    expect(M.recap(w.threads.find(undefined, "billing")!)).toContain("retry the failed invoice emails")
     // auth's own recap is never overwritten.
-    expect(w.threads.find(undefined, "auth")!.recap.value).toBe("rotating the session tokens and their refresh")
+    expect(M.recap(w.threads.find(undefined, "auth")!)).toBe("rotating the session tokens and their refresh")
   })
 
   test("context spent: the question once, or a fresh session at once by the standing rule", async () => {

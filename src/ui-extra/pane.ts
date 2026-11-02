@@ -34,7 +34,7 @@ export function paneModel(t: M.Thread, items: Record<string, ui.UiItem>, o: { re
     ...open.filter((i) => i.kind === "ask").map((i) => `${i.from} asks: ${oneLine(i.text ?? "")}`),
     ...open.filter((i) => i.question && i.kind !== "message" && i.kind !== "ask").map((i) => oneLine(i.question!)),
   ]
-  const decisions = M.live(t, "decisions").sort((a, b) => b.at - a.at)
+  const decisions = M.notes(t, "decision").sort((a, b) => b.at - a.at)
   const recent = Object.values(items)
     .filter((i) => (i.kind === "message" || i.kind === "ask") && about(i))
     .sort((a, b) => (b.ts ?? b.createdAt) - (a.ts ?? a.createdAt))
@@ -44,7 +44,7 @@ export function paneModel(t: M.Thread, items: Record<string, ui.UiItem>, o: { re
     thread: name,
     status: t.meta.value.status,
     repo: t.meta.value.repo || undefined,
-    recap: t.recap.value ? oneLine(t.recap.value) : undefined,
+    recap: M.recap(t) ? oneLine(M.recap(t)) : undefined,
     people: M.live(t, "people").map((p) => p.label),
     sessions: M.live(t, "sessions").length,
     waiting,

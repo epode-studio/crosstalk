@@ -15,10 +15,9 @@ const OLD: [old: string, tool: string, args: Record<string, unknown>, handed?: R
   ["crosstalk_thread_read", "crosstalk_thread", { action: "read", thread: "auth" }, { thread: "auth" }],
   ["crosstalk_decide", "crosstalk_thread", { action: "note", kind: "decision", text: "v2 tokens", rationale: "r", tell: "marie" }, { text: "v2 tokens", rationale: "r", tell: "marie" }],
   ["crosstalk_remember", "crosstalk_thread", { action: "note", kind: "fact", text: "tokens are v2", tags: ["api"] }, { text: "tokens are v2", tags: ["api"] }],
-  ["crosstalk_facts", "crosstalk_thread", { action: "note", kind: "fact" }, {}],
+  ["crosstalk_notes", "crosstalk_thread", { action: "note", kind: "fact" }, { kind: "fact" }],
   ["crosstalk_confirm", "crosstalk_thread", { action: "note", kind: "fact", op: "confirm", id: "f1" }, { id: "f1" }],
   ["crosstalk_correct", "crosstalk_thread", { action: "note", kind: "fact", op: "correct", id: "f1", text: "now v3", reason: "moved" }, { id: "f1", text: "now v3", reason: "moved" }],
-  ["crosstalk_tasks", "crosstalk_thread", { action: "note", kind: "task" }, {}],
   ["crosstalk_task_add", "crosstalk_thread", { action: "note", kind: "task", text: "write docs", for: "jo" }, { text: "write docs", for: "jo" }],
   ["crosstalk_task_claim", "crosstalk_thread", { action: "note", kind: "task", op: "claim", id: "t1" }, { id: "t1" }],
   ["crosstalk_task_done", "crosstalk_thread", { action: "note", kind: "task", op: "done", id: "t1", text: "shipped" }, { id: "t1", note: "shipped" }],
@@ -96,6 +95,9 @@ const OLD: [old: string, tool: string, args: Record<string, unknown>, handed?: R
 
 /** Calls that reach an old tool through a part of it, rather than the whole. */
 const PARTS: [old: string, tool: string, args: Record<string, unknown>, handed: Record<string, unknown>][] = [
+  ["crosstalk_notes", "crosstalk_thread", { action: "note", kind: "task", thread: "auth" }, { thread: "auth", kind: "task" }],
+  ["crosstalk_notes", "crosstalk_thread", { action: "note" }, {}],
+  ["crosstalk_confirm", "crosstalk_thread", { action: "note", kind: "fact", op: "confirm", id: "f1", thread: "auth" }, { id: "f1", thread: "auth" }],
   ["crosstalk_thread", "crosstalk_thread", { action: "note", kind: "rule", text: "always v2", when: "w", then: "t" }, { rule: { text: "always v2", when: "w", then: "t" } }],
   ["crosstalk_thread", "crosstalk_thread", { action: "note", kind: "recap", text: "half done", thread: "auth" }, { thread: "auth", recap: "half done" }],
   ["crosstalk_thread", "crosstalk_thread", { action: "note", kind: "question", text: "v1?", blocking: true }, { question: { text: "v1?", blocking: true } }],
@@ -147,10 +149,10 @@ describe("the surface", () => {
 })
 
 describe("every tool of the old surface is reachable", () => {
-  test("the table names each of the 73 once", () => {
+  test("the table names each of the 73, less the two lists that are now one (notes), once", () => {
     const names = OLD.map(([n]) => n)
     expect(new Set(names).size).toBe(names.length)
-    expect(names.length).toBe(73)
+    expect(names.length).toBe(72)
   })
 
   for (const [old, tool, args, handed] of [...OLD, ...PARTS])

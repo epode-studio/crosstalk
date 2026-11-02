@@ -1,7 +1,7 @@
 // The repo-wide standing rules: RULES.md on refs/crosstalk/threads.
 //
 // One document per repository, shaped as a thread (src/threads/model.ts) that
-// only uses its `rules` section, so it merges with the same CRDT, is written
+// only holds notes of kind rule, so it merges with the same CRDT, is written
 // with the same format (sealed section by section, or public markdown) and is
 // sealed to the same people: everyone in a thread of that repo. It is never a
 // thread anywhere else: it is kept here, not in the thread service, and no
@@ -39,6 +39,11 @@ import { adoption, check, retire, validKey } from "../threads/rekey.ts"
 export const RULES_FILE = "RULES.md"
 
 export type Rule = M.Item<M.Rule>
+
+const ruleOf = (t: M.Thread | undefined, id: string): Rule | undefined => {
+  const n = t?.notes[id]
+  return n && n.kind === "rule" ? (n as Rule) : undefined
+}
 
 /** epochs and holders: the key's generation and who it may have reached (threads/rekey.ts). */
 type State = {
@@ -121,7 +126,7 @@ export class RuleDocs {
 
   rules(repo: string): Rule[] {
     const t = this.st.docs[repo]
-    return t ? (M.live(t, "rules") as Rule[]) : []
+    return t ? M.notes(t, "rule") : []
   }
 
   /** The standing rule for a question's key, if there is one. */
@@ -131,7 +136,7 @@ export class RuleDocs {
 
   /** Who last wrote a rule, live or undone: the person who made or dropped it. */
   writer(repo: string, id: string): string | undefined {
-    return this.st.docs[repo]?.rules[id]?.by
+    return ruleOf(this.st.docs[repo], id)?.by
   }
 
   isPublic = (repo: string) => !!this.st.docs[repo]?.meta.value.public
@@ -139,10 +144,10 @@ export class RuleDocs {
   add(repo: string, o: { key: string; then: string; text: string; who: string }): Rule {
     const t = this.doc(repo)
     const id = ruleId(o.key)
-    M.put(t, "rules", id, { text: o.text, who: o.who, at: this.now(), when: o.key, then: o.then }, this.me, this.now())
+    M.put(t, "notes", id, { kind: "rule", text: o.text, who: o.who, at: this.now(), when: o.key, then: o.then }, this.me, this.now())
     this.signItem(repo, id)
     this.save()
-    return t.rules[id] as Rule
+    return ruleOf(t, id)!
   }
 
   /** Undo a rule, by id, by its key, or by words from its text when only one matches. */
@@ -151,13 +156,13 @@ export class RuleDocs {
     const hits: { repo: string; r: Rule }[] = []
     for (const [rp, t] of Object.entries(this.st.docs)) {
       if (repo && rp !== repo) continue
-      for (const r of M.live(t, "rules") as Rule[])
+      for (const r of M.notes(t, "rule"))
         if (r.id === ref || r.when === ref || (want && r.text.toLowerCase().includes(want))) hits.push({ repo: rp, r })
     }
     if (!hits.length) return { ok: false, error: `no standing rule matches "${ref}"` }
     if (hits.length > 1) return { ok: false, error: `more than one rule matches "${ref}": ${hits.map((h) => `${h.r.id} (${h.r.text})`).join("; ")}` }
     const { repo: rp, r } = hits[0]
-    M.remove(this.st.docs[rp], "rules", r.id, this.me, this.now())
+    M.remove(this.st.docs[rp], "notes", r.id, this.me, this.now())
     this.signItem(rp, r.id)
     this.save()
     return { ok: true, rule: r, repo: rp }
@@ -172,10 +177,10 @@ export class RuleDocs {
   /** Sign one rule item (made or undone here) with this machine's key. */
   private signItem(repo: string, id: string) {
     const t = this.st.docs[repo]
-    const r = t?.rules[id] as Rule | undefined
-    if (!r) return
-    const { sig: _s, ...rest } = r as Rule & { sig?: string }
-    t.rules[id] = { ...rest, sig: sign(this.d.identity, signedPart(t.id, rest as Rule)) } as Rule
+    const r = ruleOf(t, id)
+    if (!t || !r) return
+    const { sig: _s, ...rest } = r
+    t.notes[id] = { ...rest, sig: sign(this.d.identity, signedPart(t.id, rest as Rule)) }
   }
 
   /** The Ed25519 key behind a fingerprint, as far as this machine knows. */
@@ -225,22 +230,24 @@ export class RuleDocs {
       }
     }
     const known = this.st.docs[repo]
-    const rules: M.Items<M.Rule> = {}
-    for (const [id, r] of Object.entries(inc.rules)) {
-      const mine = known?.rules[id]
-      const ok = this.verified(inc.id, r as Rule) && (!allowed || allowed.has(r.by))
-      if (ok) rules[id] = r
-      else if (mine) rules[id] = mine
+    // Rules only: any other note in the document is no rule and is left out.
+    const notes: M.Items<M.Note> = {}
+    for (const id of Object.keys(inc.notes)) {
+      const r = ruleOf(inc, id)
+      const mine = ruleOf(known, id)
+      const ok = !!r && this.verified(inc.id, r) && (!allowed || allowed.has(r.by))
+      if (ok) notes[id] = r
+      else if (mine) notes[id] = mine
     }
-    const screened: M.Thread = { ...inc, rules, meta: { ...inc.meta, value: { ...inc.meta.value, public: known ? known.meta.value.public : false } } }
-    const before = new Map((known ? (M.live(known, "rules") as Rule[]) : []).map((r) => [r.id, r]))
+    const screened: M.Thread = { ...inc, notes, meta: { ...inc.meta, value: { ...inc.meta.value, public: known ? known.meta.value.public : false } } }
+    const before = new Map((known ? M.notes(known, "rule") : []).map((r) => [r.id, r]))
     const merged = known ? M.merge(known, screened) : screened
     merged.people = {}
     if (known) merged.meta = { ...merged.meta, value: { ...merged.meta.value, public: known.meta.value.public } }
     if (known && M.same(known, merged)) return { added: [], removed: [] }
     this.st.docs[repo] = merged
     this.save()
-    const after = new Map((M.live(merged, "rules") as Rule[]).map((r) => [r.id, r]))
+    const after = new Map(M.notes(merged, "rule").map((r) => [r.id, r]))
     return {
       added: [...after.values()].filter((r) => !before.has(r.id)),
       removed: [...before.values()].filter((r) => !after.has(r.id)),

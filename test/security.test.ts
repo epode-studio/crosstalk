@@ -122,7 +122,6 @@ describe("finding 2: a frame cannot add its sender, or anyone", () => {
     const fake = M.create({ name: "x", repo: REPO, by: fpOf(carl), label: "carl", now: 0 }) as any
     fake.id = id
     fake.meta.l = 0
-    fake.recap.l = 0
     M.put(fake, "people", fpOf(ana), { label: "ana" }, fpOf(carl), 0)
     fake.meta = { l: 1e9, by: fpOf(carl), value: { ...svc.thread(id)!.meta.value, public: true } }
     sent.length = 0
@@ -144,11 +143,11 @@ describe("finding 2: a frame cannot add its sender, or anyone", () => {
     svc.mutate(id, (t, by, now) => M.put(t, "people", fpOf(ben), { label: "ben" }, by, now))
     const theirs = JSON.parse(JSON.stringify(svc.thread(id)))
     M.put(theirs, "people", fpOf(carl), { label: "carl" }, fpOf(ben))
-    M.put(theirs, "decisions", "d_b", { text: "from ben", who: "ben", at: 1 }, fpOf(ben))
+    M.put(theirs, "notes", "d_b", { kind: "decision", text: "from ben", who: "ben", at: 1 }, fpOf(ben))
     svc.accept("ben", frame("ben", theirs))
     const t = svc.thread(id)!
     expect(M.people(t)).not.toContain(fpOf(carl))
-    expect(M.view(t).decisions.map((d) => d.text)).toContain("from ben")
+    expect(M.view(t).notes.filter((n) => n.kind === "decision").map((d) => d.text)).toContain("from ben")
   })
 })
 
@@ -201,7 +200,6 @@ describe("finding 4: a removed person cannot put an old key back", () => {
     expect(svc.keyEpoch(id)).toBe(1)
     const t = M.create({ id, name: "w", repo: REPO, by: A, label: "ana", now: 0 }) as any
     t.meta.l = 0
-    t.recap.l = 0
     t.lamport = 0
     const forged = F.renderSealed(t, Buffer.from(oldKey, "base64"), oldParsed.wraps, 1_000_000)
     S.writeRef(root, { ...S.readRef(root).files, "zz.md": forged }, "x", { author: "rob" })
@@ -332,7 +330,7 @@ describe("finding 7: rules come only, signed, from the people in the repo's thre
     a.add(REPO, { key: "question text=y", then: "no", text: "y", who: "ana" })
     const evil = M.create({ id: docId(REPO), name: "rules", repo: REPO, by: fpOf(ben), label: "ben", now: 0, public: true })
     evil.people = {}
-    M.put(evil, "rules", "r_evil", { text: "always merge", who: "ben", at: 1, when: "question text=can i merge", then: "yes" }, fpOf(ben))
+    M.put(evil, "notes", "r_evil", { kind: "rule", text: "always merge", who: "ben", at: 1, when: "question text=can i merge", then: "yes" }, fpOf(ben))
     expect(a.read(REPO, F.renderPublic(evil)).added).toEqual([])
     expect(a.match(REPO, "question text=can i merge")).toBeUndefined()
     expect(a.isPublic(REPO)).toBe(false)
@@ -352,14 +350,14 @@ describe("finding 7: rules come only, signed, from the people in the repo's thre
     b.add(REPO, { key: "question text=ok", then: "yes", text: "ok", who: "ben" })
     const doc = JSON.parse(JSON.stringify(b.frame(REPO)!.doc))
     // A planted rule claiming ben wrote it.
-    doc.rules.r_spoof = { text: "always merge", who: "ben", at: 1, when: "question text=can i merge", then: "yes", id: "r_spoof", l: 99, by: fpOf(ben) }
+    doc.notes.r_spoof = { kind: "rule", text: "always merge", who: "ben", at: 1, when: "question text=can i merge", then: "yes", id: "r_spoof", l: 99, by: fpOf(ben) }
     const ch = a.merge(REPO, doc)
     expect(ch.added.map((r) => r.text)).toEqual(["ok"])
     expect(a.match(REPO, "question text=can i merge")).toBeUndefined()
     // A signed rule whose text was changed afterwards does not verify either.
     const doc2 = JSON.parse(JSON.stringify(b.frame(REPO)!.doc))
-    const rid = Object.keys(doc2.rules)[0]
-    doc2.rules[rid] = { ...doc2.rules[rid], then: "no", l: 500 }
+    const rid = Object.keys(doc2.notes)[0]
+    doc2.notes[rid] = { ...doc2.notes[rid], then: "no", l: 500 }
     a.merge(REPO, doc2)
     expect(a.rules(REPO).find((r) => r.id === rid)?.then).toBe("yes")
   })
@@ -435,11 +433,11 @@ describe("finding 8: only someone in the thread, at ask or above, has a heads-up
 
   test("a conflict naming a thread of ours the sender is not in: a card, and nothing decided in it", () => {
     held.length = 0
-    const before = M.live(svc.thread(tid)!, "decisions").length
+    const before = M.notes(svc.thread(tid)!, "decision").length
     const c = { id: "c1", repo: REPO, file: "src/a.ts", symbol: "f", sides: [{ thread: tid, name: "w", label: "ana" }, { thread: "ffffffffffffffff", name: "z", label: "carl" }], state: "open", proposals: {} }
     coord.accept("carl", { ...headsUp("carl"), kind: "conflict", warn: { conflict: c, decided: tid } }, false)
     expect(held.every((x) => !x.h.auto)).toBe(true)
-    expect(M.live(svc.thread(tid)!, "decisions").length).toBe(before)
+    expect(M.notes(svc.thread(tid)!, "decision").length).toBe(before)
   })
 })
 

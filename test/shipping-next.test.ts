@@ -482,7 +482,7 @@ describe("the engine: preview, dark, metrics, auto-kill", () => {
     expect(q2.text).toContain("shadow_mismatch_rate 0.01")
     await e.answer(q2.id, "yes", { person: true })
     expect(flagsOn(dir)["pay-v2"]).toBe("internal")
-    expect(M.live(port.get(t.id)!, "facts").map((x) => x.text).join("\n")).toContain("Baseline before the step: errors 2")
+    expect(M.notes(port.get(t.id)!, "fact").map((x) => x.text).join("\n")).toContain("Baseline before the step: errors 2")
     // A regression: errors 2 → 9. Off, everyone told, the thread reopened.
     M.setMeta(port.get(t.id)!, "x", { status: "done" })
     fs.writeFileSync(path.join(S, "m-pay-v2.json"), '{"errors": 9, "latency_p95": 100}')
@@ -491,7 +491,7 @@ describe("the engine: preview, dark, metrics, auto-kill", () => {
     expect(w.text).toContain("errors went from 2 to 9")
     expect(flagsOn(dir)["pay-v2"]).toBe("off")
     expect(port.get(t.id)!.meta.value.status).toBe("active")
-    expect(M.live(port.get(t.id)!, "tasks").map((x) => x.text).join()).toContain("regressed")
+    expect(M.notes(port.get(t.id)!, "task").map((x) => x.text).join()).toContain("regressed")
     expect(port.notes.at(-1)).toContain("turned off by itself")
     expect(woke.at(-1)!.text).toContain("<crosstalk-metrics")
     expect((await e.watch()).text).toBe("no flag is ramping")
