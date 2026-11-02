@@ -31,7 +31,7 @@ import {
 import { channelKey, seal, open as unseal, fingerprint as fingerprintOf } from "./crypto.ts"
 import { Channel, derive, newEphemeral, signWith, transcript, verifyWith } from "./link.ts"
 import { listLocalSessions, findSession, type LocalSession } from "./registry.ts"
-import { injectNotice, injectMessage, injectRouteQuestion, routeQuestionText, handedMessage } from "./inject.ts"
+import { attr, injectNotice, injectMessage, injectRouteQuestion, routeQuestionText, handedMessage } from "./inject.ts"
 import * as footprint from "./footprint.ts"
 import * as ui from "./uistate.ts"
 import { triage } from "./policy.ts"
@@ -44,6 +44,7 @@ import * as facts from "./facts.ts"
 import * as tasks from "./tasks.ts"
 import * as repotrust from "./repotrust/index.ts"
 import type { Envelope, Frame, Intent, Kind, SessionPresence, Slice } from "./protocol.ts"
+import { cleanEnvelope } from "./protocol.ts"
 import { ThreadService } from "./threads/service.ts"
 import * as threadModel from "./threads/model.ts"
 import { createShipping } from "./shipping/daemon.ts"
@@ -470,6 +471,8 @@ function push(sessionId: string, msg: unknown): boolean {
   return sent
 }
 const slicesById = new Map<string, Slice[]>()
+/** When a session's agent was last given a peer's words (handed over, crosstalk_read, delivered): steering from it waits. */
+const peerTextAt = new Map<string, number>()
 const persist = () => saveQueue(held)
 
 function hold(sessionId: string, h: Held, slices?: Slice[]) {
@@ -878,6 +881,9 @@ function onEnvelope(
   env: Envelope,
   ctx?: { room?: rooms.Room; strangerInRoom?: boolean; replayingParked?: boolean },
 ): void {
+  // Names the sender chose (session, thread, room) are cut to a short plain
+  // charset before anything reads them: they end up in notices, tags and cards.
+  cleanEnvelope(env)
   // A parked envelope is re-run through here once a session registers, so the
   // duplicate check has to skip that path and only record an id once the
   // message is actually held.
@@ -1037,6 +1043,7 @@ function onEnvelope(
   persist()
 
   if (decision.action === "deliver") {
+    peerTextAt.set(target.sessionId, Date.now())
     injectMessage(opts, {
       peer: peerLabel,
       peerSession: env.fromSession,
@@ -2054,7 +2061,8 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       if (questions.length) persistUnrouted()
       const parts: string[] = questions.map((u) => routeQuestionText(routeQuestionFor(u)))
       if (waiting.length) {
-        const from = [...new Set(waiting.map((m) => `${m.from}/${m.fromSession}`))].join(", ")
+        // Labels and session names are the senders': escaped like any attribute (inject.ts).
+        const from = [...new Set(waiting.map((m) => `${attr(m.from)}/${attr(m.fromSession)}`))].join(", ").slice(0, 400)
         const what = waiting.length === 1 ? "1 message" : `${waiting.length} messages`
         parts.unshift(
           [
@@ -2232,14 +2240,35 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         ui.withStore((items, now) => ui.settle(items, id, "handed", now))
         return { ok: false, error: "that message is no longer held here" }
       }
+      // The mod could not append the handed row: the message waits again,
+      // rather than sitting handed and read but never delivered.
+      if (action === "unhand") {
+        if (before.state !== "handed") return { ok: false, error: `not handed: ${before.state}`, item: before }
+        ui.withStore((items, now) => ui.reopen(items, id, now))
+        markHeld(id, (h) => {
+          delete h.readAt
+          delete h.handedAt
+          delete h.toolReadAt
+          h.surfaced = false
+        })
+        return { ok: true, item: ui.snapshot()[id] }
+      }
       if (action === "hand") {
         const claim = ui.withStore((items, now) => ui.act(items, id, "hand", now))
         if (!claim.ok) return claim
-        markHeld(id, settledHeld)
+        // Passed on by the mod because it is about this session's own thread,
+        // never put to the person: framed as that, not as their hand-over.
+        const auto = value === "auto" || (!!m.auto && before.raisedAt === undefined)
+        markHeld(id, (h) => {
+          settledHeld(h)
+          h.handedAt = h.toolReadAt = Date.now()
+        })
+        peerTextAt.set(sid, Date.now())
         return {
           ok: true,
           item: claim.item,
-          text: handedMessage({ id: m.id, peer: m.from, peerSession: m.fromSession, thread: m.thread, text: m.text, slices: m.slices }),
+          auto,
+          text: handedMessage({ id: m.id, peer: m.from, peerSession: m.fromSession, thread: m.thread, text: m.text, slices: m.slices, auto }),
         }
       }
       if (action === "answer") {
@@ -2262,10 +2291,25 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
     case "read": {
       const sid = resolveSession(req)?.sessionId ?? req.sessionId
       if (!sid) return { ok: false, error: "read needs a sessionId" }
+      const now = Date.now()
+      // With the mod live, a card is the person's until they hand it over:
+      // crosstalk_read (all or not) returns only what was handed to this
+      // agent, and what is about its own thread, never the cards waiting.
+      if (modLive(sessions.get(sid))) {
+        const q = (held[sid] ?? []).filter((m) => m.handedAt || (m.auto && (!m.readAt || m.toolReadAt)))
+        const unread = q.filter((m) => !m.toolReadAt)
+        for (const m of unread) {
+          m.toolReadAt = now
+          m.readAt ??= now
+        }
+        if (unread.length) peerTextAt.set(sid, now)
+        persist()
+        return { ok: true, messages: req.all ? q : unread }
+      }
       const q = held[sid] ?? []
       const unread = q.filter((m) => !m.readAt)
-      const now = Date.now()
       for (const m of unread) m.readAt = now
+      if (unread.length || (req.all && q.length)) peerTextAt.set(sid, now)
       persist()
       return { ok: true, messages: req.all ? q : unread }
     }
@@ -2517,6 +2561,16 @@ coord = new Coordinator({
   },
   route: (id, session) => handle({ op: "route", id, session, auto: true }),
   answerPeer: (label, correlation, text, replyTo) => handle({ op: "answer", to: label, correlation, text, replyTo, auto: true }),
+  spawned: (sid) => {
+    const reg = sessions.get(sid)
+    if (attention?.isBackground(sid)) return true
+    try {
+      return !!(reg?.cwd && spawnedAt(reg.cwd))
+    } catch {
+      return false
+    }
+  },
+  peerTextAt: (sid) => peerTextAt.get(sid),
 })
 
 // Disk, team install, local stats, leaving a thread (src/extras.ts).

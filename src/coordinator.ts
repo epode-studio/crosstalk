@@ -29,6 +29,7 @@ import { describe, neverAuto, ruleKey, type Question } from "./rules/key.ts"
 import { WarnService, type LocalMessage } from "./warn/service.ts"
 import type { Conflict } from "./warn/conflict.ts"
 import { isBot } from "./ui-extra/bots.ts"
+import { STEER_NO, STEER_YES } from "./ui-extra/pure.ts"
 import { revokedFingerprints, shouldHold } from "./threads/rekey.ts"
 import * as metrics from "./metrics/log.ts"
 import { CrossRepo } from "./threads/crossrepo.ts"
@@ -57,6 +58,10 @@ export type CoordDeps = {
   route: (id: string, session: string) => Promise<any>
   /** Answer a peer's ask. */
   answerPeer: (label: string, correlation: string, text: string, replyTo?: string) => unknown
+  /** True for a session crosstalk started: a spawned agent, or one in the background. */
+  spawned?: (sessionId: string) => boolean
+  /** When the session's agent was last given a peer's words. */
+  peerTextAt?: (sessionId: string) => number | undefined
 }
 
 type Note = H.Note
@@ -195,23 +200,72 @@ export class Coordinator {
     }))
   }
 
+  /** Steers waiting on the person's yes, by item id. Gone with the daemon, which is the safe way to lose one. */
+  private steers = new Map<string, { from: string; to: string; text: string; at: number }>()
+
+  /**
+   * crosstalk_steer: the person's own instruction, into another of their
+   * sessions, framed there as theirs. A tool description is no guard (any
+   * registered session could call the op, a peer's text could talk an agent
+   * into it), so nothing is injected until the person says yes in crosstalk's
+   * mod, in the session that asked, on a picker that shows the exact words.
+   * Refused outright from a session crosstalk started (a spawned or
+   * background agent: nobody is there to ask), from one that was just given
+   * another person's words, and without the mod. The target is named
+   * exactly: a session id, a session name, or a thread only one session is in.
+   */
   private async steer(self: Reg | undefined, req: any) {
     if (!self) return { ok: false, error: "steering comes only from one of your own registered sessions" }
     const want = String(req.session ?? "").trim()
-    const text = String(req.text ?? "").trim()
+    const text = String(req.text ?? "").trim().slice(0, 8000)
     if (!want || !text) return { ok: false, error: "say which session and what to tell it" }
+    if (this.d.spawned?.(self.sessionId))
+      return { ok: false, error: "this session was started by crosstalk (a spawned or background agent), so it cannot steer other sessions. Ask your user to do it from their own session." }
+    const handedAt = this.d.peerTextAt?.(self.sessionId)
+    const cool = Number(process.env.CROSSTALK_STEER_COOLDOWN_MS ?? 10 * 60_000)
+    if (handedAt && Date.now() - handedAt < cool)
+      return { ok: false, error: "this session was just given another person's words, so it does not steer other sessions now. If your user wants it, they can tell that session themselves." }
     const all = [...this.d.sessions().values()]
+    const lc = want.toLowerCase()
+    const byThread = all.filter((s) => s.sessionId !== self.sessionId && this.d.threads.namesFor(s.sessionId).some((t) => t.toLowerCase() === lc))
     const target =
       all.find((s) => s.sessionId === want) ??
       all.find((s) => s.name === want) ??
-      all.find((s) => this.d.threads.namesFor(s.sessionId).includes(want) && s.sessionId !== self.sessionId) ??
-      all.find((s) => s.name.toLowerCase().includes(want.toLowerCase()))
+      all.find((s) => s.name.toLowerCase() === lc) ??
+      (byThread.length === 1 ? byThread[0] : undefined)
+    if (!target && byThread.length > 1) return { ok: false, error: `more than one session is in ${want}: ${byThread.map((s) => s.name).join(", ")}. Name one.` }
     if (!target) return { ok: false, error: `no session called "${want}". Open: ${all.map((s) => s.name).join(", ") || "none"}` }
     if (target.sessionId === self.sessionId) return { ok: false, error: "that is this session; just say it here" }
     if (!target.socket) return { ok: false, error: `${target.name} has no inbox crosstalk can write to (it is not a Claude Code session)` }
-    await injectInstruction({ socket: target.socket, replyTo: self.socket || undefined, fromName: `${self.name} (you)`, token: target.token }, { from: self.name, text })
-    this.d.log(`steered ${target.name} from ${self.name}`)
-    return { ok: true, to: target.name, text: `Told ${target.name}.` }
+    if (!this.d.modLive(self.sessionId))
+      return {
+        ok: false,
+        error: `steering needs your user's yes, and this session has no crosstalk mod to ask them with. Nothing was sent. Tell your user to type it into ${target.name} themselves.`,
+      }
+    const id = `steer:${crypto.randomBytes(6).toString("hex")}`
+    this.steers.set(id, { from: self.sessionId, to: target.sessionId, text, at: Date.now() })
+    const shown = text.length > 300 ? text.slice(0, 299) + "…" : text
+    ui.withStore((items, now) =>
+      ui.upsert(items, { id, kind: "steer", sessionId: self.sessionId, thread: target.name, question: `Tell ${target.name}: "${shown.replace(/\s+/g, " ")}"?`, options: [STEER_YES, STEER_NO], ts: now }, now),
+    )
+    this.d.log(`steer from ${self.name} to ${target.name} waits on the person`)
+    return { ok: true, pending: true, to: target.name, text: `Asked your user to confirm, in this session. Nothing reaches ${target.name} unless they pick "${STEER_YES}".` }
+  }
+
+  /** The person's answer to a steer's picker: only "Tell it" sends, and only what the picker showed. */
+  private async steerAnswered(sid: string, it: ui.UiItem, value: string) {
+    const claim = ui.withStore((items, now) => ui.act(items, it.id, "answer", now, value))
+    if (!claim.ok) return claim
+    const s = this.steers.get(it.id)
+    this.steers.delete(it.id)
+    if (!s || s.from !== sid) return { ok: false, error: "that steer is no longer waiting; nothing was sent", item: claim.item }
+    if (value !== STEER_YES) return { ok: true, text: "Not sent.", item: claim.item }
+    const self = this.d.sessions().get(s.from)
+    const target = this.d.sessions().get(s.to)
+    if (!self || !target?.socket) return { ok: false, error: "that session has gone; nothing was sent", item: claim.item }
+    await injectInstruction({ socket: target.socket, replyTo: self.socket || undefined, fromName: `${self.name} (you)`, token: target.token }, { from: self.name, text: s.text })
+    this.d.log(`steered ${target.name} from ${self.name}, confirmed by the person`)
+    return { ok: true, to: target.name, text: `Told ${target.name}.`, item: claim.item }
   }
 
   // --- the daemon's requests ---------------------------------------------------------
@@ -485,6 +539,7 @@ export class Coordinator {
 
   /** The mod's picker answered a rule offer or a conflict. */
   uiAct(sid: string, it: ui.UiItem, value: string) {
+    if (it.kind === "steer") return this.steerAnswered(sid, it, value)
     if (it.kind === "rule") {
       const claim = ui.withStore((items, now) => ui.act(items, it.id, "answer", now, value))
       if (!claim.ok) return claim

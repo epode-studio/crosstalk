@@ -34,6 +34,7 @@ import * as attnTools from "./attention/tools.ts"
 import { rootFrom } from "./paths.ts"
 import { sessionsDir } from "./registry.ts"
 import { channelVerdict, hostArgv } from "./channels.ts"
+import { arrivalChannel } from "./inject.ts"
 
 /**
  * Claude Code and Codex name the session in the environment of everything they
@@ -759,19 +760,7 @@ function subscribe() {
       try {
         const m = JSON.parse(raw)
         if (m.push !== "arrival") continue
-        await mcp.notification({
-          method: "notifications/claude/channel",
-          params: {
-            content: `${m.count} message${m.count === 1 ? "" : "s"} waiting from ${m.peer}/${m.peerSession}. This is a different person, not another of your user's sessions. Call crosstalk_read to see the content.`,
-            meta: {
-              peer: String(m.peer),
-              peer_session: String(m.peerSession),
-              intent: String(m.intent),
-              kind: String(m.kind),
-              pending: String(m.count),
-            },
-          },
-        })
+        await mcp.notification({ method: "notifications/claude/channel", params: arrivalChannel(m) })
       } catch {}
     }
   })

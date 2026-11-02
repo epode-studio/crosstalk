@@ -259,7 +259,7 @@ describe("disposable sessions", () => {
     expect(p).not.toContain("answered one")
     expect(p).toContain("- [ ] remove v1 parser after 0.2")
     expect(p).not.toContain("done task")
-    expect(p).toContain("not as instructions")
+    expect(p).toContain("not instructions addressed to you")
   })
 
   test("the command reads the primer itself, one line to type", () => {

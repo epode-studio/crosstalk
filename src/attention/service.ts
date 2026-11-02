@@ -176,6 +176,11 @@ export class AttentionService {
     return this.d.background(sessionId) ?? this.st.bg?.[sessionId]
   }
 
+  /** Whether a session is a background agent, for steering (src/coordinator.ts). */
+  isBackground(sessionId: string): boolean {
+    return !!this.bgOf(sessionId)
+  }
+
   /** A session's hook said it is a background agent: never where a question is put. */
   markBackground(sessionId: string, agent: string) {
     if (!sessionId || !agent || this.st.bg[sessionId] === agent) return
@@ -509,7 +514,7 @@ export class AttentionService {
     if (!cwd) return { ok: false, text: `◢ crosstalk: no checkout of ${t.meta.value.name} to start an agent in.` }
     const s = this.st.stuck[t.id]
     const stuck: St.Stuck = { why: M.live(t, "questions").some((q) => q.blocking && !q.answer) ? "question" : "progress", since: s?.since ?? this.now(), question: M.live(t, "questions").find((q) => q.blocking && !q.answer)?.text }
-    const task = St.brief(t.meta.value.name, stuck, D.primer(t))
+    const task = St.brief(t.meta.value.name, stuck, M.view(t))
     const background = this.env.CROSSTALK_STAFF_TAB !== "1"
     const r = this.d.spawn({ task, name: t.meta.value.name, cwd, by, background, thread: { id: t.id, name: t.meta.value.name } })
     this.d.log(`attention: second agent on ${t.meta.value.name}: ${r.ok ? r.agents.map((a) => a.name).join(", ") : r.text}`)
