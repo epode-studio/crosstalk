@@ -19397,6 +19397,73 @@ Public link: ${s.public.url} (${untilText(s.expiresAt)}).`;
   };
 }
 
+// src/streamgate.ts
+var PAUSED_TEXT = "sharing through the shared relay is paused until tomorrow; run your own relay with `--host` or `worker/`. Ordinary messages still work.";
+var NO_STREAMS_TEXT = "the shared relay does not carry live share traffic yet (it needs redeploying from `worker/`), so sharing waits rather than costing everyone's storage; run your own relay with `--host` or `worker/` to share now.";
+var RECENT_MS = 15 * 60000;
+function createStreamGate(d) {
+  const now = d.now ?? Date.now;
+  let hosted = false;
+  let streams;
+  let openedAt = 0;
+  let pausedUntil = 0;
+  let toldNoStreams = false;
+  const recent = new Map;
+  return {
+    connected(o) {
+      hosted = o.hosted;
+      streams = undefined;
+      openedAt = now();
+    },
+    ready(o) {
+      streams = !!o.streams;
+    },
+    route(label) {
+      const t = now();
+      if (t < pausedUntil)
+        return null;
+      if (hosted && !streams) {
+        if (!toldNoStreams && t - openedAt > 5000) {
+          toldNoStreams = true;
+          d.log("share: the hosted relay does not advertise stream frames; share frames are not sent");
+          d.note(`streams:none:${t}`, `\u25e2 crosstalk: ${NO_STREAMS_TEXT}`);
+        }
+        return null;
+      }
+      recent.set(label, t);
+      return streams ? "stream" : "send";
+    },
+    mode() {
+      return streams ? hosted ? "worker" : "stream" : "send";
+    },
+    paused() {
+      return now() < pausedUntil;
+    },
+    onError(f, me = "this machine") {
+      if (f.code === "stream_offline" || f.code === "stream_burst") {
+        d.log(`share: relay: ${String(f.message ?? f.code).slice(0, 200)}`);
+        return true;
+      }
+      if (f.code !== "stream_paused")
+        return false;
+      const t = now();
+      const fresh = t >= pausedUntil;
+      const until = Number(f.until);
+      pausedUntil = Number.isFinite(until) && until > t ? Math.min(until, t + 25 * 60 * 60000) : t + 60 * 60000;
+      if (!fresh)
+        return true;
+      const why = f.scope === "relay" ? "everyone's sharing together has used the shared relay's daily allowance" : "this machine has used its daily allowance on the shared relay";
+      d.log(`share: paused by the hosted relay until ${new Date(pausedUntil).toISOString()} (${why})`);
+      d.note(`streams:paused:${t}`, `\u25e2 crosstalk: ${PAUSED_TEXT} (${why}.)`);
+      for (const [label, at] of recent)
+        if (t - at < RECENT_MS)
+          d.tell(label, `\u25e2 crosstalk: ${me}'s ${PAUSED_TEXT}`);
+      recent.clear();
+      return true;
+    }
+  };
+}
+
 // src/urls/health/index.ts
 import fs74 from "node:fs";
 import path86 from "node:path";
@@ -20415,7 +20482,11 @@ var peersByFingerprint = () => {
 var ws = null;
 var channel = null;
 var workerMode = false;
-var relayStreams = false;
+var streamGate = createStreamGate({
+  note: (id, text) => coord.note({ id, text }),
+  tell: (label, text) => sendEnvelope(label, { v: 1, id: crypto32.randomUUID(), ts: Date.now(), from: identity.label, fromSession: "-", to: label, kind: "message", intent: "fyi", text }),
+  log
+});
 var backoff2 = 1000;
 var pendingAsks = new Map;
 function connect() {
@@ -20426,6 +20497,7 @@ function connect() {
   log(`relay connecting ${base}${workerMode ? " (hosted)" : ""}`);
   const sock = new WebSocket(target);
   ws = sock;
+  streamGate.connected({ hosted: workerMode });
   let eph = null;
   let pendingTranscript = null;
   sock.onmessage = (ev) => {
@@ -20472,6 +20544,11 @@ function connect() {
     return onFrame(f, pendingTranscript);
   };
   function onFrame(f, pendingTranscript) {
+    if (f.t === "ready" && workerMode) {
+      streamGate.ready(f);
+      log(`relay carries ${f.streams ? "live stream frames" : "no stream frames"} (hosted)`);
+      return;
+    }
     if (f.t === "ready") {
       const pinned = loadRelay().pub;
       const sig = f.sig;
@@ -20486,7 +20563,7 @@ function connect() {
       }
       backoff2 = 1000;
       lastHeard = Date.now();
-      relayStreams = !!f.streams;
+      streamGate.ready(f);
       log(`relay ready as ${f.fingerprint}`);
       flushOutbox();
       publishPresence();
@@ -20522,7 +20599,7 @@ function connect() {
     }
     if (f.t === "room_deliver")
       return onRoomBody(f);
-    if (f.t === "error")
+    if (f.t === "error" && !streamGate.onError(f, identity.label))
       log(`relay error: ${f.message}`);
   }
   sock.onopen = () => {
@@ -22214,9 +22291,12 @@ shares = createShares({
     const peer = loadPeers()[label];
     if (!peer)
       return false;
-    return relaySend({ t: !workerMode && relayStreams ? "stream" : "send", to: peer.fingerprint, id: env.id, body: seal(channelKey(identity, peer), JSON.stringify(env)) });
+    const t = streamGate.route(label);
+    if (!t)
+      return false;
+    return relaySend({ t, to: peer.fingerprint, id: env.id, body: seal(channelKey(identity, peer), JSON.stringify(env)) });
   },
-  mode: () => workerMode ? "worker" : relayStreams ? "stream" : "send",
+  mode: () => streamGate.mode(),
   log,
   fallbackSession: () => coord.mainId() ?? mostRecentSession()?.sessionId,
   modLive: (sid) => modLive(sessions.get(sid)),

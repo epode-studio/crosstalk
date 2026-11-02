@@ -283,9 +283,18 @@ responses up to 256 MB, websocket messages up to 16 MB. Both daemons pace what
 they send (80 frames and 3 MB a second, with bursts), below what the relay
 takes, and paul's holds what each person sends to twice that; more gets 429.
 Frames are live: the self-hosted relay carries them as `stream` frames, with a
-budget of their own and never buffered for someone offline; a relay that
-predates them carries them as ordinary sends, much slower (60 a minute); the
-hosted relay carries them as ordinary sends.
+budget of their own and never buffered for someone offline; a self-hosted relay
+that predates them carries them as ordinary sends, much slower (60 a minute).
+The hosted relay carries them as `stream` frames too, never stored, with a
+daily allowance because it is a free plan everyone shares: 4,000 frames a day
+per person and 15,000 for everyone together (`worker/README.md` has the
+arithmetic: sharing as a whole stays under a sixth of the relay's day). Past
+it, the relay says `stream_paused`, sharing stops until 00:00 UTC, and both
+people get a plain message: "sharing through the shared relay is paused until
+tomorrow; run your own relay with `--host` or `worker/`". Messages keep
+working. On the hosted relay share frames never fall back to ordinary sends,
+which are stored: one that has not been redeployed with stream frames carries
+no sharing at all, and the person is told so once (`src/streamgate.ts`).
 
 **Ending.** At its expiry each side ends it by itself; `crosstalk_unshare`
 ends it at once and tells everyone in it. Either way open requests get 410,
@@ -471,6 +480,8 @@ Every capture is passed to `noteShot({ urlId, path, note? })` from
   `check-ignore` with a case-insensitive file system, and `.env` files in
   monorepos deeper than eight folders (not walked).
 - **Sharing between two real machines:** three identities on one machine and
-  a local relay stood in. Not run: the hosted relay, a public link through a
+  a local relay stood in, and the Worker's stream frames under a local
+  `wrangler dev` (`test/share-worker.sh`). Not run: the deployed hosted relay
+  (not redeployed with stream frames yet), a public link through a
   real cloudflared, Vite or Next.js HMR through a share, Safari and Chrome on
   `*.<owner>.localhost` names, and the share card in the mod.
