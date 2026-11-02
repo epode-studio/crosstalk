@@ -1,6 +1,6 @@
 // The terminal workspace's commands, for scripts and for the mod.
 //
-//   crosstalk spawn [--count N] [--name X] [--background] "<task>"
+//   crosstalk spawn [--count N] [--name X] [--thread T] [--background] "<task>"
 //   crosstalk show <name>
 //   crosstalk cleanup [--yes] [--include <worktree>]...
 //   crosstalk term status --session <id> (--state <s> | --event <E> [--type <t>]) [--pending N]
@@ -18,7 +18,7 @@ const flag = (argv: string[], f: string) => {
   return i === -1 ? undefined : argv[i + 1]
 }
 const flags = (argv: string[], f: string) => argv.flatMap((a, i) => (a === f && argv[i + 1] !== undefined ? [argv[i + 1]] : []))
-const VALUE = new Set(["--count", "--name", "--session", "--state", "--event", "--type", "--pending", "--include", "--cwd"])
+const VALUE = new Set(["--count", "--name", "--thread", "--session", "--state", "--event", "--type", "--pending", "--include", "--cwd"])
 const positional = (argv: string[]) => {
   const out: string[] = []
   for (let i = 1; i < argv.length; i++) {
@@ -57,16 +57,17 @@ export async function termCmd(argv: string[], root: string) {
 export async function spawnCmd(argv: string[]) {
   const task = positional(argv).join(" ").trim()
   if (!task) {
-    console.error(`usage: crosstalk spawn [--count N] [--name X] [--background] "<task>"`)
+    console.error(`usage: crosstalk spawn [--count N] [--name X] [--thread T] [--background] "<task>"`)
     process.exit(64)
   }
-  const out = spawn.spawnAgents({
+  const out = await spawn.spawnFromSession({
     count: Number(flag(argv, "--count") ?? 1),
     name: flag(argv, "--name"),
     background: argv.includes("--background"),
     task,
     cwd: flag(argv, "--cwd") ?? process.cwd(),
     by: process.env.CLAUDE_CODE_SESSION_ID,
+    threadName: flag(argv, "--thread"),
   })
   console.log(out.text)
   if (!out.ok) process.exitCode = 1

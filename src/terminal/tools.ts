@@ -10,7 +10,7 @@ export const TOOLS = [
   {
     name: "crosstalk_spawn",
     description:
-      "Start new Claude agents on a task, each in its own private copy of this repository (a git worktree on a new branch, dependencies shared, not copied) and its own tab in the user's terminal, in the window that already holds this repository. Call this whenever the user asks for more agents or another agent, e.g. \"put two more on auth\" (count 2, task about auth), \"start an agent to fix the flaky login test\", \"get someone on the docs\", \"spin up three agents for the migration\". Write `task` as the full instruction the new agent should start from, with the context it needs from this conversation. Use background: true when the user wants it to run in the background or out of sight (\"in the background\", \"without a window\"); it then keeps running when windows close and \"show me <name>\" opens it. Relay the result text to the user as it is.",
+      "Start new Claude agents on a task, each in its own private copy of this repository (a git worktree on a new branch, dependencies shared, not copied) and its own tab in the user's terminal, in the window that already holds this repository. When this session is in a crosstalk thread, the new agents start in it: their first prompt is the thread's brief followed by the task, and their tabs go next to the thread's.Call this whenever the user asks for more agents or another agent, e.g. \"put two more on auth\" (count 2, task about auth), \"start an agent to fix the flaky login test\", \"get someone on the docs\", \"spin up three agents for the migration\". Write `task` as the full instruction the new agent should start from, with the context it needs from this conversation. Use background: true when the user wants it to run in the background or out of sight (\"in the background\", \"without a window\"); it then keeps running when windows close and \"show me <name>\" opens it. Relay the result text to the user as it is.",
     inputSchema: {
       type: "object",
       properties: {
@@ -18,6 +18,7 @@ export const TOOLS = [
         count: { type: "number", description: "How many agents, default 1, at most 8" },
         name: { type: "string", description: "A short name for the agent(s), e.g. auth; several become auth-1, auth-2" },
         background: { type: "boolean", description: "true runs it in crosstalk's background tmux instead of a tab" },
+        thread: { type: "string", description: "The crosstalk thread to start it in; default: this session's own thread, if it is in one" },
       },
       required: ["task"],
     },
@@ -49,10 +50,21 @@ export const TOOLS = [
 const text = (out: { ok: boolean; text: string }) => ({ content: [{ type: "text" as const, text: out.text }], ...(out.ok ? {} : { isError: true }) })
 
 /** The call, or null when the tool is not one of these. */
-export function callTool(name: string, a: any, o: { sessionId: string; cwd: string }) {
+export async function callTool(name: string, a: any, o: { sessionId: string; cwd: string }) {
   switch (name) {
     case "crosstalk_spawn":
-      return text(spawn.spawnAgents({ task: String(a.task ?? ""), count: Number(a.count ?? 1), name: a.name, background: !!a.background, cwd: o.cwd, by: o.sessionId || undefined }))
+      // From a session in a thread, the agents start in it, from its brief (src/spawn.ts).
+      return text(
+        await spawn.spawnFromSession({
+          task: String(a.task ?? ""),
+          count: Number(a.count ?? 1),
+          name: a.name,
+          background: !!a.background,
+          cwd: o.cwd,
+          by: o.sessionId || undefined,
+          threadName: a.thread ? String(a.thread) : undefined,
+        }),
+      )
     case "crosstalk_show":
       return text(spawn.show({ name: String(a.name ?? ""), cwd: o.cwd, by: o.sessionId || undefined }))
     case "crosstalk_cleanup": {

@@ -98,9 +98,20 @@ type State = {
   /** Each thread key's epoch and who it may have reached (rekey.ts). */
   epochs: Record<string, number>
   holders: Record<string, string[]>
+  /**
+   * Placements said in advance (`expect`): "sid:<session id>" or "cwd:<folder>"
+   * to the thread it starts in. `used` is the sessions it has placed, each once.
+   */
+  expected: Record<string, Expected>
 }
 
+type Expected = { thread: string; why: string; at: number; used: string[] }
+
+/** How long a placement said in advance waits for its session. */
+const EXPECT_MS = 7 * 24 * 60 * 60_000
+
 const empty = (): State => ({
+  expected: {},
   epochs: {},
   holders: {},
   v: 1,
@@ -349,6 +360,68 @@ export class ThreadService {
 
   // --- local sessions ----------------------------------------------------------
 
+  /**
+   * Say where a session goes before it arrives: a new agent started from a
+   * thread (src/spawn.ts) is in that thread from its first registration, by
+   * its session id or by the folder it runs in (its worktree). It is a pin,
+   * like the person choosing the thread: its files never move it, and its own
+   * branch joins the thread so a pin made on another branch is not dropped.
+   * Each session is placed by it once; leaving the thread afterwards sticks.
+   * Saying it again for the same key and thread changes nothing.
+   */
+  expect(o: { sessionId?: string; cwd?: string; thread: string; why?: string }): { ok: boolean; error?: string; thread?: string } {
+    const t = this.thread(o.thread) ?? this.find(undefined, o.thread)
+    if (!t) return { ok: false, error: `no thread called "${o.thread}"` }
+    const key = o.sessionId ? `sid:${o.sessionId}` : o.cwd ? `cwd:${path.resolve(o.cwd)}` : ""
+    if (!key) return { ok: false, error: "a session id or a folder is needed" }
+    const now = this.now()
+    for (const [k, e] of Object.entries(this.st.expected)) if (now - e.at > EXPECT_MS) delete this.st.expected[k]
+    const was = this.st.expected[key]
+    if (was?.thread === t.id) return { ok: true, thread: t.meta.value.name }
+    this.st.expected[key] = { thread: t.id, why: o.why ?? "started in it", at: now, used: [] }
+    this.save()
+    // Already registered: placed now.
+    const s = o.sessionId ? this.locals.get(o.sessionId) : [...this.locals.values()].find((x) => this.expectedFor(x)?.[0] === key)
+    if (s) {
+      this.place(s)
+      this.flush()
+    }
+    return { ok: true, thread: t.meta.value.name }
+  }
+
+  /** The placement said in advance for this session, if one is waiting for it. */
+  private expectedFor(s: LocalSession): [string, Expected] | undefined {
+    const e = this.st.expected
+    const bySid = e[`sid:${s.sessionId}`]
+    if (bySid && !bySid.used.includes(s.sessionId)) return [`sid:${s.sessionId}`, bySid]
+    if (!s.cwd) return undefined
+    const c = path.resolve(s.cwd)
+    let best: [string, Expected] | undefined
+    for (const [k, x] of Object.entries(e)) {
+      if (!k.startsWith("cwd:") || x.used.includes(s.sessionId)) continue
+      const dir = k.slice(4)
+      if (c !== dir && !c.startsWith(dir + path.sep)) continue
+      if (!best || k.length > best[0].length) best = [k, x]
+    }
+    return best
+  }
+
+  /** Take a waiting placement: the session is pinned to that thread. */
+  private takeExpected(s: LocalSession, rec: Placed, fp: I.Footprint) {
+    const hit = this.expectedFor(s)
+    if (!hit) return
+    const [, x] = hit
+    x.used.push(s.sessionId)
+    const id = this.resolve(x.thread)
+    const t = this.st.threads[id]
+    if (!t || K.isRemoved(t, this.me)) return
+    rec.pinned = [...new Set([...(rec.pinned ?? []), id])]
+    rec.why[id] = x.why
+    delete this.st.questions[s.sessionId]
+    // Its branch is this thread's work, so the pin holds on it.
+    if (fp.branch && !fp.onDefault && !t.branches[fp.branch] && M.put(t, "branches", fp.branch, { at: this.now() }, this.me, this.now())) this.touched.add(t.id)
+  }
+
   /** Place a local session from its footprint. Cheap when nothing changed, which is most calls. */
   observe(s: LocalSession) {
     this.locals.set(s.sessionId, s)
@@ -421,6 +494,7 @@ export class ThreadService {
     const rec: Placed = (this.st.placed[s.sessionId] ??= { threads: [], why: {} })
     rec.name = s.name
     rec.threads = rec.threads.map((id) => this.resolve(id)).filter((id) => this.st.threads[id])
+    this.takeExpected(s, rec, fp)
     let want: { id: string; why: string }[]
     if (rec.pinned) {
       rec.pinned = rec.pinned.map((id) => this.resolve(id)).filter((id) => this.st.threads[id])

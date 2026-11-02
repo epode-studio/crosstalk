@@ -28,6 +28,9 @@ import { openForRepo, type Tab } from "./terminal/layout.ts"
 import { refuseBot } from "./ui-extra/bots.ts"
 import * as bgx from "./attention/background.ts"
 import { focusSession } from "./attention/show.ts"
+import * as St from "./attention/staffing.ts"
+import type { View } from "./attention/dispose.ts"
+import { request } from "./client.ts"
 
 export const DEP_DIRS = ["node_modules", ".venv", "venv"]
 export const MAX_AGENTS = 8
@@ -53,6 +56,11 @@ export type SpawnRec = {
   claudeBg?: boolean
   /** The session that asked. */
   by?: string
+  /** Its name, for the thread's "started from". */
+  byName?: string
+  /** The thread it starts in, by name and id: the daemon places it there from its first registration. */
+  thread?: string
+  threadId?: string
   /** The agent's own session, once its first hook has run. */
   sessionId?: string
   /** Dependency folders linked in from the main checkout. */
@@ -166,6 +174,10 @@ export function planSpawn(o: {
   claude: string
   exists: (p: string) => boolean
   branchExists: (b: string) => boolean
+  /** The first prompt, when it is more than the task (a thread's brief and the task). */
+  prompt?: string
+  /** The thread the agents start in, so their tabs go beside its tabs. */
+  thread?: string
 }): Planned[] {
   const main = o.worktrees[0]?.path ?? o.top
   const where = worktreeHome({ main, worktrees: o.worktrees, home: o.home })
@@ -182,7 +194,7 @@ export function planSpawn(o: {
     const worktree = path.join(where, name)
     const cwd = sub ? path.join(worktree, sub) : worktree
     const links: [string, string][] = DEP_DIRS.filter((d) => o.exists(path.join(main, d))).map((d) => [path.join(main, d), path.join(worktree, d)])
-    return { name, branch: BRANCH_PREFIX + name, worktree, cwd, links, tab: { cwd, argv: [o.claude, o.task], name } }
+    return { name, branch: BRANCH_PREFIX + name, worktree, cwd, links, tab: { cwd, argv: [o.claude, o.prompt ?? o.task], name, ...(o.thread ? { thread: o.thread } : {}) } }
   })
 }
 
@@ -270,6 +282,60 @@ export function excludeLinks(commonDir: string, names: string[]) {
 
 export type SpawnOutcome = { ok: boolean; text: string; agents: SpawnRec[] }
 
+/** The thread new agents start in. */
+export type ThreadCtx = {
+  id: string
+  name: string
+  /** The thread as the daemon shows it, for the brief. */
+  view?: View
+  /** The asking session's name. */
+  from?: string
+  /** Whether the asking session is in it (its tab is then one of the thread's tabs). */
+  asking?: boolean
+}
+
+/**
+ * The thread an agent asked for from this session starts in: the one named,
+ * else the asking session's own first thread. Asked of the daemon; without
+ * one, or with the session in no thread, there is none and the agent starts
+ * from its task alone. A thread named that does not exist is an error.
+ */
+export async function threadFor(o: { sessionId?: string; cwd: string; thread?: string; ask?: Ask }): Promise<{ ok: true; thread?: ThreadCtx } | { ok: false; text: string }> {
+  const ask = o.ask ?? ((req) => request(req, 4000))
+  const named = (o.thread ?? "").trim()
+  let r: any
+  try {
+    r = await ask({ op: "thread_read", sessionId: o.sessionId, cwd: o.cwd, ...(named ? { thread: named } : {}) })
+  } catch {
+    // No daemon: nothing to brief from, unless a thread was named.
+    return named ? { ok: false, text: `◢ crosstalk: cannot reach the daemon to find the thread ${named}.` } : { ok: true }
+  }
+  if (!r?.ok) return named ? { ok: false, text: `◢ crosstalk: no thread called "${named}".${r?.all?.length ? ` Threads: ${r.all.map((t: { name: string }) => t.name).join(", ")}.` : ""}` } : { ok: true }
+  const v = (r.threads ?? [])[0] as View | undefined
+  if (!v?.id) return { ok: true }
+  let mine: string[] = []
+  let from: string | undefined
+  if (o.sessionId) {
+    try {
+      const s = await ask({ op: "threads", sessionId: o.sessionId, cwd: o.cwd })
+      mine = (s?.threads ?? []).map((t: { id: string }) => t.id)
+      from = typeof s?.name === "string" && s.name ? s.name : undefined
+    } catch {}
+  }
+  return { ok: true, thread: { id: v.id, name: v.name, view: v, ...(from ? { from } : {}), asking: !named || mine.includes(v.id) } }
+}
+
+type Ask = (req: Record<string, unknown>) => Promise<any>
+
+/** spawnAgents, from a session: in its thread (or the one named), with the thread's brief. */
+export async function spawnFromSession(o: Parameters<typeof spawnAgents>[0] & { threadName?: string; ask?: Ask }): Promise<SpawnOutcome> {
+  const bot = refuseBot(o.peer, "start an agent on this machine")
+  if (bot) return { ok: false, text: `◢ crosstalk: ${bot}`, agents: [] }
+  const t = await threadFor({ sessionId: o.by, cwd: o.cwd, thread: o.threadName, ask: o.ask })
+  if (!t.ok) return { ok: false, text: t.text, agents: [] }
+  return spawnAgents({ ...o, thread: t.thread })
+}
+
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
 export function spawnAgents(o: {
@@ -283,6 +349,12 @@ export function spawnAgents(o: {
   git?: Git
   /** The peer this is done for, if any: an agent (a bot) is refused. */
   peer?: string
+  /**
+   * The thread the asking session is in (or was named): each agent starts
+   * from its brief (`view`, src/attention/staffing.ts) and is placed in it.
+   * Without a view the task is the whole prompt (staffing writes its own brief).
+   */
+  thread?: ThreadCtx
 }): SpawnOutcome {
   const bot = refuseBot(o.peer, "start an agent on this machine")
   if (bot) return { ok: false, text: `◢ crosstalk: ${bot}`, agents: [] }
@@ -304,6 +376,7 @@ export function spawnAgents(o: {
   if (o.background && !which("tmux", env) && !claudeBg)
     return { ok: false, text: "◢ crosstalk: background agents run in tmux, which is not installed here. Install tmux, or start the agent in a tab instead.", agents: [] }
 
+  const prompt = o.thread?.view ? St.threadBrief(o.thread.view, task, { from: o.thread.from }) : task
   const plans = planSpawn({
     count: o.count ?? 1,
     task,
@@ -315,6 +388,8 @@ export function spawnAgents(o: {
     claude: which("claude", env) ?? "claude",
     exists: (p) => fs.existsSync(p),
     branchExists: (b) => g(main, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]).ok,
+    prompt,
+    thread: o.thread?.name,
   })
 
   const made: SpawnRec[] = []
@@ -349,6 +424,7 @@ export function spawnAgents(o: {
       background: !!o.background,
       ...(o.background ? (claudeBg ? { claudeBg: true } : { tmux: p.name }) : {}),
       by: o.by,
+      ...(o.thread ? { thread: o.thread.name, threadId: o.thread.id, ...(o.thread.from ? { byName: o.thread.from } : {}) } : {}),
       links: linked,
     }
     writeSpawned(rec)
@@ -362,7 +438,7 @@ export function spawnAgents(o: {
   if (o.background && claudeBg) {
     const failed: string[] = []
     for (const p of started) {
-      const st = bgx.bgStep({ claude: claudeBin, name: p.name, task, cwd: p.cwd })
+      const st = bgx.bgStep({ claude: claudeBin, name: p.name, task: prompt, cwd: p.cwd })
       const r = spawnSync(st.cmd, st.args, { cwd: st.cwd, encoding: "utf8", timeout: 60_000, env: { ...env, ...st.env } })
       if (r.status !== 0) failed.push(`${p.name} (${`${r.stderr ?? ""}${r.error ?? ""}`.trim().split("\n").pop()})`)
     }
@@ -386,7 +462,7 @@ export function spawnAgents(o: {
   } else {
     const r = openForRepo(
       started.map((p) => p.tab),
-      { cwd: o.cwd, envVars: env, git: g, by: o.by },
+      { cwd: o.cwd, envVars: env, git: g, by: o.by, thread: o.thread?.name, byInThread: !!o.thread?.asking },
     )
     if (r.opened.kind === "manual" || !r.ok) {
       // Nothing could open it: the commands to paste are the answer, not a failure.
@@ -399,7 +475,7 @@ export function spawnAgents(o: {
     } else where = `in new tabs in ${r.opened.where}`
   }
   const names = made.map((m) => m.name).join(", ")
-  const head = `◢ crosstalk: started ${plural(made.length, "agent")} (${names}), each in its own copy of the code, ${where}.`
+  const head = `◢ crosstalk: started ${plural(made.length, "agent")} (${names}), each in its own copy of the code, ${where}.${o.thread ? ` ${made.length === 1 ? "It is" : "They are"} in the thread ${o.thread.name}${o.thread.view ? ", starting from its brief" : ""}.` : ""}`
   const deps = made[0].links.length ? ` ${made[0].links.join(" and ")} ${made[0].links.length === 1 ? "is" : "are"} shared with the main checkout, not copied.` : ""
   return { ok, text: head + deps + (notes.length ? `\n  ${notes.join("\n  ")}` : ""), agents: made }
 }
@@ -419,7 +495,7 @@ export function show(o: { name: string; cwd: string; env?: NodeJS.ProcessEnv; by
   if (rec?.claudeBg) {
     // Claude Code's own background session: `claude attach` in a new tab.
     const claude = which("claude", env) ?? "claude"
-    const r = openForRepo([{ cwd: rec.cwd, argv: bgx.attachArgv(claude, rec.name), name: rec.name }], { cwd: rec.cwd, envVars: env, by: o.by })
+    const r = openForRepo([{ cwd: rec.cwd, argv: bgx.attachArgv(claude, rec.name), name: rec.name, thread: rec.thread }], { cwd: rec.cwd, envVars: env, by: o.by, thread: rec.thread })
     if (r.opened.kind === "manual" || !r.ok) return { ok: r.opened.kind === "manual", text: `◢ crosstalk: to watch ${rec.name}, run:\n  ${R.shq(claude)} attach ${R.shq(rec.name)}` }
     return { ok: true, text: `◢ crosstalk: opened ${rec.name} in a new tab in ${r.opened.where}. Leaving it leaves it running.` }
   }
@@ -435,7 +511,7 @@ export function show(o: { name: string; cwd: string; env?: NodeJS.ProcessEnv; by
     return { ok: false, text: `◢ crosstalk: no background agent called ${o.name}.${bg.length ? ` Running in the background: ${bg.join(", ")}.` : ""}` }
   }
   if (!tmuxHas(session, env)) return { ok: false, text: `◢ crosstalk: ${rec?.name ?? session} is not running any more.` }
-  const r = openForRepo([{ cwd: rec?.cwd ?? o.cwd, argv: attachArgv(session), name: session }], { cwd: rec?.cwd ?? o.cwd, envVars: env, by: o.by })
+  const r = openForRepo([{ cwd: rec?.cwd ?? o.cwd, argv: attachArgv(session), name: session, thread: rec?.thread }], { cwd: rec?.cwd ?? o.cwd, envVars: env, by: o.by, thread: rec?.thread })
   if (r.opened.kind === "manual") return { ok: true, text: `◢ crosstalk: this terminal cannot open a tab from outside. To watch ${session}, run:\n  ${R.shq("tmux")} -L ${TMUX_SOCKET} attach -t ${R.shq("=" + session)}` }
   if (!r.ok) return { ok: false, text: `◢ crosstalk: could not open a tab for ${session}: ${r.out.split("\n").pop()}` }
   return { ok: true, text: `◢ crosstalk: opened ${session} in a new tab in ${r.opened.where}. Closing that tab leaves it running.` }

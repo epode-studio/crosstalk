@@ -684,7 +684,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           (await nextTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD, root: rootFrom(import.meta.url) })) ??
           (await extraTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD, root: rootFrom(import.meta.url) })) ??
           (await moreTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
-          terminalTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD }) ??
+          (await terminalTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
           (await attnTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
           err(`unknown tool ${req.params.name}`)
         )
