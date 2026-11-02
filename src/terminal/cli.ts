@@ -40,7 +40,9 @@ export async function termCmd(argv: string[], root: string) {
   if (!session) return void console.log(JSON.stringify({ ok: false, error: "--session is needed" }))
   if (sub === "apply") return void console.log(await S.applyLoop(session))
   if (sub === "status") {
-    const current = S.readTab(session)?.want
+    const tab = S.readTab(session)
+    // The state asked for last, under any broken mark (src/urls/health/).
+    const current = tab?.base ?? tab?.want
     const pending = flag(argv, "--pending") !== undefined ? Number(flag(argv, "--pending")) : S.pendingFor(session, ui.snapshot)
     const asked = flag(argv, "--state")
     const event = flag(argv, "--event")
@@ -49,7 +51,7 @@ export async function termCmd(argv: string[], root: string) {
     else if (event === "refresh") state = S.stateFromRegistry({ status: readRegistry().find((e) => e.sessionId === session)?.status, pending, current })
     else if (event) state = S.stateForEvent({ event, pending, current, notificationType: flag(argv, "--type") })
     const changed = state ? S.want({ sessionId: session, state, root }) : false
-    return void console.log(JSON.stringify({ ok: true, state: state ?? current ?? null, changed }))
+    return void console.log(JSON.stringify({ ok: true, state: S.readTab(session)?.want ?? state ?? current ?? null, changed }))
   }
   console.log(JSON.stringify({ ok: false, error: `unknown: crosstalk term ${sub ?? ""}` }))
 }

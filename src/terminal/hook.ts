@@ -65,7 +65,8 @@ export function fromHook(o: { event: string; sessionId: string; cwd: string; hoo
   const out: Chrome = {}
   if (o.env.CROSSTALK_NO_TERM) return out
   try {
-    const current = S.readTab(o.sessionId)?.want
+    const tab = S.readTab(o.sessionId)
+    const current = tab?.base ?? tab?.want
     const state = S.stateForEvent({
       event: o.event,
       pending: /^(Stop|Notification)$/.test(o.event) ? S.pendingFor(o.sessionId, ui.snapshot) : 0,
@@ -75,7 +76,8 @@ export function fromHook(o: { event: string; sessionId: string; cwd: string; hoo
     })
     if (state) {
       S.want({ sessionId: o.sessionId, state, root: o.root })
-      if (S.drawsProgress(o.env) && o.event !== "SessionEnd") out.terminalSequence = S.progressSequence(state)
+      // A broken service of this session's (src/urls/health/) shows over done and waiting.
+      if (S.drawsProgress(o.env) && o.event !== "SessionEnd") out.terminalSequence = S.progressSequence(S.shownState(o.sessionId, state))
     }
   } catch {}
   if (o.isSessionStart && !/^(clear|compact)$/.test(String(o.hook?.source ?? ""))) {

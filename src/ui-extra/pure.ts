@@ -124,11 +124,22 @@ export type PaneModel = {
   services?: PaneService[]
   /** The thread's URLs (src/urls/): in the main session, every thread's. */
   links?: PaneLink[]
+  /** Screenshots, each URL's before and after, as files (src/urls/shots/); the mod links them, it cannot draw images. */
+  shots?: PaneShot[]
   /** A QR code crosstalk_qr made for the phone (src/urls/history/phone.ts): half-block rows, drawn white on black. */
   qr?: { label: string; caption: string; rows: string[]; at: number; why?: string }
 }
 
-export type PaneService = { name: string; ports: number[]; url?: string }
+/** `broken`: crashed or stopped answering (src/urls/health/), with why. */
+export type PaneService = { name: string; ports: number[]; url?: string; broken?: string }
+
+export type PaneShot = { label: string; path?: string; before?: { file: string; at: number }; after: { file: string; at: number } }
+
+/** `file:///…`, its path escaped, for an OSC 8 link to a screenshot. Only an absolute path of printable characters. */
+export const fileLink = (file: string) => (/^\/[^\u0000-\u001f\u007f]*$/.test(file) && file.length <= 1000 ? `file://${file.split("/").map(encodeURIComponent).join("/")}` : undefined)
+
+/** A screenshot pair's line: `auth · web /login · before 2m · after now`. */
+export const shotLine = (s: PaneShot, now: number) => `${s.label}${s.path ? ` ${s.path}` : ""} · ${s.before ? `before ${ago(s.before.at, now)}` : "no before yet"} · after ${ago(s.after.at, now)}`
 
 /** One URL in the pane: what it is, where (the proxy's name for a local server), and whether it answers. */
 export type PaneLink = { label: string; url: string; kind: "local" | "preview" | "pr" | "link" | "shared"; alive: boolean; thread?: string }
@@ -153,7 +164,7 @@ export const linkable = (url: string) => url.length <= 500 && /^https?:\/\/[A-Za
 export const linkLine = (l: PaneLink) => `${l.alive ? "●" : "○"} ${l.label}${l.alive ? "" : l.kind === "shared" ? " · ended" : " · dead"}`
 
 /** A service's line in the pane: `web · :4100`. */
-export const serviceLine = (s: PaneService) => (s.ports.length ? `${s.name} · ${s.ports.map((p) => `:${p}`).join(" ")}` : `${s.name} · starting`)
+export const serviceLine = (s: PaneService) => (s.broken ? `${s.name} · broken: ${s.broken}` : s.ports.length ? `${s.name} · ${s.ports.map((p) => `:${p}`).join(" ")}` : `${s.name} · starting`)
 
 /** A feature's line in the pane: `v2 tokens · risky · flag auth-v2 at internal · merged`. */
 export function featureLine(f: PaneFeature): string {
@@ -185,6 +196,10 @@ export function paneLines(p: PaneModel, now: number): string[] {
   if (p.links?.length) {
     out.push("", "Links")
     for (const g of linkGroups(p.links)) out.push(` ${g.title}`, ...g.links.map((l) => `  ${linkLine(l)} ${l.url}`))
+  }
+  if (p.shots?.length) {
+    out.push("", "Screenshots")
+    for (const s of p.shots) out.push(` ${shotLine(s, now)}`, ...(s.before ? [`  before ${s.before.file}`] : []), `  after  ${s.after.file}`)
   }
   return out
 }

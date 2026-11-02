@@ -62,6 +62,7 @@ import { createSessionOps } from "./sessions/daemon.ts"
 import "./services/service.ts"
 import { createUrls } from "./urls/daemon.ts"
 import { createShares } from "./share/daemon.ts"
+import { createHealth } from "./urls/health/index.ts"
 import { startHistory } from "./urls/history/sync.ts"
 
 const identity = loadIdentity()
@@ -2762,6 +2763,24 @@ control.listen(P.daemonSock, () => {
   // URLs: the proxy behind <thread>.localhost, services' URLs, liveness (src/urls/).
   if (!process.env.CROSSTALK_NO_URLS)
     void createUrls({ log, live: () => [...sessions.values()].map((s) => ({ sessionId: s.sessionId, cwd: s.cwd })) }).catch((e) => log(`urls: ${(e as Error).message}`))
+  // Servers that look after themselves, and baseline screenshots (src/urls/health/).
+  if (!process.env.CROSSTALK_NO_URLS && !process.env.CROSSTALK_NO_HEALTH)
+    createHealth({
+      log,
+      root: rootFrom(import.meta.url),
+      sessions: () => [...sessions.values()].map((s) => ({ sessionId: s.sessionId, cwd: s.cwd })),
+      threadOf: (sid) => {
+        const t = threads.thread(threads.idsFor(sid)[0] ?? "")
+        return t ? { id: t.id, name: t.meta.value.name } : undefined
+      },
+      sessionsIn: (id) => threads.sessionsIn([id]),
+      // A thread's: the own-thread heads-up, handed to its agent by itself. Otherwise a held local message.
+      tell: (o) =>
+        o.thread
+          ? coord.warn.relay({ thread: o.thread, local: o.sessions, labels: [], text: o.text, diff: { label: o.label, content: o.log || "(empty)" }, warn: {}, fromSession: "-" })
+          : o.sessions.forEach((sid) => void Promise.resolve(handle({ op: "post", to: sid, source: "crosstalk health", intent: "fyi", text: o.text })).catch(() => {})),
+      notifyPerson: (o) => (o.thread ? threads.notify(o.thread, o.text) : coord.note({ id: `health:${Date.now()}`, text: o.text }, o.session)),
+    })
   // Every link, preview and screenshot a thread had, kept in it (src/urls/history/).
   if (!process.env.CROSSTALK_NO_URLS) startHistory({ threads, log })
 })

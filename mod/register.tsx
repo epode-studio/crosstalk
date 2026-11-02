@@ -44,6 +44,9 @@
 //   links          the pane's Links: the thread's URLs by kind (local, previews,
 //                  PRs, links found in output), clickable, alive or dead
 //                  (docs/urls.md); in the main session every thread's
+//   screenshots    the pane's before / after lines, each a file link (OSC 8):
+//                  a mod cannot draw an image; a service that broke is marked
+//                  in Services (src/urls/shots/, src/urls/health/)
 //   tab status     working / waiting on you / done on this session's own tab,
 //                  through `crosstalk term status` (src/terminal/status.ts)
 //
@@ -69,7 +72,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Item, Pane, Receipt } from './types'
-import { HANDED_PROMPT, LATER, MORE, MORE_OPTIONS, MUTE, OPEN_THREAD, ago, cardOptions, featureLine, linkGroups, linkLine, linkable, parseAt, takesAt } from '../src/ui-extra/pure.ts'
+import { HANDED_PROMPT, LATER, MORE, MORE_OPTIONS, MUTE, OPEN_THREAD, ago, cardOptions, featureLine, fileLink, linkGroups, linkLine, linkable, parseAt, shotLine, takesAt } from '../src/ui-extra/pure.ts'
 
 const items = atom({ plugin: 'crosstalk', key: 'items' } as const, [])
 const receipts = atom({ plugin: 'crosstalk', key: 'receipts' } as const, [])
@@ -769,9 +772,32 @@ export const register: Register = on => {
               <Text key={`s${i}`} wrap="truncate">
                 {' '}
                 {clean(s.name)}
-                {s.ports.length ? ` · ${s.ports.map(n => `:${n}`).join(' ')} ` : ' · starting'}
+                {s.broken ? <Text color="red">{` · broken: ${clean(s.broken)} `}</Text> : s.ports.length ? ` · ${s.ports.map(n => `:${n}`).join(' ')} ` : ' · starting'}
                 {s.url && /^http:\/\/localhost:\d+$/.test(s.url) ? <Link href={s.url}>{s.url}</Link> : null}
               </Text>
+            ))}
+          </Box>
+        ) : null}
+        {p.shots?.length ? (
+          // A mod cannot draw an image: each before and after is a file link (OSC 8) to open it.
+          <Box key="sh" flexDirection="column" marginTop={1}>
+            <Text bold>Screenshots</Text>
+            {p.shots.map((s, i) => (
+              <Box key={`sh${i}`} flexDirection="column">
+                <Text wrap="truncate">
+                  {' '}
+                  {clean(shotLine(s, now))}
+                </Text>
+                {[...(s.before ? [{ w: 'before', f: s.before.file }] : []), { w: 'after ', f: s.after.file }].map(({ w, f }) => {
+                  const href = fileLink(f)
+                  return (
+                    <Text key={`sh${i}${w}`} wrap="truncate" dimColor>
+                      {'  '}
+                      {w} {href ? <Link href={href}>{clean(f)}</Link> : clean(f)}
+                    </Text>
+                  )
+                })}
+              </Box>
             ))}
           </Box>
         ) : null}

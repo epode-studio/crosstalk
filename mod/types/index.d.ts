@@ -46,11 +46,13 @@ export type Pane = {
   recent: { from: string; text: string; ts?: number }[]
   features: PaneFeature[]
   /** crosstalk services running in this session's worktree (docs/services.md). */
-  services?: { name: string; ports: number[]; url?: string }[]
+  services?: { name: string; ports: number[]; url?: string; broken?: string }[]
   /** The thread's URLs (src/urls/), each with whether it answers; in the main session, every thread's. */
   links?: { label: string; url: string; kind: 'local' | 'preview' | 'pr' | 'link' | 'shared'; alive: boolean; thread?: string }[]
   /** A QR code for the phone (crosstalk_qr): half-block rows, drawn white on black. */
   qr?: { label: string; caption: string; rows: string[]; at: number; why?: string }
+  /** Screenshots, each URL's before and after, as files (src/urls/shots/): linked, never drawn. */
+  shots?: { label: string; path?: string; before?: { file: string; at: number }; after: { file: string; at: number } }[]
 }
 
 declare module 'claude-code' {
