@@ -14,6 +14,14 @@ export type Kind =
   | "fact_sync"
   | "task"
   | "task_sync"
+  | "thread"
+  | "heads-up"
+  | "conflict"
+  | "rules"
+  | "sessions_req"
+  | "sessions_res"
+  | "share"
+  | "share_data"
 
 export type Slice = {
   kind: "diff" | "file" | "turns" | "text"
@@ -51,13 +59,50 @@ export type Envelope = {
   fact?: unknown
   /** A task operation, on kind "task", or a set of them on "task_sync". */
   task?: unknown
+  /**
+   * What the sending session is working on: repo remote, branch and the paths
+   * it touched most recently. The receiver routes by it. Sealed with the rest
+   * of the envelope, so the relay never sees it, and a peer that predates it
+   * ignores it and routes the old way.
+   */
+  footprint?: FootprintSummary
+  /**
+   * Thread ids the sending session is in, or the threads a message with no
+   * named recipient was sent to. The receiver delivers to its own sessions in
+   * those threads first. Sealed like everything else here.
+   */
+  threads?: string[]
+  /** A thread's state and content key, on kind "thread" (src/threads/service.ts). */
+  threadSync?: unknown
+  /** A heads-up or a conflict about an edit, on kind "heads-up" and "conflict" (src/warn/service.ts). */
+  warn?: unknown
+  /** A repo's standing rules and their key, on kind "rules" (src/rules/doc.ts). */
+  rules?: unknown
+  /**
+   * A request about sessions on one of your own machines, and its answer, on
+   * kinds "sessions_req" and "sessions_res" (src/sessions/remote.ts). Only
+   * ever accepted from your own machines.
+   */
+  sessions?: unknown
+  /**
+   * A running server shared with a teammate (src/share/): an offer, a
+   * revocation or a decline on kind "share", one HTTP frame on "share_data".
+   * Direct channels only.
+   */
+  share?: unknown
 }
+
+export type FootprintSummary = { repo?: string; branch?: string; paths?: string[] }
 
 export type SessionPresence = {
   name: string
   cwd: string
   status: string
   lastSeen: number
+  /** What the session is working on, so a peer's thread can find it. Absent outside a repo. */
+  footprint?: FootprintSummary
+  /** Its thread ids. Present (maybe empty) only from a daemon that knows threads. */
+  threads?: string[]
 }
 
 /** What the relay routes. `body` is a sealed Envelope. */
@@ -67,6 +112,8 @@ export type Frame =
   | { t: "ready"; fingerprint: string }
   | { t: "error"; message: string }
   | { t: "send"; to: string; body: string; id: string }
+  /** Like send, for a live peer only: never buffered, never acked, a budget of its own (src/share/). */
+  | { t: "stream"; to: string; body: string; id: string }
   | { t: "deliver"; from: string; body: string; id: string }
   | { t: "ack"; id: string }
   | { t: "presence"; peers: string[] }
@@ -99,4 +146,37 @@ export function* lines(buffer: { rest: string }, chunk: string): Generator<unkno
       // A malformed line is dropped rather than killing the connection.
     }
   }
+}
+
+/**
+ * A name a sender chose (their session, a thread, a room), cut to a short
+ * plain charset: letters, digits, space and `._-@:`, and a leading `#`. It ends up in notices,
+ * tag attributes and cards on the receiving side, so nothing that could close
+ * a tag, start a line or pass for markup survives. Empty or not a string is
+ * undefined.
+ */
+export function cleanName(v: unknown, max = 64): string | undefined {
+  if (typeof v !== "string") return undefined
+  const s = v
+    .normalize("NFKC")
+    .replace(/[^\p{L}\p{N} ._#@:-]+/gu, "-")
+    .replace(/\s+/g, " ")
+    .trim()
+    // A room's leading # is its own; anywhere else it could pass for a heading.
+    .replace(/(?!^)#/g, "-")
+    .slice(0, max)
+    .trim()
+  return s || undefined
+}
+
+/** Clean an inbound envelope's sender-chosen names in place, on receipt. */
+export function cleanEnvelope(env: Envelope): Envelope {
+  if (!env || typeof env !== "object") return env
+  env.fromSession = cleanName(env.fromSession) ?? "-"
+  if (env.fromAgent !== undefined) env.fromAgent = cleanName(env.fromAgent)
+  if (env.thread !== undefined) env.thread = cleanName(env.thread)
+  if (env.room !== undefined) env.room = cleanName(env.room)
+  if (env.toSession !== undefined) env.toSession = cleanName(env.toSession)
+  if (Array.isArray(env.threads)) env.threads = env.threads.map((t) => cleanName(t)).filter((t): t is string => !!t)
+  return env
 }

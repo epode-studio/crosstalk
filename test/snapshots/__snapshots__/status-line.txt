@@ -1,0 +1,14 @@
+a thread, one server, one waiting
+  ◢ auth · auth.localhost:1355 · 1 for you
+two threads, three things running
+  ◢ auth · tokens · 3 running
+no thread: what the cards are about
+  ◢ billing · 2 for you
+no thread and no card: the repo
+  ◢ api
+the watch said where
+  ◢ auth · auth.localhost:1355
+the main session
+  ◢ main · 2 threads · 3 working · 5 for you
+nothing waiting, nothing running
+  (no status line)

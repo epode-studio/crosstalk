@@ -1,8 +1,8 @@
-# Which agents can be in a room
+# Which agents crosstalk works with
 
 Crosstalk is not tied to one CLI. The relay routes sealed messages between
 identities and has no idea what is running on either end, so a Claude Code
-session, a Codex session and an Antigravity session can all be in the same room
+session, a Codex session and an Antigravity session can all be in one thread
 and talk to each other.
 
 What differs between them is only how a message gets into a running session.

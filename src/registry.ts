@@ -11,7 +11,20 @@ import net from "node:net"
 import os from "node:os"
 import path from "node:path"
 
-export const SESSIONS = path.join(os.homedir(), ".claude", "sessions")
+/**
+ * Claude Code's own directory: CLAUDE_CONFIG_DIR when it is set, else
+ * ~/.claude. Read on every call, so a test or a caller that sets it later is
+ * seen. Everything that reads the session registry goes through here.
+ */
+export const claudeConfigDir = (env: NodeJS.ProcessEnv = process.env): string =>
+  env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude")
+
+/** Where Claude Code writes one <pid>.json per running session. */
+export const sessionsDir = (env: NodeJS.ProcessEnv = process.env): string => path.join(claudeConfigDir(env), "sessions")
+
+/** The registry as it was resolved when this module loaded; prefer sessionsDir(). */
+export const SESSIONS = sessionsDir()
+
 
 export type LocalSession = {
   pid: number
@@ -25,9 +38,10 @@ export type LocalSession = {
 }
 
 export function listLocalSessions(): LocalSession[] {
+  const dir = sessionsDir()
   let files: string[]
   try {
-    files = fs.readdirSync(SESSIONS).filter((f) => f.endsWith(".json"))
+    files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"))
   } catch {
     return []
   }
@@ -41,7 +55,7 @@ export function listLocalSessions(): LocalSession[] {
       continue // process gone
     }
     try {
-      const e = JSON.parse(fs.readFileSync(path.join(SESSIONS, f), "utf8"))
+      const e = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"))
       if (!e.messagingSocketPath) continue
       if (!fs.existsSync(e.messagingSocketPath)) continue // socket swept
       out.push({

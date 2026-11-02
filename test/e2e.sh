@@ -15,6 +15,7 @@
 # is the subshell.
 
 set -u
+export CROSSTALK_NO_GATHER=1  # sessions started before crosstalk: test/gather.sh, with a registry of its own
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 A=$(mktemp -d)/a
@@ -321,17 +322,18 @@ esac
 OUT=$(echo '{"hook_event_name":"afterAgentThought","session_id":"cu1","cursor_version":"x","workspace_roots":["/tmp"]}' \
   | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts 2>&1)
 check "$OUT" "{}" "a cursor step that cannot deliver stays quiet"
-# Facts have their own smaller digest cap. A long task actually reaches the
-# hook's output limit, which is the boundary this check needs to exercise.
-BIG=$(bun -e 'console.log("x".repeat(12000))')
+# Each task in the digest is cut to one line of 300 characters, so ordinary
+# content no longer reaches Cursor's 10,000 limit. Lower the limit for this
+# check instead, so it still exercises the trimming path.
+BIG=$(bun -e 'console.log("x".repeat(400))')
 a tasks add "$BIG" >/dev/null 2>&1
 # Use a fresh session: cu1 already consumed its working set, so reusing it
 # silently tested the length of an empty answer instead of the trimming path.
 CUR_BIG='{"hook_event_name":"sessionStart","session_id":"cu-big","conversation_id":"cu-big","cursor_version":"2026.08.11","workspace_roots":["/tmp"]}'
-OUT=$(echo "$CUR_BIG" | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" bun src/hook.ts 2>&1)
+OUT=$(echo "$CUR_BIG" | env -u CLAUDE_CODE_MESSAGING_SOCKET CROSSTALK_HOME="$A" CROSSTALK_CURSOR_LIMIT=400 bun src/hook.ts 2>&1)
 LEN=$(echo "$OUT" | bun -e 'const o=JSON.parse(await new Response(Bun.stdin).text());console.log((o.additional_context??"").length)')
 has "$OUT" "crosstalk trimmed this to fit Cursor" "cursor received enough context to require trimming"
-[ "$LEN" -gt 0 ] && [ "$LEN" -le 10000 ] && ok "cursor context is trimmed to fit ($LEN chars)" || bad "cursor context is $LEN chars, expected 1 to 10000"
+[ "$LEN" -gt 0 ] && [ "$LEN" -le 400 ] && ok "cursor context is trimmed to fit ($LEN chars)" || bad "cursor context is $LEN chars, expected 1 to 400"
 
 # Goose is the mirror image of the others: it never adds context, but a Stop
 # hook that refuses to let the turn end has its reason put in front of the
@@ -382,7 +384,7 @@ for c in room facts tasks attention peers; do
     *) bad "$c on a fresh install said: $(echo "$OUT" | cut -c1-40)" ;;
   esac
 done
-has "$(CROSSTALK_HOME="$FRESH" bun src/cli.ts room 2>&1)" "room new" "and names room new"
+has "$(CROSSTALK_HOME="$FRESH" bun src/cli.ts room 2>&1)" "/crosstalk:join" "and names /crosstalk:join"
 rm -rf "$FRESH"
 
 # A half-written identity file reads as no identity at all, and the advice for

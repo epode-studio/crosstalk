@@ -7,5 +7,6 @@
   },
   "license": "MIT",
   "homepage": "https://github.com/epode-studio/crosstalk",
-  "repository": "https://github.com/epode-studio/crosstalk"
+  "repository": "https://github.com/epode-studio/crosstalk",
+  "types": "./mod/types/index.d.ts"
 }

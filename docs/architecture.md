@@ -25,12 +25,49 @@ to the relay and knows about every local session. The **relay** exists because b
 laptops are behind NAT and both go to sleep. It is a dumb fan-out that
 authenticates peers and copies ciphertext.
 
+## Which session a message reaches
+
+Each local session has a footprint: the repo remote and branch of its working
+directory, read from git, and the files its tool calls touched, reported by the
+`PostToolUse` hook. Every message a session sends carries a short summary of its
+own footprint inside the sealed body.
+
+On arrival the daemon delivers to the session the sender named, if there is
+one. Otherwise it scores each local session against the message's footprint: a
+different repo scores nothing, the same repo scores, the same branch outranks
+any amount of file overlap, and shared files and directories break the rest.
+The best session gets it. When none scores or two score the same, nothing is
+delivered: the message is held and the session you touched last is asked where
+it goes, with none of the sender's words in the question. The answer, given
+with `crosstalk_answer action "route"`, is remembered for that sender, repo and branch.
+
+A peer that sends no footprint (an older crosstalk, or a session outside a git
+repo) is routed as before: an idle session, else any live one, else the first
+registered. So is every message on a machine where no session is in a repo.
+
+## Restore after a restart
+
+The hook keeps one small file per open session in `open/` under crosstalk's
+home: its id, folder, client, process and terminal tab. These records can't
+live in the daemon. After a restart, the daemon isn't running. When it starts,
+it drops every session whose process is gone, and those are exactly the
+sessions to bring back. A session whose process disappeared without a
+`SessionEnd` was lost. The first session opened afterwards asks once, through
+a `systemMessage` the model never sees. The `crosstalk_work action "restore"` tool reopens
+the lost sessions through an adapter per terminal. See [restore.md](restore.md).
+
 ## Two transports
 
 **Channel MCP server** is the target, and what the server already declares.
 During the channels research preview a custom channel needs
-`--dangerously-load-development-channels crosstalk`, which shows a warning dialog
-at every launch, so it is not the default path yet.
+`--dangerously-load-development-channels plugin:crosstalk@<marketplace>`, which
+shows a warning dialog at every launch, so it is not the default path yet.
+Claude Code tells a channel server nothing about whether it was opted in (the
+initialize request is the same either way) and drops the events of one that
+was not, silently. So the server reads the command line Claude Code was started
+with ([`src/channels.ts`](../src/channels.ts)) and subscribes for push only when
+it names crosstalk; otherwise the daemon uses the inbox socket below. A mod that
+is live takes precedence over both.
 
 **Session inbox socket** is what runs today, with no flag and no allowlist. The
 daemon writes to `CLAUDE_CODE_MESSAGING_SOCKET` using a payload format that is
@@ -75,10 +112,18 @@ rest.
 
 ```
 src/daemon.ts    relay link, routing, triage, injection
-src/server.ts    the MCP tools, channel push
+src/server.ts    the MCP server, channel push
+src/tools/       the eight MCP tools and the action each resolves to
 src/link.ts      encrypted channel to the relay
-src/rooms.ts     rooms, invitations, room keys
+src/rooms.ts     how the protocol groups people joined with words: invitations, keys
+src/threads/     threads: the model (notes, features, …), the file, sealing, the ref
+src/threads/running.ts   a thread's Running: one view over services, URLs, shares, shots
+src/threads/history.ts   a thread's History: its links and ended notes, one search
+src/notes.ts     notes kept outside threads (facts.ts, tasks.ts), listed as notes
+mod/             what the person sees in Claude Code: register.tsx, draw.tsx
 src/inject.ts    writes into a session's inbox socket
+src/footprint.ts what a session is working on, and matching a message to it
+src/restore.ts   which sessions a restart lost, and reopening them per terminal
 src/policy.ts    intent plus your state decides what interrupts you
 src/crypto.ts    identities, phrase exchange, sealing
 relay/relay.ts   the relay
@@ -93,8 +138,10 @@ bun scripts/build.ts        # dist/ is committed, rebuild after editing src/
 bun relay/relay.ts          # a relay on :8787
 bun src/cli.ts doctor
 bash test/resilience.sh     # the sleep failure modes
+bun run test:routing        # messages reach the session on the same work
+bun run test:restore        # sessions come back after a restart (real tmux)
 bun scripts/release.ts "what changed"
 ```
 
 `CROSSTALK_HOME` moves crosstalk's state, so you can run several identities on
-one machine and put them in a room with each other. That is how all of this was tested.
+one machine and join them together with words. That is how all of this was tested.

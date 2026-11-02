@@ -1,4 +1,5 @@
 {
+  "modules": ["../mod/register.tsx"],
   "hooks": {
     "SessionStart": [
       { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/crosstalk\" hook" }] }
@@ -9,7 +10,19 @@
     "PostToolUse": [
       { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/crosstalk\" hook" }] }
     ],
+    "Notification": [
+      { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/crosstalk\" hook" }] }
+    ],
     "Stop": [
+      { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/crosstalk\" hook" }] }
+    ],
+    "PreCompact": [
+      { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/crosstalk\" hook" }] }
+    ],
+    "PermissionRequest": [
+      { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/crosstalk\" hook", "timeout": 3600 }] }
+    ],
+    "SessionEnd": [
       { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/crosstalk\" hook" }] }
     ]
   }

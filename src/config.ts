@@ -21,6 +21,8 @@ export const P = {
   sessions: path.join(ROOT, "sessions.json"),
   outbox: path.join(ROOT, "outbox.json"),
   usage: path.join(ROOT, "usage.json"),
+  routes: path.join(ROOT, "routes.json"),
+  unrouted: path.join(ROOT, "unrouted.json"),
   daemonSock: path.join(ROOT, "daemon.sock"),
   daemonLock: path.join(ROOT, "daemon.lock"),
   log: path.join(ROOT, "daemon.log"),
@@ -45,6 +47,14 @@ export type Peer = {
   machine?: string
   /** True when this member is not a person. Capped at a notice, always. */
   isMachine?: boolean
+  /** Set when trusted through a repository (src/repotrust), not with words. */
+  via?: "repo"
+  /** Their GitHub login, for a peer trusted through a repository. */
+  person?: string
+  /** The repositories (owner/repo) that vouch for them. */
+  repos?: string[]
+  /** One of your own machines: a statement signed by a key on your own account. */
+  own?: boolean
 }
 
 
@@ -202,12 +212,20 @@ export type Held = {
   thread?: string
   replyTo?: string
   room?: string
-  /** Set on kind "ask": pass it back to crosstalk_answer. */
+  /** Set on kind "ask": pass it back to crosstalk_say action "reply". */
   correlation?: string
   /** A notice for this message has been shown. Unset means still silent. */
   surfaced?: boolean
   ts: number
   readAt?: number
+  /** The receiving session's threads this message was about (src/threads/). */
+  threads?: string[]
+  /** About the session's own thread, so it goes to its agent without a picker. */
+  auto?: boolean
+  /** Handed to the agent from the mod: by the person, or passed on as its own thread's. */
+  handedAt?: number
+  /** Already in the agent's context while the mod was live: handed over, or returned by crosstalk_say action "read". */
+  toolReadAt?: number
 }
 
 export const loadQueue = (): Record<string, Held[]> => readJson(P.queue, {})
@@ -238,3 +256,27 @@ export const saveRegistered = (s: Record<string, any>) => writeJson(P.sessions, 
 
 export const loadParked = (): { label: string; env: unknown }[] => readJson(P.parked, [])
 export const saveParked = (p: { label: string; env: unknown }[]) => writeJson(P.parked, p)
+
+/**
+ * Where a sender's work in one repo and branch should land, as the user said
+ * when no session matched. Keyed by footprint.bindingKey.
+ */
+export type Binding = { sessionId: string; name: string; at: number }
+export const loadRoutes = (): Record<string, Binding> => readJson(P.routes, {})
+export const saveRoutes = (r: Record<string, Binding>) => writeJson(P.routes, r)
+
+/** Messages that matched no session, or two equally, waiting for the user to say where. */
+export type Unrouted = {
+  id: string
+  label: string
+  env: unknown
+  stranger?: boolean
+  roomId?: string
+  at: number
+  why: "none" | "tie"
+  /** The session the question was put to, and whether it has been shown there. */
+  askedSession?: string
+  surfaced?: boolean
+}
+export const loadUnrouted = (): Unrouted[] => readJson(P.unrouted, [])
+export const saveUnrouted = (u: Unrouted[]) => writeJson(P.unrouted, u)

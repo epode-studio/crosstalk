@@ -18,6 +18,7 @@
 # check a result with `grep | tail`, whose exit code is tail's and always zero.
 
 set -u
+export CROSSTALK_NO_GATHER=1  # sessions started before crosstalk: test/gather.sh, with a registry of its own
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 PORT=${PORT:-8899}

@@ -8,16 +8,23 @@
 //   crosstalk room join 3644-cherry-…    join one you were read
 //   crosstalk room create platform           a bigger one, for several people
 //   crosstalk link                       another machine, same identity
+//   crosstalk team [trust|distrust <who>] who the repo vouches for, no words
 //   crosstalk install <client|path>      another agent, or your PATH
 //   crosstalk trust <who> <level>        how much they may interrupt
 //   crosstalk facts | tasks | room       what the room keeps
 //   crosstalk relay [status|start|stop]  the relay, not the server itself
 //   crosstalk peers | status | cost | attention | doctor
+//   crosstalk restore [--yes|--dry-run|no]  sessions lost to a restart
+//   crosstalk gather [--yes]             sessions started before crosstalk
+//   crosstalk spawn [--count N] [--background] "<task>"   new agents, own worktrees
+//   crosstalk show <name>                watch a background agent in a tab
+//   crosstalk cleanup [--yes]            remove merged agent worktrees
 //   crosstalk post "…" [--intent] [--source]
 //   crosstalk mute [peer] [minutes]
 //   crosstalk relay start|stop|status
 //   crosstalk daemon start|stop|restart
 //
+import * as attnCli from "./attention/cli.ts"
 import {
   loadIdentity,
   saveIdentity,
@@ -47,6 +54,14 @@ import { summarise } from "./usage.ts"
 import * as trust from "./trust.ts"
 import * as facts from "./facts.ts"
 import { rootFrom, shim } from "./paths.ts"
+import { sessionsDir as registrySessionsDir } from "./registry.ts"
+import * as restore from "./restore.ts"
+import * as gather from "./gather.ts"
+import { uiCmd } from "./uicli.ts"
+import * as terminal from "./terminal/cli.ts"
+import * as shipCli from "./shipping/cli.ts"
+import { urlsCmd } from "./urls/cli.ts"
+import { shotsCmd } from "./urls/shots/cli.ts"
 import fs from "node:fs"
 import path from "node:path"
 import os from "node:os"
@@ -107,7 +122,7 @@ function refuseIfIdentityDamaged() {
 async function ready() {
   refuseIfIdentityDamaged()
   if (!loadIdentity())
-    die("crosstalk is not set up yet.\n\n  /crosstalk:room new     start a room, and read the words to someone")
+    die("crosstalk is not set up yet.\n\n  /crosstalk:join     get four words to read to someone outside your repos")
   if (!(await ensureDaemon(ROOT_DIR)))
     die("the daemon would not start. See ~/.claude/crosstalk/daemon.log")
 }
@@ -160,7 +175,7 @@ function identityOrCreate() {
   const id = { ...newIdentity(label), machine: machineName() }
   saveIdentity(id)
   console.log(`you are "${label}" on "${id.machine}"   ${fingerprint(id.ed.pub)}`)
-  console.log(`change it any time with /crosstalk:rename me <name>`)
+  console.log(`change it any time with crosstalk rename me <name>`)
   return id
 }
 
@@ -300,7 +315,7 @@ function adoptPeer(peer: ReturnType<typeof asPeer>): string {
       label = `${peer.label}-${i}`
     }
     console.log(
-      `\nYou already have a "${peer.label}" (${peers[peer.label].fingerprint}), so this one is "${label}".\nRename it with /crosstalk:rename ${label} <name>.`,
+      `\nYou already have a "${peer.label}" (${peers[peer.label].fingerprint}), so this one is "${label}".\nRename it with crosstalk rename ${label} <name>.`,
     )
   }
 
@@ -387,7 +402,7 @@ yours. If both cross over, nobody is in the middle.
 They start at "ask": they can put a line on your screen, and their agent can ask
 yours a question. Their words never enter your session unless you raise them.
 
-  /crosstalk:trust`)
+  crosstalk trust`)
     return
   }
 
@@ -398,7 +413,7 @@ yours a question. Their words never enter your session unless you raise them.
   // said nothing, and quietly handed out the hosted relay instead.
   const url = has("--host") || has("--public") ? await startRelay() : loadRelay().url
   if (!(await relayReachable(url)))
-    die(`no relay at ${httpBase(url)}.\n\nRun this instead and crosstalk will host one for you:\n  /crosstalk:room new --host`)
+    die(`no relay at ${httpBase(url)}.\n\nRun this instead and crosstalk will host one for you:\n  /crosstalk:join --host`)
 
   const slotRes = await fetch(`${httpBase(url)}/slot`, { method: "POST" }).catch(() => null)
   if (!slotRes?.ok) die("the relay would not give out a slot. Try again in a moment.")
@@ -418,7 +433,7 @@ Tell them this:
 
     ${invite}
 
-They run  /crosstalk:room join ${invite}
+They run  /crosstalk:join ${invite}
 
 Say it out loud, or send it somewhere you already trust. The number is public;
 the words are the secret. They work once and expire in fifteen minutes.
@@ -460,7 +475,7 @@ yours. If both cross over, nobody is in the middle.
 They start at "ask": a line on your screen, and their agent may ask yours a
 question. Nothing they do puts their words inside your turn.
 
-  /crosstalk:trust`)
+  crosstalk trust`)
 }
 
 // --- everything else -------------------------------------------------------------
@@ -472,7 +487,7 @@ async function peers() {
   console.log(`  you   ${r.me.label}   relay ${r.relay}`)
   for (const s of r.me.sessions) console.log(`        ${s.name}  ${s.cwd}  ${s.status}`)
   if (!r.peers.length) {
-    console.log(`\n  Nobody yet. Run /crosstalk:room new and read the words to someone.\n`)
+    console.log(`\n  Nobody yet. Run /crosstalk:join and read the words to someone, or work in a repo you share.\n`)
     return
   }
   for (const p of r.peers) {
@@ -515,7 +530,7 @@ Token figures are a rough estimate from message length, for orientation only.\n`
 async function status() {
   const id = loadIdentity()
   if (identityUnreadable()) return refuseIfIdentityDamaged()
-  if (!id) return console.log("crosstalk: not set up. Run /crosstalk:room new.")
+  if (!id) return console.log("crosstalk: not set up. Run /crosstalk:join.")
   heading()
   console.log(`  identity  ${id.label}  ${fingerprint(id.ed.pub)}`)
   console.log(`  relay     ${loadRelay().url}`)
@@ -540,7 +555,7 @@ async function doctor() {
       ? `${id.label}  ${fingerprint(id.ed.pub)}`
       : identityUnreadable()
         ? `${P.identity} will not parse. Restore it from a backup rather than starting again.`
-        : "none, run /crosstalk:room new",
+        : "none, run /crosstalk:join",
   ])
   rows.push([
     "peers",
@@ -560,7 +575,7 @@ async function doctor() {
       : "only used with a Claude Code inbox socket",
   ])
 
-  const sessionsDir = path.join(process.env.HOME ?? "", ".claude", "sessions")
+  const sessionsDir = registrySessionsDir()
   let visible = 0
   try {
     visible = fs.readdirSync(sessionsDir).filter((f) => f.endsWith(".json")).length
@@ -609,6 +624,43 @@ async function doctor() {
         false,
         `${pending.join(", ")} not trusted yet, so codex will skip them. Run codex, then /hooks, and trust the crosstalk entries.`,
       ])
+  }
+
+  // Restore after a restart: what is waiting to be reopened, and on a Mac
+  // whether the two permissions tabs need are on. Both checks only ask macOS,
+  // they never prompt.
+  {
+    const lost = restore.lostSessions(restore.ctxNow(), process.env.CLAUDE_CODE_SESSION_ID)
+    rows.push([
+      "restore",
+      lost.length ? false : null,
+      lost.length
+        ? `${lost.length} session(s) lost to a restart (${restore.names(lost)}). Say "restore them", or run crosstalk restore --yes`
+        : "nothing to restore",
+    ])
+    if (process.platform === "darwin") {
+      const app = restore.appName(restore.captureTerminal(process.env, process.pid, false))
+      const ax = restore.accessibilityGranted()
+      const [axSteps, axCmd] = restore.permissionSteps("accessibility", app)
+      rows.push([
+        "accessibility",
+        ax,
+        ax === true
+          ? `${app} may open tabs`
+          : `${ax === false ? "off" : "unknown"}; without it restored sessions open as one window each.\n${" ".repeat(26)}${axSteps}\n${" ".repeat(26)}${axCmd}`,
+      ])
+      const au = restore.automationGranted()
+      const [auSteps, auCmd] = restore.permissionSteps("automation", app)
+      rows.push([
+        "automation",
+        au === "yes" ? true : au === "no" ? false : null,
+        au === "yes"
+          ? `${app} may control System Events`
+          : au === "ask"
+            ? `macOS will ask once, the first time sessions are restored as tabs; allow it`
+            : `${au === "no" ? "off" : "unknown"}; tabs need ${app} to control System Events.\n${" ".repeat(26)}${auSteps}\n${" ".repeat(26)}${auCmd}`,
+      ])
+    }
   }
 
   const relayUrl = loadRelay().url
@@ -694,7 +746,7 @@ async function room() {
     const direct = r.direct ?? []
     if (!r.rooms.length && !direct.length) {
       console.log(
-        "\nYou are not in anything yet.\n\n  /crosstalk:room new             start one, and read the words to someone\n  /crosstalk:room join <words>    join one you were read\n  /crosstalk:room create platform  one for a whole team, any size\n",
+        "\nYou are not in anything yet.\n\n  /crosstalk:join                 get four words to read to someone\n  /crosstalk:join <words>         join people with the words you were read\n  crosstalk room create platform  one for a whole team, any size\n",
       )
       return
     }
@@ -709,7 +761,7 @@ async function room() {
       if (room.pending) {
         console.log(`  #${room.name}   INVITATION from ${room.pending.invitedBy}`)
         console.log(`      ${who}`)
-        console.log(`      accept:  /crosstalk:room accept ${room.name}`)
+        console.log(`      accept:  crosstalk room accept ${room.name}`)
       } else {
         console.log(`  #${room.name}`.padEnd(18) + who)
       }
@@ -722,14 +774,14 @@ async function room() {
 
   switch (verb) {
     case "create": {
-      const name = rest[0] ?? die("name the room: /crosstalk:room create platform")
+      const name = rest[0] ?? die("name the room: crosstalk room create platform")
       const r = await request({ op: "room_create", name })
-      say(r, `created #${r.room}. Invite someone you already share a room with:\n\n  /crosstalk:room invite ${r.room} <peer>\n`)
+      say(r, `created #${r.room}. Invite someone you already share a room with:\n\n  crosstalk room invite ${r.room} <peer>\n`)
       return
     }
     case "invite": {
       const [name, ...people] = rest
-      if (!name || !people.length) die("usage: /crosstalk:room invite platform marie jo")
+      if (!name || !people.length) die("usage: crosstalk room invite platform marie jo")
       for (const p of people) {
         const r = await request({ op: "room_invite", room: name, peer: p })
         r.ok ? console.log(`invited ${r.invited} to #${r.room}`) : console.error(`${p}: ${r.error}`)
@@ -740,7 +792,7 @@ async function room() {
     case "accept":
     case "decline":
     case "leave": {
-      const name = rest[0] ?? die(`usage: /crosstalk:room ${verb} platform`)
+      const name = rest[0] ?? die(`usage: crosstalk room ${verb} platform`)
       const r = await request({ op: `room_${verb}`, room: name })
       say(r, verb === "accept" ? `joined #${r.room}` : `left #${r.room}`)
       return
@@ -748,7 +800,7 @@ async function room() {
     case "kick":
     case "remove": {
       const [name, who] = rest
-      if (!name || !who) die("usage: /crosstalk:room kick platform marie")
+      if (!name || !who) die("usage: crosstalk room kick platform marie")
       const r = await request({ op: "room_kick", room: name, peer: who })
       if (!r.ok) die(r.error)
       console.log(`removed ${r.removed} from #${name} and rekeyed to epoch ${r.rekeyedTo}`)
@@ -759,7 +811,7 @@ async function room() {
       return
     }
     default:
-      die(`unknown: /crosstalk:room ${verb}\n\nTry: list, create, invite, accept, decline, leave, kick`)
+      die(`unknown: crosstalk room ${verb}\n\nTry: list, create, invite, accept, decline, leave, kick`)
   }
 }
 
@@ -785,7 +837,7 @@ async function rename() {
   // only affects how you introduce yourself to someone new.
   if (has("--me") || a === "me") {
     const to = (has("--me") ? a : b)?.trim()
-    if (!to) die("usage: /crosstalk:rename me <newname>")
+    if (!to) die("usage: crosstalk rename me <newname>")
     const id = loadIdentity()
     if (!id) die("no identity yet")
     const was = id.label
@@ -793,13 +845,13 @@ async function rename() {
     saveIdentity(id)
     console.log(`you are "${to}" now, was "${was}".`)
     console.log("People already in a room with you keep the name they gave you.")
-    if (daemonRunning()) console.log("Restart the daemon to advertise it: /crosstalk:status then crosstalk daemon restart")
+    if (daemonRunning()) console.log("Restart the daemon to advertise it: crosstalk daemon restart")
     return
   }
 
   if (!a || !b) {
     const peers = loadPeers()
-    console.log(`\nusage: /crosstalk:rename <current> <new>\n       /crosstalk:rename me <new>\n`)
+    console.log(`\nusage: crosstalk rename <current> <new>\n       crosstalk rename me <new>\n`)
     console.log(`known: ${Object.keys(peers).join(", ") || "nobody yet"}\n`)
     return
   }
@@ -869,9 +921,9 @@ async function trustCmd() {
     console.log("\n  levels, each including the ones before it\n")
     for (const l of trust.LEVELS) console.log(`    ${l.padEnd(10)}${trust.DESCRIPTION[l]}`)
     console.log(`
-  /crosstalk:trust marie ask          pin a person
-  /crosstalk:trust incident deliver   set a room, for everyone in it
-  /crosstalk:trust marie mute --in ideas
+  crosstalk trust marie ask          pin a person
+  crosstalk trust incident deliver   set a room, for everyone in it
+  crosstalk trust marie mute --in ideas
 `)
     return
   }
@@ -939,7 +991,7 @@ async function attention() {
   console.log(`
   Nothing here is capped. This is a record of who has been reaching you, so
   that if someone is reaching you too often you can say so, per person, with
-  /crosstalk:trust.
+  crosstalk trust.
 `)
 }
 
@@ -970,7 +1022,7 @@ async function tasksCmd() {
     console.log(`
   Nothing on the list.
 
-    /crosstalk:tasks add "wire the upload retry" --for marie
+    crosstalk tasks add "wire the upload retry" --for marie
 `)
     return
   }
@@ -1012,8 +1064,8 @@ async function factsCmd() {
     console.log(`
   Nothing written down yet.
 
-    /crosstalk:facts add "the API returns snake_case"
-    /crosstalk:facts add "uploads chunk at 4KB" --in palpable-fw
+    crosstalk facts add "the API returns snake_case"
+    crosstalk facts add "uploads chunk at 4KB" --in palpable-fw
 `)
     return
   }
@@ -1105,7 +1157,7 @@ and a message reaches whichever machine you are sitting at.`)
     return
   }
 
-  if (!id) die("nothing to link yet. Run /crosstalk:room new first, or run this on the machine that already has your identity.")
+  if (!id) die("nothing to link yet. Run /crosstalk:join first, or run this on the machine that already has your identity.")
   const url0 = loadRelay().url
   const slotRes = await fetch(`${httpBase(url0)}/slot`, { method: "POST" }).catch(() => null)
   if (!slotRes?.ok) die("the relay would not give out a slot. Try again in a moment.")
@@ -1129,7 +1181,7 @@ and a message reaches whichever machine you are sitting at.`)
   console.log(`
 On your other machine, run:
 
-    /crosstalk:link ${slot}-${phrase}
+    /crosstalk:join link ${slot}-${phrase}
 
 Waiting…`)
 
@@ -1582,6 +1634,50 @@ async function installPath() {
   )
 }
 
+/**
+ * Sessions lost to a restart or a dead terminal, for scripts. In a session,
+ * saying "restore them" does the same through crosstalk_work action "restore".
+ *
+ *   crosstalk restore             list them
+ *   crosstalk restore --dry-run   and exactly what would be run, AppleScript included
+ *   crosstalk restore --yes       reopen them (--windows: one window each, no tabs)
+ *   crosstalk restore no          forget them
+ */
+async function restoreCmd() {
+  const self = process.env.CLAUDE_CODE_SESSION_ID || undefined
+  if (has("--finish")) {
+    await restore.finishWhenPermitted()
+    return
+  }
+  if (positional[0] === "no") return console.log(restore.forget(self).text)
+  if (has("--yes") || has("-y") || positional[0] === "yes") {
+    const out = restore.restore({ self, tabs: !has("--windows"), userAction: true, root: ROOT_DIR })
+    console.log(out.text)
+    if (!out.ok) process.exit(1)
+    return
+  }
+  const d = restore.describe(self, process.env, has("--dry-run"))
+  console.log(d.text)
+  if (d.lost.length && !has("--dry-run")) console.log(`\n  crosstalk restore --yes     reopen them\n  crosstalk restore --dry-run show exactly what would run`)
+}
+
+/**
+ * Sessions started before crosstalk was installed. In a session, saying "bring
+ * my other sessions into crosstalk" does the same through crosstalk_work action "gather".
+ *
+ *   crosstalk gather            list them
+ *   crosstalk gather --yes      restart each in its tab once idle, with its conversation
+ *   crosstalk gather --finish   the detached waiter that does it (not for people)
+ */
+async function gatherCmd() {
+  const self = process.env.CLAUDE_CODE_SESSION_ID || undefined
+  if (has("--finish")) return void console.log(await gather.finish())
+  if (has("--yes") || has("-y") || positional[0] === "yes") return void console.log(gather.start({ self, root: ROOT_DIR }).text)
+  const d = gather.describe(self)
+  console.log(d.text)
+  if (d.sessions.length) console.log(`\n  crosstalk gather --yes   bring them in`)
+}
+
 /** Everything a client needs, per client. */
 async function install() {
   const who = (positional[0] ?? "").toLowerCase()
@@ -1603,8 +1699,51 @@ Claude Code and Codex install as a plugin instead:
   /plugin install crosstalk@epode`)
 }
 
+/**
+ * Who is trusted through this repository. Needs no words: it makes an identity
+ * if this machine has none, and the daemon does the rest (src/repotrust).
+ */
+async function team() {
+  refuseIfIdentityDamaged()
+  identityOrCreate()
+  if (!(await ensureDaemon(ROOT_DIR))) die("the daemon would not start. See ~/.claude/crosstalk/daemon.log")
+  const [verb, who] = positional
+  if (verb === "trust" || verb === "distrust") {
+    if (!who) die(`usage: crosstalk team ${verb} <login or question id>`)
+    const r = await request({ op: "team_answer", id: who, trust: verb === "trust" })
+    if (!r.ok) die(r.error)
+    console.log(r.text)
+    return
+  }
+  const r = await request({ op: "team", cwd: process.cwd(), refresh: true }, 90_000)
+  if (has("--json")) return console.log(JSON.stringify(r, null, 2))
+  if (r.note) console.log(r.note)
+  if (r.repo) console.log(`${r.repo}${r.you ? `: ${r.you}` : ""}`)
+  for (const p of r.trusted ?? []) console.log(`  ${p.who.padEnd(24)} ${p.yours ? "your machine" : p.login} on ${p.machine}  ${p.fingerprint}`)
+  if (!(r.trusted ?? []).length) console.log("  nobody trusted through this repository yet")
+  for (const q of r.pending ?? []) console.log(`\n? ${q.question}\n  crosstalk team trust ${q.id}   or   crosstalk team distrust ${q.id}`)
+  for (const n of r.notTrusted ?? []) console.log(`  not trusted: ${n.ref}: ${n.why}`)
+  if (r.error) console.log(`\n${r.error}`)
+}
+
+/**
+ * `/crosstalk:join`: the four words, for people outside your repos. With none,
+ * words to read to someone; with the words you were read, joining them;
+ * `link <six words>` makes this machine another of yours. The one slash
+ * command for people, because words typed as a prompt would reach the model.
+ */
+async function join() {
+  if (positional[0] === "link") {
+    positional.shift()
+    return link()
+  }
+  return startRoom(positional.join(" ").trim())
+}
+
 const commands: Record<string, () => Promise<void>> = {
+  join,
   link,
+  team,
   post,
   attention,
   facts: factsCmd,
@@ -1621,5 +1760,24 @@ const commands: Record<string, () => Promise<void>> = {
   daemon,
   relay,
   install,
+  restore: restoreCmd,
+  gather: gatherCmd,
+  // The terminal workspace: src/terminal/cli.ts.
+  spawn: () => terminal.spawnCmd(argv),
+  show: () => terminal.showCmd(argv),
+  cleanup: () => terminal.cleanupCmd(argv),
+  term: () => terminal.termCmd(argv, ROOT_DIR),
+  // Shipping: src/shipping/cli.ts.
+  ship: async () => (await ready(), shipCli.shipCmd(argv)),
+  review: async () => (await ready(), shipCli.reviewCmd(argv)),
+  incident: async () => (await ready(), shipCli.incidentCmd(argv)),
+  // For crosstalk's mod, not for people: see src/uicli.ts.
+  ui: () => uiCmd(argv, ROOT_DIR),
+  // Sessions and attention, for the mod and notifications: src/attention/cli.ts.
+  attn: () => attnCli.attnCmd(argv),
+  // Every URL the threads have, and the proxy's names: src/urls/cli.ts.
+  urls: () => urlsCmd(argv),
+  // Screenshots, before and after: src/urls/shots/cli.ts (`shots turn` is what the Stop hook starts).
+  shots: () => shotsCmd(argv),
 }
 await (commands[cmd] ?? (async () => die(`unknown command "${cmd}"`)))()

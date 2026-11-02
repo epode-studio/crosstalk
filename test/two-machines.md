@@ -14,13 +14,13 @@ only this machine.
 On the machine that will host the relay:
 
 ```
-/crosstalk:room new --host
+/crosstalk:join --host
 ```
 
 Read the four words and the address to the other person. On the second machine:
 
 ```
-/crosstalk:room join <the four words> @ <the address>
+/crosstalk:join <the four words> @ <the address>
 ```
 
 Then, on both:
@@ -49,7 +49,7 @@ several network cards can advertise one the other side cannot route to.
 `--host` prints every address it found. Redo it with the right one:
 
 ```
-/crosstalk:room new --host --address 192.168.50.69
+/crosstalk:join --host --address 192.168.50.69
 ```
 
 **Check the port directly.** From the second machine:

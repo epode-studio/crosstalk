@@ -1,5 +1,12 @@
 # What an agent pays attention to
 
+> A design note from before threads. The slash commands it names
+> (`crosstalk trust`, `crosstalk mute`, `crosstalk facts`, `crosstalk peers`,
+> `crosstalk attention`) were removed: the same things are plain words to any
+> agent, or `crosstalk trust`, `crosstalk mute`, `crosstalk facts` and so on in
+> the CLI. Rooms became "the people you joined with words", and facts a kind of
+> note in a thread (`docs/design/next-generation.md`, "Three nouns").
+
 How interruption works, and why it works this way. All four pieces below are
 built: the trust ladder is `src/trust.ts`, triage is `src/policy.ts`, the budget
 lives in the daemon, facts are `src/facts.ts`.
@@ -44,9 +51,9 @@ Set globally per person, with an optional override per room, because the same
 colleague can be worth interrupting for in `#incident` and not in `#ideas`.
 
 ```
-/crosstalk:trust marie ask
-/crosstalk:trust marie deliver --in incident
-/crosstalk:trust ci notify
+crosstalk trust marie ask
+crosstalk trust marie deliver --in incident
+crosstalk trust ci notify
 ```
 
 **Why a ladder rather than flags.** A room of eight is unusable if trust is
@@ -58,7 +65,7 @@ two-field version it replaced hid.
 command and `policy.json` itself, plus the `strangerInRoom` branch in the daemon. One value, one place.
 
 Both existed side by side for a while, and that had a cost worth recording:
-`/crosstalk:mute` went on writing `mutedUntil` into `policy.json` while triage
+`crosstalk mute` went on writing `mutedUntil` into `policy.json` while triage
 read `trust.muted`, so muting somebody did nothing at all once `trust.json`
 existed. Two dials where one decides is not a smaller change, it is a silent
 one.
@@ -93,7 +100,7 @@ On top, a ceiling. Today it is 40 notices an hour across everyone, hardcoded.
 Make it configurable, make it visible, and make it per-source as well as total:
 
 ```
-/crosstalk:attention
+crosstalk attention
 
   today          31 notices, 4 questions, 1 handoff
   reached you    12 in the last hour
@@ -145,9 +152,9 @@ end of a turn. The daemon hands it over once, so it does not matter which event
 arrives first.
 
 ```
-/crosstalk:facts                        what the room holds
-/crosstalk:facts add "..."              from the terminal
-crosstalk_remember / crosstalk_facts    from the agent
+crosstalk facts                        what the room holds
+crosstalk facts add "..."              from the terminal
+crosstalk_thread action "note" kind "fact" / crosstalk_thread action "note" kind "fact"    from the agent
 ```
 
 **The discipline this needs.** Injecting shared text into a session at startup is
@@ -180,7 +187,7 @@ watcher everyone sees, or a headless worker that knows the codebase and answers
 questions in the room. It runs the daemon and nothing else, no client at all.
 
 Its offer carries `kind: "agent"`, and that has consequences: it starts at
-`notify`, it can never be raised to `deliver`, and `/crosstalk:peers` shows it as
+`notify`, it can never be raised to `deliver`, and `crosstalk peers` shows it as
 a machine rather than a person so nobody mistakes its output for a colleague's.
 
 **Why this matters beyond convenience.** It is the proof that the identity model
@@ -214,7 +221,7 @@ member's machine and on the relay, so closing a laptop for a week leaves the roo
 and its roster untouched. What is sent meanwhile waits on the relay for 24 hours
 and is then dropped, so a long absence costs that traffic rather than the room
 it belonged to. Presence is the only part that
-is per-session, which is why `/crosstalk:peers` shows sessions coming and going
+is per-session, which is why `crosstalk peers` shows sessions coming and going
 while the room stays. Everything below depends on that: a working set only means
 anything because the place holding it outlasts the conversations.
 
