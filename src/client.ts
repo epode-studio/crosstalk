@@ -56,9 +56,63 @@ export function daemonRunning(): boolean {
   }
 }
 
-/** Start the daemon detached if it is not already up. Safe to call repeatedly. */
+/** The version in a plugin root's manifest, or "" when it has none. */
+export function pluginVersion(root: string): string {
+  try {
+    return String(JSON.parse(fs.readFileSync(path.join(root, ".claude-plugin", "plugin.json"), "utf8")).version ?? "")
+  } catch {
+    return ""
+  }
+}
+
+/** a > b, for dotted versions. */
+export function newer(a: string, b: string): boolean {
+  const x = a.split(".").map((n) => parseInt(n, 10) || 0)
+  const y = b.split(".").map((n) => parseInt(n, 10) || 0)
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0)
+  return false
+}
+
+/**
+ * Whether the running daemon is older than this install: its version file
+ * names an older version, or it predates version files. Only ever newer over
+ * older, so sessions still on an old install never pull the daemon back.
+ */
+export function daemonOutdated(mine: string): boolean {
+  if (!mine || process.env.CROSSTALK_NO_DAEMON_UPGRADE) return false
+  let pid = 0
+  try {
+    pid = Number(fs.readFileSync(P.daemonLock, "utf8"))
+  } catch {
+    return false
+  }
+  try {
+    const v = JSON.parse(fs.readFileSync(P.daemonVersion, "utf8"))
+    if (v.pid !== pid) return true // written by an earlier daemon: this one predates version files
+    return newer(mine, String(v.version ?? ""))
+  } catch {
+    return true
+  }
+}
+
+/** Stop an older daemon so this install's starts. SIGTERM only; true when it has gone. */
+async function stopOutdated(): Promise<boolean> {
+  try {
+    process.kill(Number(fs.readFileSync(P.daemonLock, "utf8")), "SIGTERM")
+  } catch {}
+  for (let i = 0; i < 50; i++) {
+    if (!daemonRunning()) return true
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  return false
+}
+
+/** Start the daemon detached if it is not already up. Safe to call repeatedly. A daemon from an older install is replaced. */
 export async function ensureDaemon(root = rootFrom(import.meta.url)): Promise<boolean> {
-  if (daemonRunning()) return true
+  if (daemonRunning()) {
+    if (!daemonOutdated(pluginVersion(root))) return true
+    if (!(await stopOutdated())) return true // it would not go: keep using it
+  }
   let child
   try {
     fs.mkdirSync(P.root, { recursive: true, mode: 0o700 })

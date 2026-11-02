@@ -40,6 +40,12 @@ shift
 # and a CLI subcommand, and the subcommand is the one a person means: `crosstalk
 # relay` should say what the relay is doing, not start a second one. The CLI
 # spawns the server as `relay-server`.
+# `crosstalk daemon restart` (and stop, start) is the CLI subcommand; bare
+# `crosstalk daemon` is the daemon itself.
+if [ "$what" = "daemon" ] && [ $# -gt 0 ]; then
+  set -- daemon "$@"
+  what=cli
+fi
 case "$what" in
   cli|daemon|server|hook|relay-server) ;;
   *) set -- "$what" "$@"; what=cli ;;

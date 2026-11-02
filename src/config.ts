@@ -25,6 +25,7 @@ export const P = {
   unrouted: path.join(ROOT, "unrouted.json"),
   daemonSock: path.join(ROOT, "daemon.sock"),
   daemonLock: path.join(ROOT, "daemon.lock"),
+  daemonVersion: path.join(ROOT, "daemon.version"),
   log: path.join(ROOT, "daemon.log"),
 }
 

@@ -1,0 +1,46 @@
+// A newer install takes over from an older daemon; an older one never pulls it back.
+//
+//   bun test test/upgrade.test.ts
+
+import { describe, expect, test } from "bun:test"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
+import { spawnSync } from "node:child_process"
+
+process.env.CROSSTALK_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "ct-upgrade-"))
+const C = await import("../src/client.ts")
+const { P } = await import("../src/config.ts")
+
+describe("daemon upgrade", () => {
+  test("versions compare by number", () => {
+    expect(C.newer("0.2.1", "0.2.0")).toBe(true)
+    expect(C.newer("0.10.0", "0.9.9")).toBe(true)
+    expect(C.newer("0.2.0", "0.2.0")).toBe(false)
+    expect(C.newer("0.1.40", "0.2.0")).toBe(false)
+  })
+  test("older, or from before version files: outdated; the same or newer: not", () => {
+    fs.writeFileSync(P.daemonLock, String(process.pid))
+    fs.rmSync(P.daemonVersion, { force: true })
+    expect(C.daemonOutdated("0.2.1")).toBe(true) // predates version files
+    fs.writeFileSync(P.daemonVersion, JSON.stringify({ pid: 1, version: "0.9.0" }))
+    expect(C.daemonOutdated("0.2.1")).toBe(true) // the file is an earlier daemon's
+    fs.writeFileSync(P.daemonVersion, JSON.stringify({ pid: process.pid, version: "0.2.0" }))
+    expect(C.daemonOutdated("0.2.1")).toBe(true)
+    fs.writeFileSync(P.daemonVersion, JSON.stringify({ pid: process.pid, version: "0.2.1" }))
+    expect(C.daemonOutdated("0.2.1")).toBe(false)
+    fs.writeFileSync(P.daemonVersion, JSON.stringify({ pid: process.pid, version: "0.3.0" }))
+    expect(C.daemonOutdated("0.2.1")).toBe(false) // an old session never pulls a newer daemon back
+    expect(C.daemonOutdated("")).toBe(false)
+  })
+  test("the plugin's own version is read from its manifest", () => {
+    const root = path.join(import.meta.dir, "..")
+    expect(C.pluginVersion(root)).toBe(JSON.parse(fs.readFileSync(path.join(root, ".claude-plugin", "plugin.json"), "utf8")).version)
+  })
+  test("`crosstalk daemon restart` is the CLI subcommand, not a second daemon", () => {
+    const shim = path.join(import.meta.dir, "..", "bin", "crosstalk")
+    fs.rmSync(P.daemonLock, { force: true }) // nothing to stop: never this test's own process
+    const r = spawnSync("sh", [shim, "daemon", "stop"], { encoding: "utf8", env: { ...process.env } })
+    expect(`${r.stdout}${r.stderr}`).toMatch(/daemon (stopped|was not running)/)
+  })
+})

@@ -22,7 +22,7 @@
     "test:security": "bun test test/security.test.ts",
     "test:boundary": "bun test test/boundary.test.ts && bash test/boundary.sh",
     "test:safety": "bun test test/safety.test.ts",
-    "test:tools": "bun test test/tools.test.ts",
+    "test:tools": "bun test test/tools.test.ts test/upgrade.test.ts",
     "test:services": "bun test test/services.test.ts && bash test/services.sh",
     "test:urls": "bun test test/urls.test.ts && bash test/urls.sh",
     "test:share": "bun test test/share.test.ts && bash test/share.sh",

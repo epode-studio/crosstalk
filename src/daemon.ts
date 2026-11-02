@@ -52,6 +52,7 @@ import * as threadModel from "./threads/model.ts"
 import { createShipping } from "./shipping/daemon.ts"
 import { createExtras } from "./extras.ts"
 import { rootFrom } from "./paths.ts"
+import { pluginVersion } from "./client.ts"
 import { Coordinator, RULES_FILE } from "./coordinator.ts"
 import { isBot } from "./ui-extra/bots.ts"
 import { threadMuted } from "./ui-extra/mute.ts"
@@ -2808,6 +2809,10 @@ try {
 control.listen(P.daemonSock, () => {
   fs.chmodSync(P.daemonSock, 0o600)
   fs.writeFileSync(P.daemonLock, String(process.pid), { mode: 0o600 })
+  // Which crosstalk this is, so a newer install takes over (client.ts ensureDaemon).
+  try {
+    fs.writeFileSync(P.daemonVersion, JSON.stringify({ pid: process.pid, version: pluginVersion(rootFrom(import.meta.url)) }), { mode: 0o600 })
+  } catch {}
   log(`daemon up as "${identity!.label}" on ${P.daemonSock}`)
   connect()
   // Sessions that outlived the last daemon are placed again, and every repo
