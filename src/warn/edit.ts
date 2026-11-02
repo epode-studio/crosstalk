@@ -40,11 +40,21 @@ export function baseOf(root: string): string | undefined {
   return head.out.trim()
 }
 
-export function editReport(o: { cwd: string; tool: string; input: any }): EditReport | null {
+/**
+ * The file an edit tool call wrote, absolute, or null for anything else. No git
+ * and no reading: the hook asks the daemon whether anyone shares this file
+ * before it spends the git calls editReport makes.
+ */
+export function editedPath(o: { cwd: string; tool: string; input: any }): string | null {
   if (!EDIT_TOOLS.test(o.tool)) return null
   const raw = o.input?.file_path ?? o.input?.notebook_path ?? o.input?.path
   if (typeof raw !== "string" || !raw) return null
-  const abs = path.resolve(o.cwd || "/", raw)
+  return path.resolve(o.cwd || "/", raw)
+}
+
+export function editReport(o: { cwd: string; tool: string; input: any }): EditReport | null {
+  const abs = editedPath(o)
+  if (!abs) return null
   const top = git(path.dirname(abs), ["rev-parse", "--show-toplevel"])
   if (!top.ok) return null
   const root = top.out.trim()

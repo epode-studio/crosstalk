@@ -32,6 +32,7 @@ import * as extraTools from "./ui-extra/tools.ts"
 import * as moreTools from "./moretools.ts"
 import * as attnTools from "./attention/tools.ts"
 import { rootFrom } from "./paths.ts"
+import { sessionsDir } from "./registry.ts"
 import { channelVerdict, hostArgv } from "./channels.ts"
 
 /**
@@ -709,7 +710,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
  */
 function selfRegistration() {
   try {
-    const dir = path.join(os.homedir(), ".claude", "sessions")
+    const dir = sessionsDir()
     for (const f of fs.readdirSync(dir)) {
       if (!f.endsWith(".json")) continue
       const e = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"))

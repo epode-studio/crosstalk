@@ -54,6 +54,7 @@ import { summarise } from "./usage.ts"
 import * as trust from "./trust.ts"
 import * as facts from "./facts.ts"
 import { rootFrom, shim } from "./paths.ts"
+import { sessionsDir as registrySessionsDir } from "./registry.ts"
 import * as restore from "./restore.ts"
 import * as gather from "./gather.ts"
 import { uiCmd } from "./uicli.ts"
@@ -572,7 +573,7 @@ async function doctor() {
       : "only used with a Claude Code inbox socket",
   ])
 
-  const sessionsDir = path.join(process.env.HOME ?? "", ".claude", "sessions")
+  const sessionsDir = registrySessionsDir()
   let visible = 0
   try {
     visible = fs.readdirSync(sessionsDir).filter((f) => f.endsWith(".json")).length

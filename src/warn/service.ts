@@ -161,6 +161,17 @@ export class WarnService {
     return [...out.values()].filter((t) => t.labels.size || t.local.size)
   }
 
+  /**
+   * Whether an edit to `file` by this session would matter to anyone: another
+   * thread works on it, or one of this session's own threads already has
+   * unmerged edits recorded there (kept current for conflict detection).
+   */
+  shares(repo: string, file: string, sessionId: string): boolean {
+    const mine = this.d.threads.idsFor(sessionId)
+    if (mine.some((id) => this.st.pending[id]?.files[file])) return true
+    return this.targets(repo, file, mine, sessionId).length > 0
+  }
+
   /** A local session edited a file. */
   edited(o: { sessionId: string; name: string; repo: string; edit: Edit }) {
     const { edit, repo } = o

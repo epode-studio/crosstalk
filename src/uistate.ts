@@ -97,24 +97,122 @@ function write(f: File) {
 
 const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 
+/** The store's lock could not be taken: another live process holds it. Nothing was read or written. */
+export class StoreBusy extends Error {
+  constructor(holder?: number) {
+    super(`crosstalk's ui store is locked${holder ? ` by process ${holder}` : ""}; try again`)
+    this.name = "StoreBusy"
+  }
+}
+
+/**
+ * How long withStore waits for the lock before it gives up. A hook or a CLI can
+ * wait; the daemon cannot, since the wait blocks its event loop, so it sets a
+ * short one (setLockWait). Every holder is a read and a rename: milliseconds.
+ */
+let lockWaitMs = Number(process.env.CROSSTALK_UI_LOCK_WAIT_MS ?? 2000)
+export const setLockWait = (ms: number) => void (lockWaitMs = Math.max(0, ms))
+
+/** A lock older than this is broken whatever it says: its pid may have been reused. */
+const LOCK_MAX_AGE_MS = 10_000
+/** A lock with no owner yet: its maker died between mkdir and writing its pid. */
+const LOCK_UNOWNED_MS = 1_000
+
+const ownerFile = () => path.join(lockDir(), "pid")
+
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM"
+  }
+}
+
+function takeLock(): boolean {
+  try {
+    fs.mkdirSync(lockDir())
+  } catch {
+    return false
+  }
+  try {
+    fs.writeFileSync(ownerFile(), String(process.pid), { mode: 0o600 })
+  } catch {}
+  return true
+}
+
+/** The holder's pid, when it wrote one. */
+function holderOf(): number | undefined {
+  try {
+    const pid = Number(fs.readFileSync(ownerFile(), "utf8"))
+    return pid > 0 ? pid : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Break the lock if whoever holds it is gone. True when it was broken. */
+function breakIfStale(): boolean {
+  let age: number
+  try {
+    age = Date.now() - fs.statSync(lockDir()).mtimeMs
+  } catch {
+    return true // gone already: try again at once
+  }
+  const pid = holderOf()
+  const stale = age > LOCK_MAX_AGE_MS || (pid ? pid !== process.pid && !alive(pid) : age > LOCK_UNOWNED_MS)
+  if (!stale) return false
+  // Moved aside first, so two processes breaking it at once cannot remove a lock a third just took.
+  const aside = `${lockDir()}.stale.${process.pid}.${Date.now()}`
+  try {
+    fs.renameSync(lockDir(), aside)
+  } catch {
+    return true
+  }
+  const moved = (() => {
+    try {
+      return Number(fs.readFileSync(path.join(aside, "pid"), "utf8")) || undefined
+    } catch {
+      return undefined
+    }
+  })()
+  // What was moved is not what was judged stale: a fresh lock taken meanwhile. Put it back.
+  if (moved !== pid)
+    try {
+      fs.renameSync(aside, lockDir())
+      return false
+    } catch {}
+  try {
+    fs.rmSync(aside, { recursive: true, force: true })
+  } catch {}
+  return true
+}
+
+/** Nested calls in one process run inside the outer one's lock. */
+let depth = 0
+
 /**
  * Run `fn` over the store under the lock and write back what it left. A lock
- * older than ten seconds belonged to a process that died holding it.
+ * whose process has died is broken at once; one held by a live process is
+ * waited on, and when that takes too long this throws StoreBusy rather than
+ * write without the lock. Keep `fn` to the store: no git, no network.
  */
 export function withStore<T>(fn: (items: Record<string, UiItem>, now: number) => T): T {
   fs.mkdirSync(P.root, { recursive: true, mode: 0o700 })
   let held = false
-  for (let i = 0; i < 200 && !held; i++) {
-    try {
-      fs.mkdirSync(lockDir())
-      held = true
-    } catch {
-      try {
-        if (Date.now() - fs.statSync(lockDir()).mtimeMs > 10_000) fs.rmdirSync(lockDir())
-      } catch {}
-      sleepSync(10)
+  if (depth === 0) {
+    const until = Date.now() + lockWaitMs
+    for (;;) {
+      if (takeLock()) {
+        held = true
+        break
+      }
+      if (breakIfStale()) continue
+      if (Date.now() >= until) throw new StoreBusy(holderOf())
+      sleepSync(Math.min(10, Math.max(1, until - Date.now())))
     }
   }
+  depth++
   try {
     const f = read()
     const was = JSON.stringify(f)
@@ -126,9 +224,12 @@ export function withStore<T>(fn: (items: Record<string, UiItem>, now: number) =>
     if (JSON.stringify(f) !== was) write(f)
     return out
   } finally {
-    if (held)
+    depth--
+    // Only our own: held past LOCK_MAX_AGE_MS, it may have been broken and taken since.
+    const h = held ? holderOf() : undefined
+    if (held && (h === undefined || h === process.pid))
       try {
-        fs.rmdirSync(lockDir())
+        fs.rmSync(lockDir(), { recursive: true, force: true })
       } catch {}
   }
 }
