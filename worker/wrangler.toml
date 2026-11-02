@@ -14,6 +14,10 @@ class_name = "Room"
 name = "INVITES"
 class_name = "Invites"
 
+[[durable_objects.bindings]]
+name = "STREAM_POOL"
+class_name = "StreamPool"
+
 # SQLite-backed objects are the ones available on the free plan.
 #
 # An applied tag is a record of what already happened, so v1 keeps the name the
@@ -25,6 +29,11 @@ new_sqlite_classes = ["Mailbox", "Room", "Pairing"]
 [[migrations]]
 tag = "v2"
 renamed_classes = [{ from = "Pairing", to = "Invites" }]
+
+# Everyone's live stream frames for the day, in one small object (streams.ts).
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["StreamPool"]
 
 [observability]
 enabled = true

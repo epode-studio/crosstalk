@@ -106,7 +106,9 @@ does not declare the permission capability and will not.
 
 Fingerprints, message sizes, timing, and who is in which room. Never any content,
 and never which repositories you work in, since presence is encrypted the same
-way messages are.
+way messages are. The hosted relay also counts how many live share frames each
+fingerprint sent today (a number, kept to enforce its daily allowance, and
+reset at 00:00 UTC); the frames themselves are relayed and never stored.
 
 ## Starting a room
 
@@ -343,7 +345,11 @@ What it rests on, and what it costs:
 - **Bounded.** Request and response sizes, websocket messages, streams at once
   and frames a second are capped on the owner's side, whatever the viewer
   sends (429 beyond the budget); the relay gives live frames a budget of its
-  own and never buffers them for someone offline.
+  own and never buffers them for someone offline. The hosted relay never
+  stores them either, and caps them per person and for everyone together per
+  day (`worker/README.md`), so one share cannot use up the free plan everyone
+  else's messages run on; past that it pauses sharing until 00:00 UTC, both
+  people are told, and the client does not fall back to stored sends.
 - **Expiry and revocation.** Eight hours by default, a week at most. Both
   sides end a share at its expiry by themselves, so a viewer whose relay link
   dropped still loses it on time; `crosstalk_unshare` ends it at once.

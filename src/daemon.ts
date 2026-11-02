@@ -62,6 +62,7 @@ import { createSessionOps } from "./sessions/daemon.ts"
 import "./services/service.ts"
 import { createUrls } from "./urls/daemon.ts"
 import { createShares } from "./share/daemon.ts"
+import { createStreamGate } from "./streamgate.ts"
 import { createHealth } from "./urls/health/index.ts"
 import { startHistory } from "./urls/history/sync.ts"
 
@@ -649,8 +650,17 @@ let channel: Channel | null = null
 // A hosted relay is always wss, and TLS already hides the metadata that the
 // custom link layer exists to hide, so that handshake is skipped there.
 let workerMode = false
-/** The relay said it carries live `stream` frames (relay/relay.ts), which sharing a server uses. */
-let relayStreams = false
+/**
+ * Whether the relay carries live `stream` frames (relay/relay.ts, and the hosted
+ * Worker since its stream allowance), which sharing a server uses; and when the
+ * hosted relay has paused them for the day (src/streamgate.ts).
+ */
+const streamGate = createStreamGate({
+  note: (id, text) => coord.note({ id, text }),
+  tell: (label, text) =>
+    sendEnvelope(label, { v: 1, id: crypto.randomUUID(), ts: Date.now(), from: identity!.label, fromSession: "-", to: label, kind: "message", intent: "fyi", text }),
+  log,
+})
 let backoff = 1000
 const pendingAsks = new Map<string, { peer: string; resolve: (answer: Envelope) => void }>()
 
@@ -664,6 +674,7 @@ function connect() {
   log(`relay connecting ${base}${workerMode ? " (hosted)" : ""}`)
   const sock = new WebSocket(target)
   ws = sock
+  streamGate.connected({ hosted: workerMode })
 
   let eph: ReturnType<typeof newEphemeral> | null = null
   let pendingTranscript: Buffer | null = null
@@ -718,6 +729,13 @@ function connect() {
   }
 
   function onFrame(f: Frame, pendingTranscript: Buffer | null) {
+    // The hosted relay's `ready` only says what it carries: TLS authenticated it,
+    // and sock.onopen already did the rest.
+    if (f.t === "ready" && workerMode) {
+      streamGate.ready(f as any)
+      log(`relay carries ${(f as any).streams ? "live stream frames" : "no stream frames"} (hosted)`)
+      return
+    }
     if (f.t === "ready") {
       // The relay proves which relay it is, inside the channel. A pinned key
       // that does not match means someone is standing in the middle.
@@ -737,7 +755,7 @@ function connect() {
       }
       backoff = 1000
       lastHeard = Date.now()
-      relayStreams = !!(f as any).streams
+      streamGate.ready(f as any)
       log(`relay ready as ${f.fingerprint}`)
       flushOutbox()
       publishPresence()
@@ -768,7 +786,7 @@ function connect() {
       return
     }
     if (f.t === "room_deliver") return onRoomBody(f)
-    if (f.t === "error") log(`relay error: ${f.message}`)
+    if (f.t === "error" && !streamGate.onError(f as any, identity!.label)) log(`relay error: ${f.message}`)
   }
 
   sock.onopen = () => {
@@ -2678,9 +2696,12 @@ shares = createShares({
   stream: (label, env) => {
     const peer = loadPeers()[label]
     if (!peer) return false
-    return relaySend({ t: !workerMode && relayStreams ? "stream" : "send", to: peer.fingerprint, id: env.id, body: seal(channelKey(identity!, peer), JSON.stringify(env)) })
+    // Live only, and on the hosted relay only as stream frames (src/streamgate.ts).
+    const t = streamGate.route(label)
+    if (!t) return false
+    return relaySend({ t, to: peer.fingerprint, id: env.id, body: seal(channelKey(identity!, peer), JSON.stringify(env)) })
   },
-  mode: () => (workerMode ? "worker" : relayStreams ? "stream" : "send"),
+  mode: () => streamGate.mode(),
   log,
   fallbackSession: () => coord.mainId() ?? mostRecentSession()?.sessionId,
   modLive: (sid) => modLive(sessions.get(sid)),
