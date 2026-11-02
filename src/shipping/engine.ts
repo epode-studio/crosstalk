@@ -39,6 +39,7 @@ import { executeMerge, type Merged } from "./merge.ts"
 import { providerFor, type FlagProvider } from "./providers/index.ts"
 import type { Env, Fetch } from "./providers/types.ts"
 import { readSpawned, writeSpawned } from "../spawn.ts"
+import { prBody } from "../ui-extra/prbody.ts"
 
 export type SessionInfo = { sessionId: string; name: string; cwd: string; root?: string; branch?: string; repo?: string }
 
@@ -628,7 +629,7 @@ export class ShipEngine {
       gh: this.d.gh,
       scratchDir: path.join(this.d.home, "scratch"),
       title: f.name,
-      body: `${t.meta.value.name}: ${f.name}\n\nReviewed by ${(f.ship.signoff ?? []).map((s) => `${s.kind} (${s.client})`).join(", ") || "crosstalk's reviewers"}. Opened by crosstalk.`,
+      body: prBody(t, f),
     })
     if (!m.ok) {
       this.patch(t, f.id, { state: "blocked", last: m.text })

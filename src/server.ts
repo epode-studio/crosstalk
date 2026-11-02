@@ -28,6 +28,7 @@ import * as ui from "./uistate.ts"
 import * as terminalTools from "./terminal/tools.ts"
 import * as shipTools from "./shipping/tools.ts"
 import * as nextTools from "./nexttools.ts"
+import * as extraTools from "./ui-extra/tools.ts"
 import { rootFrom } from "./paths.ts"
 import { channelVerdict, hostArgv } from "./channels.ts"
 
@@ -398,6 +399,8 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     ...shipTools.TOOLS,
     // The main session, standing rules, conflicts, first use in a repo.
     ...nextTools.TOOLS,
+    // Rooms, muting, trust, doctor, the pane, the editor, digest and standup (src/ui-extra/).
+    ...extraTools.TOOLS,
     {
       name: "crosstalk_thread_read",
       description:
@@ -673,6 +676,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         return (
           (await shipTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
           (await nextTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD, root: rootFrom(import.meta.url) })) ??
+          (await extraTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD, root: rootFrom(import.meta.url) })) ??
           terminalTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD }) ??
           err(`unknown tool ${req.params.name}`)
         )

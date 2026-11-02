@@ -23,6 +23,7 @@ import { spawn, spawnSync } from "node:child_process"
 import { P } from "./config.ts"
 import { rootFrom, shim } from "./paths.ts"
 import { repoKey } from "./terminal/repo.ts"
+import { refuseBot } from "./ui-extra/bots.ts"
 
 // --- records -------------------------------------------------------------------
 
@@ -943,6 +944,8 @@ export type RunOpts = {
   userAction: boolean
   /** Where the plugin lives, for starting the background waiter. */
   root?: string
+  /** The peer this is done for, if any: an agent (a bot) is refused. */
+  peer?: string
 }
 
 function runStep(s: Step): { ok: boolean; out: string } {
@@ -958,6 +961,8 @@ function runStep(s: Step): { ok: boolean; out: string } {
  * listed as lost; any that fail to open are written back.
  */
 export function restore(o: RunOpts, only?: Rec[]): Outcome {
+  const bot = refuseBot(o.peer, "resume a session on this machine")
+  if (bot) return { ok: false, text: `◢ crosstalk: ${bot}`, lost: [], restored: [] }
   const env = o.env ?? process.env
   const lost = only ?? lostSessions(ctxNow(), o.self)
   if (!lost.length) return { ok: true, text: "◢ crosstalk: nothing to restore.", lost, restored: [] }

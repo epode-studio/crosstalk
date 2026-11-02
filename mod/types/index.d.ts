@@ -8,7 +8,7 @@ export type Chip = { kind: string; label: string; bytes?: number }
 /** One thing waiting on the person, as `crosstalk ui watch` reports it. */
 export type Item = {
   id: string
-  kind: 'restore' | 'message' | 'ask' | 'route' | 'gather' | 'team' | 'cleanup' | 'thread' | 'ship' | 'rule' | 'connect' | 'conflict'
+  kind: 'restore' | 'message' | 'ask' | 'route' | 'gather' | 'team' | 'cleanup' | 'thread' | 'ship' | 'rule' | 'connect' | 'conflict' | 'invite' | 'doctor'
   sessionId: string
   state: 'pending' | 'answered' | 'handed' | 'muted' | 'later'
   createdAt: number
@@ -30,8 +30,34 @@ export type Item = {
 /** A row the mod placed in the transcript for the person alone. */
 export type Receipt = { id: string; text: string }
 
+/** One feature in the pane: its risk, and where its flag stands. */
+export type PaneFeature = { name: string; risk: string; flag?: string; stage?: string; state?: string }
+
+/** A thread, as its pane draws it (src/ui-extra/pure.ts PaneModel). Never model context. */
+export type Pane = {
+  thread: string
+  status: string
+  repo?: string
+  recap?: string
+  people: string[]
+  sessions: number
+  waiting: string[]
+  decision?: { text: string; who: string; at: number }
+  recent: { from: string; text: string; ts?: number }[]
+  features: PaneFeature[]
+}
+
 declare module 'claude-code' {
   interface PluginState {
-    crosstalk: { items: Item[]; receipts: Receipt[] }
+    crosstalk: {
+      items: Item[]
+      receipts: Receipt[]
+      /** The thread the pane shows, as `crosstalk ui pane` last printed it. */
+      pane: Pane | null
+      /** What the pane could not show, when it could not. */
+      paneError: string
+      /** The digest's one line at a pause; empty when there is none. */
+      digest: string
+    }
   }
 }

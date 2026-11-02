@@ -491,9 +491,28 @@ The measure is time from idea to merge, and how few of your minutes it took.
   once you say yes.
 - **Attach the thing, not a description of it.** "Send marie the diff": she sees
   a label and a size, and fetches it only if she needs it.
-- **No commands to learn.** Today a few things still need one: rooms
-  (`/crosstalk:room`), muting (`/crosstalk:mute`) and diagnosis
-  (`/crosstalk:doctor`). Each is on its way to plain words.
+- **No commands to learn.** Say it to any agent: "marie gave me words:
+  cherry horn…", "start a crosstalk room", "mute jo for an hour", "let marie
+  ask me questions", "is crosstalk OK?". The slash commands stay for scripts
+  and people who like them; the four words are shown to you, not to the model.
+- **Something broken is noticed for you.** Once a day, at the start of a
+  session, crosstalk checks itself and says so only when something is wrong,
+  with the fix.
+- **"Show me auth"** opens the thread beside the chat: status, people, what is
+  waiting, the latest decision, recent messages, each feature's risk and flag.
+  The main session gets it by itself on a wide terminal. None of it reaches
+  the model. A card's picker has **Open thread** too, and **More…** for Mute
+  and Later.
+- **"Open auth in my editor"**, **"what happened?"** (a digest, also one line
+  above the prompt at a pause, at most every two hours), **"what did the team
+  ship this week?"**, and pull requests that describe themselves from the
+  thread: recap, decisions, evidence, open questions (a sealed thread keeps its
+  recap and decisions out of the PR).
+- **`@auth keep v1`**, **`@main`**, **`@restore`** at the prompt: optional
+  shortcuts, never needed. `@<thread>` answers what that thread is waiting on.
+- **Bots** are members that declare themselves agents (`--agent`). They post to
+  threads and rooms, and nothing more: they never start or resume a session on
+  anyone's machine, never answer a question, and are never above notify.
 
 <br>
 

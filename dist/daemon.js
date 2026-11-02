@@ -2,9 +2,9 @@
 // @bun
 
 // src/daemon.ts
-import fs30 from "fs";
+import fs31 from "fs";
 import net3 from "net";
-import path38 from "path";
+import path39 from "path";
 import crypto19 from "crypto";
 
 // src/config.ts
@@ -3121,6 +3121,40 @@ function converge(a, b) {
 }
 var survivor = (a, b) => a.createdAt !== b.createdAt ? a.createdAt < b.createdAt ? [a, b] : [b, a] : a.id < b.id ? [a, b] : [b, a];
 
+// src/ui-extra/bots.ts
+function isBot(label, peers = loadPeers2()) {
+  if (!label)
+    return false;
+  const name = label.replace(/^@/, "").split("/")[0];
+  return !!peers[name]?.isMachine;
+}
+function refuseBot(peer, what, peers) {
+  if (!peer || !isBot(peer, peers))
+    return null;
+  return `Refused: ${peer.split("/")[0]} is an agent, and an agent can post to threads but never ${what}.`;
+}
+function withoutBotAnswers(inc, known) {
+  const questions = {};
+  for (const [id, q] of Object.entries(inc.questions)) {
+    const mine = known?.questions[id];
+    const same = (mine?.answer ?? undefined) === (q.answer ?? undefined);
+    if (same)
+      questions[id] = q;
+    else if (mine)
+      questions[id] = mine;
+    else {
+      const { answer: _a, answeredBy: _b, ...rest } = q;
+      questions[id] = rest;
+    }
+  }
+  return { ...inc, questions };
+}
+function botSafe(label, inc, known, peers) {
+  if (!inc || !isBot(label, peers))
+    return inc;
+  return withoutBotAnswers(inc, known[inc.id]);
+}
+
 // src/threads/service.ts
 var empty3 = () => ({
   v: 1,
@@ -3587,7 +3621,7 @@ class ThreadService {
       return this.d.log(`ignored a thread from ${label}: no direct channel`);
     this.capable.add(label);
     const sync = env.threadSync;
-    const inc = parseThread(sync?.thread);
+    const inc = botSafe(label, parseThread(sync?.thread), this.st.threads, this.d.peers());
     if (!inc)
       return this.d.log(`ignored a malformed thread from ${label}`);
     const known = this.st.threads[inc.id];
@@ -5514,6 +5548,59 @@ function providerFor(name, o) {
   }
 }
 
+// src/ui-extra/prbody.ts
+var line = (s) => s.replace(/\s+/g, " ").trim();
+var day2 = (at) => new Date(at).toISOString().slice(0, 10);
+function prBody(t, f) {
+  const name = t.meta.value.name;
+  const sealed = !t.meta.value.public;
+  const out = [];
+  const flag = f.flag ? `, behind the flag \`${f.flag}\`${f.ship?.stage ? ` (now ${f.ship.stage})` : ""}` : "";
+  out.push(`**${f.name}**: ${f.risk} work from the crosstalk thread **${name}**${flag}.`);
+  if (f.risk === "risky" && f.ship?.why)
+    out.push("", `Risky because: ${line(f.ship.why)}`);
+  if (!sealed) {
+    out.push("", "## Recap", "", t.recap.value ? t.recap.value.trim() : "_No recap yet._");
+    const decisions = live(t, "decisions").sort((a, b) => a.at - b.at);
+    out.push("", "## Decisions", "");
+    if (decisions.length)
+      for (const d of decisions)
+        out.push(`- ${day2(d.at)} \u00b7 ${d.who} \u00b7 ${line(d.text)}${d.rationale ? ` (${line(d.rationale)})` : ""}`);
+    else
+      out.push("_None recorded._");
+  }
+  const ev = f.ship?.evidence ?? [];
+  out.push("", "## Evidence", "");
+  if (!ev.length)
+    out.push("_None attached._");
+  for (const e of ev) {
+    out.push(`- **${e.stage === "merge" ? "before merging" : `at ${e.stage}`}** (${e.who}): ${line(e.summary)}`);
+    for (const x of e.tests ?? [])
+      out.push(`  - test: ${line(x)}`);
+    for (const x of e.evals ?? [])
+      out.push(`  - eval: ${line(x)}`);
+    for (const x of e.before_after ?? [])
+      out.push(`  - before: ${line(x.before) || "nothing"} \u2192 after: ${line(x.after)}`);
+    for (const x of e.screenshots ?? [])
+      out.push(`  - screenshot: ${x}`);
+  }
+  if (!sealed) {
+    const open = live(t, "questions").filter((q) => !q.answer);
+    out.push("", "## Open questions", "");
+    if (open.length)
+      for (const q of open)
+        out.push(`- ${line(q.text)}${q.blocking ? " **(blocking)**" : ""}`);
+    else
+      out.push("_None._");
+  } else {
+    out.push("", `_The thread **${name}** is sealed to its people, so its recap, decisions and open questions stay in crosstalk (crosstalk_thread_read)._`);
+  }
+  const reviewers = (f.ship?.signoff ?? []).map((s) => `${s.kind} (${s.client})`);
+  out.push("", "---", `Reviewed by ${reviewers.join(", ") || "crosstalk's reviewers"}. Opened by crosstalk.`);
+  return out.join(`
+`);
+}
+
 // src/shipping/engine.ts
 var keyOf = (thread, feature) => `${thread}/${feature}`;
 var unkey = (k) => {
@@ -6009,9 +6096,7 @@ ${describe(latestFor(f.ship?.evidence, "merge"))}`,
       gh: this.d.gh,
       scratchDir: path30.join(this.d.home, "scratch"),
       title: f.name,
-      body: `${t.meta.value.name}: ${f.name}
-
-Reviewed by ${(f.ship.signoff ?? []).map((s) => `${s.kind} (${s.client})`).join(", ") || "crosstalk's reviewers"}. Opened by crosstalk.`
+      body: prBody(t, f)
     });
     if (!m.ok) {
       this.patch(t, f.id, { state: "blocked", last: m.text });
@@ -6457,6 +6542,9 @@ function createShipping(o) {
   }, 10 * 60000);
   sweep.unref?.();
   const op = async (req, sid) => {
+    const bot = refuseBot(req.peer ? String(req.peer) : undefined, "start reviewers, merge or change a flag here");
+    if (bot)
+      return { ok: false, text: bot };
     switch (req.action) {
       case "feature":
         return engine.feature(sid, { thread: req.thread, name: req.name ?? req.feature, risk: req.risk, why: req.why, flag: req.flag, branch: req.branch });
@@ -7565,6 +7653,8 @@ class Coordinator {
         this.warn.acceptHeadsUp(label, env);
       else if (env.kind === "conflict")
         this.warn.acceptConflict(label, env);
+      else if (isBot(label, this.d.peers()))
+        this.d.log(`ignored rules from ${label}: an agent cannot answer for anyone`);
       else
         this.acceptRules(label, env);
     } catch (e) {
@@ -7853,6 +7943,38 @@ function riskyIn(t, text) {
   return live(t, "features").some((f) => f.risk === "risky" && (low.includes(f.name.toLowerCase()) || !!f.flag && low.includes(f.flag.toLowerCase())));
 }
 
+// src/ui-extra/bots.ts
+function isBot2(label, peers = loadPeers2()) {
+  if (!label)
+    return false;
+  const name = label.replace(/^@/, "").split("/")[0];
+  return !!peers[name]?.isMachine;
+}
+
+// src/ui-extra/mute.ts
+import fs30 from "node:fs";
+import path38 from "node:path";
+var file5 = () => path38.join(P2.root, "thread-mutes.json");
+function loadMutes() {
+  try {
+    const m = JSON.parse(fs30.readFileSync(file5(), "utf8"));
+    return m && typeof m === "object" ? m : {};
+  } catch {
+    return {};
+  }
+}
+var HOUR = 60 * 60000;
+var DEFAULT_MS = 24 * HOUR;
+var FOREVER_MS = 10 * 365 * 24 * HOUR;
+function threadMuted(env, now = Date.now(), mutes = loadMutes()) {
+  const live = Object.entries(mutes).filter(([, v]) => v.until > now);
+  if (!live.length)
+    return false;
+  const ids = new Set(env.threads ?? []);
+  const name = env.thread ? slug(env.thread) : undefined;
+  return live.some(([id, v]) => ids.has(id) || !!name && v.name === name);
+}
+
 // src/daemon.ts
 var identity = loadIdentity();
 if (!identity) {
@@ -7878,7 +8000,7 @@ var threads = new ThreadService({
   peers: () => loadPeers(),
   send: (label, env) => sendEnvelope(label, env),
   log,
-  file: path38.join(P.root, "threads.json"),
+  file: path39.join(P.root, "threads.json"),
   settleMs: Number(process.env.CROSSTALK_THREAD_SETTLE_MS ?? 3000),
   network: process.env.CROSSTALK_THREADS_NO_PUSH !== "1",
   fadeDays: Number(process.env.CROSSTALK_THREAD_FADE_DAYS ?? 14)
@@ -8430,6 +8552,8 @@ function onEnvelope(peerLabel, env, ctx) {
     }
     return;
   }
+  if (env.kind === "answer" && isBot2(peerLabel))
+    return log(`dropped an answer from ${peerLabel}: an agent cannot answer questions`);
   if (env.kind === "answer" && env.correlation) {
     const waiter = pendingAsks.get(env.correlation);
     if (waiter) {
@@ -8455,7 +8579,7 @@ function onEnvelope(peerLabel, env, ctx) {
     machine: !!loadPeers()[peerLabel]?.isMachine
   };
   const level = levelFor(peerLabel, tctx);
-  const muted = isMuted(peerLabel, tctx);
+  const muted = isMuted(peerLabel, tctx) || threadMuted(env);
   if (env.kind === "ask" && !atLeast2(level, "ask")) {
     log(`refused ask from ${peerLabel}: they are at ${level}`);
     if (env.correlation)
@@ -9230,6 +9354,8 @@ async function handle(req, sock) {
     case "send":
     case "handoff":
     case "ask": {
+      if (req.op === "ask" && isBot2(String(req.to ?? "")))
+        return { ok: false, error: `${String(req.to).split("/")[0]} is an agent: it can post to threads but cannot answer questions. Send it a message instead.` };
       if (isRoom(String(req.to))) {
         const named = normalise(String(req.to));
         const asPerson = loadPeers()[named];
@@ -9817,7 +9943,7 @@ coord = new Coordinator({
   route: (id, session) => handle({ op: "route", id, session, auto: true }),
   answerPeer: (label, correlation, text, replyTo) => handle({ op: "answer", to: label, correlation, text, replyTo, auto: true })
 });
-fs30.mkdirSync(path38.dirname(P.daemonSock), { recursive: true, mode: 448 });
+fs31.mkdirSync(path39.dirname(P.daemonSock), { recursive: true, mode: 448 });
 var control = net3.createServer((sock) => {
   let rest = "";
   sock.on("data", async (buf) => {
@@ -9843,7 +9969,7 @@ var control = net3.createServer((sock) => {
   sock.on("error", () => {});
 });
 var alreadyRunning = () => new Promise((resolve) => {
-  if (!fs30.existsSync(P.daemonSock))
+  if (!fs31.existsSync(P.daemonSock))
     return resolve(false);
   const probe = net3.createConnection(P.daemonSock);
   const done = (answer) => {
@@ -9857,17 +9983,17 @@ var alreadyRunning = () => new Promise((resolve) => {
 if (await alreadyRunning()) {
   let who = "";
   try {
-    who = ` as pid ${Number(fs30.readFileSync(P.daemonLock, "utf8"))}`;
+    who = ` as pid ${Number(fs31.readFileSync(P.daemonLock, "utf8"))}`;
   } catch {}
   console.error(`crosstalk: a daemon is already running${who}`);
   process.exit(0);
 }
 try {
-  fs30.unlinkSync(P.daemonSock);
+  fs31.unlinkSync(P.daemonSock);
 } catch {}
 control.listen(P.daemonSock, () => {
-  fs30.chmodSync(P.daemonSock, 384);
-  fs30.writeFileSync(P.daemonLock, String(process.pid), { mode: 384 });
+  fs31.chmodSync(P.daemonSock, 384);
+  fs31.writeFileSync(P.daemonLock, String(process.pid), { mode: 384 });
   log(`daemon up as "${identity.label}" on ${P.daemonSock}`);
   connect();
   threads.retain([...sessions.keys()]);
@@ -9888,14 +10014,14 @@ setInterval(() => {
 var bye = () => {
   let mine = false;
   try {
-    mine = Number(fs30.readFileSync(P.daemonLock, "utf8")) === process.pid;
+    mine = Number(fs31.readFileSync(P.daemonLock, "utf8")) === process.pid;
   } catch {}
   if (mine) {
     try {
-      fs30.unlinkSync(P.daemonSock);
+      fs31.unlinkSync(P.daemonSock);
     } catch {}
     try {
-      fs30.unlinkSync(P.daemonLock);
+      fs31.unlinkSync(P.daemonLock);
     } catch {}
   }
   process.exit(0);

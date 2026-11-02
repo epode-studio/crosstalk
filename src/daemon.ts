@@ -49,6 +49,8 @@ import * as threadModel from "./threads/model.ts"
 import { createShipping } from "./shipping/daemon.ts"
 import { rootFrom } from "./paths.ts"
 import { Coordinator, RULES_FILE } from "./coordinator.ts"
+import { isBot } from "./ui-extra/bots.ts"
+import { threadMuted } from "./ui-extra/mute.ts"
 
 const identity = loadIdentity()
 if (!identity) {
@@ -873,6 +875,8 @@ function onEnvelope(
     return
   }
 
+  // An agent never answers a question (src/ui-extra/bots.ts).
+  if (env.kind === "answer" && isBot(peerLabel)) return log(`dropped an answer from ${peerLabel}: an agent cannot answer questions`)
   if (env.kind === "answer" && env.correlation) {
     const waiter = pendingAsks.get(env.correlation)
     if (waiter) {
@@ -899,7 +903,7 @@ function onEnvelope(
     machine: !!loadPeers()[peerLabel]?.isMachine,
   }
   const level = trust.levelFor(peerLabel, tctx)
-  const muted = trust.isMuted(peerLabel, tctx)
+  const muted = trust.isMuted(peerLabel, tctx) || threadMuted(env)
   if (env.kind === "ask" && !trust.atLeast(level, "ask")) {
     log(`refused ask from ${peerLabel}: they are at ${level}`)
     if (env.correlation)
@@ -1803,6 +1807,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
     case "send":
     case "handoff":
     case "ask": {
+      if (req.op === "ask" && isBot(String(req.to ?? ""))) return { ok: false, error: `${String(req.to).split("/")[0]} is an agent: it can post to threads but cannot answer questions. Send it a message instead.` }
       // A room fans out over the pairwise channels. Every member is someone
       // this machine has a direct channel to, so nothing here widens who can
       // reach us.
