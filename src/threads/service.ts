@@ -18,9 +18,15 @@
 // first or twice.
 //
 // Trust: a thread frame is accepted only from a direct peer (someone this
-// machine shares a channel with) who is in the thread, and only into a thread
-// we are in or that names us. Peer text in a thread reaches an agent only
-// through crosstalk_thread_read, framed as other people's words.
+// machine shares a channel with) who is in the thread *here*, and only into a
+// thread we are in or that names us. Who is in a thread, whether it is public
+// and what it was combined into are this replica's to decide: neither a frame
+// nor a file on the ref (which anyone who can push can write) adds a person,
+// makes a sealed thread public or folds it into another (accept, mergeRef,
+// settle). Keys move only forward (rekey.ts adoption). Nothing is committed or
+// pushed for a repo before the person connected it (shared). Peer text in a
+// thread reaches an agent only through crosstalk_thread_read, framed as other
+// people's words. docs/security.md, "Who may change a thread".
 
 import fs from "node:fs"
 import path from "node:path"
@@ -33,7 +39,7 @@ import * as M from "./model.ts"
 import * as F from "./format.ts"
 import * as S from "./store.ts"
 import * as I from "./infer.ts"
-import { sealSection, unwrapKey, wrapKey, newKey } from "./seal.ts"
+import { sealSection, unwrapFor, wrapKey, newKey } from "./seal.ts"
 import { botSafe } from "../ui-extra/bots.ts"
 import * as K from "./rekey.ts"
 
@@ -68,6 +74,11 @@ export type Deps = {
   extra?: { file: string; read: (repo: string, text: string) => void; render: (repo: string) => string | undefined }
   /** Threads that changed, after each save: what a standing rule may answer (src/coordinator.ts). */
   onFlush?: (ids: string[]) => void
+  /**
+   * Whether the person connected this repo with their team (src/repotrust/
+   * firstuse.ts). Absent (tests, tools) is yes. See ThreadService.shared.
+   */
+  connected?: (repo: string) => boolean
   /** Fingerprints repo trust revoked; defaults to repotrust's state (rekey.ts). */
   revoked?: () => Set<string>
   /**
@@ -78,7 +89,13 @@ export type Deps = {
 }
 
 /** Where a local session was placed. `name` is how its thread entry is keyed, the same way a peer sees it in presence. */
-type Placed = { threads: string[]; why: Record<string, string>; pinned?: string[]; name?: string; left?: string[] }
+/**
+ * `pinBranch` is the branch the session was on when its placement was chosen
+ * (by the person, by `expect`, or by leaving a thread): the choice holds on
+ * that branch, and a move to another branch none of the pinned threads has is
+ * new work, placed afresh.
+ */
+type Placed = { threads: string[]; why: Record<string, string>; pinned?: string[]; pinBranch?: string; name?: string; left?: string[] }
 type Note = { id: string; text: string }
 
 type State = {
@@ -98,6 +115,8 @@ type State = {
   /** Each thread key's epoch and who it may have reached (rekey.ts). */
   epochs: Record<string, number>
   holders: Record<string, string[]>
+  /** Hashes of every key this replica replaced: never taken back from anyone (rekey.ts adoption). */
+  retired: Record<string, string[]>
   /**
    * Placements said in advance (`expect`): "sid:<session id>" or "cwd:<folder>"
    * to the thread it starts in. `used` is the sessions it has placed, each once.
@@ -114,6 +133,7 @@ const empty = (): State => ({
   expected: {},
   epochs: {},
   holders: {},
+  retired: {},
   v: 1,
   threads: {},
   keys: {},
@@ -185,11 +205,17 @@ export class ThreadService {
     }
   }
 
+  /** What was last written, so a save with nothing new in it writes nothing. */
+  private written?: string
+
   private save() {
+    const text = JSON.stringify(this.st)
+    if (text === this.written) return
     fs.mkdirSync(path.dirname(this.d.file), { recursive: true, mode: 0o700 })
     const tmp = `${this.d.file}.${process.pid}.tmp`
-    fs.writeFileSync(tmp, JSON.stringify(this.st), { mode: 0o600 })
+    fs.writeFileSync(tmp, text, { mode: 0o600 })
     fs.renameSync(tmp, this.d.file)
+    this.written = text
   }
 
   // --- reading -----------------------------------------------------------------
@@ -416,6 +442,7 @@ export class ThreadService {
     const t = this.st.threads[id]
     if (!t || K.isRemoved(t, this.me)) return
     rec.pinned = [...new Set([...(rec.pinned ?? []), id])]
+    rec.pinBranch = fp.branch
     rec.why[id] = x.why
     delete this.st.questions[s.sessionId]
     // Its branch is this thread's work, so the pin holds on it.
@@ -433,13 +460,22 @@ export class ThreadService {
   forget(sessionId: string) {
     const p = this.st.placed[sessionId]
     this.locals.delete(sessionId)
-    if (!p) return
+    if (!p) {
+      if (this.st.notes[sessionId] || this.st.banner[sessionId]) {
+        delete this.st.notes[sessionId]
+        delete this.st.banner[sessionId]
+        this.save()
+      }
+      return
+    }
     for (const id of p.threads) {
       const t = this.st.threads[this.resolve(id)]
       if (t && M.remove(t, "sessions", `${this.me}:${p.name ?? sessionId}`, this.me, this.now())) this.touched.add(t.id)
     }
     delete this.st.placed[sessionId]
     delete this.st.questions[sessionId]
+    delete this.st.notes[sessionId]
+    delete this.st.banner[sessionId]
     this.flush()
   }
 
@@ -500,8 +536,10 @@ export class ThreadService {
       rec.pinned = rec.pinned.map((id) => this.resolve(id)).filter((id) => this.st.threads[id])
       want = rec.pinned.map((id) => ({ id, why: rec.why[id] ?? "you chose it" }))
       // A pin from the default branch is about those files; a new branch is new work.
-      if (!fp.onDefault && fp.branch && !rec.pinned.some((id) => M.ids(this.st.threads[id], "branches").includes(fp.branch!))) {
+      const moved = rec.pinBranch === undefined || rec.pinBranch !== fp.branch
+      if (!fp.onDefault && fp.branch && moved && !rec.pinned.some((id) => M.ids(this.st.threads[id], "branches").includes(fp.branch!))) {
         delete rec.pinned
+        delete rec.pinBranch
         return this.place(s)
       }
     } else {
@@ -598,6 +636,7 @@ export class ThreadService {
     const q = this.st.questions[sessionId]
     delete this.st.questions[sessionId]
     const rec: Placed = (this.st.placed[sessionId] ??= { threads: [], why: {} })
+    rec.pinBranch = s?.branch
     if (pick === NO_THREAD) {
       rec.pinned = []
     } else if (pick === NEW_THREAD) {
@@ -608,12 +647,14 @@ export class ThreadService {
       for (let i = 2; taken.has(name); i++) name = `${base}-${i}`
       const t = this.createThread(s, name, "you asked for a new thread")
       for (const p of s.paths.slice(0, 12)) M.put(t, "files", p, { at: this.now() }, this.me, this.now())
+      this.branchInto(t, s)
       rec.pinned = [t.id]
       rec.why[t.id] = "you asked for a new thread"
     } else {
       const t = this.find(sessionId, pick) ?? (q ? q.candidates.map((id) => this.st.threads[id]).find((t) => t?.meta.value.name === pick) : undefined)
       if (!t) return { ok: false, error: `no thread called "${pick}". Threads: ${this.list().map((t) => t.name).join(", ") || "none"}` }
       rec.pinned = [...new Set([...(rec.pinned ?? []), t.id])]
+      if (s) this.branchInto(t, s)
       rec.why[t.id] = "you chose it"
       rec.left = rec.left?.filter((id) => this.resolve(id) !== t.id)
     }
@@ -622,12 +663,20 @@ export class ThreadService {
     return { ok: true, threads: this.namesFor(sessionId) }
   }
 
+  /** A thread chosen for a session on a work branch takes that branch, so the choice holds there. */
+  private branchInto(t: M.Thread, s: LocalSession) {
+    const b = s.branch ? t.branches[s.branch] : undefined
+    if (!s.branch || this.onDefault(s) || (b && !b.gone)) return
+    if (M.put(t, "branches", s.branch, { at: this.now() }, this.me, this.now())) this.touched.add(t.id)
+  }
+
   /** Take a session out of one thread for good (until it is placed there by hand). */
   leave(sessionId: string, nameOrId: string) {
     const t = this.find(sessionId, nameOrId)
     if (!t) return { ok: false, error: `no thread called "${nameOrId}"` }
     const rec: Placed = (this.st.placed[sessionId] ??= { threads: [], why: {} })
     rec.pinned = this.idsFor(sessionId).filter((id) => id !== t.id)
+    rec.pinBranch = this.locals.get(sessionId)?.branch
     // Remembered, so matching (its branch, its files) never puts it back; only choosing it does.
     rec.left = [...new Set([...(rec.left ?? []), t.id])]
     const s = this.locals.get(sessionId)
@@ -690,34 +739,117 @@ export class ThreadService {
     return this.defaults.get(root)?.v ?? S.defaultBranch(root)
   }
 
-  /** A thread frame from a peer. */
+  /**
+   * A thread frame from a peer.
+   *
+   * The frame is a replica of the thread, but not everything in it is the
+   * sender's to change. A known thread is heard only from someone who is in
+   * it here. Who is in it, whether it is public and what it was combined into
+   * are decided on this machine: a frame cannot add a person (only take one
+   * out, or the sender themselves leaving), cannot make a sealed thread
+   * public, and cannot fold this thread into another unless nobody new could
+   * read that other thread by it.
+   */
   accept(label: string, env: Envelope) {
     const peer = this.d.peers()[label]
     if (!peer) return this.d.log(`ignored a thread from ${label}: no direct channel`)
     this.capable.add(label)
     const sync = env.threadSync as { thread?: unknown; key?: string; epoch?: number } | undefined
-    const inc = botSafe(label, M.parseThread(sync?.thread), this.st.threads, this.d.peers())
-    if (!inc) return this.d.log(`ignored a malformed thread from ${label}`)
-    const known = this.st.threads[inc.id]
-    const theirPeople = M.people(inc)
+    const raw = botSafe(label, M.parseThread(sync?.thread), this.st.threads, this.d.peers())
+    if (!raw) return this.d.log(`ignored a malformed thread from ${label}`)
+    const known = this.st.threads[raw.id]
+    const theirPeople = M.people(raw)
+    if (known) {
+      // Someone taken out of a thread is not heard in it again.
+      if (K.isRemoved(known, peer.fingerprint)) return this.d.log(`ignored thread ${raw.id} from ${label}: they were taken out of it`)
+      // Membership is what this replica says, never what the frame says.
+      if (!M.people(known).includes(peer.fingerprint)) return this.d.log(`ignored thread ${raw.id} from ${label}: they are not in it here`)
+      // A thread we left, or were taken out of, is not ours to hear about.
+      if (!M.people(known).includes(this.me)) return
+    } else {
+      if (!theirPeople.includes(peer.fingerprint)) return this.d.log(`ignored thread ${raw.id} from ${label}: they are not in it`)
+      if (!theirPeople.includes(this.me)) return this.d.log(`ignored thread ${raw.id} from ${label}: it does not name us`)
+    }
     // Someone leaving sends the thread once more, without themselves in it.
-    const leaving = !!known && K.isRemoved(inc, peer.fingerprint) && inc.people[peer.fingerprint].by === peer.fingerprint && M.people(known).includes(peer.fingerprint)
-    if (!theirPeople.includes(peer.fingerprint) && !leaving) return this.d.log(`ignored thread ${inc.id} from ${label}: they are not in it`)
-    if (!known && !theirPeople.includes(this.me)) return this.d.log(`ignored thread ${inc.id} from ${label}: it does not name us`)
-    if (known && !M.people(known).includes(this.me) && !theirPeople.includes(this.me)) return
-    // Someone taken out of a thread is not heard in it again.
-    if (known && K.isRemoved(known, peer.fingerprint)) return this.d.log(`ignored thread ${inc.id} from ${label}: they were taken out of it`)
-    const merged = known ? M.merge(known, inc) : inc
+    const leaving = !!known && K.isRemoved(raw, peer.fingerprint) && raw.people[peer.fingerprint].by === peer.fingerprint
+    if (!theirPeople.includes(peer.fingerprint) && !leaving) return this.d.log(`ignored thread ${raw.id} from ${label}: they are not in it`)
+    const inc = this.screen(known, raw)
+    const merged = this.settle(known, known ? M.merge(known, inc) : inc, peer.label)
     // Keys converge on the higher epoch, then the smaller key (rekey.ts), so every replica agrees.
-    if (K.validKey(sync?.key)) this.adoptKey(inc.id, sync.key, Number(sync.epoch) || 0, merged)
+    if (K.validKey(sync?.key)) this.adoptKey(raw.id, sync.key, Number(sync.epoch) || 0, merged, [])
     if (known && M.same(known, merged)) return
-    this.st.threads[inc.id] = merged
-    this.touched.add(inc.id)
+    this.st.threads[raw.id] = merged
+    this.touched.add(raw.id)
     this.d.log(`thread ${merged.meta.value.name} updated by ${label}`)
     this.reconcile()
     // Sent back to them too: whatever we added while placing our own sessions
     // has to reach them, and an unchanged echo stops at their merge.
     this.flush()
+  }
+
+  /**
+   * A replica from elsewhere (a frame or a file) with the people it would add
+   * taken out: adding a person is done here (presence, a combine decided here),
+   * with a notice. Taking someone out, and leaving, still travel.
+   */
+  private screen(known: M.Thread | undefined, inc: M.Thread): M.Thread {
+    if (!known) return inc
+    const people: M.Items<M.Person> = {}
+    for (const [fp, p] of Object.entries(inc.people)) {
+      const mine = known.people[fp]
+      const adds = !p.gone && (!mine || mine.gone)
+      if (!adds) people[fp] = p
+      else if (mine) people[fp] = mine
+    }
+    return { ...inc, people }
+  }
+
+  /**
+   * After a merge: `public` and `combinedInto` as this replica decided them.
+   * A change the other side made is a notice here, not a change.
+   */
+  private settle(known: M.Thread | undefined, merged: M.Thread, from: string): M.Thread {
+    const want = { ...merged.meta.value }
+    const was = known?.meta.value
+    const notes: string[] = []
+    const pub = was ? was.public : false
+    if (want.public !== pub) {
+      if (want.public && !pub) notes.push(`◢ crosstalk: ${from} made ${want.name} public on their side. It stays sealed here; it is committed in plain text only if you make it public yourself (crosstalk_thread public: true).`)
+      want.public = pub
+    }
+    if (want.combinedInto !== was?.combinedInto) {
+      const ok = want.combinedInto ? this.combineOk(merged, want.combinedInto) : false
+      if (!ok) {
+        if (want.combinedInto) {
+          const into = this.st.threads[want.combinedInto]
+          notes.push(`◢ crosstalk: ${from} combined ${want.name} into ${into ? into.meta.value.name : "a thread you do not have"}. It was not combined here, because that would let someone new read it.`)
+        }
+        want.combinedInto = was?.combinedInto
+        // The combine archived it; not combined, it is as it was.
+        want.status = was?.status ?? "active"
+      }
+    }
+    if (M.canonical(want) !== M.canonical(merged.meta.value)) merged = { ...merged, meta: { ...merged.meta, value: want } }
+    if (notes.length) for (const text of notes) this.noteThread(merged.id, `${merged.id}:${text.length}:${merged.meta.l}`, text)
+    return merged
+  }
+
+  /** A combine this replica did not decide: only when everyone in `x` can already read the thread it goes into. */
+  private combineOk(x: M.Thread, into: string): boolean {
+    const s = this.st.threads[this.resolve(into)]
+    if (!s || s.id === x.id) return false
+    const readers = new Set(M.people(s))
+    return M.people(x).every((fp) => readers.has(fp)) && (!s.meta.value.public || x.meta.value.public)
+  }
+
+  /** A notice for the local sessions in one thread, once. */
+  private noteThread(id: string, key: string, text: string) {
+    const note = { id: `note:${key}`, text }
+    this.d.log(text)
+    for (const sid of this.sessionsIn([id])) {
+      const list = (this.st.notes[sid] ??= [])
+      if (!list.some((n) => n.id === note.id)) list.push(note)
+    }
   }
 
   /** Send a thread to every peer in it, except whoever it just came from. */
@@ -751,6 +883,11 @@ export class ThreadService {
       for (const x of all) {
         const into = x.meta.value.combinedInto
         if (into && this.st.threads[into] && !this.st.noticed.includes(x.id)) {
+          // Only a combine decided here, or one that lets nobody new read anything.
+          if (x.meta.by !== this.me && !this.combineOk(x, into)) {
+            this.st.noticed.push(x.id)
+            continue
+          }
           this.absorb(this.st.threads[this.resolve(into)], x, `combined by ${x.meta.by === this.me ? "you" : this.labelOf(x.meta.by)}`)
           any = true
         }
@@ -1038,6 +1175,7 @@ export class ThreadService {
     const r = K.check({ me: this.me, holders: this.st.holders[id], should })
     this.st.holders[id] = r.holders
     if (!r.rotate) return
+    this.st.retired[id] = K.retire(this.st.retired[id], this.st.keys[id])
     this.st.keys[id] = newKey().toString("base64")
     this.st.epochs[id] = this.keyEpoch(id) + 1
     // Re-sealed on the next commit, whatever else changed.
@@ -1046,15 +1184,23 @@ export class ThreadService {
     this.d.log(`thread ${t.meta.value.name}: new key (epoch ${this.st.epochs[id]}) for ${should.length} ${should.length === 1 ? "person" : "people"}`)
   }
 
-  /** Take a key from a peer's frame or the ref when it wins (rekey.ts). */
-  private adoptKey(id: string, key: string, epoch: number, t: M.Thread) {
-    if (!K.wins({ key: this.st.keys[id], epoch: this.st.epochs[id] }, { key, epoch })) return
-    if (this.st.keys[id] === key && this.keyEpoch(id) === epoch) return
+  /**
+   * Take a key from a peer's frame or the ref when it may replace ours
+   * (rekey.ts adoption): never a retired key, never an older epoch, at most
+   * one epoch ahead. Who it may have reached is everyone in the thread and
+   * everyone a file wrapped it for, so a file that leaves someone out of its
+   * wraps does not hide that they hold it. True when it was taken.
+   */
+  private adoptKey(id: string, key: string, epoch: number, t: M.Thread, wrapped: string[]): boolean {
+    const e = K.adoption({ key: this.st.keys[id], epoch: this.st.epochs[id], retired: this.st.retired[id] }, { key, epoch })
+    if (e === null) return false
+    this.st.retired[id] = K.retire(this.st.retired[id], this.st.keys[id])
     this.st.keys[id] = key
-    if (epoch) this.st.epochs[id] = epoch
-    // Whoever gave it to us gave it to who should hold it, as far as we know.
-    this.st.holders[id] = K.shouldHold(M.people(t), this.revoked())
+    if (e) this.st.epochs[id] = e
+    else delete this.st.epochs[id]
+    this.st.holders[id] = [...new Set([...M.people(t), ...wrapped])].sort()
     this.save()
+    return true
   }
 
   // --- after every operation -------------------------------------------------------
@@ -1113,9 +1259,32 @@ export class ThreadService {
     return p
   }
 
+  /**
+   * Whether this repo's threads may leave this machine: the ref committed,
+   * the clone's fetch list changed, anything pushed. Only once the person
+   * said yes to "Connect with your team" for the repo (repotrust/firstuse.ts),
+   * or once someone else is in one of its threads, which they joined over a
+   * channel the person set up. Until then threads stay in threads.json.
+   */
+  shared(repo: string): boolean {
+    if (!this.d.connected) return true
+    try {
+      if (this.d.connected(repo)) return true
+    } catch {}
+    return Object.values(this.st.threads).some((t) => t.meta.value.repo === repo && M.people(t).some((fp) => fp !== this.me))
+  }
+
   private async syncOnce(repo: string, commit: boolean) {
     const root = this.st.roots[repo]
     if (!root || !fs.existsSync(root)) return
+    if (!this.shared(repo)) {
+      // Local only: what a fetch the person ran brought is still read.
+      this.mergeRef(root, repo, S.SYNC_REF)
+      this.mergeRef(root, repo, S.REF)
+      this.reconcile()
+      this.flush()
+      return
+    }
     const remote = S.remoteName(root)
     for (const clone of new Set([root, ...(this.clones.get(repo) ?? [])])) {
       if (this.refspecDone.has(clone) || !fs.existsSync(clone)) continue
@@ -1134,8 +1303,11 @@ export class ThreadService {
     // Trust revoked since the last round leaves a key holder who should not be one.
     for (const t of Object.values(this.st.threads)) if (t.meta.value.repo === repo) this.checkKey(t.id)
     this.flush()
-    const mine =Object.values(this.st.threads).filter((t) => t.meta.value.repo === repo)
-    const due = commit || mine.some((t) => M.committedDigest(t) !== this.st.committed[t.id])
+    const mine = Object.values(this.st.threads).filter((t) => t.meta.value.repo === repo)
+    // Due when asked, when something committed changed, or when the ref does
+    // not hold what this replica would write (a commit that lost its race, or
+    // one a forced fetch dropped).
+    const due = commit || mine.some((t) => M.committedDigest(t) !== this.st.committed[t.id]) || !S.holds(root, this.render(repo))
     if (!due) return
     for (let attempt = 0; attempt < 2; attempt++) {
       const files = this.render(repo)
@@ -1143,7 +1315,8 @@ export class ThreadService {
       const remoteHead = S.refCommit(root, S.SYNC_REF)
       const extra = remoteHead && remoteHead !== local && !(local && S.isAncestor(root, remoteHead, local)) ? [remoteHead] : []
       const made = S.writeRef(root, files, commitMessage(mine), { author: `crosstalk (${this.label})`, extraParents: extra })
-      for (const t of mine) this.st.committed[t.id] = M.committedDigest(t)
+      // Only what the ref now holds counts as committed: a lost swap is tried again next round.
+      if (S.holds(root, files)) for (const t of mine) this.st.committed[t.id] = M.committedDigest(t)
       this.save()
       this.writeSummary(repo, root)
       if (made) this.d.log(`committed ${Object.keys(files).length} thread file(s) to ${S.REF} in ${root}`)
@@ -1159,7 +1332,16 @@ export class ThreadService {
     }
   }
 
-  /** Merge what a ref holds. A sealed file nobody gave us the key to is kept as it is. */
+  /**
+   * Merge what a ref holds. A sealed file nobody gave us the key to is kept as it is.
+   *
+   * Anyone who can push can write any file on the ref, so a file is screened
+   * like a frame, and more: a public file is read only into a thread that is
+   * public here already (never into a sealed one, and never as a new thread a
+   * session could then be placed in and committed in plain text); a sealed
+   * file that does not open with our key opens only through a wrap from
+   * someone in the thread here, for this thread, at an epoch we may adopt.
+   */
   private mergeRef(root: string, repo: string, ref: string) {
     const { files } = S.readRef(root, ref)
     const peers = Object.values(this.d.peers())
@@ -1174,31 +1356,43 @@ export class ThreadService {
         continue
       }
       const p = F.parse(text)
+      const known = p.kind === "unknown" ? undefined : this.st.threads[p.id]
+      const keep = () => {
+        // Not ours to read: carried along untouched so a commit never drops it.
+        if (!known) (this.st.opaque[repo] ??= {})[name] = text
+      }
       let t: M.Thread | null = null
-      if (p.kind === "public") t = p.thread
-      else if (p.kind === "sealed") {
-        let key: Buffer | null = this.st.keys[p.id] ? Buffer.from(this.st.keys[p.id], "base64") : null
-        t = key ? p.open(key) : null
+      let adopt: { key: string; epoch: number; wrapped: string[] } | undefined
+      if (p.kind === "public") {
+        if (known?.meta.value.public) t = p.thread
+        else if (known) this.d.log(`ignored ${name} on ${ref}: a public file for a thread that is sealed here`)
+      } else if (p.kind === "sealed") {
+        const mine = this.st.keys[p.id]
+        t = mine ? p.open(Buffer.from(mine, "base64")) : null
         if (!t) {
-          key = unwrapKey(this.d.identity, p.wraps, peers)
-          t = key ? p.open(key) : null
-          // An older file opens with the key it was sealed with, which is never put back over a newer one.
-          if (t && key) this.adoptKey(p.id, key.toString("base64"), p.epoch, t)
+          const u = unwrapFor(this.d.identity, p.wraps, peers, p.id, known ? new Set(M.people(known)) : undefined)
+          const opened = u ? p.open(u.key) : null
+          const k = u?.key.toString("base64")
+          if (opened && u && k && K.adoption({ key: mine, epoch: this.st.epochs[p.id], retired: this.st.retired[p.id] }, { key: k, epoch: u.epoch }) !== null) {
+            t = opened
+            adopt = { key: k, epoch: u.epoch, wrapped: p.wraps.map((w) => w.to) }
+          } else if (opened) this.d.log(`ignored ${name} on ${ref}: sealed with a key that was replaced`)
         }
       }
-      if (!t || (t.meta.value.repo && t.meta.value.repo !== repo)) {
-        // Not ours to read: carried along untouched so a commit never drops it.
-        if (!this.st.threads[p.kind === "unknown" ? "" : p.id]) (this.st.opaque[repo] ??= {})[name] = text
+      if (!t || p.kind === "unknown" || t.id !== p.id || (t.meta.value.repo && t.meta.value.repo !== repo)) {
+        keep()
         continue
       }
       if (this.st.opaque[repo]) delete this.st.opaque[repo][name]
-      const known = this.st.threads[t.id]
-      const merged = known ? M.merge(known, t) : t
+      let merged = known ? M.merge(known, this.screen(known, t)) : t
+      // A combine first seen in git, on a thread new here, is history: its people were told when it happened.
+      if (known) merged = this.settle(known, merged, "a file on the ref")
+      else if (merged.meta.value.public) merged = { ...merged, meta: { ...merged.meta, value: { ...merged.meta.value, public: false } } }
+      if (adopt) this.adoptKey(t.id, adopt.key, adopt.epoch, merged, adopt.wrapped)
       if (!known || !M.same(known, merged)) {
         this.st.threads[t.id] = merged
         this.touched.add(t.id)
       }
-      // A combine first seen in git is history: its people were told when it happened.
       if (!known && merged.meta.value.combinedInto && !this.st.noticed.includes(t.id)) this.st.noticed.push(t.id)
     }
   }
@@ -1245,11 +1439,12 @@ export class ThreadService {
 
   private wraps(id: string, key: Buffer, recipients: Peer[]) {
     const kh = crypto.createHash("sha256").update(key).digest("hex").slice(0, 8)
-    const h = kh + recipients.map((p) => p.fingerprint).sort().join(",")
+    const epoch = this.keyEpoch(id)
+    const h = `${kh}e${epoch}b1:` + recipients.map((p) => p.fingerprint).sort().join(",")
     const slot = `${id}/wraps`
     const c = this.st.blobs[slot]
     if (c?.h === h) return JSON.parse(c.b)
-    const w = wrapKey(this.d.identity, key, recipients)
+    const w = wrapKey(this.d.identity, key, recipients, { thread: id, epoch })
     this.st.blobs[slot] = { h, b: JSON.stringify(w) }
     return w
   }

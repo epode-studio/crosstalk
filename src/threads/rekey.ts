@@ -25,6 +25,7 @@
 // the smaller key, so every replica ends with the same one and a stale replica
 // can never put an old key back.
 
+import crypto from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
 import { ROOT } from "../config.ts"
@@ -86,5 +87,35 @@ export function wins(mine: { key?: string; epoch?: number }, theirs: { key: stri
   if (b !== a) return b > a
   return theirs.key < mine.key
 }
+
+/** A short hash of a key: what is remembered of a key once it is retired. */
+export const keyHash = (k: string) => crypto.createHash("sha256").update(Buffer.from(k, "base64")).digest("hex").slice(0, 32)
+
+/**
+ * Whether a key offered by a peer's frame or found in a file may replace ours,
+ * and the epoch it is kept at; null when it may not. The epoch it claims is
+ * only believed within limits, since whoever offers it may have held the key
+ * once and kept it:
+ *
+ *   - never a key this replica retired (its hash is kept), whatever its epoch;
+ *   - never an epoch below the one held: keys only move forward;
+ *   - at most one epoch ahead: a claim of 2^53 is kept as ours + 1, so the
+ *     next rotation here still goes past it;
+ *   - otherwise as wins() says.
+ */
+export function adoption(mine: { key?: string; epoch?: number; retired?: string[] }, theirs: { key: string; epoch?: number }): number | null {
+  const a = mine.epoch ?? 0
+  const claimed = theirs.epoch ?? 0
+  if (!Number.isSafeInteger(claimed) || claimed < 0) return null
+  if (mine.retired?.includes(keyHash(theirs.key))) return null
+  if (!mine.key) return Math.min(claimed, a + 1)
+  if (theirs.key === mine.key || claimed < a) return null
+  const b = Math.min(claimed, a + 1)
+  return wins(mine, { key: theirs.key, epoch: b }) ? b : null
+}
+
+/** The retired list with one more key in it, bounded. */
+export const retire = (list: string[] | undefined, key: string | undefined) =>
+  key ? [...new Set([...(list ?? []), keyHash(key)])].slice(-64) : list ?? []
 
 export const validKey = (k: unknown): k is string => typeof k === "string" && Buffer.from(k, "base64").length === 32

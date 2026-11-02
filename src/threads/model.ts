@@ -76,7 +76,7 @@ export type Task = { text: string; who: string; at: number; state: TaskState; cl
  * matches and does; the format only keeps a place for them. `when` describes
  * the kind of question, `then` the standing answer.
  */
-export type Rule = { text: string; who: string; at: number; when?: string; then?: string }
+export type Rule = { text: string; who: string; at: number; when?: string; then?: string; sig?: string }
 /** Files and branches are sets of strings: the id is the value. */
 export type Mark = { at: number }
 

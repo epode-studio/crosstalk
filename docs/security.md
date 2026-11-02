@@ -108,8 +108,12 @@ namespace of its own (`crosstalk-identity`), and pushes it to
 `github.com/<login>.keys`, and checks each statement with `ssh-keygen -Y verify`
 against an allowed-signers file holding only that login's keys, only for that
 namespace. The statement must be in its one canonical encoding, name the login
-and machine of the ref it was found under, and carry a fingerprint that is its
-own key's. What verifies becomes a peer, with the same direct channel and the
+and machine of the ref it was found under, carry a fingerprint that is its
+own key's, and be countersigned by that crosstalk Ed25519 key itself (`bind`,
+over every field, the X25519 key included). The SSH signature says the person
+vouches for the statement; `bind` says the crosstalk key does too, so nobody can
+publish someone else's (public) identity key next to an encryption key of their
+own and be encrypted to under that person's name. What verifies becomes a peer, with the same direct channel and the
 same default level as someone verified with four words; their words still only
 ever arrive as data.
 
@@ -133,7 +137,13 @@ changes silently:
 - a new machine vouched for by an SSH key that is not pinned is a question;
 - a fingerprint that was revoked and comes back is a question;
 - a statement older than the one trusted is ignored, so a rollback is not an
-  update;
+  update; a revoked machine stays pinned as a tombstone (its fingerprint and
+  date), so an older statement stays ignored after the newer one is gone too;
+- saying yes to a changed key revokes the one it replaces: putting the old
+  statement back is a question, never a quiet return;
+- one crosstalk fingerprint claimed under two logins or two machines is
+  trusted under neither, and an existing peer's keys are never replaced from a
+  different login or machine;
 - removing a pinned key from GitHub revokes everything it signed, which an
   attacker can use to make you stop trusting someone, not to start.
 
@@ -151,7 +161,7 @@ statement signed by a key on the named person's account verifies. Someone with
 push access who also holds a *retired* crosstalk private key of yours (an old
 laptop) can re-publish that machine's old statement while the SSH key that
 signed it is still on your account; anyone who had already seen the newer one
-ignores it, a fresh installation would accept it. Removing the SSH key from your
+ignores it, on every sync after, a fresh installation would accept it. Removing the SSH key from your
 GitHub account is what retires everything it ever signed.
 
 **Who gets to message you.** Rooms grow only along links that already exist.
@@ -191,16 +201,77 @@ may hold it should no longer (`src/threads/rekey.ts`):
   frame, is not added back by matching the thread's files, and their frames
   are ignored.
 - **Converging.** Two people may replace the key at once. Every replica keeps
-  the higher epoch, then the smaller key, so they agree, and a stale copy from
-  git or the relay can never put an old key back.
+  the higher epoch, then the smaller key, so they agree.
+- **Epochs are not taken on anyone's word.** The epoch and the thread id are
+  sealed inside each wrap with the key; the `epoch:` line in a file's
+  frontmatter is only for reading. A replica never adopts a key it retired (it
+  keeps a hash of every key it replaced), never an epoch below the one it holds,
+  and believes at most one epoch ahead (a claim of 2^53 is kept as one more than
+  ours), so someone who was a member and kept a key, or who claimed a huge epoch
+  before being taken out, cannot put it back over the ref or the relay. A sealed
+  file that does not open with our key is read only through a wrap written by
+  someone in the thread here. Who may hold a key is everyone in the thread plus
+  everyone a file wrapped it for, never just what a file lists.
 - **RULES.md** works the same way: its key is replaced when someone is no
-  longer in any of the repo's threads, or is revoked.
+  longer in any of the repo's threads, or is revoked, with the same binding and
+  adoption rules, and merging someone else's copy keeps who may hold the key.
 
 **What it does not do.** Old commits on `refs/crosstalk/threads` are not
 rewritten. Whoever held the old key can still open what was committed before
 they left, as they could the day they read it: that data was already handed
 over, and rewriting shared history would break everyone else's clones without
 taking it back. What is written after the new key is sealed is closed to them.
+
+## Who may change a thread
+
+A thread is a CRDT replica that arrives over the relay (a frame from a peer) and
+out of git (a file on `refs/crosstalk/threads`, which anyone with push access
+can write). Neither source decides what this machine shares, or with whom:
+
+- **Only its people are heard.** A frame for a thread this machine knows is
+  taken only from someone who is in it here, over a direct channel, and not at
+  `mute` or muted (a frame dropped while muted loses nothing: the next carries
+  the whole state). Membership is checked against this replica, never against
+  the copy that arrived.
+- **Nobody is added by a frame or a file.** Adding a person is done here: their
+  presence matching the thread, or a combine this machine decided, each with a
+  notice that says who can now read it. A frame or file can still take someone
+  out, and a person can leave.
+- **Public is a local decision.** A frame or file never makes a sealed thread
+  public. A peer making it public on their side is a notice here; it is
+  committed in plain text only if the person here says so. A public file on the
+  ref is read only into a thread already public here, never into a sealed one
+  and never as a new thread a session could be placed in.
+- **A combine from elsewhere** folds a thread into another only when everyone in
+  it can already read the other one. Otherwise it is not combined here, and the
+  people in it are told. Combines this machine decides (two threads converging
+  on the same work) are unaffected.
+- **Standing rules** (RULES.md) are taken only sealed, opened with our key or
+  with a wrap from someone in one of the repo's threads (never an agent), and a
+  public copy only while the rules are public here. Each rule, and each undoing,
+  is signed with its author's Ed25519 key over the rule, its stamp and the
+  document, and is merged only when that verifies, so someone who can merely
+  push cannot plant a rule or put another person's name on one.
+- **Heads-ups and conflicts** from a peer are handed to an agent by themselves
+  only when the sender is in the thread they are about here, is a person (not an
+  agent), is at `ask` or above and is not muted. Anything else, including a
+  heads-up addressed to a session by name, is held as an ordinary card for the
+  person. The same holds for an ordinary message routed by the threads it names:
+  what the envelope claims is not enough, the sender has to be in the thread.
+
+**Nothing leaves before a yes.** A repo's threads stay in
+`<crosstalk home>/threads.json` until the person said yes to "Connect with your
+team" in that repo (`src/repotrust/firstuse.ts`), or someone else is in one of
+its threads over a channel the person set up. Until then crosstalk commits
+nothing to the ref, adds nothing to `.git/config` and pushes nothing.
+
+**A fetch cannot drop a commit.** The refspec crosstalk adds is
+`+refs/crosstalk/threads:refs/crosstalk/sync/threads`: a plain `git fetch`
+brings the remote's threads into crosstalk's side ref, never over the local
+ref (the old `+refs/crosstalk/*:refs/crosstalk/*` is taken out). A commit
+counts as done only once the ref holds exactly what was written, and every
+sync compares the ref with what this replica would write, so a lost race or a
+dropped commit is written again.
 
 ## Local measurements
 

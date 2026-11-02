@@ -23,12 +23,14 @@ import * as M from "./threads/model.ts"
 import * as ui from "./uistate.ts"
 import * as mainS from "./main.ts"
 import { injectInstruction } from "./inject.ts"
-import { RuleDocs, RULES_FILE, type Change } from "./rules/doc.ts"
+import { RuleDocs, RULES_FILE, docId, type Change } from "./rules/doc.ts"
 import * as H from "./rules/history.ts"
 import { describe, neverAuto, ruleKey, type Question } from "./rules/key.ts"
 import { WarnService, type LocalMessage } from "./warn/service.ts"
 import type { Conflict } from "./warn/conflict.ts"
 import { isBot } from "./ui-extra/bots.ts"
+import * as trust from "./trust.ts"
+import { threadMuted } from "./ui-extra/mute.ts"
 import { revokedFingerprints, shouldHold } from "./threads/rekey.ts"
 import * as metrics from "./metrics/log.ts"
 import { CrossRepo } from "./threads/crossrepo.ts"
@@ -71,7 +73,7 @@ export class Coordinator {
   private answering = false
 
   constructor(private d: CoordDeps) {
-    this.docs = new RuleDocs({ identity: d.identity, peers: d.peers, file: path.join(d.root, "rules-docs.json") })
+    this.docs = new RuleDocs({ identity: d.identity, peers: d.peers, file: path.join(d.root, "rules-docs.json"), members: (repo) => d.threads.peopleIn(repo) })
     this.me = this.docs.me
     this.hist = H.loadHistory()
     this.warn = new WarnService({
@@ -264,9 +266,21 @@ export class Coordinator {
       this.d.log(`ignored a ${env.kind} from ${label}: only over a direct channel`)
       return true
     }
+    // What a heads-up or conflict from them may do here: the same level and
+    // mutes as any message. Muted (or at "mute") is dropped; an agent, a
+    // muted thread or anyone below "ask" is never handed to an agent by
+    // itself, only held as a card the person hands over.
+    const peer = this.d.peers()[label]
+    const ctx: trust.Context = { direct: true, machine: !!peer.isMachine }
+    const level = trust.levelFor(label, ctx)
+    if (env.kind !== "rules" && level === "mute") {
+      this.d.log(`dropped a ${env.kind} from ${label}: they are at mute`)
+      return true
+    }
+    const screen = { auto: !peer.isMachine && !isBot(label, this.d.peers()) && trust.atLeast(level, "ask") && !trust.isMuted(label, ctx) && !threadMuted(env) }
     try {
-      if (env.kind === "heads-up") this.warn.acceptHeadsUp(label, env)
-      else if (env.kind === "conflict") this.warn.acceptConflict(label, env)
+      if (env.kind === "heads-up") this.warn.acceptHeadsUp(label, env, screen)
+      else if (env.kind === "conflict") this.warn.acceptConflict(label, env, screen)
       else if (isBot(label, this.d.peers())) this.d.log(`ignored rules from ${label}: an agent cannot answer for anyone`)
       else this.acceptRules(label, env)
     } catch (e) {
@@ -289,7 +303,9 @@ export class Coordinator {
       slices: m.slices.map((s) => ({ kind: s.kind, label: s.label, bytes: s.bytes })),
       ts: Date.now(),
       threads: m.threads,
-      auto: true,
+      // Handed to the agent by itself only when warn/service.ts said so: a
+      // heads-up from this machine, or from someone in the thread it is about.
+      ...(m.auto ? { auto: true } : {}),
     }
     this.d.holdLocal(sessionId, h, m.slices)
   }
@@ -446,7 +462,8 @@ export class Coordinator {
     const repos = req.repo ? [String(req.repo)] : this.docs.repos()
     return {
       ok: true,
-      rules: repos.flatMap((repo) => this.docs.rules(repo).map((r) => ({ id: r.id, repo, rule: r.text, answer: r.then, by: r.who }))),
+      // Who made it is the key that signed it, not the name written in it.
+      rules: repos.flatMap((repo) => this.docs.rules(repo).map((r) => ({ id: r.id, repo, rule: r.text, answer: r.then, by: this.docs.verified(docId(repo), r) ? this.whoOf(r.by) : "unsigned" }))),
       offers: Object.values(this.hist.offers)
         .filter((o) => o.state === "open")
         .map((o) => ({ id: o.id, question: H.offerQuestion(o) })),
@@ -555,7 +572,7 @@ export class Coordinator {
     for (const r of c.added) {
       if (this.hist.seen.includes(r.id)) continue
       this.hist.seen.push(r.id)
-      this.digest({ id: `rule:${r.id}:${r.l}`, text: `◢ crosstalk: ${this.whoOf(r.by)} made a standing rule for ${short(repo)}: ${r.text}. Matching questions are answered by it from now on; anyone can undo it ("drop the rule about …").` })
+      this.digest({ id: `rule:${r.id}:${r.l}`, text: `◢ crosstalk: ${this.docs.verified(docId(repo), r) ? this.whoOf(r.by) : "someone (unsigned)"} made a standing rule for ${short(repo)}: ${r.text}. Matching questions are answered by it from now on; anyone can undo it ("drop the rule about …").` })
     }
     for (const r of c.removed) {
       const by = this.docs.writer(repo, r.id)

@@ -1,7 +1,14 @@
 // The statement that binds one machine's crosstalk identity to a GitHub person.
 //
 //   {"v":1,"kind":"crosstalk-identity","login":"marie","machine":"laptop",
-//    "fingerprint":"…","edPub":"…","xPub":"…","created":1767225600000}
+//    "fingerprint":"…","edPub":"…","xPub":"…","created":1767225600000,
+//    "bind":"…"}
+//
+// `bind` is the crosstalk Ed25519 key's own signature over everything before
+// it, xPub included. The SSH signature says the person vouches for the
+// statement; `bind` says the crosstalk key does too. Without it a collaborator
+// could publish someone else's edPub (it is public) next to his own xPub, and
+// whoever trusted the statement would encrypt to him under her name.
 //
 // Each machine keeps its own crosstalk identity, as it always has. What is new
 // is that the person signs a statement naming it, with the SSH key they already
@@ -19,7 +26,8 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { execFile } from "node:child_process"
-import { fingerprint } from "../crypto.ts"
+import { fingerprint, sign as edSign, verify as edVerify } from "../crypto.ts"
+import type { Identity } from "../config.ts"
 
 export const NAMESPACE = "crosstalk-identity"
 export const KIND = "crosstalk-identity"
@@ -39,7 +47,15 @@ export type Statement = {
   xPub: string
   /** When it was signed, ms since the epoch. A newer statement replaces an older one. */
   created: number
+  /** The crosstalk Ed25519 key's signature over bindBytes(): edPub and xPub belong together. */
+  bind: string
 }
+
+/** What `bind` signs: a context of our own, then every field before it, canonically. */
+export const BIND_CONTEXT = "crosstalk-identity-bind/v1\n"
+export const bindBytes = (s: Omit<Statement, "bind">) =>
+  BIND_CONTEXT +
+  JSON.stringify({ v: s.v, kind: s.kind, login: s.login, machine: s.machine, fingerprint: s.fingerprint, edPub: s.edPub, xPub: s.xPub, created: s.created })
 
 /** GitHub's own rule: alphanumerics and single hyphens, at most 39, no leading hyphen. */
 export const isLogin = (s: unknown): s is string =>
@@ -68,6 +84,7 @@ export function canonical(s: Statement): string {
     edPub: s.edPub,
     xPub: s.xPub,
     created: s.created,
+    bind: s.bind,
   })
 }
 
@@ -79,17 +96,19 @@ const isKey = (b64: string, type: "ed25519" | "x25519") => {
   }
 }
 
-export function makeStatement(o: { login: string; machine: string; edPub: string; xPub: string; created?: number }): Statement {
-  const s: Statement = {
+/** A statement for this machine, countersigned by its crosstalk key. */
+export function makeStatement(o: { login: string; machine: string; identity: Identity; created?: number }): Statement {
+  const body: Omit<Statement, "bind"> = {
     v: 1,
     kind: KIND,
     login: o.login.toLowerCase(),
     machine: cleanMachine(o.machine),
-    fingerprint: fingerprint(o.edPub),
-    edPub: o.edPub,
-    xPub: o.xPub,
+    fingerprint: fingerprint(o.identity.ed.pub),
+    edPub: o.identity.ed.pub,
+    xPub: o.identity.x.pub,
     created: o.created ?? Date.now(),
   }
+  const s: Statement = { ...body, bind: edSign(o.identity, bindBytes(body)) }
   const bad = problem(s)
   if (bad) throw new Error(`cannot make that statement: ${bad}`)
   return s
@@ -105,6 +124,7 @@ export function problem(s: Statement, now = Date.now()): string | null {
   if (s.fingerprint !== fingerprint(s.edPub)) return "the fingerprint does not match the key"
   if (!Number.isSafeInteger(s.created) || s.created <= 0) return "no signing date"
   if (s.created > now + 24 * 60 * 60 * 1000) return "signed in the future"
+  if (typeof s.bind !== "string" || !edVerify(s.edPub, bindBytes(s), s.bind)) return "not countersigned by its own crosstalk key"
   return null
 }
 

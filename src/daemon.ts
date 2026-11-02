@@ -43,6 +43,7 @@ import * as rooms from "./rooms.ts"
 import * as facts from "./facts.ts"
 import * as tasks from "./tasks.ts"
 import * as repotrust from "./repotrust/index.ts"
+import { consent as connectConsent } from "./repotrust/firstuse.ts"
 import type { Envelope, Frame, Intent, Kind, SessionPresence, Slice } from "./protocol.ts"
 import { ThreadService } from "./threads/service.ts"
 import * as threadModel from "./threads/model.ts"
@@ -151,6 +152,12 @@ const threads = new ThreadService({
   settleMs: Number(process.env.CROSSTALK_THREAD_SETTLE_MS ?? 3000),
   network: process.env.CROSSTALK_THREADS_NO_PUSH !== "1",
   fadeDays: Number(process.env.CROSSTALK_THREAD_FADE_DAYS ?? 14),
+  // Nothing about a repo's threads leaves this machine before "Connect with
+  // your team" got a yes there, or someone else is in one of them.
+  connected: (repo) => {
+    const slug = repo.startsWith("github.com/") ? repo.slice("github.com/".length) : `local/${path.basename(repo)}`
+    return connectConsent(slug) === "yes"
+  },
 })
 
 // --- shipping ---------------------------------------------------------------------
@@ -885,6 +892,12 @@ function onEnvelope(
   // Thread state comes only over a direct channel, never through a room.
   if (env.kind === "thread") {
     if (ctx?.room) return log(`ignored a thread sent through #${ctx.room.name}`)
+    // The same level and mutes as anything else they send. A thread frame is
+    // a whole replica, so one dropped while muted loses nothing: the next one
+    // after the mute carries everything.
+    const tc: trust.Context = { direct: true, machine: !!loadPeers()[peerLabel]?.isMachine }
+    if (trust.levelFor(peerLabel, tc) === "mute" || trust.isMuted(peerLabel, tc))
+      return log(`ignored a thread from ${peerLabel}: they are muted`)
     try {
       threads.accept(peerLabel, env)
     } catch (e) {
@@ -973,10 +986,20 @@ function onEnvelope(
     room: ctx?.room ? `#${ctx.room.name}` : env.room,
     correlation: env.correlation,
     ts: env.ts,
-    // About this session's own thread: its mod hands it to the agent, as data.
-    ...(route.how === "thread"
-      ? { threads: threads.idsFor(target.sessionId).filter((id) => (env.threads ?? []).some((t) => threads.resolve(t) === id)), auto: true }
-      : {}),
+    // About this session's own thread: its mod hands it to the agent, as
+    // data, by itself. Only for a thread the sender is in here (what the
+    // envelope claims is not enough), from a person at "ask" or above, not
+    // muted, over a direct channel. Anything else is an ordinary card.
+    ...(() => {
+      if (route.how !== "thread") return {}
+      const fp = loadPeers()[peerLabel]?.fingerprint
+      const ids = threads
+        .idsFor(target.sessionId)
+        .filter((id) => (env.threads ?? []).some((t) => threads.resolve(t) === id))
+        .filter((id) => !!fp && threadModel.people(threads.thread(id)!).includes(fp))
+      const auto = ids.length > 0 && !muted && tctx.direct && !tctx.machine && !isBot(peerLabel) && trust.atLeast(level, "ask")
+      return auto ? { threads: ids, auto: true } : {}
+    })(),
   }
   seenIds.set(env.id, Date.now())
   hold(target.sessionId, h, env.slices)

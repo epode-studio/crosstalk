@@ -39,7 +39,7 @@ const T0 = 1_750_000_000_000
 
 describe("the statement", () => {
   test("has one canonical encoding, in a fixed order", () => {
-    const s = S.makeStatement({ login: "Ana", machine: "Ana's MacBook", edPub: ana.ed.pub, xPub: ana.x.pub, created: T0 })
+    const s = S.makeStatement({ login: "Ana", machine: "Ana's MacBook", identity: ana, created: T0 })
     expect(s.login).toBe("ana")
     expect(s.machine).toBe("ana-s-macbook")
     expect(s.fingerprint).toBe(fingerprint(ana.ed.pub))
@@ -47,22 +47,22 @@ describe("the statement", () => {
     expect(text.startsWith('{"v":1,"kind":"crosstalk-identity","login":"ana","machine":"ana-s-macbook","fingerprint":')).toBe(true)
     expect(text).not.toContain(" ")
     // Built in another order, encoded the same.
-    const shuffled = { created: s.created, xPub: s.xPub, edPub: s.edPub, fingerprint: s.fingerprint, machine: s.machine, login: s.login, kind: s.kind, v: s.v }
+    const shuffled = { bind: s.bind, created: s.created, xPub: s.xPub, edPub: s.edPub, fingerprint: s.fingerprint, machine: s.machine, login: s.login, kind: s.kind, v: s.v }
     expect(S.canonical(shuffled as any)).toBe(text)
     expect(S.parse(text).ok).toBe(true)
   })
 
   test("anything but the canonical bytes is refused", () => {
-    const s = S.makeStatement({ login: "ana", machine: "desk", edPub: ana.ed.pub, xPub: ana.x.pub, created: T0 })
+    const s = S.makeStatement({ login: "ana", machine: "desk", identity: ana, created: T0 })
     const text = S.canonical(s)
     expect(S.parse(JSON.stringify(s, null, 1)).ok).toBe(false)
     expect(S.parse(text.replace("}", ',"admin":true}')).ok).toBe(false)
-    const reordered = JSON.stringify({ kind: s.kind, v: s.v, login: s.login, machine: s.machine, fingerprint: s.fingerprint, edPub: s.edPub, xPub: s.xPub, created: s.created })
+    const reordered = JSON.stringify({ kind: s.kind, v: s.v, login: s.login, machine: s.machine, fingerprint: s.fingerprint, edPub: s.edPub, xPub: s.xPub, created: s.created, bind: s.bind })
     expect(S.parse(reordered)).toEqual({ ok: false, reason: "not in canonical form" })
   })
 
   test("a fingerprint that is not the key's, a key of the wrong type, or a bad login is refused", () => {
-    const s = S.makeStatement({ login: "ana", machine: "desk", edPub: ana.ed.pub, xPub: ana.x.pub, created: T0 })
+    const s = S.makeStatement({ login: "ana", machine: "desk", identity: ana, created: T0 })
     expect(S.problem({ ...s, fingerprint: fingerprint(ben.ed.pub) })).toMatch(/fingerprint/)
     expect(S.problem({ ...s, xPub: ana.ed.pub })).toMatch(/X25519/)
     expect(S.problem({ ...s, edPub: ana.x.pub })).toMatch(/Ed25519/)
@@ -90,7 +90,7 @@ describe.skipIf(!HAVE_SSH)("signing and verifying with ssh-keygen", () => {
   const k1 = HAVE_SSH ? sshKey("ana1") : ({} as any)
   const k2 = HAVE_SSH ? sshKey("ana2") : ({} as any)
   const kb = HAVE_SSH ? sshKey("ben1") : ({} as any)
-  const st = S.makeStatement({ login: "ana", machine: "desk", edPub: ana.ed.pub, xPub: ana.x.pub, created: T0 })
+  const st = S.makeStatement({ login: "ana", machine: "desk", identity: ana, created: T0 })
   let sig = ""
 
   beforeAll(async () => {

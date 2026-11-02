@@ -169,11 +169,11 @@ has "$BLOBS" "sealed: true" "the thread file is sealed"
 hasnt "$BLOBS" "v1 tokens accepted" "and the decision is not readable in it"
 hasnt "$BLOBS" "token-v2" "nor the thread's name"
 check "$(git -C "$R/ana-feat" status --porcelain)" "" "ana's working tree and index are untouched"
-has "$(git -C "$R/ana-feat" config --get-all remote.origin.fetch)" "+refs/crosstalk/*:refs/crosstalk/*" "the refspec was added to ana's remote"
+has "$(git -C "$R/ana-feat" config --get-all remote.origin.fetch)" "+refs/crosstalk/threads:refs/crosstalk/sync/threads" "the refspec was added to ana's remote"
 check "$(git -C "$R/ana-feat" rev-parse --abbrev-ref HEAD)" "token-v2" "and HEAD is where it was"
 [ -f "$R/ana-feat/THREADS.md" ] && fail "no THREADS.md for a sealed thread" || pass "no THREADS.md for a sealed thread"
 git -C "$R/ben-feat" fetch -q origin
-has "$(git -C "$R/ben-feat" ls-tree refs/crosstalk/threads 2>&1)" ".md" "a plain fetch in ben's clone brings the ref"
+has "$(git -C "$R/ben-feat" ls-tree refs/crosstalk/sync/threads 2>&1)" ".md" "a plain fetch in ben's clone brings the ref, into crosstalk's side ref"
 # ben's daemon forgets every thread and starts again: the ref is all it has.
 stop_daemon "$B"
 rm -f "$B/threads.json"

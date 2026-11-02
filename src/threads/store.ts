@@ -12,20 +12,28 @@
 // prompting (GIT_TERMINAL_PROMPT=0, ssh in batch mode), and run asynchronously
 // in the daemon only, so no hook ever waits on the network.
 //
-// One caveat the refspec brings. `+refs/crosstalk/*:refs/crosstalk/*` in the
-// remote's fetch list means a plain `git fetch` force-updates the local ref to
-// the remote's. A local commit that was not pushed yet is then dropped from the
-// ref, but not from crosstalk: the daemon's own copy (service.ts) holds every
-// thread and every commit is written from it merged with whatever the ref has,
-// so the next commit puts it back. crosstalk's own fetch goes to a side ref
-// with --refmap= so it never clobbers anything.
+// The refspec added to the clone's remote, `+refs/crosstalk/threads:refs/
+// crosstalk/sync/threads`, brings the remote's threads into the same side ref
+// crosstalk's own fetch uses (SYNC_REF). REF itself is only ever written here,
+// so a plain `git fetch` can never drop a local commit that was not pushed
+// yet: the daemon merges SYNC_REF into its copy and commits on top of both.
+// Earlier versions added `+refs/crosstalk/*:refs/crosstalk/*`, which did force
+// REF to the remote's; it is taken out when the new one goes in. None of this
+// happens in a repo whose threads are still local (ThreadService.shared).
 
 import { spawn, spawnSync } from "node:child_process"
 
 export const REF = "refs/crosstalk/threads"
 /** Where crosstalk's own fetch lands, so the local ref is never overwritten by it. */
 export const SYNC_REF = "refs/crosstalk/sync/threads"
-export const REFSPEC = "+refs/crosstalk/*:refs/crosstalk/*"
+/**
+ * What a plain `git fetch` brings: the remote's threads into SYNC_REF, the
+ * same side ref crosstalk's own fetch uses, never into REF. A forced fetch
+ * into REF itself would drop a local commit that was not pushed yet.
+ */
+export const REFSPEC = "+refs/crosstalk/threads:refs/crosstalk/sync/threads"
+/** The refspec earlier versions added, taken out again when the new one goes in. */
+export const OLD_REFSPEC = "+refs/crosstalk/*:refs/crosstalk/*"
 export const RULES_FILE = "RULES.md"
 const ZERO = "0000000000000000000000000000000000000000"
 
@@ -124,8 +132,26 @@ export function remoteName(root: string): string | undefined {
 export function ensureRefspec(root: string, remote = remoteName(root)): boolean {
   if (!remote) return false
   const have = git(root, ["config", "--get-all", `remote.${remote}.fetch`])
-  if (have.out.split("\n").includes(REFSPEC)) return false
+  const lines = have.out.split("\n")
+  if (lines.includes(OLD_REFSPEC))
+    git(root, ["config", "--unset-all", `remote.${remote}.fetch`, `^${OLD_REFSPEC.replace(/[+*]/g, "\\$&")}$`])
+  if (lines.includes(REFSPEC)) return false
   return git(root, ["config", "--add", `remote.${remote}.fetch`, REFSPEC]).ok
+}
+
+/** Whether the ref's tree is exactly these files: what writeRef would have written is there. */
+export function holds(root: string, files: Record<string, string>, ref = REF): boolean {
+  const lines: string[] = []
+  for (const name of Object.keys(files).sort()) {
+    if (!/^[A-Za-z0-9._-]+$/.test(name)) continue
+    const h = git(root, ["hash-object", "--stdin"], files[name])
+    if (!h.ok) return false
+    lines.push(`100644 blob ${h.out}\t${name}`)
+  }
+  const tree = git(root, ["mktree", "--missing"], lines.length ? lines.join("\n") + "\n" : "")
+  const cur = git(root, ["rev-parse", "-q", "--verify", `${ref}^{tree}`])
+  if (!cur.ok || !cur.out) return !lines.length
+  return tree.ok && tree.out === cur.out
 }
 
 /** The repo's default branch: the remote's HEAD, else a conventional name. */

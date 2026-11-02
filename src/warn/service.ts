@@ -45,7 +45,16 @@ export type LocalMessage = {
   text: string
   slices: Slice[]
   threads: string[]
+  /**
+   * Handed to the session's agent by itself (the mod's own-thread path),
+   * rather than held as a card for the person. Set only for what this machine
+   * decided, or what came from someone who is in the thread it is about.
+   */
+  auto?: boolean
 }
+
+/** What the coordinator decided about a peer's frame before it reached here. */
+export type Screen = { auto: boolean }
 
 type Known = { repo: string; name: string; label: string; files: Record<string, { symbols: string[]; at: number }> }
 
@@ -190,7 +199,7 @@ export class WarnService {
     const slice = makeSlice(`diff of ${file}`, last.edit.diff)
     const warn = { repo, file, symbols, pending: last.edit.pending, fromThreads: from.threads, fromNames: from.names, target: target.thread }
     for (const sid of target.local)
-      this.d.deliver(sid, { id: crypto.randomUUID(), kind: "heads-up", from: this.d.label, fromSession: from.name, text, slices: [slice], threads: [target.thread] })
+      this.d.deliver(sid, { id: crypto.randomUUID(), kind: "heads-up", from: this.d.label, fromSession: from.name, text, slices: [slice], threads: [target.thread], auto: true })
     for (const label of target.labels)
       this.d.send(label, this.envelope(label, "heads-up", text, target, { warn, slices: [slice], fromSession: from.name }))
     this.d.log(`heads-up about ${file} to ${target.name} (${[...target.local].length} here, ${[...target.labels].join(", ") || "nobody"} remote)`)
@@ -222,23 +231,46 @@ export class WarnService {
   relay(o: { thread: string; local: string[]; labels: string[]; text: string; diff: { label: string; content: string }; warn: Record<string, unknown>; fromSession: string }) {
     const slice = makeSlice(o.diff.label, o.diff.content)
     for (const sid of o.local)
-      this.d.deliver(sid, { id: crypto.randomUUID(), kind: "heads-up", from: this.d.label, fromSession: o.fromSession, text: o.text, slices: [slice], threads: [o.thread] })
+      this.d.deliver(sid, { id: crypto.randomUUID(), kind: "heads-up", from: this.d.label, fromSession: o.fromSession, text: o.text, slices: [slice], threads: [o.thread], auto: true })
     for (const label of o.labels) this.d.send(label, this.envelope(label, "heads-up", o.text, { thread: o.thread }, { warn: o.warn, slices: [slice], fromSession: o.fromSession }))
   }
 
-  /** A heads-up from a peer. */
-  acceptHeadsUp(label: string, env: Envelope) {
+  /** Whether a peer is in one of our threads here: a live person in it, never one taken out. */
+  private memberOf(label: string, thread: string): boolean {
+    const fp = this.d.peers()[label]?.fingerprint
+    const t = fp ? this.d.threads.thread(thread) : undefined
+    return !!t && t.id === thread && M.people(t).includes(fp!)
+  }
+
+  /**
+   * A heads-up from a peer. It goes to the sessions in the threads it names;
+   * it is handed to their agent by itself only for a thread the sender is in
+   * here, and when the coordinator's screen (their level, mutes, not an agent)
+   * allows it. Anything else, including a heads-up for a session it names
+   * rather than a thread, is held as an ordinary card for the person.
+   */
+  acceptHeadsUp(label: string, env: Envelope, screen: Screen = { auto: false }) {
     const w = env.warn as any
     if (!w || typeof w.file !== "string" || typeof w.repo !== "string") return this.d.log(`ignored a malformed heads-up from ${label}`)
     const fromThreads: string[] = Array.isArray(w.fromThreads) ? w.fromThreads.filter((x: unknown) => typeof x === "string").slice(0, 10) : []
     const fromNames: string[] = Array.isArray(w.fromNames) ? w.fromNames.map(String) : []
     const pending: string[] = Array.isArray(w.pending) ? w.pending.map(String).slice(0, 100) : []
     fromThreads.forEach((id, i) => this.record(id, { repo: w.repo, name: M.slug(fromNames[i] ?? id), label }, w.file, pending))
-    const targets = (env.threads ?? []).filter((t) => typeof t === "string").map((t) => this.d.threads.resolve(t))
-    const sids = new Set(this.d.threads.sessionsIn(targets))
-    if (!sids.size && env.toSession) for (const sid of this.byName(env.toSession)) sids.add(sid)
-    for (const sid of sids)
-      this.d.deliver(sid, { id: env.id, kind: "heads-up", from: label, fromSession: env.fromSession, text: env.text, slices: env.slices ?? [], threads: targets })
+    const targets = [...new Set((env.threads ?? []).filter((t) => typeof t === "string").slice(0, 20).map((t) => this.d.threads.resolve(t)))]
+    const delivered = new Set<string>()
+    for (const t of targets) {
+      const auto = screen.auto && this.memberOf(label, t)
+      for (const sid of this.d.threads.sessionsIn([t])) {
+        if (delivered.has(sid)) continue
+        delivered.add(sid)
+        this.d.deliver(sid, { id: env.id, kind: "heads-up", from: label, fromSession: env.fromSession, text: env.text, slices: env.slices ?? [], threads: auto ? [t] : [], auto })
+      }
+    }
+    if (!delivered.size && env.toSession)
+      for (const sid of this.byName(env.toSession)) {
+        delivered.add(sid)
+        this.d.deliver(sid, { id: env.id, kind: "heads-up", from: label, fromSession: env.fromSession, text: env.text, slices: env.slices ?? [], threads: [], auto: false })
+      }
     // Our own unmerged edits to the same symbols: a conflict, seen from this side.
     if (fromThreads[0])
       for (const mine of targets) {
@@ -247,7 +279,7 @@ export class WarnService {
         this.detect(w.repo, w.file, mine, k.name, this.d.label, k.files[w.file].symbols, fromThreads[0])
       }
     this.save()
-    this.d.log(`heads-up from ${label} about ${w.file} to ${sids.size} session(s)`)
+    this.d.log(`heads-up from ${label} about ${w.file} to ${delivered.size} session(s)`)
   }
 
   private byName(name: string): string[] {
@@ -300,7 +332,7 @@ export class WarnService {
   private tellSide(c: C.Conflict, s: C.Side, kind: "conflict", text: string, extra: Record<string, unknown>) {
     if (this.isLocalSide(s)) {
       for (const sid of this.localSessions(s.thread))
-        this.d.deliver(sid, { id: crypto.randomUUID(), kind, from: "crosstalk", fromSession: "-", text, slices: [], threads: [s.thread] })
+        this.d.deliver(sid, { id: crypto.randomUUID(), kind, from: "crosstalk", fromSession: "-", text, slices: [], threads: [s.thread], auto: true })
       return
     }
     if (!this.d.peers()[s.label]) return
@@ -308,7 +340,7 @@ export class WarnService {
   }
 
   /** A conflict frame from a peer: a new conflict, a proposal, or what the people decided. */
-  acceptConflict(label: string, env: Envelope) {
+  acceptConflict(label: string, env: Envelope, screen: Screen = { auto: false }) {
     const w = env.warn as any
     const inc = w?.conflict as C.Conflict | undefined
     if (!inc || typeof inc.id !== "string" || !Array.isArray(inc.sides) || inc.sides.length !== 2) return this.d.log(`ignored a malformed conflict from ${label}`)
@@ -316,14 +348,20 @@ export class WarnService {
     const mySide = inc.sides.find((s) => s.label === this.d.label)
     if (!theirSide || !mySide) return this.d.log(`ignored conflict ${inc.id} from ${label}: not between us`)
     let c = this.st.conflicts[inc.id]
+    // Handed over by itself only when they are in the thread it names as ours.
+    const auto = screen.auto && this.memberOf(label, mySide.thread)
+    const fresh = !c
     if (!c) {
       c = { ...C.newConflict({ repo: String(inc.repo), file: String(inc.file), symbol: String(inc.symbol), a: mySide, b: theirSide, now: this.now() }), id: inc.id }
       this.st.conflicts[c.id] = c
       for (const sid of this.localSessions(mySide.thread))
-        this.d.deliver(sid, { id: env.id, kind: "conflict", from: label, fromSession: env.fromSession, text: this.conflictText(c, mySide), slices: [], threads: [mySide.thread] })
+        this.d.deliver(sid, { id: env.id, kind: "conflict", from: label, fromSession: env.fromSession, text: this.conflictText(c, mySide), slices: [], threads: auto ? [mySide.thread] : [], auto })
     }
-    if (w.proposal && typeof w.proposal.owner === "string") this.onProposal(c, theirSide.thread, w.proposal as C.Proposal)
-    if (typeof w.decided === "string") this.onDecided(c, w.decided, label)
+    // A conflict first heard from them, about a thread they are not in here,
+    // writes nothing into that thread: they cannot decide for it.
+    const may = !fresh || this.memberOf(label, mySide.thread)
+    if (may && w.proposal && typeof w.proposal.owner === "string") this.onProposal(c, theirSide.thread, w.proposal as C.Proposal)
+    if (may && typeof w.decided === "string") this.onDecided(c, w.decided, label, auto)
     this.save()
   }
 
@@ -350,7 +388,7 @@ export class WarnService {
     const to = C.other(c, from.thread)
     if (this.isLocalSide(to)) {
       for (const sid of this.localSessions(to.thread))
-        this.d.deliver(sid, { id: crypto.randomUUID(), kind: "conflict", from: this.d.label, fromSession: from.name, text: `${from.name} proposes, for ${c.symbol} in ${c.file} (conflict ${c.id}): ${ownerName} changes it and ${otherName} rebases onto it.${p.text ? ` "${p.text}"` : ""} Answer with crosstalk_conflict.`, slices: [], threads: [to.thread] })
+        this.d.deliver(sid, { id: crypto.randomUUID(), kind: "conflict", from: this.d.label, fromSession: from.name, text: `${from.name} proposes, for ${c.symbol} in ${c.file} (conflict ${c.id}): ${ownerName} changes it and ${otherName} rebases onto it.${p.text ? ` "${p.text}"` : ""} Answer with crosstalk_conflict.`, slices: [], threads: [to.thread], auto: true })
     } else if (this.d.peers()[to.label])
       this.d.send(to.label, this.envelope(to.label, "conflict", `${from.name} proposes, for ${c.symbol} in ${c.file} (conflict ${c.id}): ${ownerName} changes it and ${otherName} rebases onto it.${p.text ? ` "${p.text}"` : ""} Answer with crosstalk_conflict.`, { thread: to.thread }, { warn: { conflict: c, proposal: { ...p, from: from.thread } } }))
     this.save()
@@ -364,7 +402,7 @@ export class WarnService {
       for (const s of c.sides)
         if (this.isLocalSide(s))
           for (const sid of this.localSessions(s.thread))
-            this.d.deliver(sid, { id: crypto.randomUUID(), kind: "conflict", from: "crosstalk", fromSession: "-", text: `agreed for ${c.symbol} in ${c.file}: ${ownerName} changes it, the other thread rebases onto it.`, slices: [], threads: [s.thread] })
+            this.d.deliver(sid, { id: crypto.randomUUID(), kind: "conflict", from: "crosstalk", fromSession: "-", text: `agreed for ${c.symbol} in ${c.file}: ${ownerName} changes it, the other thread rebases onto it.`, slices: [], threads: [s.thread], auto: true })
     }
     if (outcome === "ask") {
       const here = c.sides.filter((s) => this.isLocalSide(s)).flatMap((s) => this.localSessions(s.thread))
@@ -390,14 +428,14 @@ export class WarnService {
     return { ok: true, text }
   }
 
-  private onDecided(c: C.Conflict, owner: string, label: string) {
+  private onDecided(c: C.Conflict, owner: string, label: string, auto: boolean) {
     if (!C.decide(c, owner)) return
     const mySide = c.sides.find((s) => this.isLocalSide(s))
     if (!mySide) return
     const text = `Decided for ${c.symbol} in ${c.file} (by ${label}): ${C.side(c, owner)!.name} changes it and ${C.other(c, owner).name} rebases onto it.`
     this.d.threads.decide(undefined, { text, thread: mySide.thread })
     for (const sid of this.localSessions(mySide.thread))
-      this.d.deliver(sid, { id: crypto.randomUUID(), kind: "conflict", from: label, fromSession: "-", text, slices: [], threads: [mySide.thread] })
+      this.d.deliver(sid, { id: crypto.randomUUID(), kind: "conflict", from: label, fromSession: "-", text, slices: [], threads: auto ? [mySide.thread] : [], auto })
   }
 
   /** Forget what was merged: a thread with no unmerged edits to a file says so with its next heads-up. */
