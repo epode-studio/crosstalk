@@ -74,6 +74,20 @@ const log = (...a: unknown[]) => {
   process.stdout.write(`${new Date().toISOString()} ${a.map(String).join(" ")}\n`)
 }
 
+// The shared ui store fails with StoreBusy rather than writing without its lock
+// (src/uistate.ts). Requests turn that into an answer; a timer has nobody to
+// answer, so it is logged and skipped here instead of ending the daemon. Every
+// other error still ends the process as before.
+const busyOnly = (e: unknown) => {
+  if (e instanceof ui.StoreBusy) {
+    log(`skipped a timed step: ${(e as Error).message}`)
+    return
+  }
+  throw e
+}
+process.on("uncaughtException", busyOnly)
+process.on("unhandledRejection", busyOnly)
+
 // --- local session registrations ---------------------------------------------
 
 type Registered = {

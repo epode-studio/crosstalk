@@ -7794,6 +7794,7 @@ async function uiExtraCmd(sub, argv, session, root, print) {
 }
 
 // src/uicli.ts
+var insideAgent = () => !!(process.env.CLAUDECODE || process.env.CODEX_SANDBOX || process.env.CROSSTALK_AS_AGENT);
 function arg2(argv, f) {
   const i = argv.indexOf(f);
   return i === -1 ? undefined : argv[i + 1];
@@ -7946,6 +7947,8 @@ async function uiCmd(argv, root) {
         const n = takeNote(session, id);
         return print(n ? { ok: true, text: n.text } : { ok: false, error: "already shown" });
       }
+      if (id.startsWith("ship:") && insideAgent())
+        return print({ ok: false, error: "this question is for a person: answer it in crosstalk's picker, or run `crosstalk ship answer` yourself in a terminal" });
       if (!daemonRunning())
         return print({ ok: false, error: "the crosstalk daemon is not running" });
       try {
@@ -8380,7 +8383,7 @@ var flag3 = (argv, f) => {
   const i = argv.indexOf(f);
   return i === -1 ? undefined : argv[i + 1];
 };
-var VALUE2 = new Set(["--thread", "--json", "--run", "--output", "--verdict", "--findings", "--source", "--title", "--details", "--flag", "--files", "--sha", "--link", "--cause"]);
+var VALUE2 = new Set(["--thread", "--json", "--run", "--output", "--secret-file", "--verdict", "--findings", "--source", "--title", "--details", "--flag", "--files", "--sha", "--link", "--cause"]);
 var positional2 = (argv) => {
   const out = [];
   for (let i = 1;i < argv.length; i++) {
@@ -8393,7 +8396,7 @@ var positional2 = (argv) => {
   }
   return out;
 };
-var insideAgent = () => !!(process.env.CLAUDECODE || process.env.CODEX_SANDBOX || process.env.CROSSTALK_AS_AGENT);
+var insideAgent2 = () => !!(process.env.CLAUDECODE || process.env.CODEX_SANDBOX || process.env.CROSSTALK_AS_AGENT);
 async function send(req) {
   const r = await request({ op: "ship", cwd: process.cwd(), sessionId: process.env.CLAUDE_CODE_SESSION_ID, ...req }, 120000);
   if (process.argv.includes("--raw"))
@@ -8432,7 +8435,7 @@ async function shipCmd(argv) {
         console.error(`usage: crosstalk ship answer <id> <option>`);
         process.exit(64);
       }
-      if (insideAgent()) {
+      if (insideAgent2()) {
         console.log("this question is for a person: answer it in crosstalk's picker, or run this yourself in a terminal");
         process.exitCode = 1;
         return;
@@ -8457,7 +8460,13 @@ async function reviewCmd(argv) {
     console.error(`usage: crosstalk review --run <id> (--output <file> | --verdict approve|changes --findings "...")`);
     process.exit(64);
   }
-  return send({ action: "review", run, output: flag3(argv, "--output"), verdict: flag3(argv, "--verdict"), findings: flag3(argv, "--findings") });
+  const sf = flag3(argv, "--secret-file");
+  let secret;
+  if (sf)
+    try {
+      secret = fs20.readFileSync(sf, "utf8").trim();
+    } catch {}
+  return send({ action: "review", run, output: flag3(argv, "--output"), verdict: flag3(argv, "--verdict"), findings: flag3(argv, "--findings"), ...secret ? { secret } : {} });
 }
 async function incidentCmd(argv) {
   if (flag3(argv, "--link"))
