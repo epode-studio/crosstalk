@@ -15,7 +15,9 @@ import * as Urls from "../urls/index.ts"
 import { readState } from "../urls/proxy.ts"
 import { currentMain } from "../main.ts"
 import * as R from "../restore.ts"
-import type { PaneLink } from "./pure.ts"
+import type { PaneLink, PaneService, PaneShot } from "./pure.ts"
+import * as Shots from "../urls/shots/index.ts"
+import * as Health from "../urls/health/index.ts"
 
 const oneLine = (s: string) => s.replace(/\s+/g, " ").trim()
 
@@ -91,15 +93,24 @@ export function pane(o: { sessionId?: string; thread?: string; st?: ThreadState;
   }
   const model = paneModel(t, o.items ?? ui.snapshot())
   // This session's worktree's services, with a link each in the mod (OSC 8 there).
-  let services: Svc.Shown[] = []
+  let services: PaneService[] = []
+  let worktree: string | undefined
+  try {
+    const cwd = o.sessionId ? R.readOne(o.sessionId)?.cwd : undefined
+    worktree = cwd ? Urls.rootOf(cwd) : undefined
+  } catch {}
   try {
     services = o.services ?? Svc.forSession(o.sessionId)
+    // One that crashed or stopped answering (src/urls/health/), marked, even once it no longer runs.
+    const broken = Health.brokenIn(worktree)
+    services = [...services.map((s) => ({ ...s, ...(broken.find((b) => b.name === s.name) ? { broken: broken.find((b) => b.name === s.name)!.why } : {}) })), ...broken.filter((b) => !services.some((s) => s.name === b.name)).map((b) => ({ name: b.name, ports: [], broken: b.why }))]
   } catch {}
   let links: PaneLink[] = []
   try {
     links = paneLinks({ sessionId: o.sessionId, thread: model.thread, main: !!o.sessionId && currentMain()?.sessionId === o.sessionId })
   } catch {}
-  return { ok: true, pane: { ...model, ...(services.length ? { services } : {}), ...(links.length ? { links } : {}) } }
+  const shots: PaneShot[] = Shots.paneShots({ thread: model.thread, worktree })
+  return { ok: true, pane: { ...model, ...(services.length ? { services } : {}), ...(links.length ? { links } : {}), ...(shots.length ? { shots } : {}) } }
 }
 
 /** One line now, then one each time the pane changes, while the session that started this lives. */

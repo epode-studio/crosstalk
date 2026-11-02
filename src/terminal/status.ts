@@ -39,13 +39,19 @@ import * as R from "../restore.ts"
 import type { Step, Term } from "../restore.ts"
 import * as osc7501 from "../attention/osc7501.ts"
 
-export type TabState = "working" | "waiting" | "done" | "off"
+/**
+ * `broken`: a service of the session's crashed or stopped answering
+ * (src/urls/health/). Red, and like waiting it needs someone; while it is
+ * marked, done and waiting show as broken, working still as working.
+ */
+export type TabState = "working" | "waiting" | "done" | "broken" | "off"
 
 /** What a terminal draws for each state, as 8-bit RGB. */
 export const COLOUR: Record<Exclude<TabState, "off">, [number, number, number]> = {
   working: [47, 111, 214],
   waiting: [229, 140, 10],
   done: [46, 160, 67],
+  broken: [214, 48, 49],
 }
 export const hex = ([r, g, b]: [number, number, number]) => `#${[r, g, b].map((n) => n.toString(16).padStart(2, "0")).join("")}`
 
@@ -101,9 +107,10 @@ export function stateFromRegistry(o: { status?: string; pending: number; current
 
 const ST = "\x1b\\"
 
-/** OSC 9;4: 3 is indeterminate (working), 4 paused (waiting), 0 clears. */
+/** OSC 9;4: 3 is indeterminate (working), 4 paused (waiting), 2 error (broken), 0 clears. */
 export function progressSequence(state: TabState): string {
   if (state === "working") return `\x1b]9;4;3${ST}`
+  if (state === "broken") return `\x1b]9;4;2;100${ST}`
   if (state === "waiting") return `\x1b]9;4;4;100${ST}`
   return `\x1b]9;4;0${ST}`
 }
@@ -240,6 +247,18 @@ export type TabFile = {
   appliedAt?: number
   /** Terminal.app: the tab's own background, put back on done and exit. */
   appleOriginal?: string
+  /** What of this session's is broken (src/urls/health/); while set, done and waiting show as broken. */
+  broken?: string
+  /** The state last asked for, before `broken` was laid over it. */
+  base?: TabState
+}
+
+/** What a tab shows for a state asked for, with `broken` laid over it. */
+export const overlay = (state: TabState, broken: string | undefined): TabState => (broken && (state === "done" || state === "waiting") ? "broken" : state)
+
+/** The state a hook should draw: the one asked for, with this session's broken mark laid over it. */
+export function shownState(sessionId: string, state: TabState): TabState {
+  return overlay(state, readTab(sessionId)?.broken)
 }
 
 const dir = () => path.join(P.root, "tabs")
@@ -311,9 +330,38 @@ export function want(o: { sessionId: string; state: TabState; root: string; now?
   const changed = withFile(o.sessionId, (f) => {
     // Nothing was ever shown, so there is nothing to clear.
     if (!f && o.state === "off") return false
-    if (f && f.want === o.state) return f.applied !== o.state && now - f.wantAt > 5000
-    writeTab({ ...(f ?? { sessionId: o.sessionId }), sessionId: o.sessionId, want: o.state, wantAt: now })
-    return true
+    // A session that ends takes its broken mark with it.
+    const broken = o.state === "off" ? undefined : f?.broken
+    const shown = overlay(o.state, broken)
+    if (f && f.want === shown && (f.base ?? f.want) === o.state) return f.applied !== shown && now - f.wantAt > 5000
+    const next: TabFile = { ...(f ?? { sessionId: o.sessionId }), sessionId: o.sessionId, want: shown, wantAt: f?.want === shown ? f.wantAt : now, base: o.state }
+    if (!broken) delete next.broken
+    writeTab(next)
+    return f?.want !== shown
+  })
+  if (changed) startApplier(o.sessionId, o.root)
+  return changed
+}
+
+/**
+ * Mark a session's tab broken (`what`, for the record), or with null, not any
+ * more. Marked, it shows red at once; cleared, it goes back to the state last
+ * asked for.
+ */
+export function setBroken(o: { sessionId: string; what: string | null; root: string; now?: number }): boolean {
+  const now = o.now ?? Date.now()
+  const changed = withFile(o.sessionId, (f) => {
+    if (!o.what && !f?.broken) return false
+    const base: TabState = f?.base ?? (f?.want && f.want !== "broken" ? f.want : "done")
+    if (o.what) {
+      if (f?.broken === o.what && f.want === "broken") return false
+      writeTab({ ...(f ?? { sessionId: o.sessionId }), sessionId: o.sessionId, broken: o.what.slice(0, 200), base, want: "broken", wantAt: now })
+      return f?.want !== "broken"
+    }
+    const next: TabFile = { ...f!, base, want: base, wantAt: now }
+    delete next.broken
+    writeTab(next)
+    return f!.want !== base
   })
   if (changed) startApplier(o.sessionId, o.root)
   return changed
@@ -372,7 +420,7 @@ export function applyOnce(id: string, state: TabState, f: TabFile | null, sys: S
       if (!r.ok && !a.optional) ok = false
     } else if (a.kind === "tty") ok = sys.writeTty(a.path, a.data) && ok
     else {
-      if (!appleOriginal && (state === "working" || state === "waiting")) {
+      if (!appleOriginal && (state === "working" || state === "waiting" || state === "broken")) {
         const r = sys.run({ cmd: "osascript", args: ["-"], input: appleReadBgScript(a.tty) })
         if (r.ok && parseRgb16(r.out)) appleOriginal = r.out.trim()
       }
@@ -454,8 +502,8 @@ export async function applyLoop(id: string, sys: Sys = liveSys(), sleep = (ms: n
  */
 export const TMUX_SNIPPET = [
   `# crosstalk: show each agent's state in the window list`,
-  `set -ga window-status-format ' #{?#{==:#{@crosstalk_state},waiting},#[fg=colour208]● waiting#[default],#{?#{==:#{@crosstalk_state},working},#[fg=colour33]● working#[default],#{?#{==:#{@crosstalk_state},done},#[fg=colour34]✓#[default],}}}'`,
-  `set -ga window-status-current-format ' #{?#{==:#{@crosstalk_state},waiting},#[fg=colour208]● waiting#[default],#{?#{==:#{@crosstalk_state},working},#[fg=colour33]● working#[default],#{?#{==:#{@crosstalk_state},done},#[fg=colour34]✓#[default],}}}'`,
+  `set -ga window-status-format ' #{?#{==:#{@crosstalk_state},broken},#[fg=colour160]● broken#[default],#{?#{==:#{@crosstalk_state},waiting},#[fg=colour208]● waiting#[default],#{?#{==:#{@crosstalk_state},working},#[fg=colour33]● working#[default],#{?#{==:#{@crosstalk_state},done},#[fg=colour34]✓#[default],}}}}'`,
+  `set -ga window-status-current-format ' #{?#{==:#{@crosstalk_state},broken},#[fg=colour160]● broken#[default],#{?#{==:#{@crosstalk_state},waiting},#[fg=colour208]● waiting#[default],#{?#{==:#{@crosstalk_state},working},#[fg=colour33]● working#[default],#{?#{==:#{@crosstalk_state},done},#[fg=colour34]✓#[default],}}}}'`,
 ].join("\n")
 
 // --- the hook's part ------------------------------------------------------------

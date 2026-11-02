@@ -43,6 +43,7 @@ import { readSpawned, writeSpawned } from "../spawn.ts"
 import { prBody } from "../ui-extra/prbody.ts"
 import * as Pv from "./preview.ts"
 import * as Urls from "../urls/index.ts"
+import * as Shots from "../urls/shots/index.ts"
 import * as Mx from "./metrics.ts"
 import * as Sh from "./shadow.ts"
 import * as Rm from "./remote.ts"
@@ -872,6 +873,16 @@ export class ShipEngine {
     return { ok: true, text: "signed off, green, evidence attached: the people are asked to merge", question: q.id }
   }
 
+  /** The screenshots kept for a thread (by its name) and the author's worktree: each URL's latest before and after. */
+  private shotsFor(t: Thread, s: SessionInfo | undefined): string[] {
+    try {
+      const worktree = s?.root ?? (s?.cwd ? Urls.rootOf(s.cwd) : undefined)
+      return Shots.forEvidence({ thread: t.meta.value.name, worktree, root: worktree })
+    } catch {
+      return []
+    }
+  }
+
   /** crosstalk_evidence */
   async evidence(sid: string | undefined, a: { thread?: string; feature?: string } & E.EvidenceInput): Promise<Out> {
     const t = this.T().find(sid, a.thread)
@@ -881,7 +892,12 @@ export class ShipEngine {
     const key = keyOf(t.id, f.id)
     const s = sid ? this.T().session(sid) : undefined
     const stage = a.stage === undefined || a.stage === "merge" ? (f.ship?.merged ? f.ship.stage ?? "off" : "merge") : F.parseStage(a.stage) ?? String(a.stage)
-    const c = E.validate({ ...a, stage }, { risky: this.isRisky(t, f), base: s?.cwd })
+    // The thread's screenshots, each URL's before and after (src/urls/shots/), go with it by themselves:
+    // their paths on this machine, never the images. Not in a public thread, and not with `screenshots: off`.
+    const shots = t.meta.value.public ? [] : this.shotsFor(t, s)
+    const given = a.screenshots === undefined || a.screenshots === null || a.screenshots === "" ? [] : Array.isArray(a.screenshots) ? a.screenshots : [a.screenshots]
+    const withShots = shots.length ? { ...a, screenshots: [...given, ...shots.filter((x) => !given.includes(x))] } : a
+    const c = E.validate({ ...withShots, stage }, { risky: this.isRisky(t, f), base: s?.cwd })
     if (!c.ok) return fail(c.error)
     return this.lock(key, async () => {
       const cur = this.feat(t, f.id)!

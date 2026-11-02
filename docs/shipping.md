@@ -66,6 +66,14 @@ code. The design is in [next-generation.md](design/next-generation.md),
    before_after?, screenshots?, stage?}`: plain language with proof. A diff is
    refused; a risky feature's evidence needs proof beyond the summary;
    screenshot paths must exist. The merge question shows it.
+   **Screenshots come by themselves**: the thread's local servers and previews
+   are captured after each turn that edits files ([urls.md](urls.md),
+   "Screenshots as evidence"), and each URL's latest before and after is added
+   to the `screenshots` of every piece of evidence for a feature in that thread,
+   beside any the agent names. They count as the proof a risky feature needs.
+   What is attached is the path on this machine, never the image: in a sealed
+   thread its people see the paths, and no image goes over the relay. Not in a
+   public thread, and not with `screenshots: off` in `.crosstalk/ship`.
 8. **Merge.** See below. Sign-off, checks, the merge and each flag step are
    recorded in the thread as decisions and facts.
 9. **Flags.** A risky feature's flag starts off, and its ramp is `dark
@@ -185,6 +193,7 @@ metrics: ./scripts/flag-metrics.sh    # prints JSON numbers for $CROSSTALK_FLAG
 regress: errors:+50% latency_p95:+20% shadow_mismatch_rate:>0.01
 dwell: 1h                    # how long metrics must hold before the next step
 shadow: .crosstalk/shadow    # a folder of <flag>.json shadow counters
+screenshots: off             # no screenshots of this repo's servers, and none attached (docs/urls.md)
 ```
 
 ## `.crosstalk/risk`

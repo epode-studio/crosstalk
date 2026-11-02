@@ -61,6 +61,7 @@ import { uiCmd } from "./uicli.ts"
 import * as terminal from "./terminal/cli.ts"
 import * as shipCli from "./shipping/cli.ts"
 import { urlsCmd } from "./urls/cli.ts"
+import { shotsCmd } from "./urls/shots/cli.ts"
 import fs from "node:fs"
 import path from "node:path"
 import os from "node:os"
@@ -1761,5 +1762,7 @@ const commands: Record<string, () => Promise<void>> = {
   attn: () => attnCli.attnCmd(argv),
   // Every URL the threads have, and the proxy's names: src/urls/cli.ts.
   urls: () => urlsCmd(argv),
+  // Screenshots, before and after: src/urls/shots/cli.ts (`shots turn` is what the Stop hook starts).
+  shots: () => shotsCmd(argv),
 }
 await (commands[cmd] ?? (async () => die(`unknown command "${cmd}"`)))()

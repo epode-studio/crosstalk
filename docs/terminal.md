@@ -18,6 +18,7 @@ report it. Without the mod, the classic hooks do:
 | a permission prompt or a question (`Notification`) | waiting on you |
 | a tool runs after that prompt | working |
 | the session ends | cleared |
+| a crosstalk service of the session's crashed or stopped answering ([urls.md](urls.md), section 6) | **broken**: red at once, and shown instead of done or waiting until it is healthy again (working still shows). OSC 9;4 error, `@crosstalk_state` = `broken`, the tab colour red |
 
 A hook pays for one small file write. When the state changes, it also starts one
 detached process, which changes the tab. A tab changes at most once every 750 ms, and the
@@ -42,8 +43,8 @@ through Claude Code's `sessionTitle`, which has the same effect as `/rename`.
 you already have and do not replace it:
 
 ```tmux
-set -ga window-status-format ' #{?#{==:#{@crosstalk_state},waiting},#[fg=colour208]● waiting#[default],#{?#{==:#{@crosstalk_state},working},#[fg=colour33]● working#[default],#{?#{==:#{@crosstalk_state},done},#[fg=colour34]✓#[default],}}}'
-set -ga window-status-current-format ' #{?#{==:#{@crosstalk_state},waiting},#[fg=colour208]● waiting#[default],#{?#{==:#{@crosstalk_state},working},#[fg=colour33]● working#[default],#{?#{==:#{@crosstalk_state},done},#[fg=colour34]✓#[default],}}}'
+set -ga window-status-format ' #{?#{==:#{@crosstalk_state},broken},#[fg=colour160]● broken#[default],#{?#{==:#{@crosstalk_state},waiting},#[fg=colour208]● waiting#[default],#{?#{==:#{@crosstalk_state},working},#[fg=colour33]● working#[default],#{?#{==:#{@crosstalk_state},done},#[fg=colour34]✓#[default],}}}}'
+set -ga window-status-current-format ' #{?#{==:#{@crosstalk_state},broken},#[fg=colour160]● broken#[default],#{?#{==:#{@crosstalk_state},waiting},#[fg=colour208]● waiting#[default],#{?#{==:#{@crosstalk_state},working},#[fg=colour33]● working#[default],#{?#{==:#{@crosstalk_state},done},#[fg=colour34]✓#[default],}}}}'
 ```
 
 ### WezTerm
@@ -51,7 +52,7 @@ set -ga window-status-current-format ' #{?#{==:#{@crosstalk_state},waiting},#[fg
 ```lua
 wezterm.on('format-tab-title', function(tab)
   local s = tab.active_pane.user_vars.crosstalk_state
-  local colour = ({ working = '#2f6fd6', waiting = '#e58c0a', done = '#2ea043' })[s]
+  local colour = ({ working = '#2f6fd6', waiting = '#e58c0a', done = '#2ea043', broken = '#d63031' })[s]
   local title = tab.active_pane.title
   if colour then return { { Background = { Color = colour } }, { Text = ' ' .. title .. ' ' } } end
   return title

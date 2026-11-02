@@ -537,6 +537,13 @@ The measure is time from idea to merge, and how few of your minutes it took.
   preview" work from any session; the pane lists them, clickable. Tokens in a
   printed link are taken out before it is kept, and nothing an agent printed
   is ever fetched. [How](docs/urls.md).
+- **Screenshots as evidence, servers that look after themselves.** After a
+  turn that edits files, a headless browser (Playwright, else your Chrome)
+  captures the thread's local servers and previews; each URL's before and
+  after go into the evidence of that thread's features by themselves, and
+  "show me the auth page before and after" opens them. A dev server that
+  crashes is restarted once, its agent gets a heads-up with the log, and if it
+  keeps failing its tab turns red and stays stopped. [How](docs/urls.md#5-screenshots-as-evidence).
 - **Attach the thing, not a description of it.** "Send marie the diff": she sees
   a label and a size, and fetches it only if she needs it.
 - **No commands to learn.** Say it to any agent: "marie gave me words:

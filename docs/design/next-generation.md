@@ -705,6 +705,8 @@ Every part above has a first version on the branch, with its tests in
 | Shipping: risk, reviewers, evidence, merging, flags (Unleash first), previews, dark launch, metrics ramps, incidents | `src/shipping/` | `docs/shipping.md` |
 | Long-running processes outlive sessions: services in crosstalk's tmux, ports per worktree, waiting for what a session started, cleanup that stops services first | `src/services/` | `docs/services.md` |
 | URLs: every URL collected and labelled (services, previews, PRs, links in command output, tokens taken out), liveness, names instead of ports through a local proxy, one list in the pane, on the tab and from any session | `src/urls/` | `docs/urls.md` |
+| Screenshots as evidence: captured after a turn that edits files and on demand (Playwright, else Chrome over DevTools), before and after per URL, bounded, attached to the thread's features' evidence, before / after in the pane, opened on request | `src/urls/shots/` | `docs/urls.md`, `docs/shipping.md` |
+| Servers that look after themselves: a crash restarted once with backoff, the agent told with the log, a red "broken" tab, the person told only after the agent's own try fails, never a loop | `src/urls/health/`, `src/terminal/status.ts` | `docs/urls.md` |
 
 **Pull requests from sealed threads** carry the feature, its evidence and its
 reviewers, never the thread's recap, decisions or open questions: a PR is

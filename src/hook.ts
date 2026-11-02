@@ -33,6 +33,7 @@ import * as attnHook from "./attention/hook.ts"
 import * as sessionNames from "./sessions/names.ts"
 import * as pastSessions from "./sessions/index.ts"
 import * as urlTrack from "./urls/index.ts"
+import * as shots from "./urls/shots/index.ts"
 
 const input = await new Promise<string>((resolve) => {
   let raw = ""
@@ -296,6 +297,17 @@ if (/^post_?tool_?use$/i.test(eventName) && sessionId && !process.env.CROSSTALK_
   try {
     const out = urlTrack.outputOf(hook)
     if (out) urlTrack.collectFromOutput({ sessionId, cwd, text: out })
+  } catch {}
+}
+/**
+ * Screenshots as evidence (src/urls/shots/): an edit is noted at PostToolUse
+ * (one small write), and at Stop a turn that edited files has its thread's
+ * URLs captured, in a detached process, at most once a minute.
+ */
+if (sessionId && !process.env.CROSSTALK_NO_URLS && !process.env.CROSSTALK_NO_SHOTS) {
+  try {
+    if (/^post_?tool_?use$/i.test(eventName)) shots.noteEdit({ sessionId, cwd, tool: String(hook.tool_name ?? hook.toolName ?? "") })
+    else if (/^Stop$/.test(eventName)) await shots.turnEnded({ sessionId, cwd, root: rootFrom(import.meta.url) })
   } catch {}
 }
 
