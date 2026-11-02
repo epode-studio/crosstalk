@@ -9,7 +9,7 @@
 //   checks     every 5 seconds, whatever is due (liveness.ts)
 //   prune      hourly
 
-import { urls, syncServices, targets } from "./index.ts"
+import { urls, syncServices, targets, onTargetsChanged } from "./index.ts"
 import * as L from "./liveness.ts"
 import { clearState, readState, startProxy, writeState, type Proxy } from "./proxy.ts"
 import { rootOf } from "./index.ts"
@@ -30,6 +30,7 @@ export async function createUrls(o: { log: (...a: unknown[]) => void; live: () =
           } catch {}
         },
       })
+      if (proxy) onTargetsChanged(() => proxy?.refresh())
       if (proxy) o.log(`urls: proxy on http://127.0.0.1:${proxy.port} (names: <thread>.localhost)`)
       else o.log("urls: no proxy: no port it could listen on")
     } catch (e) {

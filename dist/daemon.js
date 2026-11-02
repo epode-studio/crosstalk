@@ -9931,6 +9931,14 @@ var urls = (o = {}) => new UrlStore({
 });
 var extra = [];
 var addTargets = (fn) => void extra.push(fn);
+var changed = [];
+var onTargetsChanged = (fn) => void changed.push(fn);
+function targetsChanged() {
+  for (const fn of changed)
+    try {
+      fn();
+    } catch {}
+}
 function targets() {
   const st = threads();
   const more = extra.flatMap((fn) => {
@@ -17616,6 +17624,8 @@ async function createUrls(o) {
         }
       });
       if (proxy)
+        onTargetsChanged(() => proxy?.refresh());
+      if (proxy)
         o.log(`urls: proxy on http://127.0.0.1:${proxy.port} (names: <thread>.localhost)`);
       else
         o.log("urls: no proxy: no port it could listen on");
@@ -19231,6 +19241,7 @@ Public link: ${s.public.url} (${untilText(s.expiresAt)}).`;
     s.ended = why;
     s.endedAt = Date.now();
     viewer.close(s.id, why === "expired" ? "has expired" : why === "declined" ? "was closed here" : "was stopped");
+    targetsChanged();
     settleCard(s.id);
     save();
     try {
@@ -19264,6 +19275,7 @@ Public link: ${s.public.url} (${untilText(s.expiresAt)}).`;
     if (!startListener(s))
       return;
     state.in.push(s);
+    targetsChanged();
     card(s);
     save();
     recordIn(s);
