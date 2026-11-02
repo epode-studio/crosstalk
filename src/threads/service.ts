@@ -774,7 +774,7 @@ export class ThreadService {
       const id = M.slug(o.feature.name, 60)
       changed = o.feature.remove
         ? M.remove(t, "features", id, this.me, now) || changed
-        : M.put(t, "features", id, { name: o.feature.name, risk: o.feature.risk === "risky" ? "risky" : "everyday", ...(o.feature.flag ? { flag: o.feature.flag } : {}) }, this.me, now) || changed
+        : M.put(t, "features", id, { ...this.featureRest(t, id), name: o.feature.name, risk: o.feature.risk === "risky" ? "risky" : "everyday", ...(o.feature.flag ? { flag: o.feature.flag } : {}) }, this.me, now) || changed
     }
     if (o.question?.text)
       changed = M.put(t, "questions", M.newItemId("q"), { text: o.question.text, blocking: !!o.question.blocking, who: this.label, at: now }, this.me, now) || changed
@@ -789,6 +789,59 @@ export class ThreadService {
     if (changed) this.touched.add(t.id)
     this.flush()
     return { ok: true as const, thread: M.view(t) }
+  }
+
+  /** What a feature edit keeps: shipping's record of it (src/shipping), and its flag unless one is named. */
+  private featureRest(t: M.Thread, id: string): Partial<M.Feature> {
+    const f = t.features[id]
+    if (!f || f.gone) return {}
+    return { ...(f.ship ? { ship: f.ship } : {}), ...(f.flag ? { flag: f.flag } : {}) }
+  }
+
+  // --- for src/shipping ------------------------------------------------------------
+
+  /** Every thread this replica holds, combined ones aside. */
+  all(): M.Thread[] {
+    return Object.values(this.st.threads).filter((t) => !t.meta.value.combinedInto)
+  }
+
+  /** Change one thread with the model's edit functions; saved, sent and committed like any edit. */
+  mutate(id: string, fn: (t: M.Thread, by: string, now: number) => unknown) {
+    const t = this.thread(id)
+    if (!t) return
+    fn(t, this.me, this.now())
+    this.touched.add(t.id)
+    this.flush()
+  }
+
+  /** A notice for the people in a thread: each local session in it shows it once. */
+  notify(id: string, text: string) {
+    const t = this.thread(id)
+    if (!t) return
+    const note = { id: M.newItemId("n"), text }
+    for (const sid of this.sessionsIn([t.id])) (this.st.notes[sid] ??= []).push(note)
+    this.save()
+  }
+
+  /** A thread nobody's session started, such as an incident's. */
+  open(o: { name: string; repo: string }): M.Thread {
+    const t = M.create({ name: M.slug(o.name), repo: o.repo, by: this.me, label: this.label, now: this.now() })
+    this.st.threads[t.id] = t
+    this.st.keys[t.id] = newKey().toString("base64")
+    this.touched.add(t.id)
+    this.flush()
+    this.d.log(`thread ${t.meta.value.name} started: ${o.name}`)
+    return t
+  }
+
+  /** A local session as the threads know it: its folder, checkout and branch. */
+  local(sessionId: string): LocalSession | undefined {
+    return this.locals.get(sessionId)
+  }
+
+  /** The clone the ref is written in for a repo. */
+  rootFor(repo: string): string | undefined {
+    return this.st.roots[repo]
   }
 
   // --- after every operation -------------------------------------------------------

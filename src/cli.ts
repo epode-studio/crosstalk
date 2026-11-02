@@ -57,6 +57,7 @@ import * as restore from "./restore.ts"
 import * as gather from "./gather.ts"
 import { uiCmd } from "./uicli.ts"
 import * as terminal from "./terminal/cli.ts"
+import * as shipCli from "./shipping/cli.ts"
 import fs from "node:fs"
 import path from "node:path"
 import os from "node:os"
@@ -1747,6 +1748,10 @@ const commands: Record<string, () => Promise<void>> = {
   show: () => terminal.showCmd(argv),
   cleanup: () => terminal.cleanupCmd(argv),
   term: () => terminal.termCmd(argv, ROOT_DIR),
+  // Shipping: src/shipping/cli.ts.
+  ship: async () => (await ready(), shipCli.shipCmd(argv)),
+  review: async () => (await ready(), shipCli.reviewCmd(argv)),
+  incident: async () => (await ready(), shipCli.incidentCmd(argv)),
   // For crosstalk's mod, not for people: see src/uicli.ts.
   ui: () => uiCmd(argv, ROOT_DIR),
 }

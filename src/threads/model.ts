@@ -22,6 +22,7 @@
 // decision at once is the common case, not the edge.
 
 import crypto from "node:crypto"
+import type { FeatureShip } from "../shipping/types.ts"
 
 export type Status = "active" | "waiting" | "done" | "archived"
 export const STATUSES: readonly Status[] = ["active", "waiting", "done", "archived"]
@@ -52,8 +53,8 @@ export type Meta = {
 export type Person = { label: string }
 /** A session working in the thread. Id: `<fingerprint>:<session name>`, the name being what presence shows a peer. */
 export type SessionRef = { person: string; label: string; name: string; branch?: string; at: number }
-/** A shippable part. Id: a slug of the name. */
-export type Feature = { name: string; risk: Risk; flag?: string }
+/** A shippable part. Id: a slug of the name. `ship` is what src/shipping knows about it. */
+export type Feature = { name: string; risk: Risk; flag?: string; ship?: FeatureShip }
 export type Question = {
   text: string
   blocking?: boolean

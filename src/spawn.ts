@@ -198,7 +198,7 @@ export const TMUX_CONF = [
   ``,
 ].join("\n")
 
-function ensureConf() {
+export function ensureConf() {
   fs.mkdirSync(P.root, { recursive: true, mode: 0o700 })
   try {
     if (fs.readFileSync(tmuxConf(), "utf8") === TMUX_CONF) return

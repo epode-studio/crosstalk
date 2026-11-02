@@ -83,7 +83,12 @@ export function liveProbe(g: Git = liveGit): Probe {
       const ahead = g(repo, ["rev-list", "--count", `${d}..${b}`])
       if (!ahead.ok || ahead.out !== "0") {
         const remote = g(repo, ["rev-list", "--count", `origin/${d}..${b}`])
-        if (!remote.ok || remote.out !== "0") return false
+        if (!remote.ok || remote.out !== "0") {
+          // Landed as equivalent patches: shipping rebases onto the default
+          // branch rather than rewriting the agent's own branch.
+          const cherry = g(repo, ["cherry", d, b])
+          if (!cherry.ok || !cherry.out || !cherry.out.split("\n").every((l) => l.startsWith("-"))) return false
+        }
       }
       return true
     },

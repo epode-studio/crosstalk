@@ -431,7 +431,7 @@ var asPeer = (o) => ({
   joinedAt: Date.now()
 });
 
-// node_modules/@noble/hashes/_u64.js
+// ../../../node_modules/@noble/hashes/_u64.js
 var U32_MASK64 = /* @__PURE__ */ (() => BigInt(2 ** 32 - 1))();
 var _32n = /* @__PURE__ */ BigInt(32);
 function fromBig(n, le = false) {
@@ -474,7 +474,7 @@ var add4H = (low, Ah, Bh, Ch, Dh) => Ah + Bh + Ch + Dh + (low / 2 ** 32 | 0) | 0
 var add5L = (Al, Bl, Cl, Dl, El) => (Al >>> 0) + (Bl >>> 0) + (Cl >>> 0) + (Dl >>> 0) + (El >>> 0);
 var add5H = (low, Ah, Bh, Ch, Dh, Eh) => Ah + Bh + Ch + Dh + Eh + (low / 2 ** 32 | 0) | 0;
 
-// node_modules/@noble/hashes/utils.js
+// ../../../node_modules/@noble/hashes/utils.js
 function isBytes(a) {
   return a instanceof Uint8Array || ArrayBuffer.isView(a) && a.constructor.name === "Uint8Array" && "BYTES_PER_ELEMENT" in a && a.BYTES_PER_ELEMENT === 1;
 }
@@ -623,7 +623,7 @@ var oidNist = (suffix) => ({
   oid: Uint8Array.from([6, 9, 96, 134, 72, 1, 101, 3, 4, 2, suffix])
 });
 
-// node_modules/@noble/hashes/_md.js
+// ../../../node_modules/@noble/hashes/_md.js
 class HashMD {
   blockLen;
   outputLen;
@@ -737,7 +737,7 @@ var SHA512_IV = /* @__PURE__ */ Uint32Array.from([
   327033209
 ]);
 
-// node_modules/@noble/hashes/sha2.js
+// ../../../node_modules/@noble/hashes/sha2.js
 var K512 = /* @__PURE__ */ (() => split([
   "0x428a2f98d728ae22",
   "0x7137449123ef65cd",
@@ -963,7 +963,7 @@ class _SHA512 extends SHA2_64B {
 }
 var sha512 = /* @__PURE__ */ createHasher(() => new _SHA512, /* @__PURE__ */ oidNist(3));
 
-// node_modules/@noble/curves/utils.js
+// ../../../node_modules/@noble/curves/utils.js
 /*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) */
 function aarray(item, title, inner = () => {}) {
   if (!Array.isArray(item))
@@ -1107,7 +1107,7 @@ var notImplemented = () => {
   throw new Error("not implemented");
 };
 
-// node_modules/@noble/curves/abstract/modular.js
+// ../../../node_modules/@noble/curves/abstract/modular.js
 /*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) */
 var _0n2 = /* @__PURE__ */ BigInt(0);
 var _1n2 = /* @__PURE__ */ BigInt(1);
@@ -1533,7 +1533,7 @@ function Field(ORDER, opts = {}) {
   return new _Field(ORDER, opts);
 }
 
-// node_modules/@noble/curves/abstract/curve.js
+// ../../../node_modules/@noble/curves/abstract/curve.js
 /*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) */
 var _0n3 = /* @__PURE__ */ BigInt(0);
 var _1n3 = /* @__PURE__ */ BigInt(1);
@@ -1867,7 +1867,7 @@ function createCurveFields(type, CURVE, curveOpts = {}, FpFnLE) {
   return { CURVE, Fp, Fn };
 }
 
-// node_modules/@noble/curves/abstract/edwards.js
+// ../../../node_modules/@noble/curves/abstract/edwards.js
 /*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) */
 var _0n4 = /* @__PURE__ */ BigInt(0);
 var _1n4 = /* @__PURE__ */ BigInt(1);
@@ -2203,7 +2203,7 @@ class PrimeEdwardsPoint {
   }
 }
 
-// node_modules/@noble/curves/abstract/hash-to-curve.js
+// ../../../node_modules/@noble/curves/abstract/hash-to-curve.js
 function i2osp(value, length) {
   asafenumber(value);
   asafenumber(length);
@@ -2262,7 +2262,7 @@ function expand_message_xmd(msg, DST, lenInBytes, H) {
 }
 var _DST_scalar = "HashToScalar-";
 
-// node_modules/@noble/curves/ed25519.js
+// ../../../node_modules/@noble/curves/ed25519.js
 /*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) */
 var _1n5 = /* @__PURE__ */ BigInt(1);
 var _2n3 = /* @__PURE__ */ BigInt(2);
@@ -5952,8 +5952,12 @@ function liveProbe(g = git) {
       const ahead = g(repo, ["rev-list", "--count", `${d}..${b}`]);
       if (!ahead.ok || ahead.out !== "0") {
         const remote = g(repo, ["rev-list", "--count", `origin/${d}..${b}`]);
-        if (!remote.ok || remote.out !== "0")
-          return false;
+        if (!remote.ok || remote.out !== "0") {
+          const cherry = g(repo, ["cherry", d, b]);
+          if (!cherry.ok || !cherry.out || !cherry.out.split(`
+`).every((l) => l.startsWith("-")))
+            return false;
+        }
       }
       return true;
     },
@@ -6652,8 +6656,111 @@ async function cleanupCmd(argv) {
     process.exitCode = 1;
 }
 
+// src/shipping/cli.ts
+import fs15 from "node:fs";
+var flag2 = (argv, f) => {
+  const i = argv.indexOf(f);
+  return i === -1 ? undefined : argv[i + 1];
+};
+var VALUE2 = new Set(["--thread", "--json", "--run", "--output", "--verdict", "--findings", "--source", "--title", "--details", "--flag", "--files", "--sha", "--link", "--cause"]);
+var positional2 = (argv) => {
+  const out = [];
+  for (let i = 1;i < argv.length; i++) {
+    if (argv[i].startsWith("--")) {
+      if (VALUE2.has(argv[i]))
+        i++;
+      continue;
+    }
+    out.push(argv[i]);
+  }
+  return out;
+};
+var insideAgent = () => !!(process.env.CLAUDECODE || process.env.CODEX_SANDBOX || process.env.CROSSTALK_AS_AGENT);
+async function send(req) {
+  const r = await request2({ op: "ship", cwd: process.cwd(), sessionId: process.env.CLAUDE_CODE_SESSION_ID, ...req }, 120000);
+  if (process.argv.includes("--raw"))
+    console.log(JSON.stringify(r));
+  else {
+    console.log(r?.text ?? r?.error ?? "no answer");
+    const { ok: _o, text: _t, error: _e, ...rest } = r ?? {};
+    if (Object.keys(rest).length)
+      console.log(JSON.stringify(rest, null, 2));
+  }
+  if (!r?.ok)
+    process.exitCode = 1;
+  return r;
+}
+var json = (argv) => {
+  const j = flag2(argv, "--json");
+  if (j)
+    return JSON.parse(j);
+  if (argv.includes("--stdin"))
+    return JSON.parse(fs15.readFileSync(0, "utf8"));
+  return {};
+};
+async function shipCmd(argv) {
+  const sub = argv[1] ?? "status";
+  const pos = positional2(argv).slice(1);
+  switch (sub) {
+    case "status":
+      return send({ action: "status", thread: flag2(argv, "--thread") });
+    case "questions":
+      return send({ action: "questions" });
+    case "answer": {
+      const [id, ...rest] = pos;
+      if (!id || !rest.length) {
+        console.error(`usage: crosstalk ship answer <id> <option>`);
+        process.exit(64);
+      }
+      if (insideAgent()) {
+        console.log("this question is for a person: answer it in crosstalk's picker, or run this yourself in a terminal");
+        process.exitCode = 1;
+        return;
+      }
+      return send({ action: "answer", id, value: rest.join(" "), person: true });
+    }
+    case "feature":
+    case "ready":
+    case "evidence":
+    case "flag": {
+      const { person: _p, ...args } = json(argv);
+      return send({ ...args, action: sub, ...flag2(argv, "--thread") ? { thread: flag2(argv, "--thread") } : {} });
+    }
+    default:
+      console.error(`unknown: crosstalk ship ${sub}`);
+      process.exitCode = 64;
+  }
+}
+async function reviewCmd(argv) {
+  const run = flag2(argv, "--run");
+  if (!run) {
+    console.error(`usage: crosstalk review --run <id> (--output <file> | --verdict approve|changes --findings "...")`);
+    process.exit(64);
+  }
+  return send({ action: "review", run, output: flag2(argv, "--output"), verdict: flag2(argv, "--verdict"), findings: flag2(argv, "--findings") });
+}
+async function incidentCmd(argv) {
+  if (flag2(argv, "--link"))
+    return send({ action: "incident", link: { incident: flag2(argv, "--link"), cause: flag2(argv, "--cause") } });
+  const j = json(argv);
+  const files = flag2(argv, "--files");
+  const req = {
+    source: flag2(argv, "--source") ?? j.source ?? "manual",
+    title: flag2(argv, "--title") ?? j.title ?? positional2(argv).join(" "),
+    details: flag2(argv, "--details") ?? j.details ?? "",
+    flag: flag2(argv, "--flag") ?? j.flag,
+    files: files ? files.split(",") : j.files,
+    sha: flag2(argv, "--sha") ?? j.sha
+  };
+  if (!req.title) {
+    console.error(`usage: crosstalk incident --source <s> --title <t> [--details <d>] [--flag <f>] [--files a,b] [--sha <sha>]`);
+    process.exit(64);
+  }
+  return send({ action: "incident", ...req });
+}
+
 // src/cli.ts
-import fs15 from "fs";
+import fs16 from "fs";
 import path17 from "path";
 import os8 from "os";
 import { spawn as spawn8, execFileSync as execFileSync4 } from "child_process";
@@ -6695,12 +6802,12 @@ async function ready() {
   if (!await ensureDaemon(ROOT_DIR))
     die("the daemon would not start. See ~/.claude/crosstalk/daemon.log");
 }
-var flag2 = (f, d) => {
+var flag3 = (f, d) => {
   const i = argv.indexOf(f);
   return i === -1 ? d : argv[i + 1];
 };
 var has = (f) => argv.includes(f);
-var positional2 = (() => {
+var positional3 = (() => {
   const out = [];
   for (let i = 1;i < argv.length; i++) {
     const a = argv[i];
@@ -6736,7 +6843,7 @@ function identityOrCreate() {
   const existing = loadIdentity();
   if (existing)
     return existing;
-  const label = flag2("--label") ?? userName();
+  const label = flag3("--label") ?? userName();
   const id = { ...newIdentity(label), machine: machineName() };
   saveIdentity(id);
   console.log(`you are "${label}" on "${id.machine}"   ${fingerprint(id.ed.pub)}`);
@@ -6745,7 +6852,7 @@ function identityOrCreate() {
 }
 var relayPid = () => {
   try {
-    const pid = Number(fs15.readFileSync(RELAY_PID, "utf8"));
+    const pid = Number(fs16.readFileSync(RELAY_PID, "utf8"));
     process.kill(pid, 0);
     return pid;
   } catch {
@@ -6771,23 +6878,23 @@ async function relayReachable(url = loadRelay().url, ms = 1500) {
     return false;
   }
 }
-async function startRelay(port = Number(flag2("--port", "8787"))) {
+async function startRelay(port = Number(flag3("--port", "8787"))) {
   if (has("--address"))
-    process.env.CROSSTALK_ADDRESS = flag2("--address");
+    process.env.CROSSTALK_ADDRESS = flag3("--address");
   const addr = bestAddress();
   if (relayPid()) {
     const url = loadRelay().url;
     if (await relayReachable(url))
       return url;
   }
-  const out = fs15.openSync(path17.join(ROOT, "relay.log"), "a");
+  const out = fs16.openSync(path17.join(ROOT, "relay.log"), "a");
   const child = spawn8(shim2(ROOT_DIR), ["relay-server", "--host", "0.0.0.0", "--port", String(port)], {
     detached: true,
     stdio: ["ignore", out, out]
   });
   child.unref();
-  fs15.mkdirSync(ROOT, { recursive: true, mode: 448 });
-  fs15.writeFileSync(RELAY_PID, String(child.pid), { mode: 384 });
+  fs16.mkdirSync(ROOT, { recursive: true, mode: 448 });
+  fs16.writeFileSync(RELAY_PID, String(child.pid), { mode: 384 });
   const url = `ws://${addr.host}:${port}`;
   saveRelay(url);
   for (let i = 0;i < 40; i++) {
@@ -6807,7 +6914,7 @@ anyone on the same network.`);
     console.log("opening a public tunnel, this takes a few seconds");
     try {
       const t = await openTunnel(bin, port, path17.join(ROOT, "tunnel.log"));
-      fs15.writeFileSync(TUNNEL_PID, String(t.pid), { mode: 384 });
+      fs16.writeFileSync(TUNNEL_PID, String(t.pid), { mode: 384 });
       saveRelay(`wss://${t.host}`);
       console.log(`relay reachable at ${t.url}`);
       return `wss://${t.host}`;
@@ -6824,16 +6931,16 @@ If they cannot reach ${addr.host}, redo with --address <one of those>.`);
   return url;
 }
 async function relay() {
-  const sub = positional2[0] ?? "status";
+  const sub = positional3[0] ?? "status";
   if (sub === "stop") {
     const pid = relayPid();
     if (!pid)
       return console.log("no relay started by crosstalk is running");
     process.kill(pid, "SIGTERM");
-    fs15.rmSync(RELAY_PID, { force: true });
+    fs16.rmSync(RELAY_PID, { force: true });
     try {
-      process.kill(Number(fs15.readFileSync(TUNNEL_PID, "utf8")), "SIGTERM");
-      fs15.rmSync(TUNNEL_PID, { force: true });
+      process.kill(Number(fs16.readFileSync(TUNNEL_PID, "utf8")), "SIGTERM");
+      fs16.rmSync(TUNNEL_PID, { force: true });
       console.log("tunnel closed");
     } catch {}
     return console.log("relay stopped");
@@ -6878,9 +6985,9 @@ Rename it with /crosstalk:rename ${label} <name>.`);
 }
 async function startRoom(words) {
   if (has("--relay"))
-    saveRelay(flag2("--relay"));
+    saveRelay(flag3("--relay"));
   const id = identityOrCreate();
-  const joining = (words ?? positional2.join(" ")).trim();
+  const joining = (words ?? positional3.join(" ")).trim();
   const base = () => httpBase(loadRelay().url);
   const put = async (slot, part, blob) => {
     const r = await fetch(`${base()}/invite/${slot}?part=${part}`, {
@@ -6962,7 +7069,7 @@ Run this instead and crosstalk will host one for you:
   if (!slotRes?.ok)
     die("the relay would not give out a slot. Try again in a moment.");
   const { slot } = await slotRes.json();
-  const phrase = flag2("--phrase") ?? newPhrase(4);
+  const phrase = flag3("--phrase") ?? newPhrase(4);
   const mine = begin(phrase, slot);
   await put(slot, "a", mine.message);
   const asHttp = new URL(url.replace(/^ws/, "http"));
@@ -7041,8 +7148,8 @@ async function peers() {
   console.log();
 }
 async function mute() {
-  const peer = positional2[0] && !/^\d+$/.test(positional2[0]) ? positional2[0] : undefined;
-  const minutes = Number(positional2.find((a) => /^\d+$/.test(a)) ?? 60);
+  const peer = positional3[0] && !/^\d+$/.test(positional3[0]) ? positional3[0] : undefined;
+  const minutes = Number(positional3.find((a) => /^\d+$/.test(a)) ?? 60);
   await ready();
   const r = await request({ op: "mute", peer, minutes });
   console.log(r.mutedUntil ? `muted ${peer ?? `all ${r.muted.length} peer(s)`} until ${new Date(r.mutedUntil).toLocaleTimeString()}` : `unmuted ${peer ?? "everyone"}`);
@@ -7097,7 +7204,7 @@ async function doctor() {
   ]);
   rows.push([
     "inbox socket",
-    socket ? fs15.existsSync(socket) : null,
+    socket ? fs16.existsSync(socket) : null,
     socket ?? "not provided; sessions without a Claude Code socket receive notices through hooks"
   ]);
   rows.push([
@@ -7108,7 +7215,7 @@ async function doctor() {
   const sessionsDir = path17.join(process.env.HOME ?? "", ".claude", "sessions");
   let visible = 0;
   try {
-    visible = fs15.readdirSync(sessionsDir).filter((f) => f.endsWith(".json")).length;
+    visible = fs16.readdirSync(sessionsDir).filter((f) => f.endsWith(".json")).length;
   } catch {}
   rows.push(["session registry", visible > 0 ? true : null, `${visible} Claude Code entries in ${sessionsDir}`]);
   {
@@ -7222,10 +7329,10 @@ ${" ".repeat(26)}${auCmd}`
 `);
 }
 async function daemon() {
-  const sub = positional2[0] ?? "start";
+  const sub = positional3[0] ?? "start";
   if (sub === "stop" || sub === "restart") {
     try {
-      process.kill(Number(fs15.readFileSync(P.daemonLock, "utf8")), "SIGTERM");
+      process.kill(Number(fs16.readFileSync(P.daemonLock, "utf8")), "SIGTERM");
       console.log("daemon stopped");
     } catch {
       console.log("daemon was not running");
@@ -7237,7 +7344,7 @@ async function daemon() {
   console.log(await ensureDaemon(ROOT_DIR) ? "daemon running" : "daemon failed to start");
 }
 async function room() {
-  const [verb, ...rest] = positional2;
+  const [verb, ...rest] = positional3;
   if (verb === "new")
     return startRoom("");
   if (verb === "join") {
@@ -7345,7 +7452,7 @@ Undo with:  security delete-generic-password -a crosstalk -s crosstalk-identity
   console.log(`not moved: ${r.reason}`);
 }
 async function rename() {
-  const [a, b] = positional2;
+  const [a, b] = positional3;
   if (has("--me") || a === "me") {
     const to = (has("--me") ? a : b)?.trim();
     if (!to)
@@ -7393,23 +7500,23 @@ usage: /crosstalk:rename <current> <new>
   save(t);
   try {
     const uPath = path17.join(ROOT, "usage.json");
-    const u = JSON.parse(fs15.readFileSync(uPath, "utf8"));
+    const u = JSON.parse(fs16.readFileSync(uPath, "utf8"));
     if (u[a]) {
       u[b] = u[a];
       delete u[a];
-      fs15.writeFileSync(uPath, JSON.stringify(u, null, 2), { mode: 384 });
+      fs16.writeFileSync(uPath, JSON.stringify(u, null, 2), { mode: 384 });
     }
   } catch {}
   try {
     const qPath = path17.join(ROOT, "queue.json");
-    const q = JSON.parse(fs15.readFileSync(qPath, "utf8"));
+    const q = JSON.parse(fs16.readFileSync(qPath, "utf8"));
     let touched = 0;
     for (const msgs of Object.values(q))
       for (const m of msgs)
         if (m.from === a)
           m.from = b, touched++;
     if (touched)
-      fs15.writeFileSync(qPath, JSON.stringify(q, null, 2), { mode: 384 });
+      fs16.writeFileSync(qPath, JSON.stringify(q, null, 2), { mode: 384 });
   } catch {}
   console.log(`"${a}" is "${b}" now, still ${peer.fingerprint}.`);
   if (daemonRunning())
@@ -7417,9 +7524,9 @@ usage: /crosstalk:rename <current> <new>
 }
 async function trustCmd() {
   const t = load2();
-  const level = positional2.find((a) => isLevel(a));
-  const who = positional2.find((a) => a !== level);
-  const room = flag2("--in");
+  const level = positional3.find((a) => isLevel(a));
+  const who = positional3.find((a) => a !== level);
+  const room = flag3("--in");
   if (!who && !level) {
     console.log();
     console.log(`  default${" ".repeat(12)}${t.default}`);
@@ -7473,7 +7580,7 @@ async function trustCmd() {
   console.log(`#${who.replace(/^#/, "")}: ${level} for everyone in it`);
 }
 async function post() {
-  const text = positional2.join(" ").trim() || flag2("--text", "");
+  const text = positional3.join(" ").trim() || flag3("--text", "");
   if (!text)
     die('usage: crosstalk post "build failed on main" [--intent blocking] [--source ci]');
   refuseIfIdentityDamaged();
@@ -7483,8 +7590,8 @@ async function post() {
   const r = await request({
     op: "post",
     text,
-    intent: flag2("--intent", "fyi"),
-    source: flag2("--source", "local")
+    intent: flag3("--intent", "fyi"),
+    source: flag3("--source", "local")
   });
   console.log(r.ok ? `posted as ${r.source}` : `not posted: ${r.error}`);
 }
@@ -7509,13 +7616,13 @@ async function attention() {
 }
 async function tasksCmd() {
   await ready();
-  const verb = positional2[0];
+  const verb = positional3[0];
   if (verb === "add") {
     const r = await request({
       op: "tasks",
       write: "add",
-      text: positional2.slice(1).join(" "),
-      for: flag2("--for")
+      text: positional3.slice(1).join(" "),
+      for: flag3("--for")
     });
     return console.log(r.ok ? `added ${r.id} to #${r.room}` : `not added: ${r.error}`);
   }
@@ -7523,10 +7630,10 @@ async function tasksCmd() {
     const r = await request({
       op: "tasks",
       write: verb,
-      id: positional2[1],
-      note: positional2.slice(2).join(" ") || undefined
+      id: positional3[1],
+      note: positional3.slice(2).join(" ") || undefined
     });
-    return console.log(r.ok ? `${verb}: ${positional2[1]}` : r.error ?? "nothing changed");
+    return console.log(r.ok ? `${verb}: ${positional3[1]}` : r.error ?? "nothing changed");
   }
   const r = await request({ op: "tasks" });
   const all = Object.entries(r.tasks ?? {});
@@ -7553,10 +7660,10 @@ async function tasksCmd() {
 }
 async function factsCmd() {
   await ready();
-  const verb = positional2[0];
+  const verb = positional3[0];
   if (verb === "add" || verb === "remember") {
-    const text = positional2.slice(1).join(" ");
-    const r = await request({ op: "facts", write: "add", text, tags: (flag2("--in") ?? "").split(",").filter(Boolean) });
+    const text = positional3.slice(1).join(" ");
+    const r = await request({ op: "facts", write: "add", text, tags: (flag3("--in") ?? "").split(",").filter(Boolean) });
     return console.log(r.ok ? `remembered in #${r.room}` : `not saved: ${r.error}`);
   }
   if (verb === "confirm" || verb === "correct" || verb === "forget") {
@@ -7564,11 +7671,11 @@ async function factsCmd() {
     const r = await request({
       op: "facts",
       write: map[verb],
-      id: positional2[1],
-      text: positional2.slice(2).join(" ") || undefined,
-      reason: flag2("--because")
+      id: positional3[1],
+      text: positional3.slice(2).join(" ") || undefined,
+      reason: flag3("--because")
     });
-    return console.log(r.ok ? `${verb}ed ${positional2[1]}` : `nothing changed: ${r.error ?? "no such fact"}`);
+    return console.log(r.ok ? `${verb}ed ${positional3[1]}` : `nothing changed: ${r.error ?? "no such fact"}`);
   }
   const r = await request({ op: "facts", cwd: process.cwd() });
   const all = Object.entries(r.facts ?? {});
@@ -7598,7 +7705,7 @@ async function factsCmd() {
 async function link() {
   const zlib = await import("zlib");
   const id = loadIdentity();
-  const joining = positional2.join(" ").trim();
+  const joining = positional3.join(" ").trim();
   if (joining) {
     if (id)
       die(`this machine already has an identity ("${id.label}"). Linking would replace it,
@@ -7643,8 +7750,8 @@ you are sure.`);
     }
     if (!bundle)
       die("the other machine never sent anything. Start again.");
-    fs15.mkdirSync(ROOT, { recursive: true, mode: 448 });
-    const write = (name, value) => fs15.writeFileSync(path17.join(ROOT, name), JSON.stringify(value, null, 2), { mode: 384 });
+    fs16.mkdirSync(ROOT, { recursive: true, mode: 448 });
+    const write = (name, value) => fs16.writeFileSync(path17.join(ROOT, name), JSON.stringify(value, null, 2), { mode: 384 });
     write("identity.json", { ...bundle.identity, machine: machineName() });
     write("peers.json", bundle.peers ?? {});
     if (bundle.rooms)
@@ -7677,7 +7784,7 @@ and a message reaches whichever machine you are sitting at.`);
     peers: loadPeers(),
     rooms: (() => {
       try {
-        return JSON.parse(fs15.readFileSync(path17.join(ROOT, "rooms.json"), "utf8"));
+        return JSON.parse(fs16.readFileSync(path17.join(ROOT, "rooms.json"), "utf8"));
       } catch {
         return {};
       }
@@ -7729,11 +7836,11 @@ async function installAgy() {
   const bin = shim2(root);
   const dir = path17.join(os8.homedir(), ".gemini", "config");
   const file = path17.join(dir, "hooks.json");
-  fs15.mkdirSync(dir, { recursive: true });
+  fs16.mkdirSync(dir, { recursive: true });
   let all = {};
-  if (fs15.existsSync(file)) {
+  if (fs16.existsSync(file)) {
     try {
-      all = JSON.parse(fs15.readFileSync(file, "utf8"));
+      all = JSON.parse(fs16.readFileSync(file, "utf8"));
     } catch {
       die(`${file} is not valid JSON. Fix or move it, then run this again.`);
     }
@@ -7743,7 +7850,7 @@ async function installAgy() {
       { type: "command", command: `"${bin}" hook PreInvocation`, timeout: 20 }
     ]
   };
-  fs15.writeFileSync(file, JSON.stringify(all, null, 2) + `
+  fs16.writeFileSync(file, JSON.stringify(all, null, 2) + `
 `);
   console.log(`hooks    ${file}`);
   try {
@@ -7768,11 +7875,11 @@ async function installQwen() {
   const bin = shim2(rootFrom2(import.meta.url));
   const dir = path17.join(os8.homedir(), ".qwen");
   const file = path17.join(dir, "settings.json");
-  fs15.mkdirSync(dir, { recursive: true });
+  fs16.mkdirSync(dir, { recursive: true });
   let cfg = {};
-  if (fs15.existsSync(file)) {
+  if (fs16.existsSync(file)) {
     try {
-      cfg = JSON.parse(fs15.readFileSync(file, "utf8"));
+      cfg = JSON.parse(fs16.readFileSync(file, "utf8"));
     } catch {
       die(`${file} is not valid JSON. Fix or move it, then run this again.`);
     }
@@ -7783,7 +7890,7 @@ async function installQwen() {
     const others = (cfg.hooks[event] ?? []).filter((g) => !JSON.stringify(g).includes("crosstalk"));
     cfg.hooks[event] = [...others, entry];
   }
-  fs15.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
+  fs16.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
 `);
   console.log(`hooks    ${file}`);
   registerMcp("qwen", ["mcp", "add", "crosstalk", bin, "server"], bin);
@@ -7792,8 +7899,8 @@ async function installKimi() {
   const bin = shim2(rootFrom2(import.meta.url));
   const dir = path17.join(os8.homedir(), ".kimi-code");
   const file = path17.join(dir, "config.toml");
-  fs15.mkdirSync(dir, { recursive: true });
-  const existing = fs15.existsSync(file) ? fs15.readFileSync(file, "utf8") : "";
+  fs16.mkdirSync(dir, { recursive: true });
+  const existing = fs16.existsSync(file) ? fs16.readFileSync(file, "utf8") : "";
   const kept = existing.replace(/\n*# crosstalk\n(?:\[\[hooks\]\][^[]*)+/g, `
 `);
   const blocks = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"].map((event) => `[[hooks]]
@@ -7802,7 +7909,7 @@ command = "${bin} hook --client kimi"
 timeout = 20
 `).join(`
 `);
-  fs15.writeFileSync(file, `${kept.trimEnd()}
+  fs16.writeFileSync(file, `${kept.trimEnd()}
 
 # crosstalk
 ${blocks}`);
@@ -7813,9 +7920,9 @@ async function installHermes() {
   const bin = shim2(rootFrom2(import.meta.url));
   const dir = path17.join(os8.homedir(), ".hermes");
   const file = path17.join(dir, "config.yaml");
-  if (!fs15.existsSync(file))
+  if (!fs16.existsSync(file))
     die(`no ${file}. Run hermes once first, then run this again.`);
-  const existing = fs15.readFileSync(file, "utf8");
+  const existing = fs16.readFileSync(file, "utf8");
   if (existing.includes("crosstalk hook"))
     die(`${file} already has crosstalk hooks. Remove them by hand to reinstall.`);
   if (/^hooks:/m.test(existing))
@@ -7828,7 +7935,7 @@ hooks:
   pre_llm_call:
     - command: "${bin} hook pre_llm_call"
       timeout: 20`);
-  fs15.writeFileSync(file, `${existing.trimEnd()}
+  fs16.writeFileSync(file, `${existing.trimEnd()}
 
 # crosstalk
 hooks:
@@ -7849,15 +7956,15 @@ terminal and answer yes twice, or run it with --accept-hooks. Check with:
 async function installGoose() {
   const bin = shim2(rootFrom2(import.meta.url));
   const dir = path17.join(os8.homedir(), ".agents", "plugins", "crosstalk");
-  fs15.mkdirSync(path17.join(dir, "hooks"), { recursive: true });
-  fs15.writeFileSync(path17.join(dir, "plugin.json"), JSON.stringify({
+  fs16.mkdirSync(path17.join(dir, "hooks"), { recursive: true });
+  fs16.writeFileSync(path17.join(dir, "plugin.json"), JSON.stringify({
     name: "crosstalk",
     version: "0.1.0",
     description: "Messages from other people's coding agents, delivered into this session."
   }, null, 2) + `
 `);
   const group = (command) => ({ hooks: [{ type: "command", command }] });
-  fs15.writeFileSync(path17.join(dir, "hooks", "hooks.json"), JSON.stringify({ hooks: { SessionStart: [group(`"${bin}" hook`)], Stop: [group(`"${bin}" hook`)] } }, null, 2) + `
+  fs16.writeFileSync(path17.join(dir, "hooks", "hooks.json"), JSON.stringify({ hooks: { SessionStart: [group(`"${bin}" hook`)], Stop: [group(`"${bin}" hook`)] } }, null, 2) + `
 `);
   console.log(`hooks    ${path17.join(dir, "hooks", "hooks.json")}`);
   const gooseConf = path17.join(os8.homedir(), ".config", "goose", "config.yaml");
@@ -7874,12 +7981,12 @@ async function installGoose() {
 `);
   let conf = "";
   try {
-    conf = fs15.readFileSync(gooseConf, "utf8");
+    conf = fs16.readFileSync(gooseConf, "utf8");
   } catch {}
   if (conf.includes(`cmd: ${bin}`)) {
     console.log(`tools    already in ${gooseConf}`);
   } else if (/^extensions:\n/m.test(conf)) {
-    fs15.writeFileSync(gooseConf, conf.replace(/^extensions:\n/m, `extensions:
+    fs16.writeFileSync(gooseConf, conf.replace(/^extensions:\n/m, `extensions:
 ${entry}
 `));
     console.log(`tools    ${gooseConf}`);
@@ -7889,8 +7996,8 @@ ${entry}
 ${entry}
 `);
   } else {
-    fs15.mkdirSync(path17.dirname(gooseConf), { recursive: true });
-    fs15.writeFileSync(gooseConf, `${conf.trimEnd()}
+    fs16.mkdirSync(path17.dirname(gooseConf), { recursive: true });
+    fs16.writeFileSync(gooseConf, `${conf.trimEnd()}
 
 extensions:
 ${entry}
@@ -7907,11 +8014,11 @@ async function installCursor() {
   const bin = shim2(rootFrom2(import.meta.url));
   const dir = path17.join(os8.homedir(), ".cursor");
   const file = path17.join(dir, "hooks.json");
-  fs15.mkdirSync(dir, { recursive: true });
+  fs16.mkdirSync(dir, { recursive: true });
   let cfg = { version: 1, hooks: {} };
-  if (fs15.existsSync(file)) {
+  if (fs16.existsSync(file)) {
     try {
-      cfg = JSON.parse(fs15.readFileSync(file, "utf8"));
+      cfg = JSON.parse(fs16.readFileSync(file, "utf8"));
     } catch {
       die(`${file} is not valid JSON. Fix or move it, then run this again.`);
     }
@@ -7922,7 +8029,7 @@ async function installCursor() {
     const others = (cfg.hooks[step] ?? []).filter((h) => !String(h?.command ?? "").includes("crosstalk"));
     cfg.hooks[step] = [...others, { type: "command", command: `"${bin}" hook` }];
   }
-  fs15.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
+  fs16.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
 `);
   console.log(`hooks    ${file}`);
   console.log(`tools    add the MCP server in ${path17.join(dir, "mcp.json")}`);
@@ -7940,17 +8047,17 @@ var CODEX_EVENT_KEY = {
 function codexHooksNeedingTrust() {
   const file = path17.join(os8.homedir(), ".codex", "hooks.json");
   const conf = path17.join(os8.homedir(), ".codex", "config.toml");
-  if (!fs15.existsSync(file))
+  if (!fs16.existsSync(file))
     return [];
   let hooks;
   try {
-    hooks = JSON.parse(fs15.readFileSync(file, "utf8")).hooks ?? {};
+    hooks = JSON.parse(fs16.readFileSync(file, "utf8")).hooks ?? {};
   } catch {
     return [];
   }
   let toml = "";
   try {
-    toml = fs15.readFileSync(conf, "utf8");
+    toml = fs16.readFileSync(conf, "utf8");
   } catch {}
   const untrusted = [];
   for (const [event, groups] of Object.entries(hooks)) {
@@ -7973,11 +8080,11 @@ async function installCodex() {
   const bin = shim2(rootFrom2(import.meta.url));
   const dir = path17.join(os8.homedir(), ".codex");
   const file = path17.join(dir, "hooks.json");
-  fs15.mkdirSync(dir, { recursive: true });
+  fs16.mkdirSync(dir, { recursive: true });
   let cfg = {};
-  if (fs15.existsSync(file)) {
+  if (fs16.existsSync(file)) {
     try {
-      cfg = JSON.parse(fs15.readFileSync(file, "utf8"));
+      cfg = JSON.parse(fs16.readFileSync(file, "utf8"));
     } catch {
       die(`${file} is not valid JSON. Fix or move it, then run this again.`);
     }
@@ -7987,7 +8094,7 @@ async function installCodex() {
     const others = (cfg.hooks[event] ?? []).filter((g) => !JSON.stringify(g).includes("crosstalk"));
     cfg.hooks[event] = [...others, { hooks: [{ type: "command", command: `"${bin}" hook` }] }];
   }
-  fs15.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
+  fs16.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
 `);
   console.log(`hooks    ${file}`);
   console.log(`
@@ -8011,20 +8118,20 @@ async function installPath() {
   const bin = shim2(rootFrom2(import.meta.url));
   const dir = path17.join(os8.homedir(), ".local", "bin");
   const link = path17.join(dir, "crosstalk");
-  fs15.mkdirSync(dir, { recursive: true });
+  fs16.mkdirSync(dir, { recursive: true });
   let existing = "";
   try {
-    existing = fs15.readlinkSync(link);
+    existing = fs16.readlinkSync(link);
   } catch {
-    if (fs15.existsSync(link))
+    if (fs16.existsSync(link))
       die(`${link} already exists and is not a link. Move it, then run this again.`);
   }
   if (existing && existing !== bin)
     console.log(`replacing a link to ${existing}`);
   try {
-    fs15.unlinkSync(link);
+    fs16.unlinkSync(link);
   } catch {}
-  fs15.symlinkSync(bin, link);
+  fs16.symlinkSync(bin, link);
   console.log(`linked   ${link} -> ${bin}`);
   const onPath = (process.env.PATH ?? "").split(":").includes(dir);
   console.log(onPath ? `
@@ -8039,9 +8146,9 @@ async function restoreCmd() {
     await finishWhenPermitted();
     return;
   }
-  if (positional2[0] === "no")
+  if (positional3[0] === "no")
     return console.log(forget(self).text);
-  if (has("--yes") || has("-y") || positional2[0] === "yes") {
+  if (has("--yes") || has("-y") || positional3[0] === "yes") {
     const out = restore({ self, tabs: !has("--windows"), userAction: true, root: ROOT_DIR });
     console.log(out.text);
     if (!out.ok)
@@ -8059,7 +8166,7 @@ async function gatherCmd() {
   const self = process.env.CLAUDE_CODE_SESSION_ID || undefined;
   if (has("--finish"))
     return void console.log(await finish2());
-  if (has("--yes") || has("-y") || positional2[0] === "yes")
+  if (has("--yes") || has("-y") || positional3[0] === "yes")
     return void console.log(start({ self, root: ROOT_DIR }).text);
   const d = describe2(self);
   console.log(d.text);
@@ -8068,7 +8175,7 @@ async function gatherCmd() {
   crosstalk gather --yes   bring them in`);
 }
 async function install() {
-  const who = (positional2[0] ?? "").toLowerCase();
+  const who = (positional3[0] ?? "").toLowerCase();
   if (who === "agy" || who === "antigravity")
     return installAgy();
   if (who === "qwen")
@@ -8099,7 +8206,7 @@ async function team() {
   identityOrCreate();
   if (!await ensureDaemon(ROOT_DIR))
     die("the daemon would not start. See ~/.claude/crosstalk/daemon.log");
-  const [verb, who] = positional2;
+  const [verb, who] = positional3;
   if (verb === "trust" || verb === "distrust") {
     if (!who)
       die(`usage: crosstalk team ${verb} <login or question id>`);
@@ -8155,6 +8262,9 @@ var commands = {
   show: () => showCmd(argv),
   cleanup: () => cleanupCmd(argv),
   term: () => termCmd(argv, ROOT_DIR),
+  ship: async () => (await ready(), shipCmd(argv)),
+  review: async () => (await ready(), reviewCmd(argv)),
+  incident: async () => (await ready(), incidentCmd(argv)),
   ui: () => uiCmd(argv, ROOT_DIR)
 };
 await (commands[cmd] ?? (async () => die(`unknown command "${cmd}"`)))();
