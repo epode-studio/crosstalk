@@ -29,7 +29,7 @@ last state asked for always shows.
 | Ghostty, WezTerm, iTerm2 3.6+, Windows Terminal, tmux 3.7+ | a progress indicator (OSC 9;4, sent through the hook's `terminalSequence`): spinning while working, paused while waiting on you |
 | tmux (yours) | a window option, `@crosstalk_state`, on the session's window. Your status line is never changed; add the snippet below to see it |
 | tmux (crosstalk's, for background agents) | in crosstalk's own status line |
-| **Terminal.app** | the tab's background colour, set by AppleScript on the tab whose tty is the session's: a light tint toward blue while working and toward amber while waiting on you. Your profile's own colour comes back when the session is done and when it ends |
+| **Terminal.app** | nothing, by default: Terminal.app's only per-tab signal is the background colour, and crosstalk does not change it unasked. Set `CROSSTALK_TAB_COLOUR=1` (in the `env` of `~/.claude/settings.json`) for a light tint toward blue while working and amber while waiting on you, with your profile's own colour back when the session is done or ends. With it off, any tint an earlier version left is put back when the daemon starts |
 | iTerm2 | the tab colour (OSC 6) and a user variable, `user.crosstalk_state`, for a badge |
 | kitty | `kitten @ set-tab-color` and a user variable (needs `allow_remote_control` and `listen_on`) |
 | WezTerm | a user variable, `crosstalk_state`, for your `format-tab-title` handler (below) |

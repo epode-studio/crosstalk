@@ -467,7 +467,7 @@ redesign?" finds it with its date.
 
 **You can see it.** "Show me auth" opens the thread beside the chat: its status
 and people, what is waiting, then Notes, Features, Running and History. The
-status line reads `◢ auth · auth.localhost:1355 · 1 waiting`. None of it reaches
+status line reads `◢ auth · auth.localhost:1355 · 1 for you`. None of it reaches
 the model.
 
 **Sealed unless public, and nothing bloats.** A thread is committed to its own

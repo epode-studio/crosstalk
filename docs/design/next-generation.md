@@ -385,7 +385,7 @@ few turns) are chips with a label and size, fetched only when opened.
 ```
 
 **The status line** is one glance, in plain text, since the status line takes
-no colour or links: `auth · tokens · marie, jo · 2 waiting`. Colour and links
+no colour or links: `auth · tokens · marie, jo · 2 for you`. Colour and links
 live in the band and the pane.
 
 **The pane** shows a thread: status, people, what is waiting, the latest

@@ -9952,6 +9952,7 @@ function applyOnce(id, state, f, sys) {
   if (!t)
     return { ok: false };
   let ok = true;
+  let restored = false;
   let appleOriginal = f?.appleOriginal;
   for (const a of actionsFor(t, state, sys.platform)) {
     if (a.kind === "run") {
@@ -9961,6 +9962,16 @@ function applyOnce(id, state, f, sys) {
     } else if (a.kind === "tty")
       ok = sys.writeTty(a.path, a.data) && ok;
     else {
+      if (!appleTintOn()) {
+        const orig = appleOriginal ? parseRgb16(appleOriginal) : null;
+        if (!orig)
+          continue;
+        const back = sys.run({ cmd: "osascript", args: ["-"], input: appleSetBgScript(a.tty, orig) }).ok;
+        if (back)
+          restored = true;
+        ok = back && ok;
+        continue;
+      }
       if (!appleOriginal && (state === "working" || state === "waiting" || state === "broken")) {
         const r = sys.run({ cmd: "osascript", args: ["-"], input: appleReadBgScript(a.tty) });
         if (r.ok && parseRgb16(r.out))
@@ -9972,7 +9983,40 @@ function applyOnce(id, state, f, sys) {
       ok = sys.run({ cmd: "osascript", args: ["-"], input: appleSetBgScript(a.tty, appleTint(orig, state)) }).ok && ok;
     }
   }
+  if (restored)
+    return { ok, restored };
   return { ok, appleOriginal };
+}
+var appleTintOn = (env = process.env) => /^(1|true|yes|on)$/i.test(env.CROSSTALK_TAB_COLOUR ?? env.CROSSTALK_TAB_COLOR ?? "");
+function resetColours(sys = liveSys4()) {
+  const reset = [];
+  const failed = [];
+  let names = [];
+  try {
+    names = fs26.readdirSync(dir5()).filter((n) => n.endsWith(".json"));
+  } catch {}
+  for (const n of names) {
+    let f = null;
+    try {
+      f = JSON.parse(fs26.readFileSync(path31.join(dir5(), n), "utf8"));
+    } catch {}
+    const orig = f?.appleOriginal ? parseRgb16(f.appleOriginal) : null;
+    const t = f ? sys.term(f.sessionId) : null;
+    if (!f || !orig || !t?.tty || kindOf(t) !== "apple" || sys.platform !== "darwin")
+      continue;
+    if (!sys.run({ cmd: "osascript", args: ["-"], input: appleSetBgScript(t.tty, orig) }).ok) {
+      failed.push(f.sessionId);
+      continue;
+    }
+    reset.push(f.sessionId);
+    withFile(f.sessionId, (cur) => {
+      if (!cur)
+        return;
+      const { appleOriginal: _, ...rest } = cur;
+      writeTab(rest);
+    });
+  }
+  return { reset, failed };
 }
 async function applyLoop(id, sys = liveSys4(), sleep = (ms) => new Promise((r) => setTimeout(r, ms))) {
   const lock = `${fileOf5(id)}.applier`;
@@ -10020,7 +10064,10 @@ async function applyLoop(id, sys = liveSys4(), sleep = (ms) => new Promise((r) =
             } catch {}
             return;
           }
-          writeTab({ ...cur, applied: state, appliedAt: Date.now(), ...r.appleOriginal ? { appleOriginal: r.appleOriginal } : {} });
+          const next = { ...cur, applied: state, appliedAt: Date.now(), ...r.appleOriginal ? { appleOriginal: r.appleOriginal } : {} };
+          if (r.restored)
+            delete next.appleOriginal;
+          writeTab(next);
         });
       }
     } finally {
@@ -12617,6 +12664,8 @@ async function termCmd(argv, root) {
   const sub = argv[1];
   if (sub === "tmux-snippet")
     return void console.log(TMUX_SNIPPET);
+  if (sub === "reset-colours" || sub === "reset-colors")
+    return void console.log(JSON.stringify({ ok: true, ...resetColours() }));
   const session = flag2(argv, "--session") ?? process.env.CLAUDE_CODE_SESSION_ID ?? "";
   if (!session)
     return void console.log(JSON.stringify({ ok: false, error: "--session is needed" }));

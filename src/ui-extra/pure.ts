@@ -9,7 +9,7 @@
 //                 the prompt and taken before they become one
 //   the pane      what a thread pane shows, as plain data: status, people,
 //                 what is waiting, Notes, Features, Running, History
-//   the status line   `◢ auth · auth.localhost:1355 · 1 waiting`
+//   the status line   `◢ auth · auth.localhost:1355 · 1 for you`
 
 export const HAND = "Hand to agent"
 export const REPLY = "Reply"
@@ -229,17 +229,20 @@ export function runningSummary(items: readonly PaneRunning[]): string {
 }
 
 /**
- * The status line: `◢ auth · tokens · auth.localhost:1355 · 1 waiting`. The
+ * The status line: `◢ auth · tokens · auth.localhost:1355 · 1 for you`. The
  * session's threads, else what its cards are about, else its repo; where its
- * one server is (or how many things run); what waits. Nothing at all when
+ * one server is (or how many things run); what waits on the person, only when
+ * something does. Nothing at all when
  * nothing is waiting and nothing runs.
  */
 export function statusLine(o: { threads: readonly string[]; cards?: readonly string[]; repo?: string; running?: readonly PaneRunning[]; where?: string; waiting: number; label?: string; main?: { sessions: number; threads: number; waiting: number } }): string | undefined {
-  if (o.main) return `◢ main · ${o.main.threads} thread${o.main.threads === 1 ? "" : "s"} · ${o.main.sessions} working · ${Math.max(o.main.waiting, o.waiting)} waiting`
+  // What waits on the person, said only when something does: "0 waiting" read as noise.
+  const forYou = (n: number) => (n > 0 ? `${n} for you` : "")
+  if (o.main) return ["◢ main", `${o.main.threads} thread${o.main.threads === 1 ? "" : "s"}`, `${o.main.sessions} working`, forYou(Math.max(o.main.waiting, o.waiting))].filter(Boolean).join(" · ")
   const named = o.threads.length ? o.threads.slice(0, 3).join(" · ") : o.cards?.length ? o.cards.slice(0, 3).join(", ") : o.repo ?? ""
   const where = o.where || runningSummary(o.running ?? [])
   if (!o.waiting && !o.label && !where) return undefined
-  return `◢ ${[named || "crosstalk", where].filter(Boolean).join(" · ")} · ${o.waiting} waiting`
+  return `◢ ${[named || "crosstalk", where, forYou(o.waiting)].filter(Boolean).join(" · ")}`
 }
 
 /** `file:///…`, its path escaped, for an OSC 8 link to a screenshot. Only an absolute path of printable characters. */

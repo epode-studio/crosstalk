@@ -2,9 +2,9 @@
 // @bun
 
 // src/daemon.ts
-import fs78 from "fs";
+import fs79 from "fs";
 import net6 from "net";
-import path90 from "path";
+import path91 from "path";
 import crypto32 from "crypto";
 
 // src/config.ts
@@ -19848,6 +19848,7 @@ function applyOnce(id, state, f, sys) {
   if (!t)
     return { ok: false };
   let ok = true;
+  let restored = false;
   let appleOriginal = f?.appleOriginal;
   for (const a of actionsFor(t, state, sys.platform)) {
     if (a.kind === "run") {
@@ -19857,6 +19858,16 @@ function applyOnce(id, state, f, sys) {
     } else if (a.kind === "tty")
       ok = sys.writeTty(a.path, a.data) && ok;
     else {
+      if (!appleTintOn()) {
+        const orig = appleOriginal ? parseRgb16(appleOriginal) : null;
+        if (!orig)
+          continue;
+        const back = sys.run({ cmd: "osascript", args: ["-"], input: appleSetBgScript(a.tty, orig) }).ok;
+        if (back)
+          restored = true;
+        ok = back && ok;
+        continue;
+      }
       if (!appleOriginal && (state === "working" || state === "waiting" || state === "broken")) {
         const r = sys.run({ cmd: "osascript", args: ["-"], input: appleReadBgScript(a.tty) });
         if (r.ok && parseRgb16(r.out))
@@ -19868,8 +19879,11 @@ function applyOnce(id, state, f, sys) {
       ok = sys.run({ cmd: "osascript", args: ["-"], input: appleSetBgScript(a.tty, appleTint(orig, state)) }).ok && ok;
     }
   }
+  if (restored)
+    return { ok, restored };
   return { ok, appleOriginal };
 }
+var appleTintOn = (env = process.env) => /^(1|true|yes|on)$/i.test(env.CROSSTALK_TAB_COLOUR ?? env.CROSSTALK_TAB_COLOR ?? "");
 async function applyLoop(id, sys = liveSys3(), sleep = (ms) => new Promise((r) => setTimeout(r, ms))) {
   const lock = `${fileOf5(id)}.applier`;
   const take = () => {
@@ -19916,7 +19930,10 @@ async function applyLoop(id, sys = liveSys3(), sleep = (ms) => new Promise((r) =
             } catch {}
             return;
           }
-          writeTab({ ...cur, applied: state, appliedAt: Date.now(), ...r.appleOriginal ? { appleOriginal: r.appleOriginal } : {} });
+          const next = { ...cur, applied: state, appliedAt: Date.now(), ...r.appleOriginal ? { appleOriginal: r.appleOriginal } : {} };
+          if (r.restored)
+            delete next.appleOriginal;
+          writeTab(next);
         });
       }
     } finally {
@@ -20302,6 +20319,130 @@ function startHistory(o) {
   return { stop: () => clearInterval(timer) };
 }
 
+// src/terminal/status.ts
+import fs78 from "node:fs";
+import path90 from "node:path";
+import { spawn as spawn14, spawnSync as spawnSync25 } from "node:child_process";
+var appleTab2 = (tty, body) => [
+  `if application "Terminal" is running then`,
+  `	tell application "Terminal"`,
+  `		repeat with w in windows`,
+  `			repeat with t in tabs of w`,
+  `				if (tty of t) is ${asq(tty)} then`,
+  ...body.map((l) => `					${l}`),
+  `				end if`,
+  `			end repeat`,
+  `		end repeat`,
+  `	end tell`,
+  `end if`,
+  `return ""`
+].join(`
+`);
+var appleSetBgScript2 = (tty, c) => appleTab2(tty, [`set background color of t to {${c.map((n) => Math.round(n)).join(", ")}}`, `return "done"`]);
+function parseRgb162(s) {
+  const m = /^(\d+),(\d+),(\d+)$/.exec(s.trim());
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+var dir9 = () => path90.join(P2.root, "tabs");
+var safe5 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
+var fileOf6 = (id) => path90.join(dir9(), `${safe5(id)}.json`);
+function readTab2(id) {
+  try {
+    return JSON.parse(fs78.readFileSync(fileOf6(id), "utf8"));
+  } catch {
+    return null;
+  }
+}
+function writeTab2(f) {
+  fs78.mkdirSync(dir9(), { recursive: true, mode: 448 });
+  const tmp = `${fileOf6(f.sessionId)}.${process.pid}.tmp`;
+  fs78.writeFileSync(tmp, JSON.stringify(f), { mode: 384 });
+  fs78.renameSync(tmp, fileOf6(f.sessionId));
+}
+var sleepSync9 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function withFile2(id, fn) {
+  fs78.mkdirSync(dir9(), { recursive: true, mode: 448 });
+  const lock = `${fileOf6(id)}.lock`;
+  let held = false;
+  for (let i = 0;i < 50 && !held; i++) {
+    try {
+      fs78.mkdirSync(lock);
+      held = true;
+    } catch {
+      try {
+        if (Date.now() - fs78.statSync(lock).mtimeMs > 5000)
+          fs78.rmdirSync(lock);
+      } catch {}
+      sleepSync9(5);
+    }
+  }
+  try {
+    return fn(readTab2(id));
+  } finally {
+    if (held)
+      try {
+        fs78.rmdirSync(lock);
+      } catch {}
+  }
+}
+var liveSys4 = () => ({
+  platform: process.platform,
+  run: (s) => {
+    const r = spawnSync25(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 5000 });
+    return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}`.trim() };
+  },
+  writeTty: (p, data) => {
+    let fd = -1;
+    try {
+      fd = fs78.openSync(p, fs78.constants.O_WRONLY | fs78.constants.O_NOCTTY | fs78.constants.O_NONBLOCK);
+      return fs78.writeSync(fd, data) === Buffer.byteLength(data);
+    } catch {
+      return false;
+    } finally {
+      if (fd >= 0)
+        fs78.closeSync(fd);
+    }
+  },
+  term: (id) => readOne(id)?.terminal ?? null
+});
+var appleTintOn2 = (env = process.env) => /^(1|true|yes|on)$/i.test(env.CROSSTALK_TAB_COLOUR ?? env.CROSSTALK_TAB_COLOR ?? "");
+function resetColours(sys = liveSys4()) {
+  const reset = [];
+  const failed = [];
+  let names = [];
+  try {
+    names = fs78.readdirSync(dir9()).filter((n) => n.endsWith(".json"));
+  } catch {}
+  for (const n of names) {
+    let f = null;
+    try {
+      f = JSON.parse(fs78.readFileSync(path90.join(dir9(), n), "utf8"));
+    } catch {}
+    const orig = f?.appleOriginal ? parseRgb162(f.appleOriginal) : null;
+    const t = f ? sys.term(f.sessionId) : null;
+    if (!f || !orig || !t?.tty || kindOf(t) !== "apple" || sys.platform !== "darwin")
+      continue;
+    if (!sys.run({ cmd: "osascript", args: ["-"], input: appleSetBgScript2(t.tty, orig) }).ok) {
+      failed.push(f.sessionId);
+      continue;
+    }
+    reset.push(f.sessionId);
+    withFile2(f.sessionId, (cur) => {
+      if (!cur)
+        return;
+      const { appleOriginal: _, ...rest } = cur;
+      writeTab2(rest);
+    });
+  }
+  return { reset, failed };
+}
+var TMUX_SNIPPET2 = [
+  `# crosstalk: show each agent's state in the window list`,
+  `set -ga window-status-format ' #{?#{==:#{@crosstalk_state},broken},#[fg=colour160]\u25cf broken#[default],#{?#{==:#{@crosstalk_state},waiting},#[fg=colour208]\u25cf waiting#[default],#{?#{==:#{@crosstalk_state},working},#[fg=colour33]\u25cf working#[default],#{?#{==:#{@crosstalk_state},done},#[fg=colour34]\u2713#[default],}}}}'`,
+  `set -ga window-status-current-format ' #{?#{==:#{@crosstalk_state},broken},#[fg=colour160]\u25cf broken#[default],#{?#{==:#{@crosstalk_state},waiting},#[fg=colour208]\u25cf waiting#[default],#{?#{==:#{@crosstalk_state},working},#[fg=colour33]\u25cf working#[default],#{?#{==:#{@crosstalk_state},done},#[fg=colour34]\u2713#[default],}}}}'`
+].join(`
+`);
+
 // src/daemon.ts
 var identity = loadIdentity();
 if (!identity) {
@@ -20345,12 +20486,12 @@ var threads2 = new ThreadService({
   peers: () => loadPeers(),
   send: (label, env) => sendEnvelope(label, env),
   log,
-  file: path90.join(P.root, "threads.json"),
+  file: path91.join(P.root, "threads.json"),
   settleMs: Number(process.env.CROSSTALK_THREAD_SETTLE_MS ?? 3000),
   network: process.env.CROSSTALK_THREADS_NO_PUSH !== "1",
   fadeDays: Number(process.env.CROSSTALK_THREAD_FADE_DAYS ?? 14),
   connected: (repo) => {
-    const slug = repo.startsWith("github.com/") ? repo.slice("github.com/".length) : `local/${path90.basename(repo)}`;
+    const slug = repo.startsWith("github.com/") ? repo.slice("github.com/".length) : `local/${path91.basename(repo)}`;
     return consent2(slug) === "yes";
   }
 });
@@ -22023,8 +22164,8 @@ async function handle(req, sock) {
       if (!fp.repo)
         return { ok: true, shared: false };
       const root = fp.root ?? threads2.rootFor(fp.repo);
-      const file = root ? path90.relative(root, abs).split(path90.sep).join("/") : "";
-      if (!file || file.startsWith("..") || path90.isAbsolute(file))
+      const file = root ? path91.relative(root, abs).split(path91.sep).join("/") : "";
+      if (!file || file.startsWith("..") || path91.isAbsolute(file))
         return { ok: true, shared: true };
       const key = `${self.sessionId}|${fp.repo}|${file}`;
       const c = editShared.get(key);
@@ -22499,7 +22640,15 @@ shares = createShares({
   note: (id, text) => coord.note({ id, text })
 });
 setInterval(() => attention?.tick(), Math.max(200, Number(process.env.CROSSTALK_ATTENTION_TICK_MS ?? 15000)));
-fs78.mkdirSync(path90.dirname(P.daemonSock), { recursive: true, mode: 448 });
+if (process.platform === "darwin" && !appleTintOn2())
+  setTimeout(() => {
+    try {
+      const r = resetColours();
+      if (r.reset.length)
+        log(`terminal: put back ${r.reset.length} tab background(s)`);
+    } catch {}
+  }, 2000).unref();
+fs79.mkdirSync(path91.dirname(P.daemonSock), { recursive: true, mode: 448 });
 var control = net6.createServer((sock) => {
   let rest = "";
   sock.on("data", async (buf) => {
@@ -22525,7 +22674,7 @@ var control = net6.createServer((sock) => {
   sock.on("error", () => {});
 });
 var alreadyRunning = () => new Promise((resolve) => {
-  if (!fs78.existsSync(P.daemonSock))
+  if (!fs79.existsSync(P.daemonSock))
     return resolve(false);
   const probe = net6.createConnection(P.daemonSock);
   const done = (answer) => {
@@ -22539,17 +22688,17 @@ var alreadyRunning = () => new Promise((resolve) => {
 if (await alreadyRunning()) {
   let who = "";
   try {
-    who = ` as pid ${Number(fs78.readFileSync(P.daemonLock, "utf8"))}`;
+    who = ` as pid ${Number(fs79.readFileSync(P.daemonLock, "utf8"))}`;
   } catch {}
   console.error(`crosstalk: a daemon is already running${who}`);
   process.exit(0);
 }
 try {
-  fs78.unlinkSync(P.daemonSock);
+  fs79.unlinkSync(P.daemonSock);
 } catch {}
 control.listen(P.daemonSock, () => {
-  fs78.chmodSync(P.daemonSock, 384);
-  fs78.writeFileSync(P.daemonLock, String(process.pid), { mode: 384 });
+  fs79.chmodSync(P.daemonSock, 384);
+  fs79.writeFileSync(P.daemonLock, String(process.pid), { mode: 384 });
   log(`daemon up as "${identity.label}" on ${P.daemonSock}`);
   connect();
   threads2.retain([...sessions.keys()]);
@@ -22588,14 +22737,14 @@ setInterval(() => {
 var bye = () => {
   let mine = false;
   try {
-    mine = Number(fs78.readFileSync(P.daemonLock, "utf8")) === process.pid;
+    mine = Number(fs79.readFileSync(P.daemonLock, "utf8")) === process.pid;
   } catch {}
   if (mine) {
     try {
-      fs78.unlinkSync(P.daemonSock);
+      fs79.unlinkSync(P.daemonSock);
     } catch {}
     try {
-      fs78.unlinkSync(P.daemonLock);
+      fs79.unlinkSync(P.daemonLock);
     } catch {}
   }
   process.exit(0);

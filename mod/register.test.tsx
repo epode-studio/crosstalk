@@ -279,5 +279,5 @@ test('a main session\'s totals reach the status line', async ($, on) => {
   const { clock, seen } = engine2(on, { card: CARD, main: true, ask: () => null })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.advance(1000)
-  expect(seen.status.some(s => s.includes('main · 2 threads · 3 working · 5 waiting'))).toBe(true)
+  expect(seen.status.some(s => s.includes('main · 2 threads · 3 working · 5 for you'))).toBe(true)
 })

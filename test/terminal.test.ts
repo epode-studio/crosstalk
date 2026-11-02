@@ -173,6 +173,7 @@ describe("the throttle", () => {
     }
     wantNow("working")
     let slept = 0
+    process.env.CROSSTALK_TAB_COLOUR = "1"
     await S.applyLoop("mac", sys, async (ms) => {
       slept += ms
       // ...and, inside the gap, to done: waiting is never drawn.
@@ -188,6 +189,37 @@ describe("the throttle", () => {
     expect(S.readTab("mac")!.appleOriginal).toBe("100,200,300")
     expect(slept).toBeGreaterThan(0)
     expect(slept).toBeLessThanOrEqual(100)
+    delete process.env.CROSSTALK_TAB_COLOUR
+  })
+  test("Terminal.app's background is left alone by default, and a tint from before is put back", async () => {
+    expect(S.appleTintOn({})).toBe(false)
+    expect(S.appleTintOn({ CROSSTALK_TAB_COLOUR: "1" })).toBe(true)
+    const tab = path.join(process.env.CROSSTALK_HOME!, "tabs")
+    fs.mkdirSync(tab, { recursive: true })
+    const ran: string[] = []
+    const sys: import("../src/terminal/status.ts").Sys = {
+      platform: "darwin",
+      run: (s) => (ran.push(s.input ?? ""), { ok: true, out: "done" }),
+      writeTty: () => true,
+      term: () => ({ program: "Apple_Terminal", tty: "/dev/ttys010" }),
+    }
+    // Never tinted: nothing read, nothing set.
+    fs.writeFileSync(path.join(tab, "plain.json"), JSON.stringify({ sessionId: "plain", want: "working", wantAt: Date.now() }))
+    await S.applyLoop("plain", sys, async () => {})
+    expect(ran).toEqual([])
+    // Tinted by an earlier version: its own colour back, and forgotten.
+    fs.writeFileSync(path.join(tab, "old.json"), JSON.stringify({ sessionId: "old", want: "waiting", wantAt: Date.now(), appleOriginal: "1,2,3" }))
+    await S.applyLoop("old", sys, async () => {})
+    expect(ran).toHaveLength(1)
+    expect(ran[0]).toContain("{1, 2, 3}")
+    expect(S.readTab("old")!.appleOriginal).toBeUndefined()
+    // And all at once, without waiting for a state change.
+    ran.length = 0
+    fs.writeFileSync(path.join(tab, "idle.json"), JSON.stringify({ sessionId: "idle", want: "done", wantAt: 0, applied: "done", appliedAt: 0, appleOriginal: "4,5,6" }))
+    expect(S.resetColours(sys).reset).toContain("idle")
+    expect(ran.join()).toContain("{4, 5, 6}")
+    expect(S.readTab("idle")!.appleOriginal).toBeUndefined()
+    expect(S.resetColours(sys).reset).toEqual([])
   })
 })
 

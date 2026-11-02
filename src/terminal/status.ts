@@ -19,9 +19,13 @@
 //                     `set-option -w`. Nothing of the person's status line is
 //                     touched; `crosstalk term tmux-snippet` prints the format
 //                     to add if they want to see it.
-//   Terminal.app      the tab's background colour through AppleScript, on the
-//                     tab whose tty is the session's, tinted from the original,
-//                     which is put back when the session is done or ends
+//   Terminal.app      nothing, by default: Terminal.app has no tab badge, only
+//                     the tab's background colour, and changing that is too
+//                     much to do unasked. With CROSSTALK_TAB_COLOUR=1 the
+//                     background is tinted through AppleScript, on the tab
+//                     whose tty is the session's, from the original, which is
+//                     put back when the session is done or ends. With it off,
+//                     a colour crosstalk changed earlier is put back.
 //   iTerm2            OSC 6 tab colour and a user var, written to the tty
 //   kitty             `kitten @ set-tab-color` and `set-user-vars`
 //   WezTerm           a user var, `crosstalk_state`, written to the tty, for a
@@ -409,10 +413,11 @@ export const liveSys = (): Sys => ({
 })
 
 /** Show one state on one tab. */
-export function applyOnce(id: string, state: TabState, f: TabFile | null, sys: Sys): { ok: boolean; appleOriginal?: string } {
+export function applyOnce(id: string, state: TabState, f: TabFile | null, sys: Sys): { ok: boolean; appleOriginal?: string; restored?: boolean } {
   const t = sys.term(id)
   if (!t) return { ok: false }
   let ok = true
+  let restored = false
   let appleOriginal = f?.appleOriginal
   for (const a of actionsFor(t, state, sys.platform)) {
     if (a.kind === "run") {
@@ -420,6 +425,15 @@ export function applyOnce(id: string, state: TabState, f: TabFile | null, sys: S
       if (!r.ok && !a.optional) ok = false
     } else if (a.kind === "tty") ok = sys.writeTty(a.path, a.data) && ok
     else {
+      if (!appleTintOn()) {
+        // Off: only ever put back a colour crosstalk changed itself.
+        const orig = appleOriginal ? parseRgb16(appleOriginal) : null
+        if (!orig) continue
+        const back = sys.run({ cmd: "osascript", args: ["-"], input: appleSetBgScript(a.tty, orig) }).ok
+        if (back) restored = true
+        ok = back && ok
+        continue
+      }
       if (!appleOriginal && (state === "working" || state === "waiting" || state === "broken")) {
         const r = sys.run({ cmd: "osascript", args: ["-"], input: appleReadBgScript(a.tty) })
         if (r.ok && parseRgb16(r.out)) appleOriginal = r.out.trim()
@@ -429,7 +443,44 @@ export function applyOnce(id: string, state: TabState, f: TabFile | null, sys: S
       ok = sys.run({ cmd: "osascript", args: ["-"], input: appleSetBgScript(a.tty, appleTint(orig, state)) }).ok && ok
     }
   }
+  if (restored) return { ok, restored }
   return { ok, appleOriginal }
+}
+
+/** Terminal.app's background tint is opt-in: CROSSTALK_TAB_COLOUR=1. */
+export const appleTintOn = (env: NodeJS.ProcessEnv = process.env) => /^(1|true|yes|on)$/i.test(env.CROSSTALK_TAB_COLOUR ?? env.CROSSTALK_TAB_COLOR ?? "")
+
+/**
+ * Put back every Terminal.app background crosstalk changed and still knows
+ * the original of, now, without waiting for each session's next state.
+ */
+export function resetColours(sys: Sys = liveSys()): { reset: string[]; failed: string[] } {
+  const reset: string[] = []
+  const failed: string[] = []
+  let names: string[] = []
+  try {
+    names = fs.readdirSync(dir()).filter((n) => n.endsWith(".json"))
+  } catch {}
+  for (const n of names) {
+    let f: TabFile | null = null
+    try {
+      f = JSON.parse(fs.readFileSync(path.join(dir(), n), "utf8"))
+    } catch {}
+    const orig = f?.appleOriginal ? parseRgb16(f.appleOriginal) : null
+    const t = f ? sys.term(f.sessionId) : null
+    if (!f || !orig || !t?.tty || R.kindOf(t) !== "apple" || sys.platform !== "darwin") continue
+    if (!sys.run({ cmd: "osascript", args: ["-"], input: appleSetBgScript(t.tty, orig) }).ok) {
+      failed.push(f.sessionId)
+      continue
+    }
+    reset.push(f.sessionId)
+    withFile(f.sessionId, (cur) => {
+      if (!cur) return
+      const { appleOriginal: _, ...rest } = cur
+      writeTab(rest)
+    })
+  }
+  return { reset, failed }
 }
 
 /**
@@ -478,7 +529,9 @@ export async function applyLoop(id: string, sys: Sys = liveSys(), sleep = (ms: n
             } catch {}
             return
           }
-          writeTab({ ...cur, applied: state, appliedAt: Date.now(), ...(r.appleOriginal ? { appleOriginal: r.appleOriginal } : {}) })
+          const next: TabFile = { ...cur, applied: state, appliedAt: Date.now(), ...(r.appleOriginal ? { appleOriginal: r.appleOriginal } : {}) }
+          if (r.restored) delete next.appleOriginal
+          writeTab(next)
         })
       }
     } finally {

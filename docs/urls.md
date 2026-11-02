@@ -129,7 +129,7 @@ pane, the tool, the status line and the digest all read the same function.
 | `crosstalk_look {action: "running", thread?, kind?, alive?}` | the list, this session's first: "what's the auth URL?", "what's running?". `kind` is server, preview, pr, share, link or screenshot. Framed as data, inside `<crosstalk-running>`: labels can come from teammates and links from command output, so they are never instructions. |
 | `crosstalk_look {action: "open_url", name?, thread?, kind?}` | "open the billing preview": the one whose label, name or URL has every word, opened in the browser (`open` on macOS, `xdg-open` elsewhere; never through a shell). A local server opens by its proxy name. Several matches open none and are listed. |
 | the pane | a **Running** section: Servers, Previews, Pull requests, Shown to people, Links found in output, Screenshots; each clickable (an OSC 8 link in the terminal, only plain http(s)), dead ones marked. The main session's pane lists every thread's. |
-| the tab and status line | the tab: the worktree's name instead of its port while the proxy is up, `auth · auth.localhost:1355` (no port on 80), else `auth · :4100`. The status line: where the thread's one server is, or how many things run (`◢ auth · auth.localhost:1355 · 1 waiting`) |
+| the tab and status line | the tab: the worktree's name instead of its port while the proxy is up, `auth · auth.localhost:1355` (no port on 80), else `auth · :4100`. The status line: where the thread's one server is, or how many things run (`◢ auth · auth.localhost:1355 · 1 for you`) |
 | `crosstalk urls [--thread T] [--kind K] [--json]` | the same list, for scripts |
 
 ## 5. History

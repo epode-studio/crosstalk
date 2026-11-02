@@ -66,6 +66,7 @@ import { createShares } from "./share/daemon.ts"
 import { createStreamGate } from "./streamgate.ts"
 import { createHealth } from "./urls/health/index.ts"
 import { startHistory } from "./urls/history/sync.ts"
+import * as tabStatus from "./terminal/status.ts"
 
 const identity = loadIdentity()
 if (!identity) {
@@ -2734,6 +2735,16 @@ shares = createShares({
   note: (id, text) => coord.note({ id, text }),
 })
 setInterval(() => attention?.tick(), Math.max(200, Number(process.env.CROSSTALK_ATTENTION_TICK_MS ?? 15_000)))
+
+// Terminal.app tints are opt-in (CROSSTALK_TAB_COLOUR=1). With them off, put
+// back any background an earlier version tinted, once, off the start path.
+if (process.platform === "darwin" && !tabStatus.appleTintOn())
+  setTimeout(() => {
+    try {
+      const r = tabStatus.resetColours()
+      if (r.reset.length) log(`terminal: put back ${r.reset.length} tab background(s)`)
+    } catch {}
+  }, 2000).unref()
 
 fs.mkdirSync(path.dirname(P.daemonSock), { recursive: true, mode: 0o700 })
 

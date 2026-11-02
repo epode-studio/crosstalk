@@ -40,7 +40,7 @@
 //   main           the status line of a main session counts every session
 //   own thread     a message about this session's own thread is handed to the
 //                  agent by itself (as data), when the prompt is empty and idle
-//   status line    ◢ <threads or repo> · auth.localhost:1355 · <n> waiting: where
+//   status line    ◢ <threads or repo> · auth.localhost:1355 · <n> for you: where
 //                  the thread's one server is, or how many things run
 //                  (src/threads/running.ts), from the watch; pure.ts statusLine
 //   running        the pane's Running by kind, clickable, alive or dead
@@ -158,7 +158,7 @@ function header(it: Item): string {
 }
 
 async function showStatus($: EngineInterface, open: Item[]) {
-  // `◢ auth · tokens · auth.localhost:1355 · 1 waiting`: the session's own threads first, else what the cards are about.
+  // `◢ auth · tokens · auth.localhost:1355 · 1 for you`: the session's own threads first, else what the cards are about.
   const cards = [...new Set(open.filter(isCard).map(i => i.thread).filter((t): t is string => !!t))]
   const text = statusLine({ threads: threadNames, cards, repo, where, waiting: open.length, label, ...(mainTotals ? { main: mainTotals } : {}) })
   if (text !== lastStatus) $.ui.status(text)

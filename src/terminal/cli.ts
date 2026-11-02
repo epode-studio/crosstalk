@@ -6,6 +6,7 @@
 //   crosstalk term status --session <id> (--state <s> | --event <E> [--type <t>]) [--pending N]
 //   crosstalk term apply --session <id>        the detached applier (not for people)
 //   crosstalk term tmux-snippet                what to add to ~/.tmux.conf
+//   crosstalk term reset-colours               put back Terminal.app backgrounds crosstalk tinted
 
 import * as S from "./status.ts"
 import * as ui from "../uistate.ts"
@@ -36,6 +37,7 @@ const STATES = new Set(["working", "waiting", "done", "off"])
 export async function termCmd(argv: string[], root: string) {
   const sub = argv[1]
   if (sub === "tmux-snippet") return void console.log(S.TMUX_SNIPPET)
+  if (sub === "reset-colours" || sub === "reset-colors") return void console.log(JSON.stringify({ ok: true, ...S.resetColours() }))
   const session = flag(argv, "--session") ?? process.env.CLAUDE_CODE_SESSION_ID ?? ""
   if (!session) return void console.log(JSON.stringify({ ok: false, error: "--session is needed" }))
   if (sub === "apply") return void console.log(await S.applyLoop(session))
