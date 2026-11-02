@@ -26,6 +26,7 @@ import * as restore from "./restore.ts"
 import * as gather from "./gather.ts"
 import * as ui from "./uistate.ts"
 import * as terminalTools from "./terminal/tools.ts"
+import * as shipTools from "./shipping/tools.ts"
 import { rootFrom } from "./paths.ts"
 import { channelVerdict, hostArgv } from "./channels.ts"
 
@@ -392,6 +393,8 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     // The terminal workspace: new agents, background ones, worktree cleanup.
     ...terminalTools.TOOLS,
+    // Shipping: review, evidence, merge, flags, incidents (src/shipping/).
+    ...shipTools.TOOLS,
     {
       name: "crosstalk_thread_read",
       description:
@@ -664,7 +667,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
 
       default:
-        return terminalTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD }) ?? err(`unknown tool ${req.params.name}`)
+        return (
+          (await shipTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
+          terminalTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD }) ??
+          err(`unknown tool ${req.params.name}`)
+        )
     }
   } catch (e) {
     if (e instanceof SliceRefused) return err(e.message)

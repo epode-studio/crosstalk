@@ -112,6 +112,7 @@ function header(it: Item): string {
   if (it.kind === 'team') return 'Team'
   if (it.kind === 'cleanup') return 'Clean up'
   if (it.kind === 'thread') return 'Thread'
+  if (it.kind === 'ship') return 'Ship'
   return cut(it.thread ? `${it.from} · ${it.thread}` : it.from ?? 'crosstalk', 12)
 }
 
@@ -253,6 +254,8 @@ async function raise($: EngineInterface, it: Item) {
       answer = await $.ui.ask(it.question ?? 'Which session should get this message?', { options: it.options ?? ['Hold it'], header: header(it) })
     else if (it.kind === 'team')
       answer = await $.ui.ask(it.question ?? `${it.from}'s key changed. Trust the new key?`, { options: it.options ?? ['Trust it', "Don't trust it"], header: header(it) })
+    else if (it.kind === 'ship')
+      answer = await $.ui.ask(it.question ?? 'crosstalk has a shipping question', { options: it.options ?? ['Not yet'], header: header(it) })
     else if (it.kind === 'thread')
       answer = await $.ui.ask(it.question ?? 'Which thread is this session part of?', { options: it.options ?? ['New thread', 'No thread'], header: header(it) })
     else {
@@ -296,6 +299,11 @@ async function answered($: EngineInterface, it: Item, answer: string) {
   if (it.kind === 'cleanup') {
     const r = await step($, it, 'answer', answer)
     await receipt($, `cleanup-${it.id}`, r.text ?? r.error ?? 'crosstalk: cleanup did not answer')
+    return
+  }
+  if (it.kind === 'ship') {
+    const r = await step($, it, 'answer', answer)
+    await receipt($, `ship-${it.id}`, r.text ?? r.error ?? 'crosstalk: the shipping question did not answer')
     return
   }
   if (it.kind === 'thread') {
@@ -511,6 +519,16 @@ export const register: Register = on => {
                 <Text dimColor>
                   {' '}
                   · {it.count ?? 0} finished worktree{it.count === 1 ? '' : 's'} · or say "clean up the worktrees"{later(it)}
+                </Text>
+              </Text>
+            )
+          if (it.kind === 'ship')
+            return (
+              <Text key={it.id} wrap="truncate">
+                <Text color={THREAD} bold>◢ ship</Text>
+                <Text dimColor>
+                  {' '}
+                  · {it.thread ? `${it.thread}: ` : ''}{cut(oneLine(it.question ?? 'a question for you'), 90)}{later(it)}
                 </Text>
               </Text>
             )

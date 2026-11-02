@@ -46,6 +46,8 @@ import * as repotrust from "./repotrust/index.ts"
 import type { Envelope, Frame, Intent, Kind, SessionPresence, Slice } from "./protocol.ts"
 import { ThreadService } from "./threads/service.ts"
 import * as threadModel from "./threads/model.ts"
+import { createShipping } from "./shipping/daemon.ts"
+import { rootFrom } from "./paths.ts"
 
 const identity = loadIdentity()
 if (!identity) {
@@ -130,6 +132,19 @@ const threads = new ThreadService({
   settleMs: Number(process.env.CROSSTALK_THREAD_SETTLE_MS ?? 3000),
   network: process.env.CROSSTALK_THREADS_NO_PUSH !== "1",
   fadeDays: Number(process.env.CROSSTALK_THREAD_FADE_DAYS ?? 14),
+})
+
+// --- shipping ---------------------------------------------------------------------
+// Review, evidence, merge, flags and incidents, on the threads' features. All of
+// it in src/shipping/. A heads-up for an agent is a held local message, read
+// with crosstalk_read like anything else that arrives.
+
+const shipping = createShipping({
+  threads,
+  root: rootFrom(import.meta.url),
+  log,
+  wake: (sid, text) => void Promise.resolve(handle({ op: "post", to: sid, source: "crosstalk ship", intent: "question", text })).catch(() => {}),
+  fallbackSession: () => mostRecentSession()?.sessionId,
 })
 
 /** Tell the threads where a session is and what it touched. Never lets a thread problem stop a registration. */
@@ -1466,7 +1481,8 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
     // Anything running on this machine can put a line on the screen. It is you
     // talking to yourself, so it needs no identity and no room.
     case "post": {
-      const target = pickSession()
+      // `to` names the session (shipping's heads-ups); otherwise whichever is there.
+      const target = (req.to && sessionById(String(req.to))) || pickSession()
       if (!target)
         return {
           ok: false,
@@ -2074,6 +2090,11 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         const r = repotrust.answerQuestion(id, value === repotrust.TRUST)
         return { ...r, item: ui.snapshot()[id] }
       }
+      if (before.kind === "ship") {
+        if (action !== "answer" || !value) return { ok: false, error: "a shipping question is answered with one of its options" }
+        const r = await shipping.uiAnswer(id, value)
+        return { ...r, error: r.ok ? undefined : r.text }
+      }
       if (before.kind === "thread") {
         if (action !== "answer" || !value) return { ok: false, error: "a thread question is answered with a thread" }
         const claim = ui.withStore((items, now) => ui.act(items, id, "answer", now, value))
@@ -2256,6 +2277,9 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         return r
       }
       if (req.leave) return sid ? threads.leave(sid, String(req.leave)) : { ok: false, error: "no session" }
+      // Lowering a risk and answering a shipping question are for people: src/shipping.
+      const guarded = await shipping.guardThreadEdit(sid, req)
+      if (guarded.stop) return guarded.stop
       return threads.edit(sid, {
         thread: req.thread,
         status: req.status,
@@ -2266,6 +2290,14 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         answer: req.answer,
         rule: req.rule,
       })
+    }
+
+    // crosstalk_feature, _ready, _review, _evidence, _flag, _incident and
+    // `crosstalk ship|review|incident`: src/shipping/daemon.ts.
+    case "ship": {
+      const self = resolveSession(req)
+      const r = await shipping.op(req, self?.sessionId ?? (req.sessionId ? String(req.sessionId) : undefined))
+      return { ...r, ...(r.ok ? {} : { error: r.text }) }
     }
 
     case "thread_read": {
