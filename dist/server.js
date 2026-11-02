@@ -15832,8 +15832,7 @@ var ServerResultSchema2 = union([
 // src/server.ts
 import net3 from "net";
 import fs22 from "fs";
-import os7 from "os";
-import path25 from "path";
+import path26 from "path";
 
 // src/config.ts
 import fs from "node:fs";
@@ -16018,9 +16017,17 @@ function request(req, timeoutMs = 130000) {
   return new Promise((resolve, reject) => {
     const sock = net.createConnection(P2.daemonSock);
     let rest = "";
+    let settled = false;
+    const finish = (f) => {
+      if (settled)
+        return;
+      settled = true;
+      clearTimeout(t);
+      f();
+    };
     const t = setTimeout(() => {
       sock.destroy();
-      reject(new Error("daemon did not answer"));
+      finish(() => reject(new Error("daemon did not answer")));
     }, timeoutMs);
     sock.on("connect", () => sock.write(JSON.stringify(req) + `
 `));
@@ -16030,19 +16037,20 @@ function request(req, timeoutMs = 130000) {
 `);
       if (i === -1)
         return;
-      clearTimeout(t);
       const line = rest.slice(0, i);
       sock.end();
-      try {
-        resolve(JSON.parse(line));
-      } catch (e) {
-        reject(e);
-      }
+      finish(() => {
+        try {
+          resolve(JSON.parse(line));
+        } catch (e) {
+          reject(e);
+        }
+      });
     });
-    sock.on("error", (e) => {
-      clearTimeout(t);
-      reject(e);
-    });
+    sock.on("error", (e) => finish(() => reject(e)));
+    const gone = () => finish(() => reject(new Error("daemon closed the connection without answering")));
+    sock.on("end", gone);
+    sock.on("close", gone);
   });
 }
 function daemonRunning() {
@@ -16057,15 +16065,25 @@ function daemonRunning() {
 async function ensureDaemon(root = rootFrom(import.meta.url)) {
   if (daemonRunning())
     return true;
-  const out = fs3.openSync(P2.log, "a");
-  const child = spawn(shim(root), ["daemon"], {
-    detached: true,
-    stdio: ["ignore", out, out]
-  });
+  let child;
+  try {
+    fs3.mkdirSync(P2.root, { recursive: true, mode: 448 });
+    const out = fs3.openSync(P2.log, "a");
+    child = spawn(shim(root), ["daemon"], {
+      detached: true,
+      stdio: ["ignore", out, out]
+    });
+  } catch {
+    return false;
+  }
+  let failed = false;
+  child.on("error", () => failed = true);
   child.unref();
   for (let i = 0;i < 40; i++) {
     if (daemonRunning())
       return true;
+    if (failed)
+      return false;
     await new Promise((r) => setTimeout(r, 100));
   }
   return false;
@@ -17695,21 +17713,97 @@ function write(f) {
   fs9.renameSync(tmp, file2());
 }
 var sleepSync2 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+class StoreBusy extends Error {
+  constructor(holder) {
+    super(`crosstalk's ui store is locked${holder ? ` by process ${holder}` : ""}; try again`);
+    this.name = "StoreBusy";
+  }
+}
+var lockWaitMs = Number(process.env.CROSSTALK_UI_LOCK_WAIT_MS ?? 2000);
+var LOCK_MAX_AGE_MS = 1e4;
+var LOCK_UNOWNED_MS = 1000;
+var ownerFile = () => path10.join(lockDir(), "pid");
+var alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+};
+function takeLock() {
+  try {
+    fs9.mkdirSync(lockDir());
+  } catch {
+    return false;
+  }
+  try {
+    fs9.writeFileSync(ownerFile(), String(process.pid), { mode: 384 });
+  } catch {}
+  return true;
+}
+function holderOf() {
+  try {
+    const pid = Number(fs9.readFileSync(ownerFile(), "utf8"));
+    return pid > 0 ? pid : undefined;
+  } catch {
+    return;
+  }
+}
+function breakIfStale() {
+  let age;
+  try {
+    age = Date.now() - fs9.statSync(lockDir()).mtimeMs;
+  } catch {
+    return true;
+  }
+  const pid = holderOf();
+  const stale = age > LOCK_MAX_AGE_MS || (pid ? pid !== process.pid && !alive(pid) : age > LOCK_UNOWNED_MS);
+  if (!stale)
+    return false;
+  const aside = `${lockDir()}.stale.${process.pid}.${Date.now()}`;
+  try {
+    fs9.renameSync(lockDir(), aside);
+  } catch {
+    return true;
+  }
+  const moved = (() => {
+    try {
+      return Number(fs9.readFileSync(path10.join(aside, "pid"), "utf8")) || undefined;
+    } catch {
+      return;
+    }
+  })();
+  if (moved !== pid)
+    try {
+      fs9.renameSync(aside, lockDir());
+      return false;
+    } catch {}
+  try {
+    fs9.rmSync(aside, { recursive: true, force: true });
+  } catch {}
+  return true;
+}
+var depth = 0;
 function withStore(fn) {
   fs9.mkdirSync(P2.root, { recursive: true, mode: 448 });
   let held = false;
-  for (let i = 0;i < 200 && !held; i++) {
-    try {
-      fs9.mkdirSync(lockDir());
-      held = true;
-    } catch {
-      try {
-        if (Date.now() - fs9.statSync(lockDir()).mtimeMs > 1e4)
-          fs9.rmdirSync(lockDir());
-      } catch {}
-      sleepSync2(10);
+  if (depth === 0) {
+    const until = Date.now() + lockWaitMs;
+    for (;; ) {
+      if (takeLock()) {
+        held = true;
+        break;
+      }
+      if (breakIfStale())
+        continue;
+      if (Date.now() >= until)
+        throw new StoreBusy(holderOf());
+      sleepSync2(Math.min(10, Math.max(1, until - Date.now())));
     }
   }
+  depth++;
   try {
     const f = read();
     const was = JSON.stringify(f);
@@ -17722,9 +17816,11 @@ function withStore(fn) {
       write(f);
     return out;
   } finally {
-    if (held)
+    depth--;
+    const h = held ? holderOf() : undefined;
+    if (held && (h === undefined || h === process.pid))
       try {
-        fs9.rmdirSync(lockDir());
+        fs9.rmSync(lockDir(), { recursive: true, force: true });
       } catch {}
   }
 }
@@ -18158,9 +18254,17 @@ function request2(req, timeoutMs = 130000) {
   return new Promise((resolve, reject) => {
     const sock = net2.createConnection(P2.daemonSock);
     let rest = "";
+    let settled = false;
+    const finish = (f) => {
+      if (settled)
+        return;
+      settled = true;
+      clearTimeout(t);
+      f();
+    };
     const t = setTimeout(() => {
       sock.destroy();
-      reject(new Error("daemon did not answer"));
+      finish(() => reject(new Error("daemon did not answer")));
     }, timeoutMs);
     sock.on("connect", () => sock.write(JSON.stringify(req) + `
 `));
@@ -18170,19 +18274,20 @@ function request2(req, timeoutMs = 130000) {
 `);
       if (i === -1)
         return;
-      clearTimeout(t);
       const line = rest.slice(0, i);
       sock.end();
-      try {
-        resolve(JSON.parse(line));
-      } catch (e) {
-        reject(e);
-      }
+      finish(() => {
+        try {
+          resolve(JSON.parse(line));
+        } catch (e) {
+          reject(e);
+        }
+      });
     });
-    sock.on("error", (e) => {
-      clearTimeout(t);
-      reject(e);
-    });
+    sock.on("error", (e) => finish(() => reject(e)));
+    const gone = () => finish(() => reject(new Error("daemon closed the connection without answering")));
+    sock.on("end", gone);
+    sock.on("close", gone);
   });
 }
 function daemonRunning2() {
@@ -18197,15 +18302,25 @@ function daemonRunning2() {
 async function ensureDaemon2(root = rootFrom(import.meta.url)) {
   if (daemonRunning2())
     return true;
-  const out = fs10.openSync(P2.log, "a");
-  const child = spawn5(shim(root), ["daemon"], {
-    detached: true,
-    stdio: ["ignore", out, out]
-  });
+  let child;
+  try {
+    fs10.mkdirSync(P2.root, { recursive: true, mode: 448 });
+    const out = fs10.openSync(P2.log, "a");
+    child = spawn5(shim(root), ["daemon"], {
+      detached: true,
+      stdio: ["ignore", out, out]
+    });
+  } catch {
+    return false;
+  }
+  let failed = false;
+  child.on("error", () => failed = true);
   child.unref();
   for (let i = 0;i < 40; i++) {
     if (daemonRunning2())
       return true;
+    if (failed)
+      return false;
     await new Promise((r) => setTimeout(r, 100));
   }
   return false;
@@ -18610,21 +18725,97 @@ function write2(f) {
   fs12.renameSync(tmp, file3());
 }
 var sleepSync3 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+class StoreBusy2 extends Error {
+  constructor(holder) {
+    super(`crosstalk's ui store is locked${holder ? ` by process ${holder}` : ""}; try again`);
+    this.name = "StoreBusy";
+  }
+}
+var lockWaitMs2 = Number(process.env.CROSSTALK_UI_LOCK_WAIT_MS ?? 2000);
+var LOCK_MAX_AGE_MS2 = 1e4;
+var LOCK_UNOWNED_MS2 = 1000;
+var ownerFile2 = () => path12.join(lockDir2(), "pid");
+var alive2 = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+};
+function takeLock2() {
+  try {
+    fs12.mkdirSync(lockDir2());
+  } catch {
+    return false;
+  }
+  try {
+    fs12.writeFileSync(ownerFile2(), String(process.pid), { mode: 384 });
+  } catch {}
+  return true;
+}
+function holderOf2() {
+  try {
+    const pid = Number(fs12.readFileSync(ownerFile2(), "utf8"));
+    return pid > 0 ? pid : undefined;
+  } catch {
+    return;
+  }
+}
+function breakIfStale2() {
+  let age;
+  try {
+    age = Date.now() - fs12.statSync(lockDir2()).mtimeMs;
+  } catch {
+    return true;
+  }
+  const pid = holderOf2();
+  const stale = age > LOCK_MAX_AGE_MS2 || (pid ? pid !== process.pid && !alive2(pid) : age > LOCK_UNOWNED_MS2);
+  if (!stale)
+    return false;
+  const aside = `${lockDir2()}.stale.${process.pid}.${Date.now()}`;
+  try {
+    fs12.renameSync(lockDir2(), aside);
+  } catch {
+    return true;
+  }
+  const moved = (() => {
+    try {
+      return Number(fs12.readFileSync(path12.join(aside, "pid"), "utf8")) || undefined;
+    } catch {
+      return;
+    }
+  })();
+  if (moved !== pid)
+    try {
+      fs12.renameSync(aside, lockDir2());
+      return false;
+    } catch {}
+  try {
+    fs12.rmSync(aside, { recursive: true, force: true });
+  } catch {}
+  return true;
+}
+var depth2 = 0;
 function withStore2(fn) {
   fs12.mkdirSync(P2.root, { recursive: true, mode: 448 });
   let held = false;
-  for (let i = 0;i < 200 && !held; i++) {
-    try {
-      fs12.mkdirSync(lockDir2());
-      held = true;
-    } catch {
-      try {
-        if (Date.now() - fs12.statSync(lockDir2()).mtimeMs > 1e4)
-          fs12.rmdirSync(lockDir2());
-      } catch {}
-      sleepSync3(10);
+  if (depth2 === 0) {
+    const until = Date.now() + lockWaitMs2;
+    for (;; ) {
+      if (takeLock2()) {
+        held = true;
+        break;
+      }
+      if (breakIfStale2())
+        continue;
+      if (Date.now() >= until)
+        throw new StoreBusy2(holderOf2());
+      sleepSync3(Math.min(10, Math.max(1, until - Date.now())));
     }
   }
+  depth2++;
   try {
     const f = read2();
     const was = JSON.stringify(f);
@@ -18637,9 +18828,11 @@ function withStore2(fn) {
       write2(f);
     return out;
   } finally {
-    if (held)
+    depth2--;
+    const h = held ? holderOf2() : undefined;
+    if (held && (h === undefined || h === process.pid))
       try {
-        fs12.rmdirSync(lockDir2());
+        fs12.rmSync(lockDir2(), { recursive: true, force: true });
       } catch {}
   }
 }
@@ -20298,9 +20491,16 @@ import { fileURLToPath as fileURLToPath2 } from "node:url";
 var dirOf2 = (metaUrl) => path23.dirname(fileURLToPath2(metaUrl));
 var rootFrom2 = (metaUrl) => path23.join(dirOf2(metaUrl), "..");
 
+// src/registry.ts
+import os7 from "node:os";
+import path24 from "node:path";
+var claudeConfigDir = (env = process.env) => env.CLAUDE_CONFIG_DIR || path24.join(os7.homedir(), ".claude");
+var sessionsDir = (env = process.env) => path24.join(claudeConfigDir(env), "sessions");
+var SESSIONS = sessionsDir();
+
 // src/channels.ts
 import fs21 from "node:fs";
-import path24 from "node:path";
+import path25 from "node:path";
 import { execFileSync as execFileSync5 } from "node:child_process";
 var SHELLS = new Set(["sh", "bash", "dash", "zsh", "env", "fish"]);
 function argvOf(pid) {
@@ -20341,7 +20541,7 @@ function hostArgv(registryPid) {
     const a = argvOf(pid);
     if (!a)
       return null;
-    if (!SHELLS.has(path24.basename(a[0] ?? "")))
+    if (!SHELLS.has(path25.basename(a[0] ?? "")))
       return a;
     pid = parentOf(pid);
   }
@@ -20987,11 +21187,11 @@ mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
 });
 function selfRegistration() {
   try {
-    const dir = path25.join(os7.homedir(), ".claude", "sessions");
+    const dir = sessionsDir();
     for (const f of fs22.readdirSync(dir)) {
       if (!f.endsWith(".json"))
         continue;
-      const e = JSON.parse(fs22.readFileSync(path25.join(dir, f), "utf8"));
+      const e = JSON.parse(fs22.readFileSync(path26.join(dir, f), "utf8"));
       if (e.sessionId !== SESSION_ID)
         continue;
       return {

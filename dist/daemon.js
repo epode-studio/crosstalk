@@ -197,11 +197,14 @@ class Channel {
 import fs2 from "node:fs";
 import os2 from "node:os";
 import path2 from "node:path";
-var SESSIONS = path2.join(os2.homedir(), ".claude", "sessions");
+var claudeConfigDir = (env = process.env) => env.CLAUDE_CONFIG_DIR || path2.join(os2.homedir(), ".claude");
+var sessionsDir = (env = process.env) => path2.join(claudeConfigDir(env), "sessions");
+var SESSIONS = sessionsDir();
 function listLocalSessions() {
+  const dir = sessionsDir();
   let files;
   try {
-    files = fs2.readdirSync(SESSIONS).filter((f) => f.endsWith(".json"));
+    files = fs2.readdirSync(dir).filter((f) => f.endsWith(".json"));
   } catch {
     return [];
   }
@@ -216,7 +219,7 @@ function listLocalSessions() {
       continue;
     }
     try {
-      const e = JSON.parse(fs2.readFileSync(path2.join(SESSIONS, f), "utf8"));
+      const e = JSON.parse(fs2.readFileSync(path2.join(dir, f), "utf8"));
       if (!e.messagingSocketPath)
         continue;
       if (!fs2.existsSync(e.messagingSocketPath))
@@ -619,21 +622,98 @@ function write(f) {
   fs5.renameSync(tmp, file2());
 }
 var sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+class StoreBusy extends Error {
+  constructor(holder) {
+    super(`crosstalk's ui store is locked${holder ? ` by process ${holder}` : ""}; try again`);
+    this.name = "StoreBusy";
+  }
+}
+var lockWaitMs = Number(process.env.CROSSTALK_UI_LOCK_WAIT_MS ?? 2000);
+var setLockWait = (ms) => void (lockWaitMs = Math.max(0, ms));
+var LOCK_MAX_AGE_MS = 1e4;
+var LOCK_UNOWNED_MS = 1000;
+var ownerFile = () => path6.join(lockDir(), "pid");
+var alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+};
+function takeLock() {
+  try {
+    fs5.mkdirSync(lockDir());
+  } catch {
+    return false;
+  }
+  try {
+    fs5.writeFileSync(ownerFile(), String(process.pid), { mode: 384 });
+  } catch {}
+  return true;
+}
+function holderOf() {
+  try {
+    const pid = Number(fs5.readFileSync(ownerFile(), "utf8"));
+    return pid > 0 ? pid : undefined;
+  } catch {
+    return;
+  }
+}
+function breakIfStale() {
+  let age;
+  try {
+    age = Date.now() - fs5.statSync(lockDir()).mtimeMs;
+  } catch {
+    return true;
+  }
+  const pid = holderOf();
+  const stale = age > LOCK_MAX_AGE_MS || (pid ? pid !== process.pid && !alive(pid) : age > LOCK_UNOWNED_MS);
+  if (!stale)
+    return false;
+  const aside = `${lockDir()}.stale.${process.pid}.${Date.now()}`;
+  try {
+    fs5.renameSync(lockDir(), aside);
+  } catch {
+    return true;
+  }
+  const moved = (() => {
+    try {
+      return Number(fs5.readFileSync(path6.join(aside, "pid"), "utf8")) || undefined;
+    } catch {
+      return;
+    }
+  })();
+  if (moved !== pid)
+    try {
+      fs5.renameSync(aside, lockDir());
+      return false;
+    } catch {}
+  try {
+    fs5.rmSync(aside, { recursive: true, force: true });
+  } catch {}
+  return true;
+}
+var depth = 0;
 function withStore(fn) {
   fs5.mkdirSync(P2.root, { recursive: true, mode: 448 });
   let held = false;
-  for (let i = 0;i < 200 && !held; i++) {
-    try {
-      fs5.mkdirSync(lockDir());
-      held = true;
-    } catch {
-      try {
-        if (Date.now() - fs5.statSync(lockDir()).mtimeMs > 1e4)
-          fs5.rmdirSync(lockDir());
-      } catch {}
-      sleepSync(10);
+  if (depth === 0) {
+    const until = Date.now() + lockWaitMs;
+    for (;; ) {
+      if (takeLock()) {
+        held = true;
+        break;
+      }
+      if (breakIfStale())
+        continue;
+      if (Date.now() >= until)
+        throw new StoreBusy(holderOf());
+      sleepSync(Math.min(10, Math.max(1, until - Date.now())));
     }
   }
+  depth++;
   try {
     const f = read2();
     const was = JSON.stringify(f);
@@ -646,9 +726,11 @@ function withStore(fn) {
       write(f);
     return out;
   } finally {
-    if (held)
+    depth--;
+    const h = held ? holderOf() : undefined;
+    if (held && (h === undefined || h === process.pid))
       try {
-        fs5.rmdirSync(lockDir());
+        fs5.rmSync(lockDir(), { recursive: true, force: true });
       } catch {}
   }
 }
@@ -1292,21 +1374,97 @@ function write3(f) {
   fs13.renameSync(tmp, file3());
 }
 var sleepSync2 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+class StoreBusy2 extends Error {
+  constructor(holder) {
+    super(`crosstalk's ui store is locked${holder ? ` by process ${holder}` : ""}; try again`);
+    this.name = "StoreBusy";
+  }
+}
+var lockWaitMs2 = Number(process.env.CROSSTALK_UI_LOCK_WAIT_MS ?? 2000);
+var LOCK_MAX_AGE_MS2 = 1e4;
+var LOCK_UNOWNED_MS2 = 1000;
+var ownerFile2 = () => path15.join(lockDir2(), "pid");
+var alive2 = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+};
+function takeLock2() {
+  try {
+    fs13.mkdirSync(lockDir2());
+  } catch {
+    return false;
+  }
+  try {
+    fs13.writeFileSync(ownerFile2(), String(process.pid), { mode: 384 });
+  } catch {}
+  return true;
+}
+function holderOf2() {
+  try {
+    const pid = Number(fs13.readFileSync(ownerFile2(), "utf8"));
+    return pid > 0 ? pid : undefined;
+  } catch {
+    return;
+  }
+}
+function breakIfStale2() {
+  let age;
+  try {
+    age = Date.now() - fs13.statSync(lockDir2()).mtimeMs;
+  } catch {
+    return true;
+  }
+  const pid = holderOf2();
+  const stale = age > LOCK_MAX_AGE_MS2 || (pid ? pid !== process.pid && !alive2(pid) : age > LOCK_UNOWNED_MS2);
+  if (!stale)
+    return false;
+  const aside = `${lockDir2()}.stale.${process.pid}.${Date.now()}`;
+  try {
+    fs13.renameSync(lockDir2(), aside);
+  } catch {
+    return true;
+  }
+  const moved = (() => {
+    try {
+      return Number(fs13.readFileSync(path15.join(aside, "pid"), "utf8")) || undefined;
+    } catch {
+      return;
+    }
+  })();
+  if (moved !== pid)
+    try {
+      fs13.renameSync(aside, lockDir2());
+      return false;
+    } catch {}
+  try {
+    fs13.rmSync(aside, { recursive: true, force: true });
+  } catch {}
+  return true;
+}
+var depth2 = 0;
 function withStore2(fn) {
   fs13.mkdirSync(P2.root, { recursive: true, mode: 448 });
   let held = false;
-  for (let i = 0;i < 200 && !held; i++) {
-    try {
-      fs13.mkdirSync(lockDir2());
-      held = true;
-    } catch {
-      try {
-        if (Date.now() - fs13.statSync(lockDir2()).mtimeMs > 1e4)
-          fs13.rmdirSync(lockDir2());
-      } catch {}
-      sleepSync2(10);
+  if (depth2 === 0) {
+    const until = Date.now() + lockWaitMs2;
+    for (;; ) {
+      if (takeLock2()) {
+        held = true;
+        break;
+      }
+      if (breakIfStale2())
+        continue;
+      if (Date.now() >= until)
+        throw new StoreBusy2(holderOf2());
+      sleepSync2(Math.min(10, Math.max(1, until - Date.now())));
     }
   }
+  depth2++;
   try {
     const f = read4();
     const was = JSON.stringify(f);
@@ -1319,9 +1477,11 @@ function withStore2(fn) {
       write3(f);
     return out;
   } finally {
-    if (held)
+    depth2--;
+    const h = held ? holderOf2() : undefined;
+    if (held && (h === undefined || h === process.pid))
       try {
-        fs13.rmdirSync(lockDir2());
+        fs13.rmSync(lockDir2(), { recursive: true, force: true });
       } catch {}
   }
 }
@@ -10545,6 +10705,12 @@ class WarnService {
     }
     return [...out.values()].filter((t) => t.labels.size || t.local.size);
   }
+  shares(repo, file, sessionId) {
+    const mine = this.d.threads.idsFor(sessionId);
+    if (mine.some((id) => this.st.pending[id]?.files[file]))
+      return true;
+    return this.targets(repo, file, mine, sessionId).length > 0;
+  }
   edited(o) {
     const { edit, repo } = o;
     const mine = this.d.threads.idsFor(o.sessionId);
@@ -12587,6 +12753,7 @@ if (!identity) {
   console.error("crosstalk: no identity. Run /crosstalk:room new first.");
   process.exit(1);
 }
+setLockWait(Number(process.env.CROSSTALK_DAEMON_UI_LOCK_WAIT_MS ?? 250));
 var log = (...a) => {
   process.stdout.write(`${new Date().toISOString()} ${a.map(String).join(" ")}
 `);
@@ -12594,6 +12761,7 @@ var log = (...a) => {
 var MOD_FRESH_MS = Number(process.env.CROSSTALK_MOD_FRESH_MS ?? 15000);
 var modLive = (s) => !!s?.modSeenAt && Date.now() - s.modSeenAt < MOD_FRESH_MS;
 var PULL_SESSION_TTL_MS = 6 * 60 * 60 * 1000;
+var PULL_LIVE_MS = Number(process.env.CROSSTALK_PULL_LIVE_MS ?? 10 * 60 * 1000);
 var stillAround = (id, reg) => reg.socket ? listLocalSessions().some((s) => s.sessionId === id) : Date.now() - (reg.seenAt ?? 0) < PULL_SESSION_TTL_MS;
 var sessions = new Map(Object.entries(loadRegistered()).filter(([id, reg]) => stillAround(id, reg)));
 var persistSessions = () => saveRegistered(Object.fromEntries(sessions));
@@ -12703,6 +12871,8 @@ function pickSession(preferName) {
   return [...sessions.values()][0];
 }
 var routes = loadRoutes();
+var editShared = new Map;
+var EDIT_SHARED_TTL_MS = Number(process.env.CROSSTALK_EDIT_SHARED_TTL_MS ?? 5000);
 var unrouted = loadUnrouted();
 var persistUnrouted = () => saveUnrouted(unrouted);
 function footprintOf(reg) {
@@ -12855,6 +13025,10 @@ function routeCandidates(u) {
   return out.slice(0, 3);
 }
 function uiSync(sid) {
+  coord.autoThread(sid);
+  const tq = threads.question(sid);
+  const waiting = new Set(unrouted.map(routeId));
+  const asks = unrouted.filter((u) => u.askedSession === sid || !sessions.has(u.askedSession ?? "")).map((u) => ({ u, q: routeQuestionFor(u), cands: routeCandidates(u) }));
   return withStore((items, now) => {
     for (const m of held[sid] ?? []) {
       if (m.readAt) {
@@ -12873,20 +13047,13 @@ function uiSync(sid) {
         ...m.auto ? { auto: true } : {}
       }, now);
     }
-    coord.autoThread(sid);
-    const tq = threads.question(sid);
     if (tq)
       upsert(items, { id: tq.id, kind: "thread", sessionId: sid, question: tq.question, options: tq.options, ts: now }, now);
     for (const it of Object.values(items))
       if (it.kind === "thread" && it.sessionId === sid && it.id !== tq?.id)
         settle(items, it.id, "answered", now);
-    const waiting = new Set(unrouted.map(routeId));
-    for (const u of unrouted) {
-      if (u.askedSession !== sid && sessions.has(u.askedSession ?? ""))
-        continue;
-      const q = routeQuestionFor(u);
+    for (const { u, q, cands } of asks) {
       const where = [q.repo, q.branch].filter(Boolean).join(" @ ") || "an unknown repo";
-      const cands = routeCandidates(u);
       const targets = { ...items[routeId(u)]?.targets, ...Object.fromEntries(cands.map((s) => [s.name, s.sessionId])) };
       upsert(items, {
         id: routeId(u),
@@ -13147,7 +13314,7 @@ function onEnvelope(peerLabel, env, ctx) {
   if (!ctx?.replayingParked && seenIds.has(env.id))
     return log(`dropped replay of ${env.id} from ${peerLabel}`);
   const age = Date.now() - (env.ts ?? 0);
-  if (age > REPLAY_WINDOW_MS || age < -MAX_SKEW_MS) {
+  if (!ctx?.replayingParked && (age > REPLAY_WINDOW_MS || age < -MAX_SKEW_MS)) {
     return log(`dropped stale or future-dated ${env.kind} from ${peerLabel} (${Math.round(age / 1000)}s)`);
   }
   if (env.kind === "presence") {
@@ -13644,6 +13811,9 @@ async function handle(req, sock) {
         })()
       });
       const liveIds = new Set(listLocalSessions().map((s) => s.sessionId));
+      for (const [id, reg] of sessions)
+        if (!reg.socket && Date.now() - (reg.seenAt ?? 0) < PULL_LIVE_MS)
+          liveIds.add(id);
       let adopted = 0;
       for (const [sid, msgs] of Object.entries(held)) {
         if (sid === sessionId || liveIds.has(sid))
@@ -14215,7 +14385,7 @@ async function handle(req, sock) {
       const st = load3();
       for (const x of going) {
         const env = x.env;
-        onEnvelope(x.label, key ? env : { ...env, toSession: target.name }, {
+        onEnvelope(x.label, key && req.auto ? env : { ...env, toSession: target.name }, {
           replayingParked: true,
           strangerInRoom: x.stranger,
           room: x.roomId ? st[x.roomId] : undefined
@@ -14225,6 +14395,30 @@ async function handle(req, sock) {
       if (!req.auto)
         coord.answeredRoute(req.sessionId, { sender: u.label, repo: fp?.repo, target: target.sessionId });
       return { ok: true, delivered: going.length, to: target.name, remembered: !!key };
+    }
+    case "edit_shared": {
+      const self = resolveSession(req);
+      const abs = typeof req.path === "string" ? req.path : "";
+      if (!self || !abs)
+        return { ok: true, shared: false };
+      const fp = footprintOf(self);
+      if (!fp.repo)
+        return { ok: true, shared: false };
+      const root = fp.root ?? threads.rootFor(fp.repo);
+      const file = root ? path57.relative(root, abs).split(path57.sep).join("/") : "";
+      if (!file || file.startsWith("..") || path57.isAbsolute(file))
+        return { ok: true, shared: true };
+      const key = `${self.sessionId}|${fp.repo}|${file}`;
+      const c = editShared.get(key);
+      if (c && Date.now() - c.at < EDIT_SHARED_TTL_MS)
+        return { ok: true, shared: c.shared, cached: true };
+      let shared = coord.warn.shares(fp.repo, file, self.sessionId);
+      if (!shared && threads.idsFor(self.sessionId).length)
+        shared = coord.cross.dependents(fp.repo).length > 0;
+      if (editShared.size > 2000)
+        editShared.clear();
+      editShared.set(key, { shared, at: Date.now() });
+      return { ok: true, shared };
     }
     case "ui": {
       const sid = String(req.sessionId ?? "");
