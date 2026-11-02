@@ -359,7 +359,7 @@ describe("new agents: names, worktrees, shared dependencies", () => {
   test("background: a tmux session of its own in crosstalk's server; show attaches with the person's tmux variables unset", () => {
     const [p] = SP.planSpawn({ count: 1, task: "watch it", name: "bg", cwd: "/a", top: "/a", worktrees: [], home: "/h", claude: "claude", exists: () => false, branchExists: () => false })
     const [s] = SP.backgroundSteps(p)
-    expect(s.args).toEqual(["-L", "crosstalk", "-f", SP.tmuxConf(), "new-session", "-d", "-s", "bg", "-c", "/h/worktrees/a/bg", "claude 'watch it'"])
+    expect(s.args).toEqual(["-L", "crosstalk", "-f", SP.tmuxConf(), "new-session", "-d", "-s", "bg", "-c", "/h/worktrees/a/bg", "env CROSSTALK_BG_AGENT=bg claude 'watch it'"])
     expect(SP.attachArgv("bg")).toEqual(["env", "-u", "TMUX", "-u", "TMUX_PANE", "tmux", "-L", "crosstalk", "attach-session", "-t", "=bg"])
     expect(SP.cleanEnv({ TMUX: "x", TMUX_PANE: "%1", PATH: "/bin" })).toEqual({ PATH: "/bin" })
   })

@@ -70,6 +70,11 @@ export type Deps = {
   onFlush?: (ids: string[]) => void
   /** Fingerprints repo trust revoked; defaults to repotrust's state (rekey.ts). */
   revoked?: () => Set<string>
+  /**
+   * When a session's files cannot place it (two threads equally, or new files
+   * no thread covers), the thread its recap points at (src/attention).
+   */
+  tiebreak?: (sessionId: string, candidates: string[], mode: "ask" | "create") => { id: string; why: string } | undefined
 }
 
 /** Where a local session was placed. `name` is how its thread entry is keyed, the same way a peer sees it in presence. */
@@ -426,7 +431,16 @@ export class ThreadService {
         return this.place(s)
       }
     } else {
-      const p = I.place(fp, this.lites(s.repo))
+      let p = I.place(fp, this.lites(s.repo))
+      // The session's own last turns break a tie the files cannot (src/attention/recap.ts).
+      if (p.kind === "ask" || (p.kind === "create" && fp.onDefault)) {
+        const cands = p.kind === "ask" ? p.candidates : this.lites(s.repo).filter((t) => t.live && !t.combinedInto).map((t) => t.id)
+        const pick = cands.length ? this.d.tiebreak?.(s.sessionId, cands, p.kind) : undefined
+        if (pick) {
+          p = { kind: "join", threads: [pick] }
+          delete this.st.questions[s.sessionId]
+        }
+      }
       if (p.kind === "join") want = p.threads
       else if (p.kind === "create") {
         const t = this.createThread(s, p.name, p.why)
