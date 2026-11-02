@@ -5419,6 +5419,7 @@ function threadAnchorFor(repo, thread, o) {
 function appleIntoWindowScript(cmds, window, tabs) {
   const L = [
     `set crosstalkFallback to ""`,
+    `set crosstalkSoft to ""`,
     `tell application "Terminal"`,
     `	if not (exists window id ${window}) then`,
     `		set crosstalkFallback to "gone"`,
@@ -5429,8 +5430,8 @@ function appleIntoWindowScript(cmds, window, tabs) {
     `end tell`
   ];
   for (const c of cmds)
-    L.push(`if crosstalkFallback is "" and ${tabs ? "true" : "false"} then`, `	try`, ...appleNewTabLines(c), `	on error errMsg number errNum`, `		set crosstalkFallback to (errNum as text)`, `		tell application "Terminal" to do script ${asq(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq(c)}`, `end if`);
-  L.push(`if crosstalkFallback is "gone" then set crosstalkFallback to ""`, `return "done " & crosstalkFallback`);
+    L.push(`if crosstalkFallback is "" and ${tabs ? "true" : "false"} then`, `	try`, ...appleNewTabLines(c), `	on error errMsg number errNum`, `		if errNum is 1001 then`, `			set crosstalkSoft to "1001"`, `		else`, `			set crosstalkFallback to (errNum as text)`, `		end if`, `		tell application "Terminal" to do script ${asq(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq(c)}`, `end if`);
+  L.push(`if crosstalkFallback is "gone" then set crosstalkFallback to ""`, `if crosstalkFallback is "" then set crosstalkFallback to crosstalkSoft`, `return "done " & crosstalkFallback`);
   return L.join(`
 `);
 }
@@ -5448,6 +5449,14 @@ function itermIntoWindowScript(cmds, tty) {
 function appleNewTabLines(c) {
   return [
     `		delay 0.3`,
+    `		repeat 10 times`,
+    `			if frontmost of application "Terminal" then exit repeat`,
+    `			tell application "Terminal" to activate`,
+    `			try`,
+    `				tell application "System Events" to set frontmost of process "Terminal" to true`,
+    `			end try`,
+    `			delay 0.3`,
+    `		end repeat`,
     `		tell application "Terminal"`,
     `			if not frontmost then error "Terminal is not in front" number 1001`,
     `			set crosstalkWin to id of front window`,
@@ -5463,15 +5472,15 @@ function appleNewTabLines(c) {
   ];
 }
 function appleTerminalScript(cmds, tabs) {
-  const L = [`set crosstalkFallback to ""`, `tell application "Terminal"`, `	activate`, `	do script ${asq(cmds[0])}`, `end tell`];
+  const L = [`set crosstalkFallback to ""`, `set crosstalkSoft to ""`, `tell application "Terminal"`, `	activate`, `	do script ${asq(cmds[0])}`, `end tell`];
   for (const c of cmds.slice(1)) {
     if (!tabs) {
       L.push(`tell application "Terminal" to do script ${asq(c)}`);
       continue;
     }
-    L.push(`if crosstalkFallback is "" then`, `	try`, ...appleNewTabLines(c), `	on error errMsg number errNum`, `		set crosstalkFallback to (errNum as text)`, `		tell application "Terminal" to do script ${asq(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq(c)}`, `end if`);
+    L.push(`if crosstalkFallback is "" then`, `	try`, ...appleNewTabLines(c), `	on error errMsg number errNum`, `		if errNum is 1001 then`, `			set crosstalkSoft to "1001"`, `		else`, `			set crosstalkFallback to (errNum as text)`, `		end if`, `		tell application "Terminal" to do script ${asq(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq(c)}`, `end if`);
   }
-  L.push(`return "done " & crosstalkFallback`);
+  L.push(`if crosstalkFallback is "" then set crosstalkFallback to crosstalkSoft`, `return "done " & crosstalkFallback`);
   return L.join(`
 `);
 }

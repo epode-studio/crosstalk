@@ -583,6 +583,7 @@ function byRepoThread(rs, repoOf) {
 function appleIntoWindowScript(cmds, window, tabs) {
   const L = [
     `set crosstalkFallback to ""`,
+    `set crosstalkSoft to ""`,
     `tell application "Terminal"`,
     `	if not (exists window id ${window}) then`,
     `		set crosstalkFallback to "gone"`,
@@ -593,8 +594,8 @@ function appleIntoWindowScript(cmds, window, tabs) {
     `end tell`
   ];
   for (const c of cmds)
-    L.push(`if crosstalkFallback is "" and ${tabs ? "true" : "false"} then`, `	try`, ...appleNewTabLines(c), `	on error errMsg number errNum`, `		set crosstalkFallback to (errNum as text)`, `		tell application "Terminal" to do script ${asq(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq(c)}`, `end if`);
-  L.push(`if crosstalkFallback is "gone" then set crosstalkFallback to ""`, `return "done " & crosstalkFallback`);
+    L.push(`if crosstalkFallback is "" and ${tabs ? "true" : "false"} then`, `	try`, ...appleNewTabLines(c), `	on error errMsg number errNum`, `		if errNum is 1001 then`, `			set crosstalkSoft to "1001"`, `		else`, `			set crosstalkFallback to (errNum as text)`, `		end if`, `		tell application "Terminal" to do script ${asq(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq(c)}`, `end if`);
+  L.push(`if crosstalkFallback is "gone" then set crosstalkFallback to ""`, `if crosstalkFallback is "" then set crosstalkFallback to crosstalkSoft`, `return "done " & crosstalkFallback`);
   return L.join(`
 `);
 }
@@ -639,6 +640,14 @@ function adapterFor(r, e) {
 function appleNewTabLines(c) {
   return [
     `		delay 0.3`,
+    `		repeat 10 times`,
+    `			if frontmost of application "Terminal" then exit repeat`,
+    `			tell application "Terminal" to activate`,
+    `			try`,
+    `				tell application "System Events" to set frontmost of process "Terminal" to true`,
+    `			end try`,
+    `			delay 0.3`,
+    `		end repeat`,
     `		tell application "Terminal"`,
     `			if not frontmost then error "Terminal is not in front" number 1001`,
     `			set crosstalkWin to id of front window`,
@@ -654,15 +663,15 @@ function appleNewTabLines(c) {
   ];
 }
 function appleTerminalScript(cmds, tabs) {
-  const L = [`set crosstalkFallback to ""`, `tell application "Terminal"`, `	activate`, `	do script ${asq(cmds[0])}`, `end tell`];
+  const L = [`set crosstalkFallback to ""`, `set crosstalkSoft to ""`, `tell application "Terminal"`, `	activate`, `	do script ${asq(cmds[0])}`, `end tell`];
   for (const c of cmds.slice(1)) {
     if (!tabs) {
       L.push(`tell application "Terminal" to do script ${asq(c)}`);
       continue;
     }
-    L.push(`if crosstalkFallback is "" then`, `	try`, ...appleNewTabLines(c), `	on error errMsg number errNum`, `		set crosstalkFallback to (errNum as text)`, `		tell application "Terminal" to do script ${asq(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq(c)}`, `end if`);
+    L.push(`if crosstalkFallback is "" then`, `	try`, ...appleNewTabLines(c), `	on error errMsg number errNum`, `		if errNum is 1001 then`, `			set crosstalkSoft to "1001"`, `		else`, `			set crosstalkFallback to (errNum as text)`, `		end if`, `		tell application "Terminal" to do script ${asq(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq(c)}`, `end if`);
   }
-  L.push(`return "done " & crosstalkFallback`);
+  L.push(`if crosstalkFallback is "" then set crosstalkFallback to crosstalkSoft`, `return "done " & crosstalkFallback`);
   return L.join(`
 `);
 }
@@ -969,7 +978,7 @@ function restore(o, only) {
     const fellBack = /done (-?\d+)/.exec(out);
     if (ok && fellBack) {
       if (fellBack[1] === "1001")
-        notes.push(`Opened ${p.sessions.length} in ${app} as separate windows: ${app} was not in front, or a new tab did not open where expected, so nothing was typed into an existing tab.`);
+        notes.push(`Opened ${p.sessions.length} in ${app} partly as separate windows: ${app} could not be brought to the front, or a new tab did not open where expected, so nothing was typed into an existing tab. Window \u25b8 Merge All Windows makes them tabs.`);
       else {
         missing = classifyOsaError(fellBack[1]) ?? "automation";
         notes.push(`Opened ${p.sessions.length} in ${app} as separate windows: ${app} ${missing === "accessibility" ? "may not type keys (Accessibility)" : "may not control System Events (Automation)"}.`);
@@ -8354,6 +8363,7 @@ function byRepoThread2(rs, repoOf) {
 function appleIntoWindowScript3(cmds, window, tabs) {
   const L = [
     `set crosstalkFallback to ""`,
+    `set crosstalkSoft to ""`,
     `tell application "Terminal"`,
     `	if not (exists window id ${window}) then`,
     `		set crosstalkFallback to "gone"`,
@@ -8364,8 +8374,8 @@ function appleIntoWindowScript3(cmds, window, tabs) {
     `end tell`
   ];
   for (const c of cmds)
-    L.push(`if crosstalkFallback is "" and ${tabs ? "true" : "false"} then`, `	try`, ...appleNewTabLines2(c), `	on error errMsg number errNum`, `		set crosstalkFallback to (errNum as text)`, `		tell application "Terminal" to do script ${asq2(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq2(c)}`, `end if`);
-  L.push(`if crosstalkFallback is "gone" then set crosstalkFallback to ""`, `return "done " & crosstalkFallback`);
+    L.push(`if crosstalkFallback is "" and ${tabs ? "true" : "false"} then`, `	try`, ...appleNewTabLines2(c), `	on error errMsg number errNum`, `		if errNum is 1001 then`, `			set crosstalkSoft to "1001"`, `		else`, `			set crosstalkFallback to (errNum as text)`, `		end if`, `		tell application "Terminal" to do script ${asq2(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq2(c)}`, `end if`);
+  L.push(`if crosstalkFallback is "gone" then set crosstalkFallback to ""`, `if crosstalkFallback is "" then set crosstalkFallback to crosstalkSoft`, `return "done " & crosstalkFallback`);
   return L.join(`
 `);
 }
@@ -8417,6 +8427,14 @@ var num2 = (n) => n === undefined || Number.isNaN(n) ? Infinity : n;
 function appleNewTabLines2(c) {
   return [
     `		delay 0.3`,
+    `		repeat 10 times`,
+    `			if frontmost of application "Terminal" then exit repeat`,
+    `			tell application "Terminal" to activate`,
+    `			try`,
+    `				tell application "System Events" to set frontmost of process "Terminal" to true`,
+    `			end try`,
+    `			delay 0.3`,
+    `		end repeat`,
     `		tell application "Terminal"`,
     `			if not frontmost then error "Terminal is not in front" number 1001`,
     `			set crosstalkWin to id of front window`,
@@ -8432,15 +8450,15 @@ function appleNewTabLines2(c) {
   ];
 }
 function appleTerminalScript2(cmds, tabs) {
-  const L = [`set crosstalkFallback to ""`, `tell application "Terminal"`, `	activate`, `	do script ${asq2(cmds[0])}`, `end tell`];
+  const L = [`set crosstalkFallback to ""`, `set crosstalkSoft to ""`, `tell application "Terminal"`, `	activate`, `	do script ${asq2(cmds[0])}`, `end tell`];
   for (const c of cmds.slice(1)) {
     if (!tabs) {
       L.push(`tell application "Terminal" to do script ${asq2(c)}`);
       continue;
     }
-    L.push(`if crosstalkFallback is "" then`, `	try`, ...appleNewTabLines2(c), `	on error errMsg number errNum`, `		set crosstalkFallback to (errNum as text)`, `		tell application "Terminal" to do script ${asq2(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq2(c)}`, `end if`);
+    L.push(`if crosstalkFallback is "" then`, `	try`, ...appleNewTabLines2(c), `	on error errMsg number errNum`, `		if errNum is 1001 then`, `			set crosstalkSoft to "1001"`, `		else`, `			set crosstalkFallback to (errNum as text)`, `		end if`, `		tell application "Terminal" to do script ${asq2(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq2(c)}`, `end if`);
   }
-  L.push(`return "done " & crosstalkFallback`);
+  L.push(`if crosstalkFallback is "" then set crosstalkFallback to crosstalkSoft`, `return "done " & crosstalkFallback`);
   return L.join(`
 `);
 }
@@ -8808,7 +8826,7 @@ function restore2(o, only) {
     const fellBack = /done (-?\d+)/.exec(out);
     if (ok && fellBack) {
       if (fellBack[1] === "1001")
-        notes.push(`Opened ${p.sessions.length} in ${app} as separate windows: ${app} was not in front, or a new tab did not open where expected, so nothing was typed into an existing tab.`);
+        notes.push(`Opened ${p.sessions.length} in ${app} partly as separate windows: ${app} could not be brought to the front, or a new tab did not open where expected, so nothing was typed into an existing tab. Window \u25b8 Merge All Windows makes them tabs.`);
       else {
         missing = classifyOsaError2(fellBack[1]) ?? "automation";
         notes.push(`Opened ${p.sessions.length} in ${app} as separate windows: ${app} ${missing === "accessibility" ? "may not type keys (Accessibility)" : "may not control System Events (Automation)"}.`);

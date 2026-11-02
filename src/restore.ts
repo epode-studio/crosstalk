@@ -559,6 +559,7 @@ export function byRepoThread<T extends { cwd: string; sessionId: string; thread?
 export function appleIntoWindowScript(cmds: string[], window: number, tabs: boolean): string {
   const L = [
     `set crosstalkFallback to ""`,
+    `set crosstalkSoft to ""`,
     `tell application "Terminal"`,
     `\tif not (exists window id ${window}) then`,
     `\t\tset crosstalkFallback to "gone"`,
@@ -574,14 +575,20 @@ export function appleIntoWindowScript(cmds: string[], window: number, tabs: bool
       `\ttry`,
       ...appleNewTabLines(c),
       `\ton error errMsg number errNum`,
-      `\t\tset crosstalkFallback to (errNum as text)`,
+      // 1001 (not in front, or the tab went elsewhere) costs this one tab;
+      // a permission error stops tabs for the rest.
+      `\t\tif errNum is 1001 then`,
+      `\t\t\tset crosstalkSoft to "1001"`,
+      `\t\telse`,
+      `\t\t\tset crosstalkFallback to (errNum as text)`,
+      `\t\tend if`,
       `\t\ttell application "Terminal" to do script ${asq(c)}`,
       `\tend try`,
       `else`,
       `\ttell application "Terminal" to do script ${asq(c)}`,
       `end if`,
     )
-  L.push(`if crosstalkFallback is "gone" then set crosstalkFallback to ""`, `return "done " & crosstalkFallback`)
+  L.push(`if crosstalkFallback is "gone" then set crosstalkFallback to ""`, `if crosstalkFallback is "" then set crosstalkFallback to crosstalkSoft`, `return "done " & crosstalkFallback`)
   return L.join("\n")
 }
 
@@ -660,6 +667,16 @@ const num = (n: number | undefined) => (n === undefined || Number.isNaN(n) ? Inf
 export function appleNewTabLines(c: string): string[] {
   return [
     `\t\tdelay 0.3`,
+    // Bring Terminal to the front first: after System Settings, or from a
+    // detached waiter, macOS may not let \`activate\` alone take focus.
+    `\t\trepeat 10 times`,
+    `\t\t\tif frontmost of application "Terminal" then exit repeat`,
+    `\t\t\ttell application "Terminal" to activate`,
+    `\t\t\ttry`,
+    `\t\t\t\ttell application "System Events" to set frontmost of process "Terminal" to true`,
+    `\t\t\tend try`,
+    `\t\t\tdelay 0.3`,
+    `\t\tend repeat`,
     `\t\ttell application "Terminal"`,
     `\t\t\tif not frontmost then error "Terminal is not in front" number 1001`,
     `\t\t\tset crosstalkWin to id of front window`,
@@ -683,7 +700,7 @@ export function appleNewTabLines(c: string): string[] {
  * returns the error number so the reason can say what permission is missing.
  */
 export function appleTerminalScript(cmds: string[], tabs: boolean): string {
-  const L: string[] = [`set crosstalkFallback to ""`, `tell application "Terminal"`, `\tactivate`, `\tdo script ${asq(cmds[0])}`, `end tell`]
+  const L: string[] = [`set crosstalkFallback to ""`, `set crosstalkSoft to ""`, `tell application "Terminal"`, `\tactivate`, `\tdo script ${asq(cmds[0])}`, `end tell`]
   for (const c of cmds.slice(1)) {
     if (!tabs) {
       L.push(`tell application "Terminal" to do script ${asq(c)}`)
@@ -694,7 +711,13 @@ export function appleTerminalScript(cmds: string[], tabs: boolean): string {
       `\ttry`,
       ...appleNewTabLines(c),
       `\ton error errMsg number errNum`,
-      `\t\tset crosstalkFallback to (errNum as text)`,
+      // 1001 (not in front, or the tab went elsewhere) costs this one tab;
+      // a permission error stops tabs for the rest.
+      `\t\tif errNum is 1001 then`,
+      `\t\t\tset crosstalkSoft to "1001"`,
+      `\t\telse`,
+      `\t\t\tset crosstalkFallback to (errNum as text)`,
+      `\t\tend if`,
       `\t\ttell application "Terminal" to do script ${asq(c)}`,
       `\tend try`,
       `else`,
@@ -702,7 +725,7 @@ export function appleTerminalScript(cmds: string[], tabs: boolean): string {
       `end if`,
     )
   }
-  L.push(`return "done " & crosstalkFallback`)
+  L.push(`if crosstalkFallback is "" then set crosstalkFallback to crosstalkSoft`, `return "done " & crosstalkFallback`)
   return L.join("\n")
 }
 
@@ -1235,7 +1258,7 @@ export function restore(o: RunOpts, only?: Rec[]): Outcome {
     if (ok && fellBack) {
       // The script opened every session, but as separate windows from the
       // point System Events refused.
-      if (fellBack[1] === "1001") notes.push(`Opened ${p.sessions.length} in ${app} as separate windows: ${app} was not in front, or a new tab did not open where expected, so nothing was typed into an existing tab.`)
+      if (fellBack[1] === "1001") notes.push(`Opened ${p.sessions.length} in ${app} partly as separate windows: ${app} could not be brought to the front, or a new tab did not open where expected, so nothing was typed into an existing tab. Window ▸ Merge All Windows makes them tabs.`)
       else {
         missing = classifyOsaError(fellBack[1]) ?? "automation"
         notes.push(
