@@ -134,7 +134,9 @@ Run as many sessions as you like, in the terminal you already use. Each one
 knows what it is working on and who else is working on the same thing. A
 message for the auth work reaches the auth session, not whichever one was
 idle. Questions from all of them come to wherever you are, and none of them
-leaks into another session's conversation.
+leaks into another session's conversation. Say "make this my main session" and every
+question that cuts across threads goes there, so working sessions only ever
+ask about their own work.
 
 <br>
 
@@ -458,7 +460,8 @@ only for people outside your repositories. [How it holds up](docs/security.md).
 
 ## Shipping without reading code
 
-*(Coming.)*
+*(First version. [How it works](docs/shipping.md).)* List the risky paths in
+`.crosstalk/risk`, and when an agent says its work is ready:
 
 - **Everyday work** merges on green checks and a review by a separate agent.
 - **Risky work** (auth, payments, migrations, whatever you list) gets an
@@ -466,6 +469,11 @@ only for people outside your repositories. [How it holds up](docs/security.md).
   of turning it on is a question, with evidence of what it does.
 - **Flags instead of staging.** Merged means off; shipped means on. Rolling back
   is turning a flag off, which any agent may do the moment something regresses.
+  Flags live in `.crosstalk/flags`, or in LaunchDarkly or PostHog.
+- **Production reopens threads.** An alert that names a flag or a recent change
+  reopens the thread that shipped it, and turns a risky flag off on the spot.
+- **Merging is out of sight.** Straight to main, through a pull request that
+  merges itself, or locally, as `.crosstalk/ship` says. Never a force push.
 
 The measure is time from idea to merge, and how few of your minutes it took.
 
@@ -508,8 +516,8 @@ The measure is time from idea to merge, and how few of your minutes it took.
 | Status on tabs, new agents on request, one window per repository | **here** |
 | Threads, found automatically, synced and kept on a hidden git ref | **here**, first version |
 | Trust through repository access, no words | **here** |
-| Main session, answers become rules, agents warning each other | coming |
-| Shipping: reviewer agents, flags, production feeding threads | coming |
+| Main session, answers become rules, agents warning each other | **here**, first version |
+| Shipping: reviewer agents, evidence, flags, production reopening threads | **here**, first version (LaunchDarkly and PostHog adapters; GrowthBook and Statsig coming) |
 
 The full design, and why each part works the way it does, is in
 [The next generation](docs/design/next-generation.md).
