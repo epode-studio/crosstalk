@@ -30,6 +30,8 @@ import { editReport, editedPath } from "./warn/edit.ts"
 import * as doctorCheck from "./ui-extra/doctor.ts"
 import * as metrics from "./metrics/log.ts"
 import * as attnHook from "./attention/hook.ts"
+import * as sessionNames from "./sessions/names.ts"
+import * as pastSessions from "./sessions/index.ts"
 
 const input = await new Promise<string>((resolve) => {
   let raw = ""
@@ -232,6 +234,11 @@ if (restoreClient && sessionId && !process.env.CROSSTALK_NO_RESTORE) {
     // With crosstalk's mod running in this session, the offer becomes its
     // picker instead (the mod marked the session before this hook ran), so
     // exactly one of the two ever shows.
+    // Sessions that ended are kept for "find the session where…" (src/sessions/index.ts): restore prunes its own records.
+    if (isSessionStart)
+      try {
+        pastSessions.sweep()
+      } catch {}
     if (isSessionStart && restoreClient === "claude" && !/^(clear|compact)$/.test(String(hook.source ?? "")))
       systemMessage = ui.restoreSurface(
         sessionId,
@@ -283,7 +290,10 @@ const chromeOut = (hookSpecific?: Record<string, unknown>) => {
   const out: Record<string, unknown> = {}
   if (chrome.terminalSequence) out.terminalSequence = chrome.terminalSequence
   // A spawned agent's own name wins; otherwise the thread's title (src/threads).
-  const named = termHook.withBadge(chrome.sessionTitle && /^(SessionStart|UserPromptSubmit)$/.test(eventName) ? chrome.sessionTitle : sessionTitle, chrome.badge)
+  // A name the person gave it (crosstalk_rename) wins: inside its threads' title when it has one, else alone.
+  const renamed = sessionId && /^(SessionStart|UserPromptSubmit)$/.test(eventName) ? sessionNames.nameOf(sessionId) : undefined
+  // In a thread, the daemon's title already carries the name, and is offered only when it changes.
+  const named = termHook.withBadge(renamed ? (sessionTitle ?? (threadNames?.length ? undefined : renamed)) : chrome.sessionTitle && /^(SessionStart|UserPromptSubmit)$/.test(eventName) ? chrome.sessionTitle : sessionTitle, chrome.badge)
   const title = named ? { sessionTitle: named } : {}
   // The worktree's ports and its running services, for the agent at SessionStart (src/services/).
   if (chrome.context && isSessionStart) {

@@ -74,6 +74,11 @@ export type Rec = {
   gather?: { state: "queued" | "restarting" | "done" | "failed"; at: number }
   /** The crosstalk thread it is in (its first), as its hook last heard: tabs of a thread sit together. */
   thread?: string
+  /**
+   * Closed on purpose (crosstalk_close, src/sessions/control.ts): never lost,
+   * whatever its SessionEnd hook said, so restore does not offer it back.
+   */
+  archived?: number
 }
 
 const dir = () => path.join(P.root, "open")
@@ -173,6 +178,7 @@ export function bootTime(env: NodeJS.ProcessEnv = process.env, now = Date.now())
  * going down.
  */
 export function endedNormally(r: Rec, all: Rec[], boot: number): boolean {
+  if (r.archived) return true
   if (!r.endedAt) return false
   if (r.endReason !== "other") return true
   if (r.endedAt < boot && boot - r.endedAt <= SHUTDOWN_MS) return false

@@ -32,6 +32,7 @@ import * as extraTools from "./ui-extra/tools.ts"
 import * as moreTools from "./moretools.ts"
 import * as attnTools from "./attention/tools.ts"
 import * as svcTools from "./services/tools.ts"
+import * as sessionTools from "./sessions/tools.ts"
 import { rootFrom } from "./paths.ts"
 import { sessionsDir } from "./registry.ts"
 import { channelVerdict, hostArgv } from "./channels.ts"
@@ -412,6 +413,8 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     ...attnTools.TOOLS,
     // Long-running processes that outlive the session, on the worktree's own ports (src/services/).
     ...svcTools.TOOLS,
+    // Close, find, resume, rename, move, pop out, background; here or on your other machines (src/sessions/).
+    ...sessionTools.TOOLS,
     {
       name: "crosstalk_thread_read",
       description:
@@ -692,6 +695,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           (await terminalTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
           (await attnTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
           (await svcTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
+          (await sessionTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
           err(`unknown tool ${req.params.name}`)
         )
     }

@@ -369,6 +369,10 @@ describe("services", () => {
     expect(b.systemMessage).toContain("still running in this worktree: sleepy")
     expect(b.context).toContain(`ports are ${s.base}-${s.base + 9}`)
     expect(b.context).toContain("sleepy")
+    // The session manager sees it (src/sessions/services.ts setServices): closing a session there names it.
+    const SS = await import("../src/sessions/services.ts")
+    expect(SS.runningFor({ sessionId: "nobody", cwd: path.join(repo) }).map((x) => [x.name, x.pid])).toEqual([["sleepy", s.pid]])
+    expect(SS.keepsLine(SS.runningFor({ sessionId: "nobody", cwd: repo }), false)).toBe(" Its sleepy keeps running.")
     expect(Svc.stop({ name: "sleepy", cwd: repo }).text).toContain("stopped sleepy")
     expect(Svc.aliveProc(s.pid!)).toBe(false)
     expect(Svc.brief(repo).systemMessage).toBeUndefined()

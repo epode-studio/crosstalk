@@ -34,6 +34,7 @@ import { TMUX_SOCKET, cleanEnv, ensureConf, tmuxConf } from "../spawn.ts"
 import { PROVIDER_VAR, SECRETISH } from "../shipping/git.ts"
 import * as Pt from "./ports.ts"
 import * as Pr from "./procs.ts"
+import { setServices } from "../sessions/services.ts"
 
 export const TMUX_SESSION = "crosstalk-services"
 
@@ -572,3 +573,29 @@ export function forSession(sessionId: string | undefined, o: { now?: number; cwd
   shownCache = { cwd, at: now, value }
   return value
 }
+
+// --- what the session manager asks (src/sessions/services.ts) ---------------------
+
+/** A session's services: those in its worktree, and those it started elsewhere. */
+export function sessionServices(o: { sessionId: string; cwd: string }, look: Look = liveLook()): Live[] {
+  let root = ""
+  try {
+    root = o.cwd ? Pt.rootOf(o.cwd) : ""
+  } catch {}
+  return readAll()
+    .filter((s) => !s.stoppedAt && ((root && s.root === root) || (o.sessionId && s.by === o.sessionId)))
+    .map((s) => state(s, look, false))
+    .filter((s) => s.state === "running")
+}
+
+// Registered where this module loads (the MCP server, `crosstalk ui`, the
+// daemon): closing a session says which services keep running, and "and stop
+// its services" stops them.
+setServices({
+  running: (o) => sessionServices(o).map((s) => ({ name: s.name, pid: headPid(s, liveLook()) ?? undefined, port: (s.ports ?? [])[0] ?? s.port })),
+  stop: async (o) => {
+    const out: string[] = []
+    for (const s of sessionServices(o)) if (stopOne(s)) out.push(s.name)
+    return out
+  },
+})

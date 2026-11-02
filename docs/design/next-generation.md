@@ -652,6 +652,36 @@ Technical, each with a proposal:
    shared thread file, so only the recap ever leaves it, sealed.
 5. **Bots.** Decided: something narrower than a member (see People).
 
+## URLs are what people review
+
+Nobody reads code, so the running thing is what a person looks at. crosstalk
+keeps track of it.
+
+- **Every URL is collected and labelled:** local servers (from crosstalk's
+  services and their detected ports), previews, pull requests, and links an
+  agent's commands print. Each has what it is (`auth · dev server`,
+  `auth · preview`, `auth · PR #12`), its thread, and whether it still answers.
+  Dead ones drop off.
+- **Names, not ports:** `http://auth.localhost`, through a small local proxy
+  that follows each worktree's service wherever its port moves. Browsers already
+  send `*.localhost` to this machine.
+- **One list, anywhere:** in the pane, clickable; on the tab
+  (`auth · auth.localhost`); and by asking any session ("what's the auth URL?",
+  "open the billing preview").
+- **Shared with teammates:** "show marie the auth page" gives her a link to the
+  running server through the sealed relay, only for the people named; her agent
+  can test against it. Nothing is public unless asked for.
+- **Screenshots as evidence:** after a change, a headless browser captures the
+  thread's URLs, before and after. Those are the evidence a person reviews.
+- **Servers that look after themselves:** each URL is checked; a crash or error
+  turns the tab red and tells the thread's agent, which restarts or fixes it.
+- **On the phone:** a QR code in the pane opens a share link.
+- **History:** every link, preview and screenshot a thread had, kept in its
+  file.
+- **Servers that just start:** a new worktree gets the main checkout's `.env`
+  and other local secrets copied in. They stay on this machine: never in git,
+  a thread or the relay.
+
 ## Built
 
 Every part above has a first version on the branch, with its tests in
@@ -667,6 +697,7 @@ Every part above has a first version on the branch, with its tests in
 | Trust through repository access, first use per repo | `src/repotrust/` | `docs/security.md` |
 | Threads, sealed, on their own ref; re-keying | `src/threads/` | `docs/architecture.md`, `docs/security.md` |
 | Terminal workspace: tab status, new agents, background agents, layout, cleanup | `src/terminal/`, `src/spawn.ts`, `src/cleanup.ts` | `docs/terminal.md` |
+| Wrangling every session: close and archive, find and resume past sessions (Claude Code's own history too), rename, move, background and pop out, across your own machines | `src/sessions/` | `docs/terminal.md` |
 | Main session, rules, agents warning each other | `src/main.ts`, `src/coordinator.ts`, `src/rules/`, `src/warn/` | `docs/tools.md` |
 | Recaps, fresh sessions, staffing, focus, notifications, phone, permission prompts | `src/attention/` | `docs/attention.md` |
 | No commands, bots, editor, digest, standup, PR text | `src/ui-extra/` | `docs/tools.md` |
@@ -685,6 +716,11 @@ thread is sealed to. Public threads put all of it in the PR. Decided 2026-11-02.
   Terminal.app): tab tints, tab placement, focus, notifications that jump to a
   tab, iTerm2, kitty, WezTerm, Ghostty; services' `lsof` port and folder
   lookups.
+- **The session manager on a Mac:** closing a session in Terminal.app or iTerm2, resuming
+  one into a tab there, and sending one from a tab to the background were tested only in
+  tmux on Linux, with a stub claude. Whether real Claude Code exits cleanly on SIGTERM
+  mid-turn, and what its SessionEnd hook reports then, was not checked. Across machines was
+  tested with two identities on one machine and one relay.
 - **Between two people on two machines:** threads, repo trust, rules, warnings
   and shipping questions answered from another machine were tested with two
   identities on one machine.

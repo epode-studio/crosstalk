@@ -107,6 +107,16 @@ when it has stopped:
   (`CROSSTALK_POSTPONE_UNTIL_MS`). If the context fills up while it waits, the
   PreCompact is let through: Claude Code compacts as usual, the wait is called
   off, and nothing is ended.
+- **sending a session to the background** (`crosstalk_background`, after the
+  person's yes) waits the same way, in a detached waiter (`crosstalk ui
+  bg-later`) that takes that one yes and moves the session once nothing it
+  started still runs, for up to two hours.
+- **closing a session** (`crosstalk_close`) is the person's own explicit
+  request, so it does not wait: the question says what it would interrupt
+  ("Close api? It is still running npm run dev, which stops with it."), and the
+  receipt says what stopped with it. Its crosstalk services keep running unless
+  the person says to stop them too (the session manager asks this module
+  through `setServices`, src/sessions/services.ts).
 
 ## 4. Services stop with the thread; nothing in use is removed
 
@@ -125,6 +135,10 @@ seconds, `CROSSTALK_SERVICE_STOP_MS`), then its tmux window closed (SIGHUP) and
 another wait, and only then is the worktree removed. Removing without that yes
 refuses while a service runs. Disk freeing (`src/disk/`) keeps any worktree
 with a service running in it.
+
+A session that was closed (its record kept in `<crosstalk home>/open/` with
+`archived` and `endedAt`) counts as ended for cleanup, but the in-use check
+still applies: a dev server it left running in the worktree keeps it.
 
 ## Not yet checked in real use
 

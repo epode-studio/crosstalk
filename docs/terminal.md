@@ -113,6 +113,80 @@ opens a tab in your terminal attached to it. Closing the tab leaves the agent ru
 Its status comes from its own hooks, like any session's, and shows in crosstalk's status line
 there. After a restart, a background agent is restored into `tmux -L crosstalk`, not into a tab.
 
+## Wrangling sessions
+
+Any session can close, find, resume, rename, move and send away any other, in plain words.
+The code is in `src/sessions/`.
+
+| You say | Tool | What happens |
+|---|---|---|
+| "close billing" | `crosstalk_close` | Billing exits as if you quit it, and its record is marked archived, so restore never offers it back as a crash. Its services (dev servers and the like) keep running unless you say to stop them too (`services: "stop"`). |
+| "find the session where I fixed the token refresh" | `crosstalk_find` | Past sessions that match, best first, each with an id. |
+| "resume it" | `crosstalk_resume` | A new tab in the repository's window, beside its thread's tabs, running `claude --resume <id>` (`codex resume <id>` for Codex) in its folder. |
+| "call this one payments" | `crosstalk_rename` | The tab title on its next turn, its name in `crosstalk_sessions`, and its entry in its threads. |
+| "this belongs in auth" | `crosstalk_move` | The session joins that thread and leaves the others it was in. Its files do not move it back. |
+| "send billing to the background" | `crosstalk_background` | It ends in its tab and carries on in `tmux -L crosstalk` as `claude --resume <id>`, with its whole conversation. Its services are not touched. |
+| "pop billing out" | `crosstalk_popout` | A new tab attached to a background agent. Closing the tab leaves it running. |
+
+**Your yes comes first.** Closing, sending to the background, renaming another session and
+moving one each change something, so you are asked first. With the mod, the question is a
+picker in the session you asked from: "Close billing? Its dev server keeps running." with Close
+and Cancel. Only your pick does it. The pick is carried out by `crosstalk ui act` from the mod's
+own process, and is refused when it comes from an agent's shell. Without the mod, the action
+happens only when the last prompt you typed in that session asked for it. That means it names
+the session and the action, and was typed in the last 15 minutes. Claude Code's transcript is
+read for this, and only words you typed count. A peer's message, a hook's context and tool
+results do not.
+
+**Ending a session** sends SIGTERM, then SIGINT twice, and never SIGKILL. A signal goes only
+to the process the session's record names, after the same checks gather makes: the same pid,
+the same start time, and a `claude` or `codex` command line. A session that will not exit is
+left running, and you are told. A session cannot close itself; type `/exit` there.
+
+**What is searched.** Sessions crosstalk saw end or close are kept in
+`<crosstalk home>/sessions/past.json`. Restore's own records are pruned after a day, so they
+are copied there at every session start. Claude Code's transcripts under its config directory
+(`CLAUDE_CONFIG_DIR`, else `~/.claude`) are searched too, read-only, for sessions whose folder
+still exists. These include sessions from before crosstalk. Each entry has the session's
+folder, repository, branch, threads, title, last recap, files touched, start and end, and
+client. A word found in a title or thread counts for most, then branch, then files and folder,
+then the recap. Matching is plain word overlap; no model is asked.
+
+### On your other machines
+
+Your own machines can see and act on each other's sessions. "What's running on my desk?" is
+`crosstalk_sessions` with `machine`. Without `machine`, it lists this machine's sessions and
+every other machine's. `crosstalk_find`, `crosstalk_resume`, `crosstalk_close`,
+`crosstalk_background` and `crosstalk_spawn` take `machine` too. Requests and answers are
+sealed envelopes over the relay, of two new kinds: `sessions_req` and `sessions_res`.
+
+**Only your own machines.** A request is accepted only from a peer that repository trust marks
+`own`: a machine whose statement is signed by a key on your own GitHub account. Another person
+is refused, however trusted, and so is a bot, and anything sent through a room. A refused
+request gets a refusal with nothing of yours in it, and the refusal is logged. A machine joined
+with `crosstalk link` is the same identity as this one, not a peer, so it is not addressed this
+way.
+
+On the machine you ask from, the request goes through the same yes as any action: the picker,
+or your own typed words naming the machine. On the machine that receives it:
+
+| Request | Someone is at that machine | Nobody is |
+|---|---|---|
+| list, find | answered | answered |
+| resume, spawn | a picker in the session typed in last | done in `tmux -L crosstalk`, since no terminal is in front to open a tab in |
+| close, background | a picker in the session typed in last | refused: a session is never ended from afar without a yes |
+
+"Someone is at it" means a session there with the mod was typed in within the last 10 minutes
+(`CROSSTALK_AWAY_MIN`). A spawn starts only in a repository that machine has had a session in,
+named by its name, never at a path the other side gives. Each machine may send 20 requests a
+minute and 6 actions in ten minutes. Every action is a line in the receiving machine's digest:
+"ana-desk, your machine, asked to start an agent in shop-auth: done, in the background".
+
+**For the services build** (`src/sessions/services.ts`): `crosstalk_close` asks
+`services().running({ sessionId, cwd })` to say what keeps running, and
+`services().stop(...)` when told to stop them. Until a services module calls `setServices`,
+a session has no services.
+
 ## One window per repository
 
 New tabs go into the window that already holds that repository's sessions: spawned agents,

@@ -2,10 +2,10 @@
 // @bun
 
 // src/daemon.ts
-import fs54 from "fs";
-import net3 from "net";
-import path64 from "path";
-import crypto22 from "crypto";
+import fs60 from "fs";
+import net4 from "net";
+import path70 from "path";
+import crypto24 from "crypto";
 
 // src/config.ts
 import fs from "node:fs";
@@ -5152,6 +5152,13 @@ function captureTerminal(env, pid, probe) {
 }
 var shq = (s) => /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
 var asq = (s) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
+function resumeArgv(r, bin) {
+  if (r.client === "claude")
+    return [bin ?? "claude", "--resume", r.sessionId];
+  if (r.client === "codex")
+    return [bin ?? "codex", "resume", r.sessionId];
+  return null;
+}
 function kindOf(t) {
   if (!t)
     return null;
@@ -5330,7 +5337,7 @@ function withWindowId(t, env = process.env) {
 // src/spawn.ts
 import fs29 from "node:fs";
 import path35 from "node:path";
-import { spawnSync as spawnSync12 } from "node:child_process";
+import { spawnSync as spawnSync13 } from "node:child_process";
 
 // src/terminal/layout.ts
 import { spawnSync as spawnSync5 } from "node:child_process";
@@ -5671,7 +5678,7 @@ import path34 from "node:path";
 // src/gather.ts
 import fs27 from "node:fs";
 import path33 from "node:path";
-import { spawn as spawn5, spawnSync as spawnSync11 } from "node:child_process";
+import { spawn as spawn5, spawnSync as spawnSync12 } from "node:child_process";
 
 // src/services/procs.ts
 import fs23 from "node:fs";
@@ -5838,7 +5845,7 @@ var oursBy = (root) => (args) => args.includes(path29.join(root, "bin", "crossta
 // src/services/service.ts
 import fs26 from "node:fs";
 import path32 from "node:path";
-import { spawn as spawn4, spawnSync as spawnSync10 } from "node:child_process";
+import { spawn as spawn4, spawnSync as spawnSync11 } from "node:child_process";
 
 // src/shipping/git.ts
 import fs24 from "node:fs";
@@ -6084,6 +6091,7 @@ function which2(bin, envVars = process.env) {
 // src/services/ports.ts
 import fs25 from "node:fs";
 import path31 from "node:path";
+import { spawnSync as spawnSync10 } from "node:child_process";
 var SIZE = 10;
 var START = () => Number(process.env.CROSSTALK_PORT_START ?? 4100);
 var MAX = 65000;
@@ -6141,6 +6149,21 @@ function pickBase(o) {
   }
   return null;
 }
+function rootOf(cwd) {
+  let dir = path31.resolve(cwd);
+  try {
+    dir = fs25.realpathSync(dir);
+  } catch {}
+  const r = spawnSync10("git", ["-C", dir, "rev-parse", "--show-toplevel"], { encoding: "utf8", timeout: 5000 });
+  const top = r.status === 0 ? r.stdout.trim() : "";
+  if (!top)
+    return dir;
+  try {
+    return fs25.realpathSync(top);
+  } catch {
+    return top;
+  }
+}
 function blockFor(root, o = {}) {
   const have = load10().blocks[root];
   if (have)
@@ -6163,9 +6186,22 @@ function blockFor(root, o = {}) {
   });
 }
 
+// src/sessions/services.ts
+var none = { running: () => [], stop: async () => [] };
+var port = none;
+var setServices = (p) => void (port = p ?? none);
+function keepsLine(list, stop) {
+  if (!list.length)
+    return "";
+  const names = list.map((s) => s.name);
+  const what = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return stop ? ` Its ${what} ${names.length === 1 ? "stops" : "stop"} too.` : ` Its ${what} ${names.length === 1 ? "keeps" : "keep"} running.`;
+}
+
 // src/services/service.ts
 var TMUX_SESSION = "crosstalk-services";
 var dir3 = () => path32.join(P2.root, "services");
+var fileOf2 = (id) => path32.join(dir3(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
 var statusFile = (id) => path32.join(dir3(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.exit`);
 function readAll2() {
   let names;
@@ -6183,9 +6219,15 @@ function readAll2() {
     } catch {}
   return out.sort((a, b) => a.startedAt - b.startedAt);
 }
+function write4(s) {
+  fs26.mkdirSync(dir3(), { recursive: true, mode: 448 });
+  const tmp = `${fileOf2(s.id)}.${process.pid}.tmp`;
+  fs26.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs26.renameSync(tmp, fileOf2(s.id));
+}
 var tmux = (args) => {
   try {
-    const r = spawnSync10("tmux", ["-L", TMUX_SOCKET, ...args], { encoding: "utf8", timeout: 1e4, env: cleanEnv(process.env) });
+    const r = spawnSync11("tmux", ["-L", TMUX_SOCKET, ...args], { encoding: "utf8", timeout: 1e4, env: cleanEnv(process.env) });
     return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.status === 0 ? "" : r.stderr ?? ""}`.trim() };
   } catch (e) {
     return { ok: false, out: String(e) };
@@ -6207,11 +6249,12 @@ function tmuxWindows(t = tmux) {
 function aliveProc(pid, start) {
   if (!pidAlive(pid, start))
     return false;
-  const r = spawnSync10("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+  const r = spawnSync11("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
   if (r.status !== 0)
     return r.error ? true : false;
   return !r.stdout.trim().startsWith("Z");
 }
+var sleepSync4 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 var liveLook = () => {
   let w;
   let t;
@@ -6261,6 +6304,46 @@ var badge = (svcs) => {
   const ports = [...new Set(svcs.flatMap(portsOf))].sort((a, b) => a - b);
   return ports.length ? ports.slice(0, 3).map((p) => `:${p}`).join(" ") + (ports.length > 3 ? " \u2026" : "") : "";
 };
+var STOP_MS = () => Number(process.env.CROSSTALK_SERVICE_STOP_MS ?? 8000);
+function signal(pids, sig) {
+  for (const p of pids)
+    try {
+      process.kill(p, sig);
+    } catch {}
+}
+function stopOne(s, o = {}) {
+  const fresh = o.look ?? liveLook;
+  const wait = o.waitMs ?? STOP_MS();
+  const gone = () => !pidsOf(s, fresh()).some((p) => aliveProc(p));
+  const until = (ms) => {
+    for (const end = Date.now() + ms;Date.now() < end; sleepSync4(100))
+      if (gone())
+        return true;
+    return gone();
+  };
+  const pids = pidsOf(s, fresh());
+  if (s.backend === "process" && s.pid)
+    try {
+      process.kill(-s.pid, "SIGTERM");
+    } catch {}
+  signal(pids, "SIGTERM");
+  let ok = !pids.length || until(wait);
+  if (!ok) {
+    if (s.backend === "tmux" && s.window)
+      tmux(["kill-window", "-t", s.window]);
+    else if (s.pid)
+      try {
+        process.kill(-s.pid, "SIGHUP");
+      } catch {}
+    signal(pidsOf(s, fresh()), "SIGHUP");
+    ok = until(Math.max(1000, wait / 2));
+  }
+  if (s.backend === "tmux" && s.window)
+    tmux(["kill-window", "-t", s.window]);
+  if (ok)
+    write4({ ...s, stoppedAt: Date.now() });
+  return ok;
+}
 function runningIn(worktree, look = liveLook()) {
   const root = path32.resolve(worktree);
   let real = root;
@@ -6270,6 +6353,23 @@ function runningIn(worktree, look = liveLook()) {
   return readAll2().filter((s) => under(s.root, real) || under(s.root, root)).map((s) => state(s, look, false)).filter((s) => s.state === "running");
 }
 var roots = new Map;
+function sessionServices(o, look = liveLook()) {
+  let root = "";
+  try {
+    root = o.cwd ? rootOf(o.cwd) : "";
+  } catch {}
+  return readAll2().filter((s) => !s.stoppedAt && (root && s.root === root || o.sessionId && s.by === o.sessionId)).map((s) => state(s, look, false)).filter((s) => s.state === "running");
+}
+setServices({
+  running: (o) => sessionServices(o).map((s) => ({ name: s.name, pid: headPid(s, liveLook()) ?? undefined, port: (s.ports ?? [])[0] ?? s.port })),
+  stop: async (o) => {
+    const out = [];
+    for (const s of sessionServices(o))
+      if (stopOne(s))
+        out.push(s.name);
+    return out;
+  }
+});
 
 // src/services/postpone.ts
 function liveActivity(pid, root = rootFrom(import.meta.url)) {
@@ -6284,6 +6384,7 @@ function liveActivity(pid, root = rootFrom(import.meta.url)) {
 }
 var POLL_MS = () => Number(process.env.CROSSTALK_POSTPONE_POLL_MS ?? 15000);
 var UNTIL_MS = () => Number(process.env.CROSSTALK_POSTPONE_UNTIL_MS ?? 2 * 60 * 60000);
+var what = (a) => a.slice(0, 3).map((x) => x.args.split(/\s+/).slice(0, 3).join(" ")).join(", ") + (a.length > 3 ? ", \u2026" : "");
 
 // src/gather.ts
 var registryDir = () => sessionsDir2();
@@ -6332,7 +6433,7 @@ function ps2(pid, field) {
   if (!pid || pid < 1)
     return null;
   try {
-    const r = spawnSync11("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    const r = spawnSync12("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
     if (r.status !== 0)
       return null;
     return r.stdout.trim() || null;
@@ -6360,7 +6461,7 @@ function procEnv(pid) {
   if (process.platform !== "darwin")
     return null;
   try {
-    const r = spawnSync11("ps", ["-wwE", "-o", "command=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    const r = spawnSync12("ps", ["-wwE", "-o", "command=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
     if (r.status !== 0)
       return null;
     return parseEnv(r.stdout.trim(), /\s+/);
@@ -6369,7 +6470,7 @@ function procEnv(pid) {
   }
 }
 function tmuxPanes() {
-  const r = spawnSync11("tmux", ["list-panes", "-a", "-F", "#{pane_tty}\t#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{socket_path}"], { encoding: "utf8", timeout: 2000 });
+  const r = spawnSync12("tmux", ["list-panes", "-a", "-F", "#{pane_tty}\t#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{socket_path}"], { encoding: "utf8", timeout: 2000 });
   if (r.status !== 0)
     return [];
   return r.stdout.trim().split(`
@@ -6393,13 +6494,13 @@ function liveSys2() {
     appleLocate: (tty) => {
       if (process.platform !== "darwin")
         return null;
-      const r = spawnSync11("osascript", ["-"], { input: appleLocateIfRunning(tty), encoding: "utf8", timeout: 2500 });
+      const r = spawnSync12("osascript", ["-"], { input: appleLocateIfRunning(tty), encoding: "utf8", timeout: 2500 });
       const [w, n] = (r.stdout ?? "").trim().split(" ").map(Number);
       return r.status === 0 && w && n ? { window: w, tab: n } : null;
     },
     kill: (pid, sig) => process.kill(pid, sig),
     run: (s) => {
-      const r = spawnSync11(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 30000 });
+      const r = spawnSync12(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 30000 });
       return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
     },
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -6686,13 +6787,56 @@ function threadBrief(v, task, o = {}) {
 `);
 }
 
+// src/client.ts
+import net2 from "node:net";
+function request(req, timeoutMs = 130000) {
+  return new Promise((resolve, reject) => {
+    const sock = net2.createConnection(P2.daemonSock);
+    let rest = "";
+    let settled = false;
+    const finish = (f) => {
+      if (settled)
+        return;
+      settled = true;
+      clearTimeout(t);
+      f();
+    };
+    const t = setTimeout(() => {
+      sock.destroy();
+      finish(() => reject(new Error("daemon did not answer")));
+    }, timeoutMs);
+    sock.on("connect", () => sock.write(JSON.stringify(req) + `
+`));
+    sock.on("data", (b) => {
+      rest += b.toString("utf8");
+      const i = rest.indexOf(`
+`);
+      if (i === -1)
+        return;
+      const line = rest.slice(0, i);
+      sock.end();
+      finish(() => {
+        try {
+          resolve(JSON.parse(line));
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+    sock.on("error", (e) => finish(() => reject(e)));
+    const gone = () => finish(() => reject(new Error("daemon closed the connection without answering")));
+    sock.on("end", gone);
+    sock.on("close", gone);
+  });
+}
+
 // src/spawn.ts
 var DEP_DIRS = ["node_modules", ".venv", "venv"];
 var MAX_AGENTS = 8;
 var BRANCH_PREFIX = "crosstalk/";
 var TMUX_SOCKET = "crosstalk";
 var dir4 = () => path35.join(P2.root, "spawned");
-var fileOf2 = (id) => path35.join(dir4(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+var fileOf3 = (id) => path35.join(dir4(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
 function readSpawned() {
   let names;
   try {
@@ -6711,9 +6855,9 @@ function readSpawned() {
 }
 function writeSpawned(r) {
   fs29.mkdirSync(dir4(), { recursive: true, mode: 448 });
-  const tmp = `${fileOf2(r.id)}.${process.pid}.tmp`;
+  const tmp = `${fileOf3(r.id)}.${process.pid}.tmp`;
   fs29.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 384 });
-  fs29.renameSync(tmp, fileOf2(r.id));
+  fs29.renameSync(tmp, fileOf3(r.id));
 }
 var STOP = new Set("a an the on to for and of in with at by from into onto this that it its be is are please can could would you start put get run spin up fire one two three four five six seven eight more another new agent agents session sessions claude someone somebody work working".split(" "));
 function nameFromTask(task) {
@@ -6803,10 +6947,10 @@ var backgroundSteps = (p) => [
   { cmd: "tmux", args: ["-L", TMUX_SOCKET, "-f", tmuxConf(), "new-session", "-d", "-s", p.name, "-c", p.cwd, tmuxArgv(p.tab.argv, p.name).map(shq).join(" ")] }
 ];
 function tmuxHas(name, env = process.env) {
-  return spawnSync12("tmux", ["-L", TMUX_SOCKET, "has-session", "-t", `=${name}`], { stdio: "ignore", timeout: 3000, env: cleanEnv(env) }).status === 0;
+  return spawnSync13("tmux", ["-L", TMUX_SOCKET, "has-session", "-t", `=${name}`], { stdio: "ignore", timeout: 3000, env: cleanEnv(env) }).status === 0;
 }
 function run4(s, env) {
-  const r = spawnSync12(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 60000, env });
+  const r = spawnSync13(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 60000, env });
   return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
 }
 function which3(bin, env) {
@@ -6935,7 +7079,7 @@ function spawnAgents(o) {
     const failed = [];
     for (const p of started) {
       const st = bgStep({ claude: claudeBin, name: p.name, task: prompt, cwd: p.cwd });
-      const r = spawnSync12(st.cmd, st.args, { cwd: st.cwd, encoding: "utf8", timeout: 60000, env: { ...env, ...st.env } });
+      const r = spawnSync13(st.cmd, st.args, { cwd: st.cwd, encoding: "utf8", timeout: 60000, env: { ...env, ...st.env } });
       if (r.status !== 0)
         failed.push(`${p.name} (${`${r.stderr ?? ""}${r.error ?? ""}`.trim().split(`
 `).pop()})`);
@@ -7145,7 +7289,7 @@ function surface(sessionId, offer, mod = modActive2(sessionId)) {
 import fs35 from "node:fs";
 import path43 from "node:path";
 import crypto15 from "node:crypto";
-import { spawnSync as spawnSync15 } from "node:child_process";
+import { spawnSync as spawnSync16 } from "node:child_process";
 
 // src/shipping/risk.ts
 var RISK_FILE = ".crosstalk/risk";
@@ -7532,7 +7676,7 @@ var validFlagName = (s) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(s);
 import fs33 from "node:fs";
 import path39 from "node:path";
 import crypto14 from "node:crypto";
-import { spawn as spawn6, spawnSync as spawnSync13 } from "node:child_process";
+import { spawn as spawn6, spawnSync as spawnSync14 } from "node:child_process";
 function detect(env = process.env) {
   return {
     claude: env.CROSSTALK_REVIEW_CLAUDE ?? which2("claude", env),
@@ -7686,7 +7830,7 @@ function launch(l) {
   const clean = `env -i /bin/sh -c ${q(`. ${q(envFile)}; exec sh ${q(file)}`)}`;
   if (process.env.CROSSTALK_REVIEW_NO_TMUX !== "1" && which2("tmux", env)) {
     ensureConf();
-    const r = spawnSync13("tmux", ["-L", TMUX_SOCKET, "-f", tmuxConf(), "new-session", "-d", "-s", l.name, "-c", l.worktree, clean], { env, encoding: "utf8", timeout: 1e4 });
+    const r = spawnSync14("tmux", ["-L", TMUX_SOCKET, "-f", tmuxConf(), "new-session", "-d", "-s", l.name, "-c", l.worktree, clean], { env, encoding: "utf8", timeout: 1e4 });
     if (r.status === 0)
       return { ok: true, how: "tmux" };
   }
@@ -7742,7 +7886,7 @@ var describeIncident = (inc) => `Incident from ${inc.source}: ${inc.title}${inc.
 
 // src/shipping/merge.ts
 import path40 from "node:path";
-import { spawnSync as spawnSync14 } from "node:child_process";
+import { spawnSync as spawnSync15 } from "node:child_process";
 function planMerge(f) {
   if (!f.defaultBranch)
     return { how: "refuse", why: "this repository has no default branch to merge into" };
@@ -7810,7 +7954,7 @@ function executeMerge(root, branch, o) {
     const p = push(root, facts.remote, branch);
     if (!p.ok)
       return { ok: false, how: "pr", text: `could not push ${branch}: ${p.err}` };
-    const gh = (args) => spawnSync14("gh", args, { cwd: root, encoding: "utf8", timeout: 120000 });
+    const gh = (args) => spawnSync15("gh", args, { cwd: root, encoding: "utf8", timeout: 120000 });
     const created = gh(["pr", "create", "--head", branch, "--base", d, "--title", o.title ?? branch, "--body", o.body ?? "Opened by crosstalk."]);
     const url = (created.stdout ?? "").trim().split(`
 `).pop() ?? "";
@@ -7892,7 +8036,7 @@ function commitToDefault(root, file, content, message, o) {
     const p = push(root, remote, b);
     if (!p.ok)
       return { ok: false, sha: c.sha, text: `could not push ${b}: ${p.err}` };
-    const gh = (args) => spawnSync14("gh", args, { cwd: root, encoding: "utf8", timeout: 120000 });
+    const gh = (args) => spawnSync15("gh", args, { cwd: root, encoding: "utf8", timeout: 120000 });
     const pr = gh(["pr", "create", "--head", b, "--base", d, "--title", message, "--body", "Opened by crosstalk."]);
     if (pr.status !== 0)
       return { ok: false, sha: c.sha, text: `gh pr create failed: ${(pr.stderr ?? "").trim().split(`
@@ -10275,7 +10419,7 @@ function insideReal(file, dir) {
   }
 }
 function ghPrState(root, pr) {
-  const r = spawnSync15("gh", ["pr", "view", pr, "--json", "state,mergeCommit"], { cwd: root, encoding: "utf8", timeout: 30000 });
+  const r = spawnSync16("gh", ["pr", "view", pr, "--json", "state,mergeCommit"], { cwd: root, encoding: "utf8", timeout: 30000 });
   if (r.status !== 0)
     return;
   try {
@@ -11430,12 +11574,12 @@ function redirect(o) {
 }
 
 // src/inject.ts
-import net2 from "node:net";
+import net3 from "node:net";
 import crypto16 from "node:crypto";
 var attr3 = (v) => String(v).replace(/[<>"'&\r\n]/g, "").slice(0, 120);
 function post2(socket, payload) {
   return new Promise((resolve, reject) => {
-    const s = net2.createConnection(socket, () => s.write(payload, () => s.end()));
+    const s = net3.createConnection(socket, () => s.write(payload, () => s.end()));
     s.on("close", () => resolve());
     s.on("error", reject);
     s.setTimeout(5000, () => {
@@ -12352,19 +12496,19 @@ function threadMuted(env, now = Date.now(), mutes = loadMutes()) {
 // src/threads/crossrepo.ts
 import fs47 from "node:fs";
 import path56 from "node:path";
-import { spawnSync as spawnSync16 } from "node:child_process";
+import { spawnSync as spawnSync17 } from "node:child_process";
 var FORGES = /^(github\.com|gitlab\.com|bitbucket\.org|codeberg\.org)\//;
 function remoteOf(dir) {
   try {
-    const r = spawnSync16("git", ["-C", dir, "remote", "get-url", "origin"], { encoding: "utf8", timeout: 3000 });
+    const r = spawnSync17("git", ["-C", dir, "remote", "get-url", "origin"], { encoding: "utf8", timeout: 3000 });
     if (r.status === 0 && r.stdout.trim())
       return normaliseRemote2(r.stdout.trim());
-    const any = spawnSync16("git", ["-C", dir, "remote"], { encoding: "utf8", timeout: 3000 });
+    const any = spawnSync17("git", ["-C", dir, "remote"], { encoding: "utf8", timeout: 3000 });
     const first = (any.stdout ?? "").split(`
 `).find(Boolean);
     if (!first)
       return;
-    const u = spawnSync16("git", ["-C", dir, "remote", "get-url", first], { encoding: "utf8", timeout: 3000 });
+    const u = spawnSync17("git", ["-C", dir, "remote", "get-url", first], { encoding: "utf8", timeout: 3000 });
     return u.status === 0 && u.stdout.trim() ? normaliseRemote2(u.stdout.trim()) : undefined;
   } catch {
     return;
@@ -13184,7 +13328,7 @@ import path62 from "node:path";
 // src/attention/service.ts
 import fs52 from "node:fs";
 import path61 from "node:path";
-import { spawnSync as spawnSync17 } from "node:child_process";
+import { spawnSync as spawnSync18 } from "node:child_process";
 
 // src/attention/recap.ts
 import fs49 from "node:fs";
@@ -14184,7 +14328,7 @@ function which4(bin, env) {
 }
 function lastCommitAt(cwd) {
   try {
-    const r = spawnSync17("git", ["-C", cwd, "log", "-1", "--format=%ct"], { encoding: "utf8", timeout: 3000 });
+    const r = spawnSync18("git", ["-C", cwd, "log", "-1", "--format=%ct"], { encoding: "utf8", timeout: 3000 });
     const s = Number(r.stdout.trim());
     return r.status === 0 && s > 0 ? s * 1000 : undefined;
   } catch {
@@ -14203,7 +14347,7 @@ function liveDesktop(d) {
     }
     return;
   }
-  spawnSync17(d.step.cmd, d.step.args, { input: d.step.input, timeout: 5000, stdio: "ignore" });
+  spawnSync18(d.step.cmd, d.step.args, { input: d.step.input, timeout: 5000, stdio: "ignore" });
 }
 
 // src/attention/daemon.ts
@@ -14275,6 +14419,1038 @@ var TMUX_CONF2 = [
 ].join(`
 `);
 
+// src/sessions/names.ts
+import fs54 from "node:fs";
+import path64 from "node:path";
+var file11 = () => path64.join(P2.root, "sessions", "names.json");
+function all() {
+  try {
+    const o = JSON.parse(fs54.readFileSync(file11(), "utf8"));
+    return o && typeof o === "object" ? o : {};
+  } catch {
+    return {};
+  }
+}
+var nameOf = (sessionId) => {
+  const n = all()[sessionId];
+  return typeof n === "string" && n ? n : undefined;
+};
+function clean2(name) {
+  return String(name ?? "").normalize("NFKC").replace(/[\u0000-\u001f\u007f-\u009f]/g, "").replace(/[^\p{L}\p{N} ._@:-]+/gu, "-").replace(/\s+/g, " ").trim().slice(0, 40);
+}
+function setName(sessionId, name) {
+  const o = all();
+  if (name)
+    o[sessionId] = name;
+  else
+    delete o[sessionId];
+  const keep = Object.entries(o).slice(-500);
+  fs54.mkdirSync(path64.dirname(file11()), { recursive: true, mode: 448 });
+  const tmp = `${file11()}.${process.pid}.tmp`;
+  fs54.writeFileSync(tmp, JSON.stringify(Object.fromEntries(keep), null, 2), { mode: 384 });
+  fs54.renameSync(tmp, file11());
+}
+
+// src/sessions/control.ts
+import crypto22 from "node:crypto";
+import fs57 from "node:fs";
+import path67 from "node:path";
+import { spawnSync as spawnSync19 } from "node:child_process";
+
+// src/sessions/index.ts
+import fs56 from "node:fs";
+import path66 from "node:path";
+
+// src/sessions/transcripts.ts
+import fs55 from "node:fs";
+import path65 from "node:path";
+var projectsDir = (env = process.env) => path65.join(claudeConfigDir2(env), "projects");
+var projectSlug = (cwd) => cwd.replace(/[^A-Za-z0-9]/g, "-");
+var HEAD_BYTES = 64 * 1024;
+var TAIL_BYTES2 = 256 * 1024;
+function head(file, bytes = HEAD_BYTES) {
+  let fd = -1;
+  try {
+    fd = fs55.openSync(file, "r");
+    const buf = Buffer.alloc(Math.min(bytes, fs55.fstatSync(fd).size));
+    fs55.readSync(fd, buf, 0, buf.length, 0);
+    const text = buf.toString("utf8");
+    return buf.length === bytes ? text.slice(0, text.lastIndexOf(`
+`) + 1) : text;
+  } catch {
+    return "";
+  } finally {
+    if (fd >= 0)
+      fs55.closeSync(fd);
+  }
+}
+function transcriptOf(sessionId, cwd, env = process.env) {
+  if (!/^[A-Za-z0-9._-]+$/.test(sessionId))
+    return null;
+  const root = projectsDir(env);
+  if (cwd) {
+    const f = path65.join(root, projectSlug(cwd), `${sessionId}.jsonl`);
+    if (fs55.existsSync(f))
+      return f;
+  }
+  try {
+    for (const d of fs55.readdirSync(root)) {
+      const f = path65.join(root, d, `${sessionId}.jsonl`);
+      if (fs55.existsSync(f))
+        return f;
+    }
+  } catch {}
+  return null;
+}
+var ts = (e) => {
+  const t = typeof e?.timestamp === "string" ? Date.parse(e.timestamp) : NaN;
+  return Number.isFinite(t) ? t : undefined;
+};
+function filesOf(e) {
+  const c = e?.message?.content;
+  if (!Array.isArray(c))
+    return [];
+  const out = [];
+  for (const b of c) {
+    if (b?.type !== "tool_use" || !b.input || typeof b.input !== "object")
+      continue;
+    for (const k of ["file_path", "notebook_path", "path"])
+      if (typeof b.input[k] === "string" && b.input[k].length < 1024)
+        out.push(b.input[k]);
+  }
+  return out;
+}
+function summarize(file) {
+  const first = lines(head(file));
+  const last = lines(tail3(file, TAIL_BYTES2));
+  const all = [...first, ...last];
+  const withCwd = all.find((e) => typeof e?.cwd === "string" && e.cwd);
+  if (!withCwd)
+    return null;
+  const sessionId = String(withCwd.sessionId ?? path65.basename(file, ".jsonl"));
+  let title;
+  let summaryLine;
+  let branch;
+  for (const e of all) {
+    if (e?.type === "custom-title" && typeof e.customTitle === "string")
+      title = e.customTitle;
+    if (e?.type === "summary" && typeof e.summary === "string")
+      summaryLine = e.summary;
+    if (typeof e?.gitBranch === "string" && e.gitBranch && e.gitBranch !== "HEAD")
+      branch = e.gitBranch;
+  }
+  const files = [];
+  for (let i = last.length - 1;i >= 0 && files.length < 30; i--) {
+    if (last[i]?.isSidechain)
+      continue;
+    for (const f of filesOf(last[i]))
+      if (!files.includes(f))
+        files.push(f);
+  }
+  const cwd = String(withCwd.cwd);
+  const rel = files.map((f) => f.startsWith(cwd + path65.sep) ? f.slice(cwd.length + 1) : f);
+  let startedAt;
+  for (const e of first)
+    if (startedAt = ts(e))
+      break;
+  let endedAt;
+  for (let i = last.length - 1;i >= 0; i--)
+    if (endedAt = ts(last[i]))
+      break;
+  if (!endedAt)
+    try {
+      endedAt = fs55.statSync(file).mtimeMs;
+    } catch {}
+  const r = extract(last.filter((e) => !e?.isSidechain));
+  return {
+    sessionId,
+    cwd,
+    ...branch ? { branch } : {},
+    ...title || summaryLine ? { title: title ?? summaryLine } : {},
+    ...r ? { recap: r } : {},
+    files: rel,
+    ...startedAt ? { startedAt } : {},
+    ...endedAt ? { endedAt } : {},
+    file
+  };
+}
+function recent2(env = process.env, limit = 400) {
+  const root = projectsDir(env);
+  const found = [];
+  let dirs = [];
+  try {
+    dirs = fs55.readdirSync(root);
+  } catch {
+    return [];
+  }
+  for (const d of dirs) {
+    let names = [];
+    try {
+      names = fs55.readdirSync(path65.join(root, d));
+    } catch {
+      continue;
+    }
+    for (const n of names) {
+      if (!n.endsWith(".jsonl") || n.startsWith("agent-"))
+        continue;
+      const f = path65.join(root, d, n);
+      try {
+        found.push({ f, m: fs55.statSync(f).mtimeMs });
+      } catch {}
+    }
+  }
+  return found.sort((a, b) => b.m - a.m).slice(0, limit).map((x) => x.f);
+}
+
+// src/sessions/index.ts
+var file12 = () => path66.join(P2.root, "sessions", "past.json");
+var KEEP_MS = 180 * 24 * 3600000;
+var MAX2 = 3000;
+function load13() {
+  try {
+    const f = JSON.parse(fs56.readFileSync(file12(), "utf8"));
+    if (f?.v === 1 && f.items && typeof f.items === "object")
+      return f.items;
+  } catch {}
+  return {};
+}
+function save10(items) {
+  const now = Date.now();
+  const kept = Object.values(items).filter((p) => now - (p.endedAt ?? p.startedAt ?? now) < KEEP_MS).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0)).slice(0, MAX2);
+  fs56.mkdirSync(path66.dirname(file12()), { recursive: true, mode: 448 });
+  const tmp = `${file12()}.${process.pid}.tmp`;
+  fs56.writeFileSync(tmp, JSON.stringify({ v: 1, items: Object.fromEntries(kept.map((p) => [p.id, p])) }), { mode: 384 });
+  fs56.renameSync(tmp, file12());
+}
+function fromRec(r, before, sum) {
+  const threads = [...new Set([...before?.threads ?? [], ...r.thread ? [r.thread] : []])];
+  const name = r.name && !/^session-\d+$/.test(r.name) ? r.name : undefined;
+  return {
+    ...before,
+    id: r.sessionId,
+    cwd: r.cwd,
+    client: r.client,
+    ...name ?? sum?.title ?? before?.title ? { title: name ?? sum?.title ?? before?.title } : {},
+    ...sum?.branch ?? before?.branch ? { branch: sum?.branch ?? before?.branch } : {},
+    threads,
+    ...sum?.recap ?? before?.recap ? { recap: sum?.recap ?? before?.recap } : {},
+    files: sum?.files.length ? sum.files : before?.files ?? [],
+    startedAt: r.startedAt,
+    endedAt: r.endedAt ?? r.seenAt,
+    ...r.archived ? { archived: r.archived } : before?.archived ? { archived: before.archived } : {},
+    source: "crosstalk"
+  };
+}
+function sweep(o = {}) {
+  const alive = o.alive ?? recAlive;
+  const items = load13();
+  let n = 0;
+  for (const r of readAll()) {
+    if (r.interactive === false)
+      continue;
+    if (!r.endedAt && alive(r))
+      continue;
+    const before = items[r.sessionId];
+    const end = r.endedAt ?? r.seenAt;
+    if (before && before.source === "crosstalk" && (before.endedAt ?? 0) >= end && !!before.archived === !!r.archived)
+      continue;
+    const sum = r.client === "claude" ? safeSummary(transcriptOf(r.sessionId, r.cwd, o.env)) : null;
+    items[r.sessionId] = fromRec(r, before, sum);
+    n++;
+  }
+  if (n)
+    save10(items);
+  return n;
+}
+function safeSummary(f) {
+  if (!f)
+    return null;
+  try {
+    return summarize(f);
+  } catch {
+    return null;
+  }
+}
+function mark(id, fields) {
+  const items = load13();
+  const before = items[id];
+  if (!before)
+    return;
+  items[id] = { ...before, ...fields };
+  if (fields.archived === undefined && "archived" in fields)
+    delete items[id].archived;
+  save10(items);
+}
+function liveIds() {
+  const ids = new Set;
+  for (const r of readAll())
+    if (!r.endedAt && recAlive(r))
+      ids.add(r.sessionId);
+  try {
+    for (const e of readRegistry())
+      ids.add(e.sessionId);
+  } catch {}
+  return ids;
+}
+function all2(o = {}) {
+  try {
+    sweep({ env: o.env });
+  } catch {}
+  const live = o.live ?? liveIds();
+  const out = new Map;
+  for (const p of Object.values(load13()))
+    if (!live.has(p.id))
+      out.set(p.id, p);
+  if (o.transcripts !== false) {
+    const cache = loadCache();
+    const fresh = {};
+    for (const f of recent2(o.env, o.limit ?? 400)) {
+      const id = path66.basename(f, ".jsonl");
+      const have = out.get(id);
+      if (live.has(id) || have && have.recap && have.files.length)
+        continue;
+      let mtime = 0;
+      try {
+        mtime = fs56.statSync(f).mtimeMs;
+      } catch {}
+      const s = cache[f]?.mtime === mtime ? cache[f].s : safeSummary(f);
+      fresh[f] = { mtime, s };
+      if (!s || live.has(s.sessionId))
+        continue;
+      if (have) {
+        out.set(id, { ...have, recap: have.recap ?? s.recap, files: have.files.length ? have.files : s.files, branch: have.branch ?? s.branch, title: have.title ?? s.title });
+        continue;
+      }
+      out.set(s.sessionId, {
+        id: s.sessionId,
+        cwd: s.cwd,
+        client: "claude",
+        ...s.title ? { title: s.title } : {},
+        ...s.branch ? { branch: s.branch } : {},
+        threads: [],
+        ...s.recap ? { recap: s.recap } : {},
+        files: s.files,
+        ...s.startedAt ? { startedAt: s.startedAt } : {},
+        ...s.endedAt ? { endedAt: s.endedAt } : {},
+        source: "claude"
+      });
+    }
+    saveCache(fresh);
+  }
+  return [...out.values()].filter((p) => exists(p.cwd)).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0));
+}
+var cacheFile = () => path66.join(P2.root, "sessions", "transcripts.json");
+function loadCache() {
+  try {
+    const c = JSON.parse(fs56.readFileSync(cacheFile(), "utf8"));
+    return c && typeof c === "object" ? c : {};
+  } catch {
+    return {};
+  }
+}
+function saveCache(c) {
+  try {
+    fs56.mkdirSync(path66.dirname(cacheFile()), { recursive: true, mode: 448 });
+    const tmp = `${cacheFile()}.${process.pid}.tmp`;
+    fs56.writeFileSync(tmp, JSON.stringify(c), { mode: 384 });
+    fs56.renameSync(tmp, cacheFile());
+  } catch {}
+}
+var exists = (d) => {
+  try {
+    return fs56.statSync(d).isDirectory();
+  } catch {
+    return false;
+  }
+};
+var WEIGHTS = { title: 4, threads: 4, branch: 3, files: 2, folder: 2, recap: 1 };
+var pathWords = (p) => words(p.replace(/[/._-]+/g, " "));
+function find(query, entries, max = 8) {
+  const q = query.trim().toLowerCase();
+  if (!q)
+    return entries.slice(0, max).map((past) => ({ past, score: 0, matched: [] }));
+  const qw = [...words(q)];
+  const hits = [];
+  for (const p of entries) {
+    if (q.length >= 6 && /^[0-9a-f-]+$/.test(q) && p.id.toLowerCase().startsWith(q)) {
+      hits.push({ past: p, score: 1000, matched: ["id"] });
+      continue;
+    }
+    const fields = [
+      ["title", words(p.title ?? "")],
+      ["threads", words(p.threads.join(" "))],
+      ["branch", pathWords(p.branch ?? "")],
+      ["files", pathWords(p.files.join(" "))],
+      ["folder", pathWords(path66.basename(p.cwd) + " " + (p.repo ?? ""))],
+      ["recap", words(p.recap ?? "")]
+    ];
+    let score = 0;
+    const matched = new Set;
+    for (const w of qw) {
+      let best = 0;
+      let where = "";
+      for (const [k, set] of fields)
+        if (set.has(w) && WEIGHTS[k] > best) {
+          best = WEIGHTS[k];
+          where = k;
+        }
+      if (best) {
+        score += best;
+        matched.add(where);
+      }
+    }
+    if (q.length >= 3 && [p.title ?? "", ...p.threads].some((t) => t.toLowerCase().includes(q)))
+      score += 2;
+    if (score > 0)
+      hits.push({ past: p, score, matched: [...matched] });
+  }
+  return hits.sort((a, b) => b.score - a.score || (b.past.endedAt ?? 0) - (a.past.endedAt ?? 0)).slice(0, max);
+}
+function lookup(ref, entries) {
+  const r = ref.trim();
+  if (!r)
+    return null;
+  return entries.find((p) => p.id === r) ?? (r.length >= 6 ? entries.find((p) => p.id.startsWith(r)) : undefined) ?? entries.find((p) => (p.title ?? "").toLowerCase() === r.toLowerCase()) ?? entries.find((p) => p.threads.some((t) => t.toLowerCase() === r.toLowerCase())) ?? null;
+}
+var ago = (t, now = Date.now()) => {
+  if (!t)
+    return "some time ago";
+  const m = Math.round((now - t) / 60000);
+  if (m < 60)
+    return `${Math.max(1, m)} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 48)
+    return `${h} h ago`;
+  return `${Math.round(h / 24)} days ago`;
+};
+function describeHits(hits, now = Date.now()) {
+  if (!hits.length)
+    return "\u25e2 crosstalk: no past session matches that.";
+  const lines = [`\u25e2 crosstalk: ${hits.length} past session${hits.length === 1 ? "" : "s"}:`];
+  for (const { past: p } of hits) {
+    const label = p.title || path66.basename(p.cwd);
+    const where = [p.threads.length ? p.threads.join(", ") : "", p.branch ?? ""].filter(Boolean).join(" \u00b7 ");
+    lines.push(`  ${p.id.slice(0, 8)}  ${label}${where ? ` (${where})` : ""}, ended ${ago(p.endedAt, now)}${p.archived ? ", closed" : ""}${p.source === "claude" ? ", from Claude Code's history" : ""}`);
+    lines.push(`            ${p.cwd}`);
+    if (p.recap)
+      lines.push(`            ${p.recap.length > 160 ? p.recap.slice(0, 159) + "\u2026" : p.recap}`);
+  }
+  lines.push(`Say "resume <id>" to reopen one in a new tab.`);
+  return lines.join(`
+`);
+}
+
+// src/sessions/control.ts
+function liveDeps(env = process.env) {
+  return {
+    env,
+    ask: (req, ms) => request(req, ms ?? 4000),
+    sys: liveSys2(),
+    open: openForRepo,
+    run: (s) => {
+      const r = spawnSync19(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 30000, env: cleanEnv(env) });
+      return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
+    },
+    which: (bin) => which5(bin, env),
+    modActive: (sid) => modActive2(sid),
+    now: Date.now
+  };
+}
+function which5(bin, env) {
+  for (const d of (env.PATH ?? "").split(path67.delimiter)) {
+    if (!d)
+      continue;
+    const p = path67.join(d, bin);
+    try {
+      fs57.accessSync(p, fs57.constants.X_OK);
+      return p;
+    } catch {}
+  }
+  return;
+}
+var label2 = (r) => nameOf(r.sessionId) ?? (r.name && !/^session-\d+$/.test(r.name) ? r.name : path67.basename(r.cwd) || r.sessionId.slice(0, 8));
+async function liveSessions(d, recs = readAll(), alive = recAlive) {
+  let byId = new Map;
+  try {
+    const r = await d.ask({ op: "sessions" }, 3000);
+    if (r?.ok)
+      byId = new Map((r.sessions ?? []).map((s) => [s.id, { name: s.name, threads: s.threads ?? [], status: s.status }]));
+  } catch {}
+  return recs.filter((r) => !r.endedAt && r.interactive !== false && alive(r)).sort((a, b) => a.startedAt - b.startedAt).map((r) => {
+    const k = byId.get(r.sessionId);
+    return {
+      id: r.sessionId,
+      name: nameOf(r.sessionId) ?? (k?.name && !/^session-\d+$/.test(k.name) ? k.name : label2(r)),
+      cwd: r.cwd,
+      client: r.client,
+      pid: r.pid,
+      pidStart: r.pidStart,
+      terminal: r.terminal,
+      threads: k?.threads ?? (r.thread ? [r.thread] : []),
+      ...k?.status ? { status: k.status } : {}
+    };
+  });
+}
+var YES3 = { close: "Close", background: "Send it", rename: "Rename", move: "Move", remote: "Do it", resume: "Resume it", spawn: "Start it" };
+var NO2 = "Cancel";
+function interruptsLine(busy) {
+  if (!busy.length)
+    return "";
+  return ` It is still running ${what(busy).replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")}, which ${busy.length === 1 ? "stops" : "stop"} with it.`;
+}
+function questionFor(a, target, svc = [], busy = []) {
+  const n = target?.name ?? ("session" in a ? a.session : "");
+  if (a.kind === "resume")
+    return `Resume ${n}?`;
+  if (a.kind === "spawn")
+    return `Start ${a.count && a.count > 1 ? `${a.count} agents` : "an agent"} in ${path67.basename(a.cwd)}: "${a.task.length > 120 ? a.task.slice(0, 119) + "\u2026" : a.task}"?`;
+  switch (a.kind) {
+    case "close":
+      return `Close ${n}?${keepsLine(svc, a.services === "stop")}${interruptsLine(busy)}`;
+    case "background":
+      return `Send ${n} to the background? It ends here and carries on in crosstalk's background tmux, conversation and all.`;
+    case "rename":
+      return `Rename ${n} to ${a.name}?`;
+    case "move":
+      return `Move ${n} to the thread ${a.thread}?`;
+    case "remote":
+      return `On ${a.machine}: ${describeRemote(a.req)}?`;
+  }
+}
+function describeRemote(r) {
+  switch (r.kind) {
+    case "close":
+      return `close ${r.session}`;
+    case "background":
+      return `send ${r.session} to the background`;
+    case "resume":
+      return `resume ${r.session}`;
+    case "spawn":
+      return `start ${r.count && r.count > 1 ? `${r.count} agents` : "an agent"}${r.repo ? ` in ${r.repo}` : ""}: "${r.task.length > 120 ? r.task.slice(0, 119) + "\u2026" : r.task}"`;
+  }
+}
+var sessId = () => `sess:${crypto22.randomBytes(6).toString("hex")}`;
+var pendingDir = () => path67.join(P2.root, "sessions", "pending");
+var pendingFile = (id) => path67.join(pendingDir(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+function writePending(p) {
+  fs57.mkdirSync(pendingDir(), { recursive: true, mode: 448 });
+  fs57.writeFileSync(pendingFile(p.id), JSON.stringify(p), { mode: 384 });
+}
+function raise(o, now = Date.now()) {
+  const id = sessId();
+  const yes = YES3[o.action.kind];
+  writePending({ id, by: o.by, cwd: o.cwd, action: o.action, at: now, yes, ...o.from ? { from: o.from } : {} });
+  withStore2((items, t) => upsert3(items, { id, kind: "session", sessionId: o.by, question: o.question, options: [yes, NO2], ...o.from ? { from: o.from } : {}, ts: now }, t));
+  return id;
+}
+function freeTmuxName(base, has) {
+  const b = slug2(base, 24) || "session";
+  for (let i = 1;; i++) {
+    const n = i === 1 ? b : `${b}-${i}`;
+    if (!has(n))
+      return n;
+  }
+}
+function backgroundStep(o) {
+  return { cmd: "tmux", args: ["-L", TMUX_SOCKET, "-f", tmuxConf(), "new-session", "-d", "-s", o.name, "-c", o.cwd, tmuxArgv(o.argv, o.name).map(shq).join(" ")] };
+}
+var tmuxHas2 = (d) => (n) => d.run({ cmd: "tmux", args: ["-L", TMUX_SOCKET, "has-session", "-t", `=${n}`] }).ok;
+var LATER_MS = 10 * 60000;
+async function resume(ref, o, d) {
+  const bot = refuseBot(o.from, "resume a session on this machine");
+  if (bot)
+    return { ok: false, text: `\u25e2 crosstalk: ${bot}` };
+  const live = liveIds();
+  const entries = all2({ env: d.env, live });
+  let p = lookup(ref, entries);
+  if (!p) {
+    const hits = find(ref, entries);
+    if (hits.length === 1 || hits.length > 1 && hits[0].score > hits[1].score * 1.5)
+      p = hits[0].past;
+    else if (hits.length)
+      return { ok: false, text: `${describeHits(hits)}
+Which one? Say its id.` };
+  }
+  if (!p) {
+    const open = (await liveSessions(d)).find((l) => l.id === ref || l.name.toLowerCase() === ref.toLowerCase());
+    if (open || live.has(ref))
+      return { ok: true, text: `\u25e2 crosstalk: ${open?.name ?? ref} is open already. Say "show me ${open?.name ?? ref}" to bring it to the front.` };
+    return { ok: false, text: `\u25e2 crosstalk: no past session matches "${ref}".` };
+  }
+  const argv = resumeArgv({ client: p.client, sessionId: p.id }, d.which(p.client));
+  if (!argv)
+    return { ok: false, text: `\u25e2 crosstalk: ${p.client} sessions cannot be resumed.` };
+  const name = p.title || path67.basename(p.cwd);
+  if (o.background) {
+    if (!d.which("tmux"))
+      return { ok: false, text: "\u25e2 crosstalk: the background runs in tmux, which is not installed here." };
+    ensureConf();
+    const tn = freeTmuxName(name, tmuxHas2(d));
+    const r = d.run(backgroundStep({ name: tn, cwd: p.cwd, argv }));
+    if (!r.ok)
+      return { ok: false, text: `\u25e2 crosstalk: could not resume ${name} in the background: ${r.out.split(`
+`).pop()}` };
+    mark(p.id, { resumedAt: d.now(), archived: undefined });
+    return { ok: true, text: `\u25e2 crosstalk: resumed ${name} in the background as ${tn}, with its whole conversation. Say "show me ${tn}" to watch it.`, tmux: tn, resumed: p.id };
+  }
+  const tab = { cwd: p.cwd, argv, name, ...p.threads[0] ? { thread: p.threads[0] } : {} };
+  const r = d.open([tab], { cwd: p.cwd, envVars: d.env, by: o.by, thread: p.threads[0] });
+  if (r.opened.kind === "manual")
+    return { ok: true, text: `\u25e2 crosstalk: this terminal cannot open a tab from outside. To resume ${name}, run:
+  ${typedTab(tab)}`, resumed: p.id };
+  if (!r.ok)
+    return { ok: false, text: `\u25e2 crosstalk: could not open a tab for ${name}: ${r.out.split(`
+`).pop()}. To resume it yourself:
+  ${typedTab(tab)}` };
+  mark(p.id, { resumedAt: d.now(), archived: undefined });
+  return { ok: true, text: `\u25e2 crosstalk: resumed ${name} in a new tab in ${r.opened.where}, with its whole conversation.`, resumed: p.id };
+}
+
+// src/sessions/remote.ts
+import crypto23 from "node:crypto";
+import fs58 from "node:fs";
+import path68 from "node:path";
+var LIMITS = { perMinute: 20, actsPer10Min: 6 };
+var isOwn = (p) => !!p && p.own === true && !p.isMachine;
+
+class SessionsRemote {
+  d;
+  waiting = new Map;
+  seen = new Map;
+  acts = new Map;
+  constructor(d) {
+    this.d = d;
+  }
+  now = () => (this.d.now ?? Date.now)();
+  own() {
+    return Object.values(this.d.peers()).filter(isOwn);
+  }
+  machine(name) {
+    const n = name.trim().toLowerCase();
+    const own = this.own();
+    return own.find((p) => p.label.toLowerCase() === n) ?? own.find((p) => (p.machine ?? "").toLowerCase() === n) ?? own.find((p) => p.label.toLowerCase().endsWith(`-${n}`));
+  }
+  allow(map, label, n, windowMs) {
+    const now = this.now();
+    const list = (map.get(label) ?? []).filter((t) => now - t < windowMs);
+    if (list.length >= n) {
+      map.set(label, list);
+      return false;
+    }
+    list.push(now);
+    map.set(label, list);
+    return true;
+  }
+  ask(p, req, timeoutMs) {
+    const correlation = crypto23.randomUUID();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.waiting.delete(correlation);
+        resolve({ ok: false, error: `${p.label} did not answer (is it on, with crosstalk running?)` });
+      }, timeoutMs);
+      this.waiting.set(correlation, { peer: p.label, resolve, timer });
+      this.d.send(p.label, {
+        v: 1,
+        id: crypto23.randomUUID(),
+        ts: Date.now(),
+        from: this.d.identity.label,
+        fromSession: "-",
+        to: p.label,
+        kind: "sessions_req",
+        intent: "fyi",
+        text: "",
+        correlation,
+        sessions: req
+      });
+    });
+  }
+  async request(o) {
+    const timeout = Number(process.env.CROSSTALK_REMOTE_TIMEOUT_MS ?? (o.req.op === "act" ? 40000 : 6000));
+    if (!o.machine) {
+      if (o.req.op === "act")
+        return { ok: false, error: "say which machine" };
+      const own = this.own();
+      const all = await Promise.all(own.map(async (p) => ({ machine: p.machine ?? p.label, label: p.label, ...await this.ask(p, o.req, timeout) })));
+      return { ok: true, machines: all };
+    }
+    const p = this.machine(o.machine);
+    if (!p) {
+      const others = Object.values(this.d.peers()).find((x) => x.label.toLowerCase() === o.machine.toLowerCase());
+      return {
+        ok: false,
+        error: others ? `${others.label} is not one of your own machines, so its sessions are not yours to see or act on.` : `no machine of yours called "${o.machine}".${this.own().length ? ` Yours: ${this.own().map((x) => x.machine ?? x.label).join(", ")}.` : " None of your other machines is known here yet."}`
+      };
+    }
+    const r = await this.ask(p, o.req, timeout);
+    return { machine: p.machine ?? p.label, label: p.label, ...r };
+  }
+  accept(label, env, inRoom) {
+    if (env.kind !== "sessions_req" && env.kind !== "sessions_res")
+      return false;
+    if (env.kind === "sessions_res") {
+      const w = env.correlation ? this.waiting.get(env.correlation) : undefined;
+      if (!w || w.peer !== label || inRoom) {
+        this.d.log(`ignored a sessions answer from ${label}: nothing of theirs was waiting`);
+        return true;
+      }
+      this.waiting.delete(env.correlation);
+      clearTimeout(w.timer);
+      w.resolve(env.sessions && typeof env.sessions === "object" ? env.sessions : { ok: false, error: "an empty answer" });
+      return true;
+    }
+    const peer = this.d.peers()[label];
+    const reply = (body) => this.d.send(label, { v: 1, id: crypto23.randomUUID(), ts: Date.now(), from: this.d.identity.label, fromSession: "-", to: label, kind: "sessions_res", intent: "fyi", text: "", correlation: env.correlation, sessions: body });
+    if (inRoom || !peer || isBot(label) || !isOwn(peer)) {
+      this.d.log(`refused a sessions request from ${label}: ${inRoom ? "through a room" : !peer ? "not a peer" : isBot(label) ? "a bot" : "not one of your own machines"}`);
+      if (peer && !inRoom && env.correlation)
+        reply({ ok: false, error: `${this.d.machine()} only answers your own machines about its sessions.` });
+      return true;
+    }
+    if (!this.allow(this.seen, label, LIMITS.perMinute, 60000)) {
+      this.d.log(`rate-limited a sessions request from ${label}`);
+      reply({ ok: false, error: `too many requests from ${label}; try again in a minute.` });
+      return true;
+    }
+    this.answer(label, env.sessions).then(reply).catch((e) => reply({ ok: false, error: e.message }));
+    return true;
+  }
+  async answer(label, req) {
+    const machine = this.d.machine();
+    if (!req || typeof req !== "object")
+      return { ok: false, error: "an empty request" };
+    if (req.op === "list")
+      return { ok: true, machine, sessions: this.d.listLocal() };
+    if (req.op === "find") {
+      const hits = find(String(req.query ?? ""), all2({ env: this.d.deps().env }));
+      return { ok: true, machine, hits: hits.map(({ past: p, score }) => ({ id: p.id, title: p.title, cwd: p.cwd, threads: p.threads, branch: p.branch, recap: p.recap, endedAt: p.endedAt, archived: !!p.archived, score })), text: describeHits(hits) };
+    }
+    if (req.op !== "act" || !req.act || typeof req.act !== "object")
+      return { ok: false, error: "unknown request" };
+    const a = clean3(req.act);
+    if (!a)
+      return { ok: false, error: "a malformed action" };
+    if (!this.allow(this.acts, label, LIMITS.actsPer10Min, 10 * 60000)) {
+      this.d.log(`rate-limited a remote ${a.kind} from ${label}`);
+      return { ok: false, error: `too many actions from ${label} in ten minutes; nothing was done.` };
+    }
+    const what = describeRemote(a);
+    const id = `remote:${crypto23.randomBytes(4).toString("hex")}`;
+    const digest = (outcome) => this.d.note(id, `\u25e2 crosstalk: ${label}, your machine, asked to ${what}: ${outcome}`);
+    this.d.log(`remote ${a.kind} from ${label}: ${what}`);
+    let local;
+    if (a.kind === "spawn") {
+      const cwd = this.folderFor(a.repo);
+      if (!cwd.ok) {
+        digest(`refused (${cwd.error})`);
+        return { ok: false, error: cwd.error };
+      }
+      local = { kind: "spawn", task: a.task, name: a.name, count: a.count, cwd: cwd.cwd };
+    } else if (a.kind === "resume")
+      local = { kind: "resume", session: a.session };
+    else if (a.kind === "close")
+      local = { kind: "close", session: a.session, services: a.services === "stop" ? "stop" : "keep" };
+    else
+      local = { kind: "background", session: a.session };
+    const here = this.personAt();
+    if (here) {
+      raise({ by: here.sessionId, cwd: here.cwd, action: local, question: `From ${label}: ${questionFor(local)}`, from: label });
+      digest(`asked you in ${here.name}`);
+      return { ok: true, pending: true, text: `\u25e2 crosstalk: asked on ${machine}, in ${here.name}: nothing happens unless the person there says yes.` };
+    }
+    if (a.kind === "close" || a.kind === "background") {
+      digest("refused: nobody was at this machine to say yes");
+      return { ok: false, text: `\u25e2 crosstalk: nobody is at ${machine} to say yes, and a session is never ended from afar without that. Nothing was done.` };
+    }
+    const d = this.d.deps();
+    const out = local.kind === "resume" ? await resume(local.session, { cwd: d.env.HOME ?? "/", background: true, from: label }, d) : local.kind === "spawn" ? spawnAgents({ task: local.task, name: local.name, count: local.count, cwd: local.cwd, background: true, env: d.env, peer: label }) : { ok: false, text: "nothing to do" };
+    digest(out.ok ? `done, in the background (nobody was at this machine)` : `failed: ${out.text.replace(/^\u25e2 crosstalk: /, "").split(`
+`)[0]}`);
+    return { ok: out.ok, text: out.text.replace(/^\u25e2 crosstalk: /, `\u25e2 crosstalk on ${machine}: `) };
+  }
+  personAt() {
+    const last = lastTyped();
+    if (!last || this.now() - last.at > awayMinutes() * 60000)
+      return null;
+    const reg = this.d.registered().get(last.sessionId);
+    if (!reg || !(this.d.modLive(last.sessionId) || modActive2(last.sessionId)))
+      return null;
+    return { sessionId: reg.sessionId, cwd: reg.cwd, name: reg.name };
+  }
+  folderFor(repo) {
+    const known = new Map;
+    const add = (cwd) => {
+      if (!cwd || known.has(cwd))
+        return;
+      try {
+        if (!fs58.statSync(cwd).isDirectory())
+          return;
+      } catch {
+        return;
+      }
+      known.set(cwd, repoName(repoKey(cwd)));
+    };
+    for (const r of readAll())
+      add(r.cwd);
+    for (const s of readSpawned())
+      if (!s.removedAt)
+        add(s.repo);
+    for (const p of Object.values(load13()).slice(0, 200))
+      add(p.cwd);
+    const repos = new Map;
+    for (const [cwd, name] of known) {
+      const main = repoKey(cwd);
+      if (!repos.has(name) || main === cwd)
+        repos.set(name, known.has(main) ? main : cwd);
+    }
+    if (!repos.size)
+      return { ok: false, error: `${this.d.machine()} has no repository it has had a session in yet` };
+    const want = slug2(repo ?? "");
+    if (!want) {
+      if (repos.size === 1)
+        return { ok: true, cwd: [...repos.values()][0] };
+      return { ok: false, error: `say which repository: ${[...repos.keys()].join(", ")}` };
+    }
+    const hit = repos.get(want) ?? [...known].find(([cwd]) => slug2(path68.basename(cwd)) === want)?.[0];
+    return hit ? { ok: true, cwd: hit } : { ok: false, error: `no repository called ${repo} on ${this.d.machine()}: ${[...repos.keys()].join(", ")}` };
+  }
+}
+function clean3(a) {
+  const s = (v, n = 200) => typeof v === "string" ? v.slice(0, n) : "";
+  switch (a?.kind) {
+    case "close":
+      return s(a.session) ? { kind: "close", session: s(a.session), services: a.services === "stop" ? "stop" : "keep" } : null;
+    case "background":
+      return s(a.session) ? { kind: "background", session: s(a.session) } : null;
+    case "resume":
+      return s(a.session) ? { kind: "resume", session: s(a.session) } : null;
+    case "spawn": {
+      const task = s(a.task, 8000).trim();
+      if (!task || /^\s*-/.test(task))
+        return null;
+      return { kind: "spawn", task, ...s(a.name, 40) ? { name: s(a.name, 40) } : {}, ...s(a.repo, 100) ? { repo: s(a.repo, 100) } : {}, ...Number(a.count) > 0 ? { count: Math.min(8, Math.floor(Number(a.count))) } : {} };
+    }
+    default:
+      return null;
+  }
+}
+
+// src/sessions/daemon.ts
+function createSessionOps(d) {
+  const deps = () => ({ ...liveDeps(process.env), ask: (req) => d.handle(req) });
+  const remote = new SessionsRemote({
+    identity: d.identity,
+    machine: d.machine,
+    peers: d.peers,
+    send: d.send,
+    log: d.log,
+    note: d.note,
+    listLocal: d.listLocal,
+    modLive: d.modLive,
+    registered: d.sessions,
+    deps
+  });
+  const name = (sessionId, registered) => nameOf(sessionId) ?? registered;
+  async function handle(req) {
+    switch (req?.op) {
+      case "session_rename": {
+        const sid = String(req.sessionId ?? "");
+        const n = clean2(String(req.name ?? ""));
+        if (!sid || !n)
+          return { ok: false, error: "say which session and what to call it" };
+        setName(sid, n);
+        const reg = d.sessions().get(sid);
+        if (reg)
+          reg.name = n;
+        const local = d.threads.local(sid);
+        if (local)
+          d.threads.observe({ ...local, name: n });
+        d.log(`session ${sid.slice(0, 8)} renamed to ${n}`);
+        return { ok: true, name: n, threads: d.threads.namesFor(sid), title: d.threads.title(sid, n) ?? n };
+      }
+      case "session_move": {
+        const sid = String(req.sessionId ?? "");
+        const want = String(req.thread ?? "").trim();
+        if (!sid || !want)
+          return { ok: false, error: "say which session and which thread" };
+        const t = d.threads.find(sid, want);
+        if (!t)
+          return { ok: false, error: `no thread called "${want}". Threads: ${d.threads.list().map((x) => x.name).join(", ") || "none"}` };
+        const r = d.threads.expect({ sessionId: sid, thread: t.id, why: "you moved it here" });
+        if (!r.ok)
+          return r;
+        if (!d.threads.idsFor(sid).includes(t.id))
+          d.threads.answer(sid, t.meta.value.name);
+        for (const other of d.threads.idsFor(sid))
+          if (other !== t.id)
+            d.threads.leave(sid, other);
+        d.log(`session ${sid.slice(0, 8)} moved to ${t.meta.value.name}`);
+        return { ok: true, threads: d.threads.namesFor(sid) };
+      }
+      case "sessions_remote":
+        return remote.request({ machine: req.machine ? String(req.machine) : undefined, req: req.req });
+      default:
+        return;
+    }
+  }
+  return { handle, accept: (label, env, inRoom) => remote.accept(label, env, inRoom), name, remote };
+}
+
+// src/services/service.ts
+import fs59 from "node:fs";
+import path69 from "node:path";
+import { spawn as spawn8, spawnSync as spawnSync20 } from "node:child_process";
+var TMUX_SESSION2 = "crosstalk-services";
+var dir7 = () => path69.join(P2.root, "services");
+var fileOf4 = (id) => path69.join(dir7(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+var statusFile2 = (id) => path69.join(dir7(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.exit`);
+function readAll3() {
+  let names;
+  try {
+    names = fs59.readdirSync(dir7()).filter((f) => f.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const f of names)
+    try {
+      const s = JSON.parse(fs59.readFileSync(path69.join(dir7(), f), "utf8"));
+      if (s?.id && s.root && s.name)
+        out.push(s);
+    } catch {}
+  return out.sort((a, b) => a.startedAt - b.startedAt);
+}
+function write5(s) {
+  fs59.mkdirSync(dir7(), { recursive: true, mode: 448 });
+  const tmp = `${fileOf4(s.id)}.${process.pid}.tmp`;
+  fs59.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs59.renameSync(tmp, fileOf4(s.id));
+}
+var tmux2 = (args) => {
+  try {
+    const r = spawnSync20("tmux", ["-L", TMUX_SOCKET, ...args], { encoding: "utf8", timeout: 1e4, env: cleanEnv(process.env) });
+    return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.status === 0 ? "" : r.stderr ?? ""}`.trim() };
+  } catch (e) {
+    return { ok: false, out: String(e) };
+  }
+};
+function tmuxWindows2(t = tmux2) {
+  const r = t(["list-windows", "-t", `=${TMUX_SESSION2}`, "-F", "#{window_id} #{pane_pid}"]);
+  const out = new Map;
+  if (!r.ok)
+    return out;
+  for (const l of r.out.split(`
+`)) {
+    const [w, p] = l.trim().split(" ");
+    if (w?.startsWith("@"))
+      out.set(w, Number(p));
+  }
+  return out;
+}
+function aliveProc2(pid, start) {
+  if (!pidAlive(pid, start))
+    return false;
+  const r = spawnSync20("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+  if (r.status !== 0)
+    return r.error ? true : false;
+  return !r.stdout.trim().startsWith("Z");
+}
+var sleepSync5 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+var liveLook2 = () => {
+  let w;
+  let t;
+  let l;
+  return { windows: () => w ??= tmuxWindows2(), table: () => t ??= psTable(), listeners: () => l ??= listeners(), alive: aliveProc2 };
+};
+function headPid2(s, look) {
+  if (s.stoppedAt)
+    return null;
+  if (s.backend === "tmux")
+    return s.window && look.windows().has(s.window) && (!s.panePid || look.windows().get(s.window) === s.panePid) ? look.windows().get(s.window) : null;
+  return s.pid && look.alive(s.pid, s.pidStart) ? s.pid : null;
+}
+function pidsOf2(s, look) {
+  const h = headPid2(s, look);
+  if (!h)
+    return [];
+  const ids = new Set(tree(h, look.table()));
+  if (s.backend === "process" && s.pid) {
+    for (const p of look.table())
+      if (p.ppid === s.pid)
+        for (const x of tree(p.pid, look.table()))
+          ids.add(x);
+  }
+  return [...ids];
+}
+function state2(s, look, withPorts = true) {
+  const h = headPid2(s, look);
+  let exit;
+  try {
+    exit = fs59.readFileSync(statusFile2(s.id), "utf8").trim();
+  } catch {}
+  const st = s.stoppedAt ? "stopped" : h ? "running" : "exited";
+  const pids = withPorts && h ? new Set(pidsOf2(s, look)) : new Set;
+  const listening = [...new Set(look.listeners().filter((l) => pids.has(l.pid)).map((l) => l.port))].sort((a, b) => a - b);
+  return { ...s, state: st, ...exit !== undefined && st === "exited" ? { exit } : {}, listening };
+}
+var STOP_MS2 = () => Number(process.env.CROSSTALK_SERVICE_STOP_MS ?? 8000);
+function signal2(pids, sig) {
+  for (const p of pids)
+    try {
+      process.kill(p, sig);
+    } catch {}
+}
+function stopOne2(s, o = {}) {
+  const fresh = o.look ?? liveLook2;
+  const wait = o.waitMs ?? STOP_MS2();
+  const gone = () => !pidsOf2(s, fresh()).some((p) => aliveProc2(p));
+  const until = (ms) => {
+    for (const end = Date.now() + ms;Date.now() < end; sleepSync5(100))
+      if (gone())
+        return true;
+    return gone();
+  };
+  const pids = pidsOf2(s, fresh());
+  if (s.backend === "process" && s.pid)
+    try {
+      process.kill(-s.pid, "SIGTERM");
+    } catch {}
+  signal2(pids, "SIGTERM");
+  let ok = !pids.length || until(wait);
+  if (!ok) {
+    if (s.backend === "tmux" && s.window)
+      tmux2(["kill-window", "-t", s.window]);
+    else if (s.pid)
+      try {
+        process.kill(-s.pid, "SIGHUP");
+      } catch {}
+    signal2(pidsOf2(s, fresh()), "SIGHUP");
+    ok = until(Math.max(1000, wait / 2));
+  }
+  if (s.backend === "tmux" && s.window)
+    tmux2(["kill-window", "-t", s.window]);
+  if (ok)
+    write5({ ...s, stoppedAt: Date.now() });
+  return ok;
+}
+var roots2 = new Map;
+function sessionServices2(o, look = liveLook2()) {
+  let root = "";
+  try {
+    root = o.cwd ? rootOf(o.cwd) : "";
+  } catch {}
+  return readAll3().filter((s) => !s.stoppedAt && (root && s.root === root || o.sessionId && s.by === o.sessionId)).map((s) => state2(s, look, false)).filter((s) => s.state === "running");
+}
+setServices({
+  running: (o) => sessionServices2(o).map((s) => ({ name: s.name, pid: headPid2(s, liveLook2()) ?? undefined, port: (s.ports ?? [])[0] ?? s.port })),
+  stop: async (o) => {
+    const out = [];
+    for (const s of sessionServices2(o))
+      if (stopOne2(s))
+        out.push(s.name);
+    return out;
+  }
+});
+
 // src/daemon.ts
 var identity = loadIdentity();
 if (!identity) {
@@ -14305,6 +15481,7 @@ var persistSessions = () => saveRegistered(Object.fromEntries(sessions));
 persistSessions();
 var coord;
 var attention;
+var sessionOps;
 var threads = new ThreadService({
   tiebreak: (sid, cands, mode) => attention?.tiebreak(sid, cands, mode),
   extra: { file: RULES_FILE2, read: (repo, text) => coord?.readRules(repo, text), render: (repo) => coord?.renderRules(repo) },
@@ -14316,12 +15493,12 @@ var threads = new ThreadService({
   peers: () => loadPeers(),
   send: (label, env) => sendEnvelope(label, env),
   log,
-  file: path64.join(P.root, "threads.json"),
+  file: path70.join(P.root, "threads.json"),
   settleMs: Number(process.env.CROSSTALK_THREAD_SETTLE_MS ?? 3000),
   network: process.env.CROSSTALK_THREADS_NO_PUSH !== "1",
   fadeDays: Number(process.env.CROSSTALK_THREAD_FADE_DAYS ?? 14),
   connected: (repo) => {
-    const slug = repo.startsWith("github.com/") ? repo.slice("github.com/".length) : `local/${path64.basename(repo)}`;
+    const slug = repo.startsWith("github.com/") ? repo.slice("github.com/".length) : `local/${path70.basename(repo)}`;
     return consent2(slug) === "yes";
   }
 });
@@ -14898,6 +16075,8 @@ function onEnvelope(peerLabel, env, ctx) {
   }
   if (env.kind === "room_key")
     return acceptRoomKey(peerLabel, env);
+  if (sessionOps?.accept(peerLabel, env, !!ctx?.room))
+    return;
   if (coord.accept(peerLabel, env, !!ctx?.room))
     return;
   if (env.kind === "fact" || env.kind === "fact_sync")
@@ -14916,7 +16095,7 @@ function onEnvelope(peerLabel, env, ctx) {
     if (env.correlation)
       sendEnvelope(peerLabel, {
         v: 1,
-        id: crypto22.randomUUID(),
+        id: crypto24.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: "-",
@@ -15045,7 +16224,7 @@ function acceptRoomKey(peerLabel, env) {
 function sendRoomKey(peerLabel, room) {
   return sendEnvelope(peerLabel, {
     v: 1,
-    id: crypto22.randomUUID(),
+    id: crypto24.randomUUID(),
     ts: Date.now(),
     from: identity.label,
     fromSession: "-",
@@ -15140,7 +16319,7 @@ function acceptTasks(peerLabel, env) {
     if (all.length)
       sendEnvelope(peerLabel, {
         v: 1,
-        id: crypto22.randomUUID(),
+        id: crypto24.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: "-",
@@ -15161,7 +16340,7 @@ function broadcastTask(room, op) {
       continue;
     sendEnvelope(label, {
       v: 1,
-      id: crypto22.randomUUID(),
+      id: crypto24.randomUUID(),
       ts: Date.now(),
       from: identity.label,
       fromSession: "-",
@@ -15182,7 +16361,7 @@ function broadcastFact(room, op) {
       continue;
     sendEnvelope(label, {
       v: 1,
-      id: crypto22.randomUUID(),
+      id: crypto24.randomUUID(),
       ts: Date.now(),
       from: identity.label,
       fromSession: "-",
@@ -15201,7 +16380,7 @@ function shareFacts(peerLabel, room) {
     return;
   sendEnvelope(peerLabel, {
     v: 1,
-    id: crypto22.randomUUID(),
+    id: crypto24.randomUUID(),
     ts: Date.now(),
     from: identity.label,
     fromSession: "-",
@@ -15222,7 +16401,7 @@ function requestFactSync() {
     for (const label of Object.keys(loadPeers()))
       sendEnvelope(label, {
         v: 1,
-        id: crypto22.randomUUID(),
+        id: crypto24.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: "-",
@@ -15237,7 +16416,7 @@ function requestFactSync() {
     for (const label of Object.keys(loadPeers()))
       sendEnvelope(label, {
         v: 1,
-        id: crypto22.randomUUID(),
+        id: crypto24.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: "-",
@@ -15283,7 +16462,7 @@ function publishPresence() {
   for (const label of Object.keys(loadPeers())) {
     sendEnvelope(label, {
       v: 1,
-      id: crypto22.randomUUID(),
+      id: crypto24.randomUUID(),
       ts: Date.now(),
       from: identity.label,
       fromSession: "-",
@@ -15347,7 +16526,7 @@ async function handle(req, sock) {
       sessions.set(sessionId, {
         sessionId,
         pid: req.pid,
-        name: before?.title && req.name === before.title ? before.name : req.name,
+        name: sessionOps?.name(sessionId, before?.title && req.name === before.title ? before.name : req.name) ?? (before?.title && req.name === before.title ? before.name : req.name),
         title: before?.title,
         cwd: req.cwd ?? "",
         socket: req.socket,
@@ -15424,7 +16603,7 @@ async function handle(req, sock) {
       const intent = req.intent ?? "fyi";
       const decision = triage("notify", intent, "message", statusOf(target.sessionId));
       const h = {
-        id: crypto22.randomUUID(),
+        id: crypto24.randomUUID(),
         from: source,
         fromSession: "-",
         intent,
@@ -15719,7 +16898,7 @@ async function handle(req, sock) {
           return { ok: false, error: `no key for #${room.name}` };
         const env = {
           v: 1,
-          id: crypto22.randomUUID(),
+          id: crypto24.randomUUID(),
           ts: Date.now(),
           from: identity.label,
           fromSession: sessionById(req.sessionId)?.name ?? "-",
@@ -15776,7 +16955,7 @@ async function handle(req, sock) {
       })();
       const env = {
         v: 1,
-        id: crypto22.randomUUID(),
+        id: crypto24.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: sessionById(req.sessionId)?.name ?? "-",
@@ -15792,7 +16971,7 @@ async function handle(req, sock) {
         thread: req.thread,
         replyTo: req.replyTo,
         room: req.room,
-        correlation: req.op === "ask" ? crypto22.randomUUID() : undefined,
+        correlation: req.op === "ask" ? crypto24.randomUUID() : undefined,
         footprint: senderFootprint(req),
         ...fromThreads.length ? { threads: fromThreads } : {}
       };
@@ -15835,7 +17014,7 @@ async function handle(req, sock) {
       const [label] = String(req.to).split("/");
       const env = {
         v: 1,
-        id: crypto22.randomUUID(),
+        id: crypto24.randomUUID(),
         ts: Date.now(),
         from: identity.label,
         fromSession: sessionById(req.sessionId)?.name ?? "-",
@@ -15959,8 +17138,8 @@ async function handle(req, sock) {
       if (!fp.repo)
         return { ok: true, shared: false };
       const root = fp.root ?? threads.rootFor(fp.repo);
-      const file = root ? path64.relative(root, abs).split(path64.sep).join("/") : "";
-      if (!file || file.startsWith("..") || path64.isAbsolute(file))
+      const file = root ? path70.relative(root, abs).split(path70.sep).join("/") : "";
+      if (!file || file.startsWith("..") || path70.isAbsolute(file))
         return { ok: true, shared: true };
       const key = `${self.sessionId}|${fp.repo}|${file}`;
       const c = editShared.get(key);
@@ -16181,7 +17360,7 @@ async function handle(req, sock) {
           const [label] = String(req.tell).split("/");
           sendEnvelope(label, {
             v: 1,
-            id: crypto22.randomUUID(),
+            id: crypto24.randomUUID(),
             ts: Date.now(),
             from: identity.label,
             fromSession: inThread?.name ?? "-",
@@ -16207,7 +17386,7 @@ ${req.rationale}` : ""}`
         const [label] = String(req.tell).split("/");
         sendEnvelope(label, {
           v: 1,
-          id: crypto22.randomUUID(),
+          id: crypto24.randomUUID(),
           ts: Date.now(),
           from: identity.label,
           fromSession: sessionById(req.sessionId)?.name ?? "-",
@@ -16327,6 +17506,9 @@ ${req.rationale}` : ""}`
       const a = await attention?.handle(req, resolveSession(req));
       if (a !== undefined)
         return a;
+      const so = await sessionOps?.handle(req);
+      if (so !== undefined)
+        return so;
       return { ok: false, error: `unknown op "${req.op}"` };
     }
   }
@@ -16393,9 +17575,22 @@ attention = createAttention({
     return reg ? footprintOf(reg).repo : undefined;
   }
 });
+sessionOps = createSessionOps({
+  identity,
+  machine: () => thisMachine(identity),
+  threads,
+  sessions: () => sessions,
+  peers: () => loadPeers(),
+  send: (label, env) => sendEnvelope(label, env),
+  log,
+  note: (id, text) => coord.note({ id, text }),
+  listLocal: () => coord.sessionsList(),
+  modLive: (sid) => modLive(sessions.get(sid)),
+  handle: (req) => handle(req)
+});
 setInterval(() => attention?.tick(), Math.max(200, Number(process.env.CROSSTALK_ATTENTION_TICK_MS ?? 15000)));
-fs54.mkdirSync(path64.dirname(P.daemonSock), { recursive: true, mode: 448 });
-var control = net3.createServer((sock) => {
+fs60.mkdirSync(path70.dirname(P.daemonSock), { recursive: true, mode: 448 });
+var control = net4.createServer((sock) => {
   let rest = "";
   sock.on("data", async (buf) => {
     rest += buf.toString("utf8");
@@ -16420,9 +17615,9 @@ var control = net3.createServer((sock) => {
   sock.on("error", () => {});
 });
 var alreadyRunning = () => new Promise((resolve) => {
-  if (!fs54.existsSync(P.daemonSock))
+  if (!fs60.existsSync(P.daemonSock))
     return resolve(false);
-  const probe = net3.createConnection(P.daemonSock);
+  const probe = net4.createConnection(P.daemonSock);
   const done = (answer) => {
     probe.destroy();
     resolve(answer);
@@ -16434,17 +17629,17 @@ var alreadyRunning = () => new Promise((resolve) => {
 if (await alreadyRunning()) {
   let who = "";
   try {
-    who = ` as pid ${Number(fs54.readFileSync(P.daemonLock, "utf8"))}`;
+    who = ` as pid ${Number(fs60.readFileSync(P.daemonLock, "utf8"))}`;
   } catch {}
   console.error(`crosstalk: a daemon is already running${who}`);
   process.exit(0);
 }
 try {
-  fs54.unlinkSync(P.daemonSock);
+  fs60.unlinkSync(P.daemonSock);
 } catch {}
 control.listen(P.daemonSock, () => {
-  fs54.chmodSync(P.daemonSock, 384);
-  fs54.writeFileSync(P.daemonLock, String(process.pid), { mode: 384 });
+  fs60.chmodSync(P.daemonSock, 384);
+  fs60.writeFileSync(P.daemonLock, String(process.pid), { mode: 384 });
   log(`daemon up as "${identity.label}" on ${P.daemonSock}`);
   connect();
   threads.retain([...sessions.keys()]);
@@ -16466,14 +17661,14 @@ setInterval(() => {
 var bye = () => {
   let mine = false;
   try {
-    mine = Number(fs54.readFileSync(P.daemonLock, "utf8")) === process.pid;
+    mine = Number(fs60.readFileSync(P.daemonLock, "utf8")) === process.pid;
   } catch {}
   if (mine) {
     try {
-      fs54.unlinkSync(P.daemonSock);
+      fs60.unlinkSync(P.daemonSock);
     } catch {}
     try {
-      fs54.unlinkSync(P.daemonLock);
+      fs60.unlinkSync(P.daemonLock);
     } catch {}
   }
   process.exit(0);

@@ -18,6 +18,8 @@ export type Kind =
   | "heads-up"
   | "conflict"
   | "rules"
+  | "sessions_req"
+  | "sessions_res"
 
 export type Slice = {
   kind: "diff" | "file" | "turns" | "text"
@@ -74,6 +76,12 @@ export type Envelope = {
   warn?: unknown
   /** A repo's standing rules and their key, on kind "rules" (src/rules/doc.ts). */
   rules?: unknown
+  /**
+   * A request about sessions on one of your own machines, and its answer, on
+   * kinds "sessions_req" and "sessions_res" (src/sessions/remote.ts). Only
+   * ever accepted from your own machines.
+   */
+  sessions?: unknown
 }
 
 export type FootprintSummary = { repo?: string; branch?: string; paths?: string[] }

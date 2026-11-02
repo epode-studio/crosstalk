@@ -163,6 +163,7 @@ function header(it: Item): string {
   if (it.kind === 'disk') return 'Disk'
   if (it.kind === 'install') return 'Team'
   if (it.kind === 'steer') return 'Steer'
+  if (it.kind === 'session') return 'Session'
   if (it.kind === 'attention') return it.id.startsWith('attn:perm:') ? 'Permission' : it.id.startsWith('attn:staff:') ? 'Staffing' : 'Fresh start'
   return cut(it.thread ? `${it.from} · ${it.thread}` : it.from ?? 'crosstalk', 12)
 }
@@ -408,7 +409,7 @@ async function raise($: EngineInterface, it: Item) {
       answer = await $.ui.ask(it.question ?? 'crosstalk has a shipping question', { options: it.options ?? ['Not yet'], header: header(it) })
     else if (it.kind === 'thread')
       answer = await $.ui.ask(it.question ?? 'Which thread is this session part of?', { options: it.options ?? ['New thread', 'No thread'], header: header(it) })
-    else if (it.kind === 'rule' || it.kind === 'connect' || it.kind === 'conflict' || it.kind === 'invite' || it.kind === 'doctor' || it.kind === 'disk' || it.kind === 'install' || it.kind === 'attention' || it.kind === 'steer')
+    else if (it.kind === 'rule' || it.kind === 'connect' || it.kind === 'conflict' || it.kind === 'invite' || it.kind === 'doctor' || it.kind === 'disk' || it.kind === 'install' || it.kind === 'attention' || it.kind === 'steer' || it.kind === 'session')
       answer = await $.ui.ask(it.question ?? 'crosstalk has a question', { options: (it.options ?? ['Not now']).slice(0, 4), header: header(it) })
     else {
       const what = it.kind === 'ask' ? 'asks' : 'says'
@@ -466,7 +467,7 @@ async function answered($: EngineInterface, it: Item, answer: string) {
     await receipt($, `disk-${it.id}`, r.text ?? r.error ?? 'crosstalk: the disk question did not answer')
     return
   }
-  if (it.kind === 'rule' || it.kind === 'connect' || it.kind === 'conflict' || it.kind === 'invite' || it.kind === 'install' || it.kind === 'attention' || it.kind === 'steer') {
+  if (it.kind === 'rule' || it.kind === 'connect' || it.kind === 'conflict' || it.kind === 'invite' || it.kind === 'install' || it.kind === 'attention' || it.kind === 'steer' || it.kind === 'session') {
     const r = await step($, it, 'answer', answer)
     $.ui.toast(oneLine((r.text ?? r.error ?? 'crosstalk did not answer').replace(/^◢ crosstalk: /, '')))
     return

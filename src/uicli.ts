@@ -20,6 +20,7 @@ import * as gather from "./gather.ts"
 import * as cleanup from "./cleanup.ts"
 import * as Svc from "./services/service.ts"
 import * as extra from "./ui-extra/uicli.ts"
+import * as sessionCtl from "./sessions/control.ts"
 
 type Out = Record<string, unknown>
 
@@ -171,6 +172,12 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
       return print({ ok: true, ...(await waiting(session, false)) })
     case "watch":
       return watch(session, Math.max(250, Number(arg(argv, "--interval") ?? 1000)))
+    case "bg-later": {
+      // A move to the background the person said yes to, waiting for what the
+      // session started to stop (src/sessions/control.ts waitThenBackground).
+      if (insideAgent()) return print({ ok: false, error: "this is crosstalk's own waiter" })
+      return print(await sessionCtl.backgroundLater(session, arg(argv, "--id") ?? ""))
+    }
     case "act": {
       const id = arg(argv, "--id") ?? ""
       const action = arg(argv, "--action") ?? ""
@@ -178,6 +185,12 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
       if (id.startsWith("restore:")) return print(restoreAct(session, id, action, value, root))
       if (id.startsWith("gather:")) return print(gatherAct(session, id, action, value, root))
       if (id.startsWith("cleanup:")) return print(cleanup.act(session, id, action, value))
+      // Close, background, rename, move, and actions from your other machines (src/sessions/control.ts):
+      // run from here, the mod's own process, and only on the person's pick, never an agent's shell.
+      if (id.startsWith("sess:")) {
+        if (action === "answer" && insideAgent()) return print({ ok: false, error: "this is for a person: answer it in crosstalk's picker" })
+        return print(await sessionCtl.act(session, id, action, value))
+      }
       // First use in a repo works with no identity and no daemon: a yes makes both.
       if (id.startsWith("connect:")) {
         if (action === "raised" || action === "later") return print(ui.withStore((items, now) => ui.act(items, id, action, now)))
