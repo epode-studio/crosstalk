@@ -169,8 +169,8 @@ terminal inside it, learn its window. crosstalk has none. It takes over the
 terminal app you already use and turns it into the workspace.
 
 - **Your tabs are the list of agents.** One per session, opened, arranged and
-  brought back by crosstalk, one window per repository. *(Here. A tab per
-  thread: coming.)*
+  brought back by crosstalk: one window per repository, a thread's tabs side by
+  side.
 - **Status at a glance.** Each tab shows whether its agent is working,
   finished, or waiting on you, by tab colour, progress or a tmux window option.
   When something needs you and you are looking elsewhere, a notification takes
@@ -178,9 +178,9 @@ terminal app you already use and turns it into the workspace.
   saying a question is waiting, never what it is.
 - **New agents on request.** "Put two more on auth" opens two tabs, each with
   its own agent in its own private copy of the code, already knowing what the
-  thread is about. *(Here, starting from the task you describe; knowing the
-  thread comes with threads. Finished worktrees are offered for cleanup once
-  their work is merged.)*
+  thread is about: each starts from the thread's recap, decisions and open
+  questions, then your task. Finished worktrees are offered for cleanup once
+  their work is merged.
 - **Start from any session.** There is no app to launch first and no window
   to live inside. Open any Claude session and everything grows out of it.
 - **Nothing is lost.** A restart, a crash or a closed laptop brings every agent

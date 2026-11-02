@@ -495,6 +495,73 @@ describe("service", () => {
     expect(ana.svc.namesFor("s3")).toEqual(["billing"])
   })
 
+  test("a placement said in advance (a new agent's worktree) survives footprint inference", () => {
+    const [ana] = pair()
+    ana.svc.observe(sess("asker", "token-v2", ["src/auth/token.ts"]))
+    ana.svc.observe(sess("bill", "billing", ["src/billing/a.ts", "src/billing/b.ts", "src/billing/c.ts"]))
+    const [auth] = ana.svc.idsFor("asker")
+    const name = ana.svc.thread(auth)!.meta.value.name
+    expect(ana.svc.expect({ cwd: "/wt/auth-1", thread: name, why: "started from asker" })).toEqual({ ok: true, thread: name })
+    // Saying it again changes nothing.
+    expect(ana.svc.expect({ cwd: "/wt/auth-1", thread: auth })).toEqual({ ok: true, thread: name })
+    // Its own branch and files would put it elsewhere: billing's files, a branch no thread has.
+    const agent: LocalSession = { sessionId: "agent", name: "auth-1", cwd: "/wt/auth-1/src", repo: "github.com/acme/api", branch: "crosstalk/auth-1", paths: ["src/billing/a.ts", "src/billing/b.ts"] }
+    ana.svc.observe(agent)
+    expect(ana.svc.idsFor("agent")).toEqual([auth])
+    expect(ana.svc.question("agent")).toBeUndefined()
+    expect(ana.svc.forSession("agent", "auth-1", false).threads[0]).toMatchObject({ name, why: "started from asker" })
+    // Its branch joined the thread, so the pin holds every time it is placed again.
+    expect(M.ids(ana.svc.thread(auth)!, "branches")).toContain("crosstalk/auth-1")
+    for (let i = 0; i < 3; i++) {
+      ana.clock.t += 60_000
+      ana.svc.observe({ ...agent, paths: [...agent.paths, `src/billing/n${i}.ts`] })
+    }
+    expect(ana.svc.idsFor("agent")).toEqual([auth])
+    // Messages for the thread reach it, and the title shows the thread.
+    expect(ana.svc.sessionsIn([auth]).sort()).toEqual(["agent", "asker"])
+    expect(ana.svc.title("agent", "auth-1")).toBe(`${name} · auth-1`)
+    // A fresh session in the same worktree (a disposed one's successor) starts there too.
+    ana.svc.observe({ ...agent, sessionId: "agent-2" })
+    expect(ana.svc.idsFor("agent-2")).toEqual([auth])
+    // By session id, too; and an unknown thread is refused.
+    ana.svc.expect({ sessionId: "other", thread: name })
+    ana.svc.observe({ ...agent, sessionId: "other", cwd: "/elsewhere" })
+    expect(ana.svc.idsFor("other")).toEqual([auth])
+    expect(ana.svc.expect({ cwd: "/x", thread: "nope" }).ok).toBe(false)
+  })
+
+  test("leaving a thread sticks: matching never puts the session back, choosing it does", () => {
+    const [ana] = pair()
+    ana.svc.observe(sess("asker", "token-v2", ["src/auth/token.ts"]))
+    const [auth] = ana.svc.idsFor("asker")
+    const name = ana.svc.thread(auth)!.meta.value.name
+    ana.svc.expect({ cwd: "/wt/auth-1", thread: name })
+    const agent: LocalSession = { sessionId: "agent", name: "auth-1", cwd: "/wt/auth-1", repo: "github.com/acme/api", branch: "crosstalk/auth-1", paths: ["src/auth/token.ts"] }
+    ana.svc.observe(agent)
+    expect(ana.svc.idsFor("agent")).toEqual([auth])
+    expect(ana.svc.leave("agent", name)).toMatchObject({ ok: true })
+    expect(ana.svc.idsFor("agent")).not.toContain(auth)
+    // Its branch belongs to the thread and its files match it, and it still stays out.
+    for (let i = 0; i < 3; i++) {
+      ana.clock.t += 60_000
+      ana.svc.observe({ ...agent, paths: [...agent.paths, `src/auth/n${i}.ts`] })
+    }
+    expect(ana.svc.idsFor("agent")).not.toContain(auth)
+    // Choosing it by hand brings it back.
+    expect(ana.svc.answer("agent", name)).toMatchObject({ ok: true })
+    expect(ana.svc.idsFor("agent")).toContain(auth)
+  })
+
+  test("a session already registered when its placement is said is placed at once", () => {
+    const [ana] = pair()
+    ana.svc.observe(sess("asker", "token-v2", ["src/auth/token.ts"]))
+    const [auth] = ana.svc.idsFor("asker")
+    ana.svc.observe({ sessionId: "early", name: "auth-2", cwd: "/wt/auth-2", repo: "github.com/acme/api", branch: "crosstalk/auth-2", paths: [] })
+    expect(ana.svc.idsFor("early")).not.toContain(auth)
+    ana.svc.expect({ cwd: "/wt/auth-2", thread: auth })
+    expect(ana.svc.idsFor("early")).toEqual([auth])
+  })
+
   test("a quiet thread nobody is in fades to its decisions, and comes back with new activity", () => {
     const [ana] = pair()
     ana.svc.observe(sess("s", "old-work"))

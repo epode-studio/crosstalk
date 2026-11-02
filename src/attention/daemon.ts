@@ -46,9 +46,9 @@ export function createAttention(o: {
     },
     answered: (q, answer, x) => void o.coord()?.answered(q, answer, x),
     spawn: (x) => {
-      const r = spawn.spawnAgents({ task: x.task, name: x.name, cwd: x.cwd, by: x.by, background: x.background })
+      const r = spawn.spawnAgents({ task: x.task, name: x.name, cwd: x.cwd, by: x.by, background: x.background, thread: x.thread })
       // No way to run it out of sight here: a tab of the person's terminal instead.
-      if (!r.ok && x.background && !r.agents.length && /background/i.test(r.text)) return spawn.spawnAgents({ task: x.task, name: x.name, cwd: x.cwd, by: x.by, background: false })
+      if (!r.ok && x.background && !r.agents.length && /background/i.test(r.text)) return spawn.spawnAgents({ task: x.task, name: x.name, cwd: x.cwd, by: x.by, background: false, thread: x.thread })
       return r
     },
     background: backgroundOf,

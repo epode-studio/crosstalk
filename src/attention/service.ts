@@ -66,7 +66,7 @@ export type Deps = {
   rule: (q: Question, repo: string | undefined) => string | undefined
   /** A person answered: recorded, so the second identical answer offers a rule. */
   answered: (q: Question, answer: string, o: { sid?: string; repo?: string }) => void
-  spawn: (o: { task: string; name: string; cwd: string; by?: string; background: boolean }) => { ok: boolean; text: string; agents: { name: string }[] }
+  spawn: (o: { task: string; name: string; cwd: string; by?: string; background: boolean; thread?: { id: string; name: string } }) => { ok: boolean; text: string; agents: { name: string }[] }
   /** Sessions crosstalk runs in the background: never where a question is put. */
   background: (sessionId: string) => string | undefined
   restart?: (o: { rec: Rec; cmd: string }) => Promise<{ ok: boolean; text: string }>
@@ -511,7 +511,7 @@ export class AttentionService {
     const stuck: St.Stuck = { why: M.live(t, "questions").some((q) => q.blocking && !q.answer) ? "question" : "progress", since: s?.since ?? this.now(), question: M.live(t, "questions").find((q) => q.blocking && !q.answer)?.text }
     const task = St.brief(t.meta.value.name, stuck, D.primer(t))
     const background = this.env.CROSSTALK_STAFF_TAB !== "1"
-    const r = this.d.spawn({ task, name: t.meta.value.name, cwd, by, background })
+    const r = this.d.spawn({ task, name: t.meta.value.name, cwd, by, background, thread: { id: t.id, name: t.meta.value.name } })
     this.d.log(`attention: second agent on ${t.meta.value.name}: ${r.ok ? r.agents.map((a) => a.name).join(", ") : r.text}`)
     return { ok: r.ok, text: r.text }
   }

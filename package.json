@@ -25,7 +25,7 @@
     "test:gather": "bun test test/gather.test.ts && bash test/gather.sh",
     "test:channels": "bun test test/channels.test.ts && bash test/channels.sh",
     "test:ui": "bun test test/uistate.test.ts && bash test/ui.sh",
-    "test:terminal": "bun test test/terminal.test.ts && bash test/terminal.sh",
+    "test:terminal": "bun test test/terminal.test.ts && bash test/terminal.sh && bash test/spawn-thread.sh",
     "test:threads": "bun test test/threads.test.ts && bash test/threads.sh",
     "test:next": "bun test test/next.test.ts && bash test/next.sh",
     "test:routing": "bun test test/footprint.test.ts && bash test/routing.sh",

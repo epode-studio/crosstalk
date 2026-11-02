@@ -33,7 +33,8 @@ export type Term = {
   program?: string
   /** The session's controlling tty, e.g. /dev/ttys003. */
   tty?: string
-  tmux?: { pane: string; socket?: string; session?: string; window?: number; paneIndex?: number }
+  /** `windowId` (`@3`) is looked up when a tab is to go right after this one. */
+  tmux?: { pane: string; socket?: string; session?: string; window?: number; paneIndex?: number; windowId?: string }
   kitty?: { window?: string; listenOn?: string }
   wezterm?: { pane: string }
   /** ITERM_SESSION_ID, "w0t1p0:<uuid>": window, tab and pane by position. */
@@ -70,6 +71,8 @@ export type Rec = {
   watchedAt?: number
   /** Being brought into crosstalk: queued until idle, restarting, done or failed. */
   gather?: { state: "queued" | "restarting" | "done" | "failed"; at: number }
+  /** The crosstalk thread it is in (its first), as its hook last heard: tabs of a thread sit together. */
+  thread?: string
 }
 
 const dir = () => path.join(P.root, "open")
@@ -404,6 +407,8 @@ export type Env = {
   repoOf?: (cwd: string) => string
   /** A live tab already in that repository's window, to open the restored ones beside. */
   anchorFor?: (repo: string) => Term | null
+  /** The last live tab of a thread in that repository, to open the thread's restored tabs right after. */
+  threadAnchor?: (repo: string, thread: string, near: Term | null) => Term | null
 }
 
 /** crosstalk's own tmux server, for agents it runs in the background (src/spawn.ts). */
@@ -423,6 +428,102 @@ export function anchorFor(
     .filter((r) => !r.endedAt && r.interactive !== false && kindOf(r.terminal) && !isCrosstalkSocket(r.terminal.tmux?.socket) && o.keyOf(r.cwd) === repo && o.alive(r))
     .sort((a, b) => b.seenAt - a.seenAt)
   return live[0]?.terminal ?? null
+}
+
+/** Whether two tabs are in the same window, as far as their terminal says. */
+export function sameWindow(a: Term, b: Term): boolean {
+  if (a.tmux || b.tmux) return !!a.tmux && !!b.tmux && (a.tmux.socket ?? "") === (b.tmux.socket ?? "") && !!a.tmux.session && a.tmux.session === b.tmux.session
+  if (a.apple || b.apple) return a.apple?.window !== undefined && a.apple.window === b.apple?.window
+  if (a.iterm || b.iterm) return a.iterm?.window !== undefined && a.iterm.window === b.iterm?.window
+  if (a.kitty || b.kitty) return !!a.kitty && !!b.kitty && (a.kitty.listenOn ?? "") === (b.kitty.listenOn ?? "")
+  return kindOf(a) === kindOf(b)
+}
+
+/**
+ * The tab a thread's new tab goes right after: the last live tab of that
+ * thread in the repository, in the same window as `near` (the window the new
+ * tabs go into) when there is one. Last is the highest tmux window index
+ * (`indexOf` asks tmux for it now; the recorded one may have moved), else the
+ * most recently started. The asking session counts as one of the thread's
+ * tabs when it is in the thread, even before its record says so.
+ */
+export function threadAnchorFor(
+  repo: string,
+  thread: string,
+  o: {
+    recs: Rec[]
+    keyOf: (cwd: string) => string
+    alive: (r: Rec) => boolean
+    near?: Term | null
+    asking?: { sessionId?: string; cwd: string; terminal: Term; inThread?: boolean }
+    indexOf?: (t: Term) => number | undefined
+  },
+): Term | null {
+  if (!thread) return null
+  const a = o.asking
+  const cands: { t: Term; startedAt: number }[] = []
+  for (const r of o.recs) {
+    const mine = !!a?.sessionId && r.sessionId === a.sessionId
+    if (r.thread !== thread && !(mine && a?.inThread)) continue
+    if (r.endedAt || r.interactive === false || isCrosstalkSocket(r.terminal.tmux?.socket)) continue
+    const t = mine && kindOf(a!.terminal) ? a!.terminal : r.terminal
+    if (!kindOf(t) || o.keyOf(r.cwd) !== repo || !(mine || o.alive(r))) continue
+    cands.push({ t, startedAt: r.startedAt })
+  }
+  if (a && a.inThread && kindOf(a.terminal) && o.keyOf(a.cwd) === repo && !cands.some((c) => c.t === a.terminal)) cands.push({ t: a.terminal, startedAt: Infinity })
+  const here = o.near ? cands.filter((c) => sameWindow(c.t, o.near!)) : cands
+  if (!here.length) return null
+  const idx = (t: Term) => (t.tmux ? (o.indexOf?.(t) ?? t.tmux.window ?? -1) : -1)
+  here.sort((x, y) => idx(y.t) - idx(x.t) || y.startedAt - x.startedAt)
+  return here[0].t
+}
+
+/**
+ * Tabs that all go right after the same tab are opened last first: each new
+ * one lands directly after that tab, pushing the ones before it along, so
+ * they end up in order. Runs of the same key are reversed; the rest stay.
+ */
+export function lastFirst<T>(xs: T[], key: (x: T) => string | undefined): T[] {
+  const out: T[] = []
+  let run: T[] = []
+  let k: string | undefined
+  const end = () => {
+    out.push(...run.reverse())
+    run = []
+  }
+  for (const x of xs) {
+    const kx = key(x)
+    if (kx === undefined) {
+      end()
+      out.push(x)
+      k = undefined
+      continue
+    }
+    if (kx !== k) end()
+    k = kx
+    run.push(x)
+  }
+  end()
+  return out
+}
+
+/**
+ * Repository, then thread, then the order given: a thread's tabs together
+ * where its first one was. Tabs in no thread stay where they are.
+ */
+export function byRepoThread<T extends { cwd: string; sessionId: string; thread?: string }>(rs: T[], repoOf?: (cwd: string) => string): T[] {
+  const rank = new Map<string, number>()
+  const key = (r: T) => `${repoOf ? repoOf(r.cwd) : ""}\t${r.thread ? `t:${r.thread}` : `s:${r.sessionId}`}`
+  const repoRank = new Map<string, number>()
+  rs.forEach((r, i) => {
+    const rk = repoOf ? repoOf(r.cwd) : ""
+    if (!repoRank.has(rk)) repoRank.set(rk, i)
+    if (!rank.has(key(r))) rank.set(key(r), i)
+  })
+  return rs
+    .map((r, i) => ({ r, i }))
+    .sort((x, y) => repoRank.get(repoOf ? repoOf(x.r.cwd) : "")! - repoRank.get(repoOf ? repoOf(y.r.cwd) : "")! || rank.get(key(x.r))! - rank.get(key(y.r))! || x.i - y.i)
+    .map((x) => x.r)
 }
 
 /**
@@ -615,30 +716,44 @@ export function plan(recs: Rec[], e: Env): { plans: Plan[]; skipped: Rec[] } {
       for (const [key, g] of groups) {
         const [own, name] = key.split("\t")
         const S = own ? ["-L", CROSSTALK_TMUX] : []
-        const sorted = [...g].sort(
-          (a, b) =>
-            num(a.terminal.tmux?.window) - num(b.terminal.tmux?.window) ||
-            num(a.terminal.tmux?.paneIndex) - num(b.terminal.tmux?.paneIndex) ||
-            a.startedAt - b.startedAt,
+        const sorted = byRepoThread(
+          [...g].sort(
+            (a, b) =>
+              num(a.terminal.tmux?.window) - num(b.terminal.tmux?.window) ||
+              num(a.terminal.tmux?.paneIndex) - num(b.terminal.tmux?.paneIndex) ||
+              a.startedAt - b.startedAt,
+          ),
+          repoOf,
         )
         let exists = own ? e.tmuxHasSession(name, CROSSTALK_TMUX) : e.tmuxHasSession(name)
-        const steps: Step[] = sorted.map((r) => {
+        // A thread with a live tab in this tmux session: its restored tabs right after that one.
+        const near: Term = { tmux: { pane: "", session: name, socket: g.find((r) => r.terminal.tmux?.socket)?.terminal.tmux?.socket } }
+        const after = (r: Rec) => {
+          if (own || !exists || !r.thread || !repoOf) return undefined
+          return e.threadAnchor?.(repoOf(r.cwd), r.thread, near)?.tmux?.windowId || undefined
+        }
+        const items = sorted.map((r) => ({ r, after: after(r) }))
+        const steps: Step[] = []
+        for (const { r, after: at } of lastFirst(items, (x) => x.after)) {
           const cmd = exec(r).map(shq).join(" ")
           if (!exists) {
             exists = true
-            return { cmd: "tmux", args: [...S, "new-session", "-d", "-s", name, "-c", r.cwd, cmd] }
-          }
-          return { cmd: "tmux", args: [...S, "new-window", "-d", "-t", `=${name}:`, "-c", r.cwd, cmd] }
-        })
+            steps.push({ cmd: "tmux", args: [...S, "new-session", "-d", "-s", name, "-c", r.cwd, cmd] })
+          } else if (at) steps.push({ cmd: "tmux", args: [...S, "new-window", "-d", "-a", "-t", at, "-c", r.cwd, cmd] })
+          else steps.push({ cmd: "tmux", args: [...S, "new-window", "-d", "-t", `=${name}:`, "-c", r.cwd, cmd] })
+        }
         plans.push({ kind: "tmux", sessions: sorted, steps })
       }
     } else if (kind === "apple") {
       for (const { recs, anchor } of byRepo(rs, (r) => String(r.terminal.apple?.window ?? "?"))) {
-        const g = [...recs].sort(
-          (a, b) =>
-            (repoOf ? num(a.terminal.apple?.window) - num(b.terminal.apple?.window) : 0) ||
-            num(a.terminal.apple?.tab) - num(b.terminal.apple?.tab) ||
-            a.startedAt - b.startedAt,
+        // Terminal.app cannot put a tab anywhere but last: a thread's tabs are only kept together.
+        const g = byRepoThread(
+          [...recs].sort(
+            (a, b) =>
+              (repoOf ? num(a.terminal.apple?.window) - num(b.terminal.apple?.window) : 0) ||
+              num(a.terminal.apple?.tab) - num(b.terminal.apple?.tab) ||
+              a.startedAt - b.startedAt,
+          ),
         )
         const into = anchor?.apple?.window
         const tabs = e.tabs && (g.length > 1 || !!into)
@@ -651,36 +766,51 @@ export function plan(recs: Rec[], e: Env): { plans: Plan[]; skipped: Rec[] } {
       }
     } else if (kind === "iterm") {
       for (const { recs, anchor } of byRepo(rs, (r) => String(r.terminal.iterm?.window ?? "?"))) {
-        const g = [...recs].sort(
-          (a, b) =>
-            (repoOf ? num(a.terminal.iterm?.window) - num(b.terminal.iterm?.window) : 0) ||
-            num(a.terminal.iterm?.tab) - num(b.terminal.iterm?.tab) ||
-            a.startedAt - b.startedAt,
+        // Nor can iTerm2's `create tab`: kept together, at the end of the window.
+        const g = byRepoThread(
+          [...recs].sort(
+            (a, b) =>
+              (repoOf ? num(a.terminal.iterm?.window) - num(b.terminal.iterm?.window) : 0) ||
+              num(a.terminal.iterm?.tab) - num(b.terminal.iterm?.tab) ||
+              a.startedAt - b.startedAt,
+          ),
         )
         const input = anchor?.tty ? itermIntoWindowScript(g.map(typed), anchor.tty) : itermScript(g.map(typed))
         plans.push({ kind: "iterm", sessions: g, steps: [{ cmd: "osascript", args: ["-"], input }] })
       }
     } else if (kind === "ghostty") {
-      const g = inRepoOrder(rs)
+      const g = byRepoThread(inRepoOrder(rs), repoOf)
       if (e.tabs) plans.push({ kind: "ghostty", sessions: g, needsAccessibility: true, steps: [{ cmd: "osascript", args: ["-"], input: ghosttyScript(g.map(typed)) }] })
       else plans.push({ kind: "manual", sessions: g, steps: [] })
     } else if (kind === "kitty") {
       const to = e.current.kitty?.listenOn ?? rs[0].terminal.kitty?.listenOn!
-      for (const { recs, anchor } of byRepo(rs, () => "")) {
+      for (const { key, recs: unordered, anchor } of byRepo(rs, () => "")) {
+        const recs = byRepoThread(unordered)
         const match = anchor?.kitty?.window ? ["--match", `window_id:${anchor.kitty.window}`] : []
+        // A thread with a live tab: right after it (--location=after, the matched tab's neighbour).
+        const after = (r: Rec) => (r.thread && repoOf ? e.threadAnchor?.(key, r.thread, anchor)?.kitty?.window : undefined) || undefined
+        const items = recs.map((r) => ({ r, after: after(r) }))
         plans.push({
           kind: "kitty",
           sessions: recs,
-          steps: recs.map((r) => ({ cmd: "kitten", args: ["@", "--to", to, "launch", "--type=tab", ...match, "--cwd", r.cwd, ...exec(r)] })),
+          steps: lastFirst(items, (x) => x.after).map(({ r, after: w }) => ({
+            cmd: "kitten",
+            args: ["@", "--to", to, "launch", "--type=tab", ...(w ? ["--location=after", "--match", `window_id:${w}`] : match), "--cwd", r.cwd, ...exec(r)],
+          })),
         })
       }
     } else if (kind === "wezterm") {
-      for (const { recs, anchor } of byRepo(rs, () => "")) {
-        const at = anchor?.wezterm?.pane ? ["--pane-id", anchor.wezterm.pane] : []
+      for (const { key, recs: unordered, anchor } of byRepo(rs, () => "")) {
+        const recs = byRepoThread(unordered)
+        // `wezterm cli` has no way to move a tab: into the thread's window, at its end.
+        const at = (r: Rec) => {
+          const p = (r.thread && repoOf ? e.threadAnchor?.(key, r.thread, anchor)?.wezterm?.pane : undefined) ?? anchor?.wezterm?.pane
+          return p ? ["--pane-id", p] : []
+        }
         plans.push({
           kind: "wezterm",
           sessions: recs,
-          steps: recs.map((r) => ({ cmd: "wezterm", args: ["cli", "spawn", ...at, "--cwd", r.cwd, "--", ...exec(r)] })),
+          steps: recs.map((r) => ({ cmd: "wezterm", args: ["cli", "spawn", ...at(r), "--cwd", r.cwd, "--", ...exec(r)] })),
         })
       }
     } else if (kind === "wt") {
@@ -803,7 +933,35 @@ export function liveEnv(env: NodeJS.ProcessEnv, tabs: boolean): Env {
     tabs,
     repoOf: (cwd) => repoKey(cwd),
     anchorFor: (repo) => anchorFor(repo, { recs: readAll(), keyOf: (cwd) => repoKey(cwd), alive: recAlive }),
+    threadAnchor: (repo, thread, near) =>
+      withWindowId(threadAnchorFor(repo, thread, { recs: readAll(), keyOf: (cwd) => repoKey(cwd), alive: recAlive, near, indexOf: (t) => tmuxWindowIndex(t, env) }), env),
   }
+}
+
+/** A tmux pane's window now, from tmux itself: its index and id (`@3`). */
+export function tmuxWindowOf(t: Term, env: NodeJS.ProcessEnv = process.env): { index: number; id: string } | undefined {
+  if (!t.tmux?.pane) return undefined
+  const r = spawnSync("tmux", [...(t.tmux.socket ? ["-S", t.tmux.socket] : []), "display-message", "-p", "-t", t.tmux.pane, "#{window_index}\t#{window_id}"], { encoding: "utf8", timeout: 2000, env })
+  const [i, id] = (r.status === 0 ? String(r.stdout).trim() : "").split("\t")
+  const n = Number(i)
+  return i && Number.isFinite(n) && id?.startsWith("@") ? { index: n, id } : undefined
+}
+
+export const tmuxWindowIndex = (t: Term, env: NodeJS.ProcessEnv = process.env) => tmuxWindowOf(t, env)?.index
+
+/** A thread's tab, with its tmux window id looked up now: what `new-window -a -t` takes (a pane id it refuses). */
+export function withWindowId(t: Term | null, env: NodeJS.ProcessEnv = process.env): Term | null {
+  if (!t?.tmux || t.tmux.windowId) return t
+  const w = tmuxWindowOf(t, env)
+  return w ? { ...t, tmux: { ...t.tmux, windowId: w.id, window: w.index } } : t
+}
+
+/** The thread a session is in, as its hook heard from the daemon: kept on its record, written only when it changes. */
+export function noteThread(sessionId: string, thread: string | undefined) {
+  const r = readOne(sessionId)
+  if (!r || (r.thread ?? "") === (thread ?? "")) return
+  const { thread: _old, ...rest } = r
+  writeRec(thread ? { ...rest, thread } : rest)
 }
 
 const label = (r: Rec) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path.basename(r.cwd) || r.sessionId.slice(0, 8)
@@ -1174,6 +1332,7 @@ export function note(o: {
     startedAt: read?.startedAt ?? now,
     seenAt: now,
     terminal: captureTerminal(o.env, pid, true),
+    ...(before?.thread ? { thread: before.thread } : {}),
   }
   writeRec(rec)
   if (start) prune(now)

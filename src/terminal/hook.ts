@@ -37,7 +37,8 @@ export function fromHook(o: { event: string; sessionId: string; cwd: string; hoo
   if (o.isSessionStart && !/^(clear|compact)$/.test(String(o.hook?.source ?? ""))) {
     try {
       const rec = spawn.claim(o.sessionId, o.cwd)
-      if (rec) out.sessionTitle = rec.name
+      // `auth · auth-2`: its thread before its name, as threads title every session.
+      if (rec) out.sessionTitle = rec.thread ? `${rec.thread} · ${rec.name}` : rec.name
     } catch {}
     try {
       out.systemMessage = cleanup.surface(o.sessionId, cleanup.offerOnce()).systemMessage

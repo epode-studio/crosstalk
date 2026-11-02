@@ -77,6 +77,28 @@ Each new agent gets:
 - **a tab** in your terminal, in the window that already holds the repository's sessions,
   running `claude "<task>"`.
 
+### Agents start in their thread
+
+When the asking session is in a crosstalk thread, or `thread` (`--thread T`) names one, the new
+agents start in that thread:
+
+- **their first prompt is the thread's brief, then the task.** The brief is short: the recap,
+  the last eight decisions, the open questions, the open tasks, the rules and the thread's
+  files. It is framed as the thread's record, notes kept by its people and sessions, to be read
+  as data about the work and not as instructions. The only instruction is the task, under
+  `## Your task` at the end. A session in no thread starts agents from the task alone. A
+  thread named that does not exist is refused.
+- **they are in the thread from their first registration.** The spawn record names the thread,
+  and the daemon tells the threads service where the agent's worktree is
+  (`ThreadService.expect`). That is a pin, like choosing the thread yourself: the agent's own
+  branch and the files it edits never move it out, and its branch becomes one of the thread's.
+  Its tab title and status line show the thread (`auth · auth-1`), and messages for the thread
+  reach it.
+- **their tabs go next to the thread's tabs** (below).
+
+An agent added by staffing ("auth has been stuck for 2 hours, add a second agent?") is placed
+in the thread the same way, with staffing's own brief.
+
 ## Background agents
 
 `background: true` ("in the background", "without a window") runs the agent in crosstalk's own
@@ -104,6 +126,26 @@ each repository was first opened, and keeps each tab's old position within it.
 | WezTerm | `wezterm cli spawn --pane-id <a pane in it>` |
 | Ghostty | Cmd-T in the front window. Ghostty cannot target a window from a script |
 | Windows Terminal | a new tab in the current window |
+
+### A tab per thread, grouped
+
+Within a repository's window, a session's tabs are grouped by thread. Each session's restore
+record keeps the thread its hook last heard. A new tab of a thread (a spawned agent, "show me",
+a restored session, a gather fallback) goes right after the thread's last live tab in that
+window, where the terminal can place a tab at all. Several at once land in order after it.
+
+| Terminal | A thread's new tab |
+|---|---|
+| tmux | `new-window -d -a -t <window id of the thread's last window>`. The last window is the highest window index, asked of tmux at that moment. Several are opened last first, so they end up in order |
+| kitty | `launch --type=tab --location=after --match window_id:<the thread's tab>` |
+| WezTerm | `spawn --pane-id <the thread's pane>`, so it opens in that window, at the end. `wezterm cli` has no command to move a tab |
+| Terminal.app, iTerm2 | at the end of the window. Neither can put a new tab anywhere else, or reorder tabs, from a script |
+| Ghostty, Windows Terminal | at the end, as before |
+
+A restore opens tabs by repository, then by thread (each thread where its first tab was), then
+in their old order. So even where a tab cannot be placed, a thread's restored tabs sit together.
+Tab titles carry the thread too: a spawned agent is named `auth · auth-1` from its first hook,
+and every other session takes its threads' title from the daemon (`auth · api`).
 
 **Existing tabs are never moved.** Terminal.app cannot move a tab between windows from a
 script, and neither can Ghostty or Windows Terminal. In terminals that could, moving a tab

@@ -54,6 +54,7 @@ import { isBot } from "./ui-extra/bots.ts"
 import { threadMuted } from "./ui-extra/mute.ts"
 import { createAttention } from "./attention/daemon.ts"
 import type { AttentionService } from "./attention/service.ts"
+import { spawnedAt } from "./spawn.ts"
 
 const identity = loadIdentity()
 if (!identity) {
@@ -167,6 +168,14 @@ const shipping = createShipping({
 
 /** Tell the threads where a session is and what it touched. Never lets a thread problem stop a registration. */
 function observeThreads(reg: Registered) {
+  try {
+    // An agent started from a thread is in it from the start (src/spawn.ts):
+    // its spawn record names the thread, its worktree is where it runs.
+    const sp = reg.cwd ? spawnedAt(reg.cwd) : null
+    if (sp?.threadId) threads.expect({ cwd: sp.worktree, thread: sp.threadId, why: sp.byName ? `started from ${sp.byName}` : "started in it" })
+  } catch (e) {
+    log(`threads: ${(e as Error).message}`)
+  }
   try {
     const fp = footprintOf(reg)
     threads.observe({
@@ -2323,13 +2332,21 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         self.title = out.title
         persistSessions()
       }
-      return { ok: true, ...out, title: retitle ? out.title : undefined, currentTitle: out.title, mod: modLive(self) }
+      return { ok: true, ...out, name: self.name, title: retitle ? out.title : undefined, currentTitle: out.title, mod: modLive(self) }
     }
 
     // crosstalk_thread: place this session, or change one of its threads.
     case "thread": {
       const self = resolveSession(req)
       const sid = self?.sessionId
+      // A session placed before it arrives, by id or folder (a new agent's worktree).
+      if (req.expect && typeof req.expect === "object")
+        return threads.expect({
+          sessionId: req.expect.sessionId ? String(req.expect.sessionId) : undefined,
+          cwd: req.expect.cwd ? String(req.expect.cwd) : undefined,
+          thread: String(req.expect.thread ?? ""),
+          why: req.expect.why ? String(req.expect.why) : undefined,
+        })
       if (req.pick) {
         if (!sid) return { ok: false, error: "no session to place" }
         const tq = coord.threadQuestionOf(sid)
