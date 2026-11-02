@@ -36,6 +36,8 @@ import { openSection, sealSection, type Wrap } from "./seal.ts"
 export const HEADER = "crosstalk: thread/v1"
 const STATE_OPEN = "<!-- crosstalk:state"
 const STATE_CLOSE = "-->"
+/** Sections added after the format first shipped: a file written before them has no line for them. */
+const LATER: ReadonlySet<string> = new Set(["links"])
 
 /** A JSON string or bare word, whichever reads back the same. */
 const word = (s: string) => (/^[A-Za-z0-9][A-Za-z0-9 ._/*@+-]*$/.test(s) && !/[ ]$/.test(s) ? s : JSON.stringify(s))
@@ -163,7 +165,8 @@ export function parse(text: string): Parsed {
       open: (key) => {
         try {
           const o: any = { v: 1, id }
-          for (const s of M.SECTIONS) o[s] = openSection(key, id, s, blobs.get(s) ?? "")
+          // A section newer than the file (links) is empty, not a reason to refuse it.
+          for (const s of M.SECTIONS) o[s] = !blobs.has(s) && LATER.has(s) ? {} : openSection(key, id, s, blobs.get(s) ?? "")
           const c: any = openSection(key, id, "clock", blobs.get("clock") ?? "")
           o.lamport = c.lamport
           o.touchedAt = c.touchedAt

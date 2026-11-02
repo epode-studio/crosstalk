@@ -62,6 +62,7 @@ import { createSessionOps } from "./sessions/daemon.ts"
 import "./services/service.ts"
 import { createUrls } from "./urls/daemon.ts"
 import { createShares } from "./share/daemon.ts"
+import { startHistory } from "./urls/history/sync.ts"
 
 const identity = loadIdentity()
 if (!identity) {
@@ -2761,6 +2762,8 @@ control.listen(P.daemonSock, () => {
   // URLs: the proxy behind <thread>.localhost, services' URLs, liveness (src/urls/).
   if (!process.env.CROSSTALK_NO_URLS)
     void createUrls({ log, live: () => [...sessions.values()].map((s) => ({ sessionId: s.sessionId, cwd: s.cwd })) }).catch((e) => log(`urls: ${(e as Error).message}`))
+  // Every link, preview and screenshot a thread had, kept in it (src/urls/history/).
+  if (!process.env.CROSSTALK_NO_URLS) startHistory({ threads, log })
 })
 
 setInterval(() => {

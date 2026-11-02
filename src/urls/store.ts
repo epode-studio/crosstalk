@@ -60,6 +60,12 @@ export type Url = {
   status?: number
   /** A PR's state from gh (OPEN, MERGED, CLOSED). */
   state?: string
+  /**
+   * A public https link to this local server while one is open (src/share/,
+   * `public: true` only): what a phone's QR code encodes. Never set for a share
+   * with people, which only opens through their own crosstalk proxy.
+   */
+  shareUrl?: string
 }
 
 /** What a caller gives `add`: the record without the bookkeeping. */

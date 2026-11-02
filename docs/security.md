@@ -76,6 +76,18 @@ only you can turn it on.
   settings you gave them. A clash gets a distinguishing suffix instead.
 - **Attaching a file refuses credentials** and anything outside the project, in
   case someone talks your Claude into sending one.
+- **A new worktree's `.env` stays on this machine.** Copying the main
+  checkout's gitignored env files into a worktree (asked once per repo) reads
+  them in one place, writes them into the worktree and nowhere else: results,
+  pickers and the daemon's log name the files, never their contents, and
+  nothing about them goes into a thread or the relay. Only ignored, untracked,
+  regular files are copied; a symlink is never followed, a path with `..` in
+  the repository's `.crosstalk/env` is refused, and nothing is written through
+  a symlinked folder ([urls.md](urls.md#7-servers-that-just-start)).
+- **A QR code is for the person's eyes.** `crosstalk_qr` draws it in the pane;
+  neither the code nor the URL it encodes (a share link is a key to a running
+  server) is returned to the model, and `crosstalk urls qr` refuses to print
+  it inside an agent.
 - **`/crosstalk:secure`** moves your private key into the macOS keychain, leaving
   only the public half on disk.
 - **Rooms cannot be used to reach a stranger.** You can only add someone you
@@ -288,7 +300,7 @@ dropped commit is written again.
 ## Sharing a running server
 
 `crosstalk_share` lets named people reach one of your local servers through
-the sealed peer channel (`src/share/`, [urls.md](urls.md#5-sharing-a-running-server)).
+the sealed peer channel (`src/share/`, [urls.md](urls.md#8-sharing-a-running-server)).
 What it rests on, and what it costs:
 
 - **Only the people named, as they are now.** A share holds each person's

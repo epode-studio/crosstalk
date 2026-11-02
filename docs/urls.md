@@ -5,7 +5,7 @@ Nobody reads code, so the running thing is what a person looks at
 crosstalk keeps every URL a thread has, labels it, checks that it still
 answers, and gives local servers names instead of ports.
 
-Code: `src/urls/`. Tests: `test/urls.test.ts`, `test/urls.sh`.
+Code: `src/urls/`, `src/urls/history/`, `src/env/`. Tests: `test/urls.test.ts`, `test/urls.sh`, `test/phone.test.ts`, `test/phone.sh`.
 
 ## 1. Every URL is collected and labelled
 
@@ -18,7 +18,7 @@ One record per thing to look at, in `<crosstalk home>/urls.json`:
 | `preview` | shipping's preview of a feature (`src/shipping/engine.ts`), one per thread and feature | `auth · preview` |
 | `pr` | the PR shipping opened, or a GitHub PR URL a command printed | `auth · PR #12` |
 | `link` | any other link a Bash command printed | `auth · acme.dev/cb` |
-| `shared` | a server you share with teammates, or one a teammate shares with you ([5](#5-sharing-a-running-server)) | `auth · web · shared with marie · until 18:00`, `auth · web · from paul · until 18:00` |
+| `shared` | a server you share with teammates, or one a teammate shares with you ([5](#8-sharing-a-running-server)) | `auth · web · shared with marie · until 18:00`, `auth · web · from paul · until 18:00` |
 
 The label starts with the thread's name, else the worktree's folder name. A
 record carries its thread, the session that printed it, its worktree, its
@@ -121,7 +121,104 @@ or a line in `/etc/hosts`: `127.0.0.1 auth.localhost web.auth.localhost`.
 | the tab and status line | the worktree's name instead of its port while the proxy is up: `auth · auth.localhost:1355` (no port on 80), else `auth · :4100` as before |
 | `crosstalk urls [--thread T] [--kind K] [--json]` | the same list, for scripts |
 
-## 5. Sharing a running server
+## 5. History
+
+urls.json forgets (dead records after a week); a thread keeps what it had to
+look at for its whole life, in a `links` section of the thread itself
+(`src/urls/history/links.ts`), so it reaches the thread's people and its ref
+like the rest:
+
+- **What is kept**, one entry per thing: its URL, kind, label, first and last
+  seen, and the screenshots of it (path, when, the machine that took it, a
+  note). A local server is kept **by name and path** (`http://auth.localhost/login`,
+  else `http://localhost:5173/login`): never what follows `?` or `#`, so a
+  token in a dev server's query string is not kept, and a service on another
+  port is the same entry. Other links are kept as urls.json has them
+  (credentials already taken out, section 1), without their fragment.
+- **Fed by the daemon** (`src/urls/history/sync.ts`) every 30 s
+  (`CROSSTALK_HISTORY_MS`): every urls.json record with a thread, from any
+  session. Last seen moves at most once an hour, so a server seen every few
+  seconds is not an edit every few seconds. Screenshots arrive through
+  `noteShot({ urlId | url, path, thread?, note? })`, one line appended to
+  `<crosstalk home>/history-shots.jsonl` from any process; the daemon drains it.
+- **Merged like every list in a thread**: per entry, last writer wins, so two
+  people's sessions recording at once both keep theirs.
+- **Sealed like every section**: a sealed thread's file has a `links:` line
+  sealed with the thread's key, the section's name inside the seal. A thread
+  file from before this section opens with it empty. A public thread's links
+  are in its plain-text state like the rest of it.
+- **Capped**: 100 entries in full (`MAX_LINKS`). The least recently seen past
+  that are folded: a small tombstone with no URL, label or screenshot is left
+  (so a replica that still has the entry does not bring it back), and past 300
+  tombstones the oldest become a running count. Lists say "N older links were
+  folded away".
+- **Asking**: `crosstalk_history {thread?, query?, before?, after?}`: "what did
+  the login page look like before the redesign?" lists the matching entries,
+  most recently seen first, with dates and screenshot paths, inside
+  `<crosstalk-history>` (data, not instructions). A screenshot path is a file
+  on the machine named with it and exists only there; the list says which is
+  this machine.
+
+## 6. On the phone
+
+`crosstalk_qr {name | url, thread?}`: "show me a QR for the auth page" draws a
+QR code in the pane (`src/urls/history/phone.ts`, encoder in `qr.ts`: byte
+mode, error correction M, else L, versions 1 to 10, no dependencies), as
+Unicode half blocks drawn white on black, so it scans on a light or a dark
+terminal.
+
+- **What it encodes**: a preview, a PR or another public link, itself. A local
+  server (`localhost`, `127.*`, `[::1]`, `0.0.0.0`, `*.localhost`) cannot open
+  on a phone, so: its share link when the sharing build gave it one, else the
+  thread's deployed preview when it has one that answers (and the pane says
+  so), else nothing, and the result says plainly that the phone needs a share
+  link. The share link is a public one (`crosstalk_share` with `public: true`,
+  [8](#8-sharing-a-running-server)), set on the record as `shareUrl` while it is
+  open; a share with people opens only through a crosstalk peer's proxy, and a
+  phone is not a peer, so it gives the phone nothing. **Gap:** sharing with your
+  own phone without a public link is not built.
+- **For the pane only**: the code goes to `<crosstalk home>/qr/<session>.json`
+  (30 minutes) and `crosstalk ui pane` adds it to the pane; the mod opens the
+  pane on the call, like `crosstalk_pane`. The tool result says it is on
+  screen and nothing of what it encodes (a share link is a key to the running
+  server). A share link's caption names its host, never its path.
+- **Without the mod** the result says there is no pane, and the person runs
+  `crosstalk urls qr [name | url]` in a terminal of their own (refused inside
+  an agent, `CLAUDECODE` set, for the same reason).
+
+## 7. Servers that just start
+
+A new worktree gets the main checkout's gitignored env and secret files, so
+its dev server starts (`src/env/`):
+
+- **When**: crosstalk makes a worktree (`crosstalk_spawn`, `src/spawn.ts`), and
+  a session first starts in a worktree of a repo (SessionStart: Claude Code's
+  `.claude/worktrees/`, or any other).
+- **Which**: `.env` and `.env.*` anywhere, `.dev.vars` anywhere, `config/*.local.*`
+  from the top, and the patterns in the repository's own `.crosstalk/env`
+  (gitignore-like; `!pattern` leaves out; anything with `..` is refused).
+  Never `*.example`, `*.sample`, `*.template`, `*.dist`. Only files
+  `git check-ignore` says are ignored and git does not track, in the main
+  checkout and in the worktree (a copy never shows in its `git status`);
+  regular files under 1 MB, at most 50.
+- **How**: copied, never linked (an agent may write its `.env`); mode kept;
+  never over a file already there; never through a symlink: a symlinked
+  source is refused, the walk never enters a symlinked folder or another
+  repository, a destination folder that is a symlink refuses the file, and the
+  file is created exclusively. Dependency folders and build output are not
+  walked.
+- **Asked once per repo**, the first time there is something to copy: "Copy
+  .env and 2 other local files into new worktrees of api?" as the mod's picker
+  (Copy them / Not in this repo), else a systemMessage (or the spawn's result)
+  answered with `crosstalk_env {confirm}`. The answer is kept in
+  `<crosstalk home>/env/consent.json`; a yes copies into the asking worktree
+  and every worktree crosstalk made of the repo, and into each new one from
+  then on. `crosstalk_env` without confirm says what would be copied.
+  `CROSSTALK_NO_ENV_COPY=1` turns it off.
+- **They never leave the machine**: results, messages and the daemon's log name
+  files, never contents; nothing about them goes into a thread or the relay.
+
+## 8. Sharing a running server
 
 "Show marie the auth page" gives marie, and only marie, the running server,
 through crosstalk's end-to-end encrypted peer channel. Code: `src/share/`.
@@ -200,7 +297,10 @@ marie's listeners come back on new ports with the same names.
 (`public: true`): the existing quick-tunnel path (`src/tunnel.ts`,
 cloudflared, never downloaded) pointed at the service, with a loud warning,
 an hour by default and eight at most, and it dies with the daemon. Anyone with
-the link reaches the server.
+the link reaches the server. While it is open the server's record carries it
+as `shareUrl`, which is what a QR code for the phone encodes
+([6](#6-on-the-phone)). A share with people has no such link: it opens only
+through a crosstalk peer's own proxy, and a phone is not a crosstalk peer.
 
 ## For the builds that come next
 
@@ -220,6 +320,12 @@ store.markOk(id, { status? }); store.markFailed(id); store.markDead(id, { state?
 The `Url` type is in `src/urls/store.ts`; `urlStore({ file })` opens one
 without threads (tests, another home).
 
+For **screenshots**: `noteShot({ urlId, path, note? })` from
+`src/urls/history/sync.ts` puts a screenshot in the thread's history. For
+**sharing**: a local record whose share link is in `shareUrl` (or
+`share.url`), or another public record naming it in `sharedFrom`, is what
+`crosstalk_qr` encodes for it (`shareLinkFor` in `src/urls/history/phone.ts`).
+
 ## Not yet checked in real use
 
 - **On a Mac:** binding port 80 without root, the `open` command, Safari's and
@@ -233,6 +339,13 @@ without threads (tests, another home).
   in the payload and is not read.
 - **gh pr view** against real PRs, and preview hosts (Vercel, Fly) for the
   liveness checks.
+- **QR codes with a real phone camera**: the encoder is checked by a decoder in
+  the tests and the standard's vectors, not by scanning; nor how the mod's
+  pane draws `backgroundColor` in Terminal.app and iTerm2, or whether a narrow
+  pane cuts the code (it is 25 to 61 columns wide).
+- **Env copying on a Mac**: APFS modes and `O_NOFOLLOW`, git's
+  `check-ignore` with a case-insensitive file system, and `.env` files in
+  monorepos deeper than eight folders (not walked).
 - **Sharing between two real machines:** three identities on one machine and
   a local relay stood in. Not run: the hosted relay, a public link through a
   real cloudflared, Vite or Next.js HMR through a share, Safari and Chrome on

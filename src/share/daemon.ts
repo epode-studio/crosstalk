@@ -234,7 +234,12 @@ export function createShares(d: ShareDeps) {
     if (why === "revoked") s.revokedAt = Date.now()
     owner.stop(s.id, { message: why === "expired" ? "the share has expired" : "the share was stopped" })
     for (const w of s.with) tell(w.label, { op: "revoke", id: s.id, why })
-    if (s.public) closePublic(s.public.pid)
+    if (s.public) {
+      closePublic(s.public.pid)
+      try {
+        store.update(s.urlId, { shareUrl: undefined })
+      } catch {}
+    }
     save()
     try {
       store.markDead(`share:${s.id}`, { state: why })
@@ -358,6 +363,10 @@ export function createShares(d: ShareDeps) {
         return { ok: false, error: pub.error }
       }
       s.public = pub
+      // The phone's QR code (src/urls/history/phone.ts) encodes this; a share with people has none.
+      try {
+        store.update(s.urlId, { shareUrl: pub.url })
+      } catch {}
     }
     if (s.public) publicText = `\n${WARNING}\nPublic link: ${s.public.url} (${F.untilText(s.expiresAt)}).`
     save()

@@ -705,6 +705,7 @@ Every part above has a first version on the branch, with its tests in
 | Shipping: risk, reviewers, evidence, merging, flags (Unleash first), previews, dark launch, metrics ramps, incidents | `src/shipping/` | `docs/shipping.md` |
 | Long-running processes outlive sessions: services in crosstalk's tmux, ports per worktree, waiting for what a session started, cleanup that stops services first | `src/services/` | `docs/services.md` |
 | URLs: every URL collected and labelled (services, previews, PRs, links in command output, tokens taken out), liveness, names instead of ports through a local proxy, one list in the pane, on the tab and from any session | `src/urls/` | `docs/urls.md` |
+| Phone, history, env: a QR code in the pane (public URLs, a local server's share link or the thread's preview, else the gap said plainly), every link, preview and screenshot kept in the thread's sealed `links` section, a new worktree's gitignored `.env` and other local files copied in on a yes asked once per repo | `src/urls/history/`, `src/env/` | `docs/urls.md` |
 | Sharing a running server with named teammates: HTTP and websockets over the sealed peer channel, `<name>.<owner>.localhost` on their machine, expiry, revocation, people and target checks; a public link only when asked | `src/share/` | `docs/urls.md`, `docs/security.md` |
 
 **Pull requests from sealed threads** carry the feature, its evidence and its
@@ -735,6 +736,13 @@ thread is sealed to. Public threads put all of it in the PR. Decided 2026-11-02.
   browsers' `*.localhost` with a port, the pane's OSC 8 links; Vite, Next.js
   and webpack HMR through the proxy (a bun server and a raw websocket stood
   in); real PostToolUse payloads; `gh pr view` on real PRs.
+- **The QR code with a real phone:** checked by a decoder in the tests and the
+  standard's vectors, never scanned; the mod's white-on-black drawing in
+  Terminal.app and iTerm2. Sharing a local server with your own phone waits
+  for the sharing build.
+- **Env copying on a Mac:** modes on APFS, `O_NOFOLLOW`, `git check-ignore` on a
+  case-insensitive file system; Claude Code's own worktrees were stood in for by
+  `git worktree add` and the real hook.
 - **Phone push:** Claude Code's own push needs Remote Control paired; ntfy was
   tested against a local stand-in.
 - **Sharing between two machines:** tested with three identities on one

@@ -8,7 +8,7 @@ export type Chip = { kind: string; label: string; bytes?: number }
 /** One thing waiting on the person, as `crosstalk ui watch` reports it. */
 export type Item = {
   id: string
-  kind: 'restore' | 'message' | 'ask' | 'route' | 'gather' | 'team' | 'cleanup' | 'thread' | 'ship' | 'rule' | 'connect' | 'conflict' | 'invite' | 'doctor' | 'disk' | 'install' | 'attention' | 'steer' | 'session' | 'share'
+  kind: 'restore' | 'message' | 'ask' | 'route' | 'gather' | 'team' | 'cleanup' | 'thread' | 'ship' | 'rule' | 'connect' | 'conflict' | 'invite' | 'doctor' | 'disk' | 'install' | 'attention' | 'steer' | 'session' | 'share' | 'env'
   sessionId: string
   state: 'pending' | 'answered' | 'handed' | 'muted' | 'later'
   createdAt: number
@@ -49,6 +49,8 @@ export type Pane = {
   services?: { name: string; ports: number[]; url?: string }[]
   /** The thread's URLs (src/urls/), each with whether it answers; in the main session, every thread's. */
   links?: { label: string; url: string; kind: 'local' | 'preview' | 'pr' | 'link' | 'shared'; alive: boolean; thread?: string }[]
+  /** A QR code for the phone (crosstalk_qr): half-block rows, drawn white on black. */
+  qr?: { label: string; caption: string; rows: string[]; at: number; why?: string }
 }
 
 declare module 'claude-code' {
