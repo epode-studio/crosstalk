@@ -45,6 +45,8 @@ export type Pane = {
   decision?: { text: string; who: string; at: number }
   recent: { from: string; text: string; ts?: number }[]
   features: PaneFeature[]
+  /** crosstalk services running in this session's worktree (docs/services.md). */
+  services?: { name: string; ports: number[]; url?: string }[]
 }
 
 declare module 'claude-code' {

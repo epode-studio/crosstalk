@@ -293,8 +293,13 @@ const chromeOut = (hookSpecific?: Record<string, unknown>) => {
   // A name the person gave it (crosstalk_rename) wins: inside its threads' title when it has one, else alone.
   const renamed = sessionId && /^(SessionStart|UserPromptSubmit)$/.test(eventName) ? sessionNames.nameOf(sessionId) : undefined
   // In a thread, the daemon's title already carries the name, and is offered only when it changes.
-  const named = renamed ? (sessionTitle ?? (threadNames?.length ? undefined : renamed)) : chrome.sessionTitle && /^(SessionStart|UserPromptSubmit)$/.test(eventName) ? chrome.sessionTitle : sessionTitle
+  const named = termHook.withBadge(renamed ? (sessionTitle ?? (threadNames?.length ? undefined : renamed)) : chrome.sessionTitle && /^(SessionStart|UserPromptSubmit)$/.test(eventName) ? chrome.sessionTitle : sessionTitle, chrome.badge)
   const title = named ? { sessionTitle: named } : {}
+  // The worktree's ports and its running services, for the agent at SessionStart (src/services/).
+  if (chrome.context && isSessionStart) {
+    const extra = hookSpecific?.additionalContext
+    hookSpecific = { ...(hookSpecific ?? {}), additionalContext: [chrome.context, extra].filter(Boolean).join("\n\n") }
+  }
   if (hookSpecific || Object.keys(title).length) out.hookSpecificOutput = { hookEventName: eventName, ...(hookSpecific ?? {}), ...title }
   return out
 }

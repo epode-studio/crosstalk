@@ -10,6 +10,7 @@ import * as M from "../threads/model.ts"
 import * as ui from "../uistate.ts"
 import type { PaneModel } from "./pure.ts"
 import { defaultThread, findThread, readThreads, type ThreadState } from "./threadfile.ts"
+import * as Svc from "../services/service.ts"
 
 const oneLine = (s: string) => s.replace(/\s+/g, " ").trim()
 
@@ -54,14 +55,20 @@ export function paneModel(t: M.Thread, items: Record<string, ui.UiItem>, o: { re
 export type PaneOut = { ok: true; pane: PaneModel } | { ok: false; error: string; threads: string[] }
 
 /** The pane for a thread by name, or this session's own. */
-export function pane(o: { sessionId?: string; thread?: string; st?: ThreadState; items?: Record<string, ui.UiItem> }): PaneOut {
+export function pane(o: { sessionId?: string; thread?: string; st?: ThreadState; items?: Record<string, ui.UiItem>; services?: Svc.Shown[] }): PaneOut {
   const st = o.st ?? readThreads()
   const t = o.thread ? findThread(st, o.thread, o.sessionId) : defaultThread(st, o.sessionId)
   if (!t) {
     const names = Object.values(st.threads).filter((x) => !x.meta.value.combinedInto).map((x) => x.meta.value.name)
     return { ok: false, error: o.thread ? `no thread called "${o.thread}"` : "no thread yet", threads: names }
   }
-  return { ok: true, pane: paneModel(t, o.items ?? ui.snapshot()) }
+  const model = paneModel(t, o.items ?? ui.snapshot())
+  // This session's worktree's services, with a link each in the mod (OSC 8 there).
+  let services: Svc.Shown[] = []
+  try {
+    services = o.services ?? Svc.forSession(o.sessionId)
+  } catch {}
+  return { ok: true, pane: services.length ? { ...model, services } : model }
 }
 
 /** One line now, then one each time the pane changes, while the session that started this lives. */

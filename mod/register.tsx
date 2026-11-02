@@ -38,7 +38,8 @@
 //   main           the status line of a main session counts every session
 //   own thread     a message about this session's own thread is handed to the
 //                  agent by itself (as data), when the prompt is empty and idle
-//   status line    ◢ <threads or repo> · <n> waiting
+//   status line    ◢ <threads or repo> · :4100 · <n> waiting, the ports of this
+//                  worktree's crosstalk services (docs/services.md) after the name
 //   tab status     working / waiting on you / done on this session's own tab,
 //                  through `crosstalk term status` (src/terminal/status.ts)
 //
@@ -83,6 +84,8 @@ let session = ''
 let bin = ''
 let label = ''
 let repo = ''
+/** This worktree's services' ports, `:4100`, from the watch. */
+let ports = ''
 /** This session's threads, from the daemon: what the status line leads with. */
 let threadNames: string[] = []
 /** Set while this is the main session: totals across every session. */
@@ -168,11 +171,13 @@ function header(it: Item): string {
 async function showStatus($: EngineInterface, open: Item[]) {
   // `◢ auth · tokens · 1 waiting`: the session's own threads first, else what the cards are about.
   const threads = [...new Set(open.filter(isCard).map(i => i.thread).filter((t): t is string => !!t))]
-  const where = threadNames.length ? threadNames.slice(0, 3).join(' · ') : threads.length ? threads.slice(0, 3).join(', ') : repo
+  const named = threadNames.length ? threadNames.slice(0, 3).join(' · ') : threads.length ? threads.slice(0, 3).join(', ') : repo
+  // `auth · :4100`: the ports of what crosstalk runs here, the numbers and nothing more.
+  const where = ports ? `${named || 'crosstalk'} · ${ports}` : named
   // Nothing waiting and no room: say nothing, rather than a line in every session.
   const text = mainTotals
     ? `◢ main · ${mainTotals.sessions} session${mainTotals.sessions === 1 ? '' : 's'} · ${mainTotals.threads} thread${mainTotals.threads === 1 ? '' : 's'} · ${Math.max(mainTotals.waiting, open.length)} waiting`
-    : open.length || label
+    : open.length || label || ports
       ? `◢ ${where || 'crosstalk'} · ${open.length} waiting`
       : undefined
   if (text !== lastStatus) $.ui.status(text)
@@ -195,6 +200,7 @@ async function received($: EngineInterface, line: string) {
   let w: {
     items?: Item[]
     label?: string
+    ports?: string
     note?: { id: string; text: string }
     threads?: string[]
     threadNotes?: { id: string; text: string }[]
@@ -208,6 +214,7 @@ async function received($: EngineInterface, line: string) {
   }
   lastLineAt = await $.clock.now()
   label = w.label ?? ''
+  ports = typeof w.ports === 'string' ? w.ports.replace(/[^0-9: …]/g, '') : ''
   threadNames = Array.isArray(w.threads) ? w.threads.filter((t): t is string => typeof t === 'string') : []
   mainTotals = w.main && typeof w.main.sessions === 'number' ? w.main : null
   for (const n of w.threadNotes ?? [])
@@ -695,7 +702,7 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($, e) => {
-    const { Box, Text } = $.ui.resolve(e)
+    const { Box, Text, Link } = $.ui.resolve(e)
     const p = await read($, paneAtom)
     const problem = await read($, paneError)
     const now = await $.clock.now()
@@ -735,6 +742,19 @@ export const register: Register = on => {
         {p.decision ? section('Latest decision', [`${p.decision.text} (${p.decision.who}${p.decision.at ? `, ${ago(p.decision.at, now)}` : ''})`], 'd') : null}
         {p.features.length ? section('Features', p.features.map(featureLine), 'f') : null}
         {p.recent.length ? section('Recent', p.recent.map(r => `${r.from} ${ago(r.ts, now)} ${r.text}`), 'r') : null}
+        {p.services?.length ? (
+          <Box key="s" flexDirection="column" marginTop={1}>
+            <Text bold>Services</Text>
+            {p.services.map((s, i) => (
+              <Text key={`s${i}`} wrap="truncate">
+                {' '}
+                {clean(s.name)}
+                {s.ports.length ? ` · ${s.ports.map(n => `:${n}`).join(' ')} ` : ' · starting'}
+                {s.url && /^http:\/\/localhost:\d+$/.test(s.url) ? <Link href={s.url}>{s.url}</Link> : null}
+              </Text>
+            ))}
+          </Box>
+        ) : null}
         {problem ? <Text dimColor>{clean(problem)}</Text> : null}
       </Box>
     )

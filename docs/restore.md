@@ -221,6 +221,10 @@ crosstalk gather          # list them
 crosstalk gather --yes    # bring them in
 ```
 
+An idle session with something it started still running (a dev server, a
+watcher) counts as busy: it is restarted once that has stopped, so nothing it
+started dies with it ([services.md](services.md)).
+
 ## Limits
 
 - A watched session has no SessionEnd hook. A watched session that is gone and whose registry

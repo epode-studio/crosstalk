@@ -45,6 +45,7 @@ import * as D from "./dispose.ts"
 import * as St from "./staffing.ts"
 import * as Pm from "./permission.ts"
 import { BG_ENV } from "./background.ts"
+import * as PP from "../services/postpone.ts"
 
 export type Reg = { sessionId: string; name: string; cwd: string; transcript?: string; pid?: number; seenAt?: number }
 
@@ -64,7 +65,12 @@ export type Deps = {
   spawn: (o: { task: string; name: string; cwd: string; by?: string; background: boolean; thread?: { id: string; name: string } }) => { ok: boolean; text: string; agents: { name: string }[] }
   /** Sessions crosstalk runs in the background: never where a question is put. */
   background: (sessionId: string) => string | undefined
-  restart?: (o: { rec: Rec; cmd: string }) => Promise<{ ok: boolean; text: string }>
+  restart?: (o: { rec: Rec; cmd: string }) => Promise<{ ok: boolean; text: string; wait?: boolean }>
+  /**
+   * Whether something the session started still runs (src/services/postpone.ts).
+   * Default: the live look, unless `restart` is a stand-in (a test's), when it is never.
+   */
+  busy?: (rec: Rec) => boolean
   focusSys?: F.Sys
   readRecs?: () => Rec[]
   recAlive?: (r: Rec) => boolean
@@ -141,6 +147,8 @@ type Pending = { resolve: (d: Pm.Decision | null) => void; timer: ReturnType<typ
 export class AttentionService {
   private st: State
   private pending = new Map<string, Pending>()
+  /** Fresh starts waiting for what the session started to stop: when they began waiting, and the next look. */
+  private postponed = new Map<string, { since: number; rule?: boolean; timer?: ReturnType<typeof setTimeout> }>()
   private ticking = false
   private lastStaffCheck = 0
   private env: NodeJS.ProcessEnv
@@ -402,6 +410,13 @@ export class AttentionService {
     const can = this.canRestart(sessionId)
     if ("why" in can) return false
     const rule = this.st.disposeRule
+    // The context is fully spent and something the session started still
+    // runs: Claude Code compacts as usual, and nothing is ended.
+    if (why === "precompact" && (this.postponed.has(sessionId) || (rule === START_FRESH && this.busy(can.rec)))) {
+      this.unpostpone(sessionId)
+      this.d.log(`attention: ${this.nameOf(sessionId)} compacts as usual: something it started is still running`)
+      return false
+    }
     if (rule === START_FRESH) {
       this.d.log(`attention: a standing rule starts ${this.nameOf(sessionId)} fresh (${why})`)
       setTimeout(() => void this.dispose(sessionId, { rule: true }), why === "precompact" ? 300 : 0)
@@ -428,9 +443,14 @@ export class AttentionService {
   }
 
   /** End the session and start a fresh one in its tab, primed with its thread. */
-  async dispose(sessionId: string, o: { rule?: boolean } = {}): Promise<{ ok: boolean; text: string }> {
+  async dispose(sessionId: string, o: { rule?: boolean; retry?: boolean } = {}): Promise<{ ok: boolean; text: string }> {
+    // A retry whose wait was called off (a compaction came first): nothing to do.
+    if (o.retry && !this.postponed.has(sessionId)) return { ok: false, text: "◢ crosstalk: no longer waiting to start it fresh." }
     const can = this.canRestart(sessionId)
-    if ("why" in can) return { ok: false, text: `◢ crosstalk: cannot start ${this.nameOf(sessionId)} fresh: ${can.why}.` }
+    if ("why" in can) {
+      this.unpostpone(sessionId)
+      return { ok: false, text: `◢ crosstalk: cannot start ${this.nameOf(sessionId)} fresh: ${can.why}.` }
+    }
     const name = this.nameOf(sessionId)
     const pct = this.st.context[sessionId]?.percent
     const file = D.writePrimer(can.thread.meta.value.name, D.primer(can.thread, { session: name, context: pct }), this.now())
@@ -438,6 +458,18 @@ export class AttentionService {
     const cmd = D.freshCommand({ claude: this.env.CROSSTALK_CLAUDE_BIN ?? which("claude", this.env) ?? "claude", primerFile: file, env: bg ? { [BG_ENV]: bg } : undefined })
     const restart = this.d.restart ?? ((x) => D.restart(x))
     const r = await restart({ rec: can.rec, cmd })
+    if (r.wait) {
+      // Silently: no question, tried again when what it started has stopped.
+      const waiting = this.postpone(sessionId, o)
+      try {
+        fs.unlinkSync(file)
+      } catch {}
+      if (!o.retry) this.d.log(`attention: ${name} starts fresh once what it started stops`)
+      return waiting
+        ? { ok: true, text: `◢ crosstalk: ${name} starts fresh from ${can.thread.meta.value.name} once what it started (a server, a watcher) has stopped. Nothing is ended under it.` }
+        : { ok: false, text: `◢ crosstalk: did not start ${name} fresh: what it started never stopped.` }
+    }
+    this.unpostpone(sessionId)
     if (!r.ok) {
       this.d.log(`attention: ${name} not started fresh: ${r.text}`)
       return { ok: false, text: `◢ crosstalk: did not start ${name} fresh: ${r.text}.` }
@@ -449,6 +481,42 @@ export class AttentionService {
     const to = this.target(sessionId)
     if (to) this.note(to, { id: `fresh:${sessionId}`, text })
     return { ok: true, text }
+  }
+
+  /** The session is still busy with what it started: whether `restart` should wait for it. */
+  private busy(rec: Rec): boolean {
+    if (this.d.busy) return this.d.busy(rec)
+    if (this.d.restart) return false
+    return PP.liveActivity(rec.pid).length > 0
+  }
+
+  /** Look again later, for at most PP.UNTIL_MS. False when that is up. */
+  private postpone(sessionId: string, o: { rule?: boolean }): boolean {
+    const p = this.postponed.get(sessionId) ?? { since: this.now(), rule: o.rule }
+    if (this.now() - p.since > PP.UNTIL_MS()) {
+      this.unpostpone(sessionId)
+      this.d.log(`attention: ${this.nameOf(sessionId)} not started fresh: what it started never stopped`)
+      return false
+    }
+    if (p.timer) clearTimeout(p.timer)
+    p.timer = setTimeout(() => {
+      p.timer = undefined
+      void this.dispose(sessionId, { rule: p.rule, retry: true }).catch(() => undefined)
+    }, PP.POLL_MS())
+    ;(p.timer as { unref?: () => void }).unref?.()
+    this.postponed.set(sessionId, p)
+    return true
+  }
+
+  private unpostpone(sessionId: string) {
+    const p = this.postponed.get(sessionId)
+    if (p?.timer) clearTimeout(p.timer)
+    this.postponed.delete(sessionId)
+  }
+
+  /** Whether a fresh start is waiting on what the session started. */
+  waitingToDispose(sessionId: string): boolean {
+    return this.postponed.has(sessionId)
   }
 
   /** A session registered: the fresh one after a disposal takes its predecessor's threads. */

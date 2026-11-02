@@ -2,8 +2,8 @@
 // @bun
 
 // src/hook.ts
-import path26 from "path";
-import fs22 from "fs";
+import path29 from "path";
+import fs25 from "fs";
 
 // src/client.ts
 import net from "node:net";
@@ -1508,9 +1508,9 @@ function storeRestore(sessionId, offer, n, when) {
 }
 
 // src/gather.ts
-import fs8 from "node:fs";
-import path12 from "node:path";
-import { spawn as spawn4, spawnSync as spawnSync4 } from "node:child_process";
+import fs14 from "node:fs";
+import path18 from "node:path";
+import { spawn as spawn5, spawnSync as spawnSync8 } from "node:child_process";
 
 // src/restore.ts
 import fs7 from "node:fs";
@@ -1637,19 +1637,1032 @@ function kindOf2(t) {
 }
 var REOPEN_SETTINGS_MS2 = 2 * 60 * 1000;
 
+// src/services/procs.ts
+import fs8 from "node:fs";
+import path12 from "node:path";
+import { spawnSync as spawnSync4 } from "node:child_process";
+var run = (cmd, args, timeout = 5000) => {
+  try {
+    const r = spawnSync4(cmd, args, { encoding: "utf8", timeout, maxBuffer: 32 * 1024 * 1024 });
+    if (r.error || r.status !== 0 && !r.stdout)
+      return null;
+    return r.stdout ?? "";
+  } catch {
+    return null;
+  }
+};
+function parsePs(text) {
+  const out = [];
+  for (const l of text.split(`
+`)) {
+    const m = /^\s*(\d+)\s+(\d+)\s?(.*)$/.exec(l);
+    if (m)
+      out.push({ pid: Number(m[1]), ppid: Number(m[2]), args: m[3].trim() });
+  }
+  return out;
+}
+function psTable() {
+  return parsePs(run("ps", ["-Ao", "pid=,ppid=,args="]) ?? "");
+}
+function descendants(pid, table) {
+  const kids = new Map;
+  for (const p of table)
+    if (p.pid !== p.ppid)
+      (kids.get(p.ppid) ?? kids.set(p.ppid, []).get(p.ppid)).push(p);
+  const out = [];
+  const seen = new Set([pid]);
+  const queue = [pid];
+  while (queue.length) {
+    for (const k of kids.get(queue.shift()) ?? []) {
+      if (seen.has(k.pid))
+        continue;
+      seen.add(k.pid);
+      out.push(k);
+      queue.push(k.pid);
+    }
+  }
+  return out;
+}
+var tree = (pid, table) => [pid, ...descendants(pid, table).map((p) => p.pid)];
+function parseSs(text) {
+  const out = [];
+  for (const l of text.split(`
+`)) {
+    const cols = l.trim().split(/\s+/);
+    if (cols.length < 5)
+      continue;
+    const local = cols[0] === "LISTEN" ? cols[3] : cols[2];
+    const port = Number(/:(\d+)$/.exec(local ?? "")?.[1]);
+    if (!port)
+      continue;
+    for (const m of l.matchAll(/pid=(\d+)/g))
+      out.push({ pid: Number(m[1]), port });
+  }
+  return out;
+}
+function parseLsof(text) {
+  const out = [];
+  let pid = 0;
+  for (const l of text.split(`
+`)) {
+    if (l.startsWith("p"))
+      pid = Number(l.slice(1)) || 0;
+    else if (l.startsWith("n") && pid) {
+      const port = Number(/:(\d+)$/.exec(l)?.[1]);
+      if (port)
+        out.push({ pid, port });
+    }
+  }
+  return out;
+}
+var dedupe = (ls) => [...new Map(ls.map((l) => [`${l.pid}:${l.port}`, l])).values()];
+function listeners(platform = process.platform) {
+  if (process.env.CROSSTALK_NO_LISTENERS)
+    return [];
+  if (platform === "linux") {
+    const ss = run("ss", ["-ltnpH"]);
+    if (ss !== null) {
+      const got = parseSs(ss);
+      if (got.length || !ss.trim())
+        return dedupe(got);
+    }
+  }
+  const lsof = run("lsof", ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn"]);
+  return lsof === null ? [] : dedupe(parseLsof(lsof));
+}
+function parseLsofCwd(text) {
+  const out = new Map;
+  let pid = 0;
+  for (const l of text.split(`
+`)) {
+    if (l.startsWith("p"))
+      pid = Number(l.slice(1)) || 0;
+    else if (l.startsWith("n") && pid)
+      out.set(pid, l.slice(1));
+  }
+  return out;
+}
+function cwds(platform = process.platform) {
+  const out = new Map;
+  if (platform === "linux") {
+    try {
+      for (const p of fs8.readdirSync("/proc")) {
+        if (!/^\d+$/.test(p))
+          continue;
+        try {
+          out.set(Number(p), fs8.readlinkSync(`/proc/${p}/cwd`));
+        } catch {}
+      }
+      return out;
+    } catch {}
+  }
+  const lsof = run("lsof", ["-d", "cwd", "-Fpn"], 15000);
+  return lsof === null ? out : parseLsofCwd(lsof);
+}
+var under = (p, dir) => {
+  const a = path12.resolve(p);
+  const b = path12.resolve(dir);
+  return a === b || a.startsWith(b + path12.sep);
+};
+var SHELL2 = /^-?(sh|bash|zsh|dash|fish|ksh|tcsh|csh)$/;
+var prog = (args) => path12.basename(args.trim().split(/\s+/)[0] ?? "");
+var isShell = (p) => SHELL2.test(prog(p.args));
+function activity(claudePid, o) {
+  const ours = o.ours ?? (() => false);
+  const exclude = o.exclude ?? new Set;
+  const ports = new Map;
+  for (const l of o.listeners)
+    (ports.get(l.pid) ?? ports.set(l.pid, []).get(l.pid)).push(l.port);
+  const kids = new Map;
+  for (const p of o.table)
+    if (p.pid !== p.ppid)
+      (kids.get(p.ppid) ?? kids.set(p.ppid, []).get(p.ppid)).push(p);
+  const out = [];
+  const walk = (p, depth) => {
+    if (exclude.has(p.pid) || ours(p.args) || depth > 64)
+      return;
+    const listening = ports.get(p.pid) ?? [];
+    if (!isShell(p) || listening.length)
+      out.push({ pid: p.pid, args: p.args, ports: [...new Set(listening)].sort((a, b) => a - b) });
+    for (const k of kids.get(p.pid) ?? [])
+      walk(k, depth + 1);
+  };
+  for (const child of kids.get(claudePid) ?? []) {
+    if (!isShell(child) || exclude.has(child.pid) || ours(child.args))
+      continue;
+    for (const k of kids.get(child.pid) ?? [])
+      walk(k, 1);
+    if (ports.get(child.pid)?.length)
+      out.push({ pid: child.pid, args: child.args, ports: ports.get(child.pid) });
+  }
+  return out;
+}
+var oursBy = (root) => (args) => args.includes(path12.join(root, "bin", "crosstalk")) || args.includes(path12.join(root, "dist")) || args.includes(path12.join(root, "src")) || /(^|\/)crosstalk(\s|$)/.test(args.split(/\s+/)[0] ?? "");
+
+// src/services/service.ts
+import fs13 from "node:fs";
+import path17 from "node:path";
+import { spawn as spawn4, spawnSync as spawnSync7 } from "node:child_process";
+
+// src/spawn.ts
+import fs10 from "node:fs";
+import path14 from "node:path";
+import { spawnSync as spawnSync6 } from "node:child_process";
+
+// src/attention/focus.ts
+var appleFrontTtyScript = [
+  `if application "Terminal" is running then`,
+  `	tell application "Terminal"`,
+  `		if frontmost then return tty of selected tab of front window`,
+  `	end tell`,
+  `end if`,
+  `return ""`
+].join(`
+`);
+var itermFrontTtyScript = [
+  `if application "iTerm2" is running then`,
+  `	tell application "iTerm2"`,
+  `		if frontmost then return tty of current session of current window`,
+  `	end tell`,
+  `end if`,
+  `return ""`
+].join(`
+`);
+
+// src/gather.ts
+var RECHECK_MS = 10 * 60 * 1000;
+
+// src/threads/model.ts
+var LISTS = [
+  "people",
+  "sessions",
+  "files",
+  "branches",
+  "features",
+  "questions",
+  "decisions",
+  "facts",
+  "tasks",
+  "rules"
+];
+var SECTIONS = ["meta", "recap", ...LISTS];
+
+// src/client.ts
+import net2 from "node:net";
+function request2(req, timeoutMs = 130000) {
+  return new Promise((resolve, reject) => {
+    const sock = net2.createConnection(P.daemonSock);
+    let rest = "";
+    let settled = false;
+    const finish = (f) => {
+      if (settled)
+        return;
+      settled = true;
+      clearTimeout(t);
+      f();
+    };
+    const t = setTimeout(() => {
+      sock.destroy();
+      finish(() => reject(new Error("daemon did not answer")));
+    }, timeoutMs);
+    sock.on("connect", () => sock.write(JSON.stringify(req) + `
+`));
+    sock.on("data", (b) => {
+      rest += b.toString("utf8");
+      const i = rest.indexOf(`
+`);
+      if (i === -1)
+        return;
+      const line = rest.slice(0, i);
+      sock.end();
+      finish(() => {
+        try {
+          resolve(JSON.parse(line));
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+    sock.on("error", (e) => finish(() => reject(e)));
+    const gone = () => finish(() => reject(new Error("daemon closed the connection without answering")));
+    sock.on("end", gone);
+    sock.on("close", gone);
+  });
+}
+
+// src/services/ports.ts
+import fs9 from "node:fs";
+import path13 from "node:path";
+import { spawnSync as spawnSync5 } from "node:child_process";
+var SIZE = 10;
+var START = () => Number(process.env.CROSSTALK_PORT_START ?? 4100);
+var MAX = 65000;
+var file3 = () => path13.join(P.root, "ports.json");
+function load() {
+  try {
+    const s = JSON.parse(fs9.readFileSync(file3(), "utf8"));
+    return { blocks: s && typeof s.blocks === "object" ? s.blocks : {} };
+  } catch {
+    return { blocks: {} };
+  }
+}
+function save(s) {
+  fs9.mkdirSync(P.root, { recursive: true, mode: 448 });
+  const tmp = `${file3()}.${process.pid}.tmp`;
+  fs9.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs9.renameSync(tmp, file3());
+}
+var sleepSync2 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function locked(fn) {
+  fs9.mkdirSync(P.root, { recursive: true, mode: 448 });
+  const lock = `${file3()}.lock`;
+  let held = false;
+  for (let i = 0;i < 200 && !held; i++) {
+    try {
+      fs9.mkdirSync(lock);
+      held = true;
+    } catch {
+      try {
+        if (Date.now() - fs9.statSync(lock).mtimeMs > 5000)
+          fs9.rmdirSync(lock);
+      } catch {}
+      sleepSync2(10);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    if (held)
+      try {
+        fs9.rmdirSync(lock);
+      } catch {}
+  }
+}
+var range = (base, size = SIZE) => Array.from({ length: size }, (_, i) => base + i);
+function pickBase(o) {
+  const size = o.size ?? SIZE;
+  const max = o.max ?? MAX;
+  for (let base = o.start ?? START();base + size - 1 <= max; base += size) {
+    if (o.taken.some((t) => Math.abs(t - base) < size))
+      continue;
+    if (range(base, size).some((p) => o.inUse.has(p)))
+      continue;
+    return base;
+  }
+  return null;
+}
+function rootOf(cwd) {
+  let dir = path13.resolve(cwd);
+  try {
+    dir = fs9.realpathSync(dir);
+  } catch {}
+  const r = spawnSync5("git", ["-C", dir, "rev-parse", "--show-toplevel"], { encoding: "utf8", timeout: 5000 });
+  const top = r.status === 0 ? r.stdout.trim() : "";
+  if (!top)
+    return dir;
+  try {
+    return fs9.realpathSync(top);
+  } catch {
+    return top;
+  }
+}
+function blockFor(root, o = {}) {
+  const have = load().blocks[root];
+  if (have)
+    return { base: have.base, ports: range(have.base) };
+  return locked(() => {
+    const s = load();
+    const again = s.blocks[root];
+    if (again)
+      return { base: again.base, ports: range(again.base) };
+    for (const [r] of Object.entries(s.blocks))
+      if (!fs9.existsSync(r))
+        delete s.blocks[r];
+    const inUse = (o.inUse ?? (() => new Set(listeners().map((l) => l.port))))();
+    const base = pickBase({ taken: Object.values(s.blocks).map((b) => b.base), inUse });
+    if (base === null)
+      return null;
+    s.blocks[root] = { base, at: o.now ?? Date.now() };
+    save(s);
+    return { base, ports: range(base) };
+  });
+}
+function blockOf(root) {
+  const b = load().blocks[root];
+  return b ? { base: b.base, ports: range(b.base) } : null;
+}
+var span = (b) => `${b.ports[0]}-${b.ports[b.ports.length - 1]}`;
+
+// src/spawn.ts
+var TMUX_SOCKET = "crosstalk";
+var dir3 = () => path14.join(P.root, "spawned");
+var fileOf3 = (id) => path14.join(dir3(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+function readSpawned() {
+  let names;
+  try {
+    names = fs10.readdirSync(dir3()).filter((f) => f.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const f of names)
+    try {
+      const r = JSON.parse(fs10.readFileSync(path14.join(dir3(), f), "utf8"));
+      if (r?.id && r.worktree)
+        out.push(r);
+    } catch {}
+  return out.sort((a, b) => a.createdAt - b.createdAt);
+}
+function writeSpawned(r) {
+  fs10.mkdirSync(dir3(), { recursive: true, mode: 448 });
+  const tmp = `${fileOf3(r.id)}.${process.pid}.tmp`;
+  fs10.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 384 });
+  fs10.renameSync(tmp, fileOf3(r.id));
+}
+function spawnedAt(cwd, recs = readSpawned()) {
+  const c = path14.resolve(cwd);
+  return recs.find((r) => !r.removedAt && (c === path14.resolve(r.worktree) || c.startsWith(path14.resolve(r.worktree) + path14.sep))) ?? null;
+}
+var STOP = new Set("a an the on to for and of in with at by from into onto this that it its be is are please can could would you start put get run spin up fire one two three four five six seven eight more another new agent agents session sessions claude someone somebody work working".split(" "));
+var TMUX_CONF = [
+  `# crosstalk's own tmux server (tmux -L crosstalk), for agents it runs in the background.`,
+  `set -g status-left '#[bold]\u25e2 crosstalk#[default] #S  '`,
+  `set -g status-left-length 40`,
+  `set -g status-right '#{?#{==:#{@crosstalk_state},waiting},#[fg=colour208]\u25cf waiting on you,#{?#{==:#{@crosstalk_state},working},#[fg=colour33]\u25cf working,#{?#{==:#{@crosstalk_state},done},#[fg=colour34]\u2713 done,}}}'`,
+  `set -g set-titles on`,
+  `set -g set-titles-string '#S'`,
+  `set -g detach-on-destroy on`,
+  `set -g history-limit 50000`,
+  ``
+].join(`
+`);
+function cleanEnv(env) {
+  const e = { ...env };
+  delete e.TMUX;
+  delete e.TMUX_PANE;
+  return e;
+}
+function tmuxHas(name, env = process.env) {
+  return spawnSync6("tmux", ["-L", TMUX_SOCKET, "has-session", "-t", `=${name}`], { stdio: "ignore", timeout: 3000, env: cleanEnv(env) }).status === 0;
+}
+function claim(sessionId, cwd) {
+  const rec = spawnedAt(cwd);
+  if (!rec)
+    return null;
+  if (rec.sessionId !== sessionId)
+    writeSpawned({ ...rec, sessionId });
+  return rec;
+}
+
+// src/cleanup.ts
+import fs12 from "node:fs";
+import path16 from "node:path";
+
+// src/uistate.ts
+import fs11 from "node:fs";
+import path15 from "node:path";
+var FINAL2 = new Set(["answered", "handed", "muted"]);
+var file4 = () => path15.join(P.root, "ui.json");
+var lockDir2 = () => path15.join(P.root, "ui.lock");
+var markers2 = () => path15.join(P.root, "ui-mod");
+var safe4 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
+var WEEK2 = 7 * 24 * 60 * 60 * 1000;
+function read2() {
+  try {
+    const f = JSON.parse(fs11.readFileSync(file4(), "utf8"));
+    if (f && f.v === 1 && f.items && typeof f.items === "object")
+      return f;
+  } catch {}
+  return { v: 1, items: {} };
+}
+function write2(f) {
+  fs11.mkdirSync(P.root, { recursive: true, mode: 448 });
+  const tmp = `${file4()}.${process.pid}.tmp`;
+  fs11.writeFileSync(tmp, JSON.stringify(f, null, 2), { mode: 384 });
+  fs11.renameSync(tmp, file4());
+}
+var sleepSync3 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+class StoreBusy2 extends Error {
+  constructor(holder) {
+    super(`crosstalk's ui store is locked${holder ? ` by process ${holder}` : ""}; try again`);
+    this.name = "StoreBusy";
+  }
+}
+var lockWaitMs2 = Number(process.env.CROSSTALK_UI_LOCK_WAIT_MS ?? 2000);
+var LOCK_MAX_AGE_MS2 = 1e4;
+var LOCK_UNOWNED_MS2 = 1000;
+var ownerFile2 = () => path15.join(lockDir2(), "pid");
+var alive2 = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+};
+function takeLock2() {
+  try {
+    fs11.mkdirSync(lockDir2());
+  } catch {
+    return false;
+  }
+  try {
+    fs11.writeFileSync(ownerFile2(), String(process.pid), { mode: 384 });
+  } catch {}
+  return true;
+}
+function holderOf2() {
+  try {
+    const pid = Number(fs11.readFileSync(ownerFile2(), "utf8"));
+    return pid > 0 ? pid : undefined;
+  } catch {
+    return;
+  }
+}
+function breakIfStale2() {
+  let age;
+  try {
+    age = Date.now() - fs11.statSync(lockDir2()).mtimeMs;
+  } catch {
+    return true;
+  }
+  const pid = holderOf2();
+  const stale = age > LOCK_MAX_AGE_MS2 || (pid ? pid !== process.pid && !alive2(pid) : age > LOCK_UNOWNED_MS2);
+  if (!stale)
+    return false;
+  const aside = `${lockDir2()}.stale.${process.pid}.${Date.now()}`;
+  try {
+    fs11.renameSync(lockDir2(), aside);
+  } catch {
+    return true;
+  }
+  const moved = (() => {
+    try {
+      return Number(fs11.readFileSync(path15.join(aside, "pid"), "utf8")) || undefined;
+    } catch {
+      return;
+    }
+  })();
+  if (moved !== pid)
+    try {
+      fs11.renameSync(aside, lockDir2());
+      return false;
+    } catch {}
+  try {
+    fs11.rmSync(aside, { recursive: true, force: true });
+  } catch {}
+  return true;
+}
+var depth2 = 0;
+function withStore2(fn) {
+  fs11.mkdirSync(P.root, { recursive: true, mode: 448 });
+  let held = false;
+  if (depth2 === 0) {
+    const until = Date.now() + lockWaitMs2;
+    for (;; ) {
+      if (takeLock2()) {
+        held = true;
+        break;
+      }
+      if (breakIfStale2())
+        continue;
+      if (Date.now() >= until)
+        throw new StoreBusy2(holderOf2());
+      sleepSync3(Math.min(10, Math.max(1, until - Date.now())));
+    }
+  }
+  depth2++;
+  try {
+    const f = read2();
+    const was = JSON.stringify(f);
+    const now = Date.now();
+    const out = fn(f.items, now);
+    for (const [id, it] of Object.entries(f.items))
+      if (FINAL2.has(it.state) && now - it.updatedAt > WEEK2 || now - it.updatedAt > 4 * WEEK2)
+        delete f.items[id];
+    if (JSON.stringify(f) !== was)
+      write2(f);
+    return out;
+  } finally {
+    depth2--;
+    const h = held ? holderOf2() : undefined;
+    if (held && (h === undefined || h === process.pid))
+      try {
+        fs11.rmSync(lockDir2(), { recursive: true, force: true });
+      } catch {}
+  }
+}
+function snapshot() {
+  return read2().items;
+}
+function upsert2(items, it, now) {
+  const before = items[it.id];
+  if (!before) {
+    if (QUESTION_KINDS.has(it.kind))
+      record({ k: "asked", at: now, id: it.id, kind: it.kind, ...it.thread ? { thread: it.thread } : {} });
+    return items[it.id] = { ...it, state: "pending", createdAt: now, updatedAt: now };
+  }
+  if (FINAL2.has(before.state))
+    return before;
+  const moved = before.sessionId !== it.sessionId;
+  items[it.id] = {
+    ...before,
+    ...it,
+    state: before.state,
+    raisedAt: moved ? undefined : before.raisedAt,
+    createdAt: before.createdAt,
+    updatedAt: moved ? now : before.updatedAt
+  };
+  return items[it.id];
+}
+var MARKER_MS2 = 10 * 60 * 1000;
+function modActive2(sessionId, now = Date.now()) {
+  try {
+    return now - fs11.statSync(path15.join(markers2(), safe4(sessionId))).mtimeMs < MARKER_MS2;
+  } catch {
+    return false;
+  }
+}
+
+// src/cleanup.ts
+var svcLabel = (s) => {
+  const b = badge([{ listening: s.listening, ports: s.ports }]);
+  return b ? `${s.name} \u00b7 ${b}` : s.name;
+};
+function select(recs, p) {
+  const out = [];
+  for (const r of recs) {
+    if (r.removedAt || !p.exists(r.worktree))
+      continue;
+    if (!p.ended(r))
+      continue;
+    if (!p.clean(r.worktree, r.links))
+      continue;
+    if (p.inUse?.(r.worktree))
+      continue;
+    const svcs = (p.services?.(r.worktree) ?? []).map(svcLabel);
+    const extra = svcs.length ? { services: svcs } : {};
+    if (!p.branchExists(r.repo, r.branch))
+      out.push({ rec: r, why: "deleted", ...extra });
+    else if (p.merged(r.repo, r.branch, r.base))
+      out.push({ rec: r, why: "merged", ...extra });
+  }
+  return out;
+}
+function defaultBranch(repo, g = git) {
+  const o = g(repo, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
+  if (o.ok && o.out)
+    return o.out.replace(/^origin\//, "");
+  for (const b of ["main", "master", "trunk"])
+    if (g(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]).ok)
+      return b;
+  const h = g(repo, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+  return h.ok && h.out ? h.out : null;
+}
+function inUseBy(worktree, o = {}) {
+  const real = (() => {
+    try {
+      return fs12.realpathSync(worktree);
+    } catch {
+      return path16.resolve(worktree);
+    }
+  })();
+  const cwds2 = o.cwds ?? cwds();
+  const exclude = o.exclude ?? (readAll3().length ? servicePids() : new Set);
+  const self = new Set([process.pid, process.ppid]);
+  const table = o.table;
+  for (const [pid, cwd] of cwds2) {
+    if (self.has(pid) || exclude.has(pid))
+      continue;
+    if (!under(cwd, real) && !under(cwd, worktree))
+      continue;
+    const args = table?.find((p) => p.pid === pid)?.args ?? psTable().find((p) => p.pid === pid)?.args ?? `pid ${pid}`;
+    return `a process is running in it (${args.split(/\s+/).slice(0, 3).join(" ")}, pid ${pid})`;
+  }
+  return null;
+}
+function liveProbe(g = git) {
+  const defaults = new Map;
+  const def = (repo) => {
+    if (!defaults.has(repo))
+      defaults.set(repo, defaultBranch(repo, g));
+    return defaults.get(repo);
+  };
+  return {
+    exists: (p) => fs12.existsSync(p),
+    clean: (w, ignore) => {
+      const r = g(w, ["status", "--porcelain", "--untracked-files=all"]);
+      if (!r.ok)
+        return false;
+      const skip = new Set(ignore);
+      return r.out.split(`
+`).filter(Boolean).every((l) => l.startsWith("?? ") && skip.has(l.slice(3).replace(/\/$/, "")));
+    },
+    branchExists: (repo, b) => g(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]).ok,
+    merged: (repo, b, base) => {
+      const d = def(repo);
+      if (!d || d === b)
+        return false;
+      const tip = g(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]);
+      if (!tip.ok || base && tip.out === base)
+        return false;
+      const ahead = g(repo, ["rev-list", "--count", `${d}..${b}`]);
+      if (!ahead.ok || ahead.out !== "0") {
+        const remote = g(repo, ["rev-list", "--count", `origin/${d}..${b}`]);
+        if (!remote.ok || remote.out !== "0") {
+          const cherry = g(repo, ["cherry", d, b]);
+          if (!cherry.ok || !cherry.out || !cherry.out.split(`
+`).every((l) => l.startsWith("-")))
+            return false;
+        }
+      }
+      return true;
+    },
+    ended: (r) => {
+      if (r.background && r.tmux && tmuxHas(r.tmux))
+        return false;
+      const live = readAll2().some((x) => !x.endedAt && path16.resolve(x.cwd).startsWith(path16.resolve(r.worktree)) && recAlive2(x));
+      return !live;
+    },
+    inUse: (w) => inUseBy(w),
+    services: (w) => runningIn(w)
+  };
+}
+var cleanupId = (sessionId) => `cleanup:${sessionId}`;
+var CLEANUP_OPTIONS = ["Remove them", "Not now"];
+function offerFor(c) {
+  const fresh = c.filter((x) => !x.rec.offeredAt);
+  if (!fresh.length)
+    return null;
+  const n = c.length;
+  const names = c.slice(0, 4).map((x) => x.rec.name).concat(n > 4 ? ["\u2026"] : []);
+  const svcs = c.flatMap((x) => x.services ?? []);
+  const stops = svcs.length ? ` ${svcs.length === 1 ? "Its service" : "Their services"} (${svcs.join(", ")}) stop${svcs.length === 1 ? "s" : ""} first.` : "";
+  const question = `${n} agent worktree${n === 1 ? " is" : "s are"} done with: ${n === 1 ? "its" : "their"} work is merged and ${n === 1 ? "its session has" : "their sessions have"} ended.${stops} Remove ${n === 1 ? "it" : "them"}?`;
+  return { count: n, names, question, text: `\u25e2 crosstalk: ${question} (${names.join(", ")}) Say "clean up the worktrees" to do it.` };
+}
+var stamp = () => path16.join(P.root, "cleanup-stamp");
+var CHECK_EVERY_MS = () => Number(process.env.CROSSTALK_CLEANUP_EVERY_MS ?? 10 * 60 * 1000);
+function offerOnce(o = {}) {
+  const recs = readSpawned().filter((r) => !r.removedAt);
+  if (!recs.length)
+    return null;
+  if (!o.force) {
+    try {
+      if (Date.now() - fs12.statSync(stamp()).mtimeMs < CHECK_EVERY_MS())
+        return null;
+    } catch {}
+    fs12.mkdirSync(P.root, { recursive: true, mode: 448 });
+    fs12.writeFileSync(stamp(), String(Date.now()), { mode: 384 });
+  }
+  const c = select(recs, o.probe ?? liveProbe());
+  const offer = offerFor(c);
+  if (!offer)
+    return null;
+  const now = Date.now();
+  for (const x of c)
+    if (!x.rec.offeredAt)
+      writeSpawned({ ...x.rec, offeredAt: now });
+  return offer;
+}
+function surface(sessionId, offer, mod = modActive2(sessionId)) {
+  if (!offer)
+    return {};
+  if (!mod)
+    return { systemMessage: offer.text };
+  try {
+    withStore2((items, now) => upsert2(items, { id: cleanupId(sessionId), kind: "cleanup", sessionId, count: offer.count, names: offer.names, question: offer.question, options: CLEANUP_OPTIONS }, now));
+    return {};
+  } catch {
+    return { systemMessage: offer.text };
+  }
+}
+
+// src/shipping/git.ts
+var KEEP = new Set([
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "LANG",
+  "LANGUAGE",
+  "TERM",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "TZ",
+  "CI",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "ALL_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+  "all_proxy",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "NODE_EXTRA_CA_CERTS",
+  "REQUESTS_CA_BUNDLE",
+  "GIT_AUTHOR_NAME",
+  "GIT_AUTHOR_EMAIL",
+  "GIT_COMMITTER_NAME",
+  "GIT_COMMITTER_EMAIL"
+]);
+var WHO = {
+  GIT_AUTHOR_NAME: process.env.CROSSTALK_GIT_NAME ?? "crosstalk",
+  GIT_AUTHOR_EMAIL: process.env.CROSSTALK_GIT_EMAIL ?? "crosstalk@localhost",
+  GIT_COMMITTER_NAME: process.env.CROSSTALK_GIT_NAME ?? "crosstalk",
+  GIT_COMMITTER_EMAIL: process.env.CROSSTALK_GIT_EMAIL ?? "crosstalk@localhost"
+};
+
+// src/sessions/services.ts
+var none = { running: () => [], stop: async () => [] };
+var port = none;
+var setServices = (p) => void (port = p ?? none);
+
+// src/services/service.ts
+var TMUX_SESSION = "crosstalk-services";
+var dir4 = () => path17.join(P.root, "services");
+var fileOf4 = (id) => path17.join(dir4(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+var statusFile = (id) => path17.join(dir4(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.exit`);
+function readAll3() {
+  let names;
+  try {
+    names = fs13.readdirSync(dir4()).filter((f) => f.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const f of names)
+    try {
+      const s = JSON.parse(fs13.readFileSync(path17.join(dir4(), f), "utf8"));
+      if (s?.id && s.root && s.name)
+        out.push(s);
+    } catch {}
+  return out.sort((a, b) => a.startedAt - b.startedAt);
+}
+function write3(s) {
+  fs13.mkdirSync(dir4(), { recursive: true, mode: 448 });
+  const tmp = `${fileOf4(s.id)}.${process.pid}.tmp`;
+  fs13.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs13.renameSync(tmp, fileOf4(s.id));
+}
+var tmux = (args) => {
+  try {
+    const r = spawnSync7("tmux", ["-L", TMUX_SOCKET, ...args], { encoding: "utf8", timeout: 1e4, env: cleanEnv(process.env) });
+    return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.status === 0 ? "" : r.stderr ?? ""}`.trim() };
+  } catch (e) {
+    return { ok: false, out: String(e) };
+  }
+};
+function tmuxWindows(t = tmux) {
+  const r = t(["list-windows", "-t", `=${TMUX_SESSION}`, "-F", "#{window_id} #{pane_pid}"]);
+  const out = new Map;
+  if (!r.ok)
+    return out;
+  for (const l of r.out.split(`
+`)) {
+    const [w, p] = l.trim().split(" ");
+    if (w?.startsWith("@"))
+      out.set(w, Number(p));
+  }
+  return out;
+}
+function aliveProc(pid, start) {
+  if (!pidAlive2(pid, start))
+    return false;
+  const r = spawnSync7("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+  if (r.status !== 0)
+    return r.error ? true : false;
+  return !r.stdout.trim().startsWith("Z");
+}
+var sleepSync4 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+var liveLook = () => {
+  let w;
+  let t;
+  let l;
+  return { windows: () => w ??= tmuxWindows(), table: () => t ??= psTable(), listeners: () => l ??= listeners(), alive: aliveProc };
+};
+function headPid(s, look) {
+  if (s.stoppedAt)
+    return null;
+  if (s.backend === "tmux")
+    return s.window && look.windows().has(s.window) && (!s.panePid || look.windows().get(s.window) === s.panePid) ? look.windows().get(s.window) : null;
+  return s.pid && look.alive(s.pid, s.pidStart) ? s.pid : null;
+}
+function pidsOf(s, look) {
+  const h = headPid(s, look);
+  if (!h)
+    return [];
+  const ids = new Set(tree(h, look.table()));
+  if (s.backend === "process" && s.pid) {
+    for (const p of look.table())
+      if (p.ppid === s.pid)
+        for (const x of tree(p.pid, look.table()))
+          ids.add(x);
+  }
+  return [...ids];
+}
+function state(s, look, withPorts = true) {
+  const h = headPid(s, look);
+  let exit;
+  try {
+    exit = fs13.readFileSync(statusFile(s.id), "utf8").trim();
+  } catch {}
+  const st = s.stoppedAt ? "stopped" : h ? "running" : "exited";
+  const pids = withPorts && h ? new Set(pidsOf(s, look)) : new Set;
+  const listening = [...new Set(look.listeners().filter((l) => pids.has(l.pid)).map((l) => l.port))].sort((a, b) => a - b);
+  return { ...s, state: st, ...exit !== undefined && st === "exited" ? { exit } : {}, listening };
+}
+function list(o = {}) {
+  const look = o.look ?? liveLook();
+  const out = [];
+  for (const s of readAll3()) {
+    if (o.root && s.root !== o.root)
+      continue;
+    const l = state(s, look, o.ports !== false);
+    if (o.ports !== false && l.state === "running" && JSON.stringify(l.listening) !== JSON.stringify(s.ports ?? []))
+      write3({ ...s, ports: l.listening });
+    out.push(l);
+  }
+  return out;
+}
+function running(root, look = liveLook()) {
+  const recs = readAll3().filter((s) => !s.stoppedAt && (!root || s.root === root));
+  if (!recs.length)
+    return [];
+  return recs.map((s) => state(s, look, false)).filter((s) => s.state === "running");
+}
+function servicePids(look = liveLook()) {
+  const out = new Set;
+  for (const s of readAll3())
+    for (const p of pidsOf(s, look))
+      out.add(p);
+  return out;
+}
+var portsOf = (s) => s.listening.length ? s.listening : s.ports ?? [];
+var url = (port) => `http://localhost:${port}`;
+var badge = (svcs) => {
+  const ports = [...new Set(svcs.flatMap(portsOf))].sort((a, b) => a - b);
+  return ports.length ? ports.slice(0, 3).map((p) => `:${p}`).join(" ") + (ports.length > 3 ? " \u2026" : "") : "";
+};
+var clean = (s) => s.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
+var STOP_MS = () => Number(process.env.CROSSTALK_SERVICE_STOP_MS ?? 8000);
+function signal(pids, sig) {
+  for (const p of pids)
+    try {
+      process.kill(p, sig);
+    } catch {}
+}
+function stopOne(s, o = {}) {
+  const fresh = o.look ?? liveLook;
+  const wait = o.waitMs ?? STOP_MS();
+  const gone = () => !pidsOf(s, fresh()).some((p) => aliveProc(p));
+  const until = (ms) => {
+    for (const end = Date.now() + ms;Date.now() < end; sleepSync4(100))
+      if (gone())
+        return true;
+    return gone();
+  };
+  const pids = pidsOf(s, fresh());
+  if (s.backend === "process" && s.pid)
+    try {
+      process.kill(-s.pid, "SIGTERM");
+    } catch {}
+  signal(pids, "SIGTERM");
+  let ok = !pids.length || until(wait);
+  if (!ok) {
+    if (s.backend === "tmux" && s.window)
+      tmux(["kill-window", "-t", s.window]);
+    else if (s.pid)
+      try {
+        process.kill(-s.pid, "SIGHUP");
+      } catch {}
+    signal(pidsOf(s, fresh()), "SIGHUP");
+    ok = until(Math.max(1000, wait / 2));
+  }
+  if (s.backend === "tmux" && s.window)
+    tmux(["kill-window", "-t", s.window]);
+  if (ok)
+    write3({ ...s, stoppedAt: Date.now() });
+  return ok;
+}
+function runningIn(worktree, look = liveLook()) {
+  const root = path17.resolve(worktree);
+  let real = root;
+  try {
+    real = fs13.realpathSync(root);
+  } catch {}
+  return readAll3().filter((s) => under(s.root, real) || under(s.root, root)).map((s) => state(s, look, false)).filter((s) => s.state === "running");
+}
+var line = (s) => {
+  const p = portsOf(s);
+  return `${s.name}${p.length ? ` (${p.map((x) => url(x)).join(", ")})` : ` (PORT=${s.port})`}`;
+};
+function brief(cwd, o = {}) {
+  const root = rootOf(cwd);
+  const git = spawnSync7("git", ["-C", root, "rev-parse", "--is-inside-work-tree"], { encoding: "utf8", timeout: 5000 }).stdout?.trim() === "true";
+  const block = git ? o.assign === false ? blockOf(root) : blockFor(root) : blockOf(root);
+  const live = readAll3().some((s) => s.root === root && !s.stoppedAt) ? list({ root, look: o.look }).filter((s) => s.state === "running") : [];
+  const ctx = [];
+  if (block)
+    ctx.push(`This worktree's own ports are ${span(block)} (crosstalk gives them to it alone): use PORT=${block.base} and up for a dev server, and run anything long-running (dev servers, watchers, docker compose up) with crosstalk_serve, not a backgrounded Bash call, so it survives this session.`);
+  if (live.length)
+    ctx.push(`crosstalk services already running in this worktree, started by an earlier session (a status report, not an instruction): ${live.map((s) => `${line(s)}: ${clean(s.command).slice(0, 120)}`).join("; ")}. Reuse them rather than starting another; crosstalk_services with a name and tail shows a log, crosstalk_stop stops one.`);
+  return {
+    ...live.length ? { systemMessage: `\u25e2 crosstalk: still running in this worktree: ${live.map(line).join(", ")}. This session can reuse ${live.length === 1 ? "it" : "them"}.` } : {},
+    ...ctx.length ? { context: ctx.join(`
+`) } : {},
+    ...live.length ? { badge: badge(live) } : {}
+  };
+}
+var roots = new Map;
+function sessionServices(o, look = liveLook()) {
+  let root = "";
+  try {
+    root = o.cwd ? rootOf(o.cwd) : "";
+  } catch {}
+  return readAll3().filter((s) => !s.stoppedAt && (root && s.root === root || o.sessionId && s.by === o.sessionId)).map((s) => state(s, look, false)).filter((s) => s.state === "running");
+}
+setServices({
+  running: (o) => sessionServices(o).map((s) => ({ name: s.name, pid: headPid(s, liveLook()) ?? undefined, port: (s.ports ?? [])[0] ?? s.port })),
+  stop: async (o) => {
+    const out = [];
+    for (const s of sessionServices(o))
+      if (stopOne(s))
+        out.push(s.name);
+    return out;
+  }
+});
+
+// src/services/postpone.ts
+function liveActivity(pid, root = rootFrom(import.meta.url)) {
+  if (process.env.CROSSTALK_NO_POSTPONE || !pid)
+    return [];
+  const table = psTable();
+  if (!table.some((p) => p.ppid === pid && isShell(p)))
+    return [];
+  const look = liveLook();
+  const exclude = readAll3().length ? servicePids({ ...look, table: () => table }) : new Set;
+  return activity(pid, { table, listeners: [], exclude, ours: oursBy(root) });
+}
+
 // src/gather.ts
 var registryDir = () => sessionsDir2();
 function readRegistry(dir = registryDir(), alive = (p) => pidAlive2(p)) {
   let files;
   try {
-    files = fs8.readdirSync(dir).filter((f) => /^\d+\.json$/.test(f));
+    files = fs14.readdirSync(dir).filter((f) => /^\d+\.json$/.test(f));
   } catch {
     return [];
   }
   const out = [];
   for (const f of files) {
     try {
-      const e = JSON.parse(fs8.readFileSync(path12.join(dir, f), "utf8"));
+      const e = JSON.parse(fs14.readFileSync(path18.join(dir, f), "utf8"));
       const pid = Number(e.pid ?? f.slice(0, -5));
       if (!pid || typeof e.sessionId !== "string" || !e.sessionId)
         continue;
@@ -1684,11 +2697,11 @@ function startMatches(e, sys) {
     return false;
   return Math.abs(sys.now() - up - e.startedAt) < START_SLACK_MS;
 }
-function isClaudeArgs(args) {
+function isClaudeArgs2(args) {
   const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
   if (!parts.length)
     return false;
-  const base = (x) => path12.basename(x);
+  const base = (x) => path18.basename(x);
   if (base(parts[0]) === "claude")
     return true;
   if (!/^(node|bun|deno|sh|bash|zsh)$/.test(base(parts[0])))
@@ -1698,7 +2711,7 @@ function isClaudeArgs(args) {
 }
 function registryPids(dir = registryDir()) {
   try {
-    return new Set(fs8.readdirSync(dir).filter((f) => /^\d+\.json$/.test(f)).map((f) => Number(f.slice(0, -5))));
+    return new Set(fs14.readdirSync(dir).filter((f) => /^\d+\.json$/.test(f)).map((f) => Number(f.slice(0, -5))));
   } catch {
     return new Set;
   }
@@ -1707,7 +2720,7 @@ function ps3(pid, field) {
   if (!pid || pid < 1)
     return null;
   try {
-    const r = spawnSync4("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    const r = spawnSync8("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
     if (r.status !== 0)
       return null;
     return r.stdout.trim() || null;
@@ -1730,12 +2743,12 @@ function parseEnv(text, sep) {
 }
 function procEnv(pid) {
   try {
-    return parseEnv(fs8.readFileSync(`/proc/${pid}/environ`, "utf8"), /\0/);
+    return parseEnv(fs14.readFileSync(`/proc/${pid}/environ`, "utf8"), /\0/);
   } catch {}
   if (process.platform !== "darwin")
     return null;
   try {
-    const r = spawnSync4("ps", ["-wwE", "-o", "command=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+    const r = spawnSync8("ps", ["-wwE", "-o", "command=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
     if (r.status !== 0)
       return null;
     return parseEnv(r.stdout.trim(), /\s+/);
@@ -1744,7 +2757,7 @@ function procEnv(pid) {
   }
 }
 function tmuxPanes() {
-  const r = spawnSync4("tmux", ["list-panes", "-a", "-F", "#{pane_tty}\t#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{socket_path}"], { encoding: "utf8", timeout: 2000 });
+  const r = spawnSync8("tmux", ["list-panes", "-a", "-F", "#{pane_tty}\t#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{socket_path}"], { encoding: "utf8", timeout: 2000 });
   if (r.status !== 0)
     return [];
   return r.stdout.trim().split(`
@@ -1756,7 +2769,7 @@ function tmuxPanes() {
 var appleLocateIfRunning = (tty) => [`if application "Terminal" is running then`, ...appleLocateScript2(tty).split(`
 `).slice(0, -1).map((l) => `	${l}`), `end if`, `return ""`].join(`
 `);
-function liveSys() {
+function liveSys3() {
   return {
     platform: process.platform,
     now: Date.now,
@@ -1768,16 +2781,17 @@ function liveSys() {
     appleLocate: (tty) => {
       if (process.platform !== "darwin")
         return null;
-      const r = spawnSync4("osascript", ["-"], { input: appleLocateIfRunning(tty), encoding: "utf8", timeout: 2500 });
+      const r = spawnSync8("osascript", ["-"], { input: appleLocateIfRunning(tty), encoding: "utf8", timeout: 2500 });
       const [w, n] = (r.stdout ?? "").trim().split(" ").map(Number);
       return r.status === 0 && w && n ? { window: w, tab: n } : null;
     },
     kill: (pid, sig) => process.kill(pid, sig),
     run: (s) => {
-      const r = spawnSync4(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 30000 });
+      const r = spawnSync8(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 30000 });
       return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
     },
-    sleep: (ms) => new Promise((r) => setTimeout(r, ms))
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    activity: (pid) => liveActivity(pid)
   };
 }
 function terminalOf(tty, env, sys, panes) {
@@ -1812,8 +2826,8 @@ function terminalOf(tty, env, sys, panes) {
   }
   return t;
 }
-var RECHECK_MS = 10 * 60 * 1000;
-function snapshot(o) {
+var RECHECK_MS2 = 10 * 60 * 1000;
+function snapshot2(o) {
   const { sys } = o;
   const now = sys.now();
   const byId = new Map(o.records.map((r) => [r.sessionId, r]));
@@ -1833,12 +2847,12 @@ function snapshot(o) {
     const pidStart = sys.ps(e.pid, "lstart") ?? undefined;
     if (!sys.alive(e.pid, pidStart))
       continue;
-    if (!startMatches(e, sys) || !isClaudeArgs(sys.ps(e.pid, "args")))
+    if (!startMatches(e, sys) || !isClaudeArgs2(sys.ps(e.pid, "args")))
       continue;
     const rawTty = sys.ps(e.pid, "tty");
     const tty = rawTty && !/^\?+$/.test(rawTty) ? rawTty.startsWith("/dev/") ? rawTty : `/dev/${rawTty}` : undefined;
     const same = before && before.pid === e.pid && before.pidStart === pidStart && before.terminal.tty === tty;
-    const fresh = same && now - (before.watchedAt ?? 0) < RECHECK_MS;
+    const fresh = same && now - (before.watchedAt ?? 0) < RECHECK_MS2;
     out.push({
       ...before ?? {},
       sessionId: e.sessionId,
@@ -1866,8 +2880,8 @@ function snapshot(o) {
   }
   return out;
 }
-function watch(self, sys = liveSys()) {
-  const recs = snapshot({
+function watch(self, sys = liveSys3()) {
+  const recs = snapshot2({
     self,
     registry: readRegistry(registryDir(), (p) => sys.alive(p)),
     records: readAll2(),
@@ -1880,50 +2894,50 @@ function watch(self, sys = liveSys()) {
   return recs;
 }
 var WATCH_EVERY_MS = () => Number(process.env.CROSSTALK_WATCH_EVERY_MS ?? 60000);
-var stampFile = () => path12.join(P.root, "watch-stamp");
+var stampFile = () => path18.join(P.root, "watch-stamp");
 function watchThrottled(self, now = Date.now()) {
   try {
-    if (now - fs8.statSync(stampFile()).mtimeMs < WATCH_EVERY_MS())
+    if (now - fs14.statSync(stampFile()).mtimeMs < WATCH_EVERY_MS())
       return false;
   } catch {}
   try {
-    fs8.mkdirSync(P.root, { recursive: true, mode: 448 });
-    fs8.writeFileSync(stampFile(), String(now), { mode: 384 });
+    fs14.mkdirSync(P.root, { recursive: true, mode: 448 });
+    fs14.writeFileSync(stampFile(), String(now), { mode: 384 });
     watch(self);
     return true;
   } catch {
     return false;
   }
 }
-var stateFile2 = () => path12.join(P.root, "gather-state.json");
+var stateFile2 = () => path18.join(P.root, "gather-state.json");
 function loadState2() {
   try {
-    return JSON.parse(fs8.readFileSync(stateFile2(), "utf8"));
+    return JSON.parse(fs14.readFileSync(stateFile2(), "utf8"));
   } catch {
     return {};
   }
 }
 function saveState2(s) {
-  fs8.mkdirSync(P.root, { recursive: true, mode: 448 });
+  fs14.mkdirSync(P.root, { recursive: true, mode: 448 });
   const tmp = `${stateFile2()}.${process.pid}.tmp`;
-  fs8.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
-  fs8.renameSync(tmp, stateFile2());
+  fs14.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs14.renameSync(tmp, stateFile2());
 }
-var sleepSync2 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-function locked(fn) {
-  const lock = path12.join(P.root, "gather.lock");
-  fs8.mkdirSync(P.root, { recursive: true, mode: 448 });
+var sleepSync5 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function locked2(fn) {
+  const lock = path18.join(P.root, "gather.lock");
+  fs14.mkdirSync(P.root, { recursive: true, mode: 448 });
   let held = false;
   for (let i = 0;i < 100 && !held; i++) {
     try {
-      fs8.mkdirSync(lock);
+      fs14.mkdirSync(lock);
       held = true;
     } catch {
       try {
-        if (Date.now() - fs8.statSync(lock).mtimeMs > 1e4)
-          fs8.rmdirSync(lock);
+        if (Date.now() - fs14.statSync(lock).mtimeMs > 1e4)
+          fs14.rmdirSync(lock);
       } catch {}
-      sleepSync2(10);
+      sleepSync5(10);
     }
   }
   if (!held)
@@ -1932,7 +2946,7 @@ function locked(fn) {
     return fn();
   } finally {
     try {
-      fs8.rmdirSync(lock);
+      fs14.rmdirSync(lock);
     } catch {}
   }
 }
@@ -1952,7 +2966,7 @@ function candidates(recs, o) {
   return recs.filter((r) => r.adopted === "watched" && !r.endedAt && r.interactive !== false && r.sessionId !== o.self && !(o.selfPids ?? []).includes(r.pid) && r.gather?.state !== "done" && o.alive(r)).sort((a, b) => a.startedAt - b.startedAt);
 }
 var offerQuestion = (n) => `${n} Claude session${n === 1 ? "" : "s"} started before crosstalk. Bring ${n === 1 ? "it" : "them"} in? Idle ones restart in their tab with their conversation.`;
-function offerFor(cands, state) {
+function offerFor2(cands, state) {
   const asked = new Set(state.offered?.ids ?? []);
   if (!cands.length || cands.every((r) => asked.has(r.sessionId)))
     return null;
@@ -1965,14 +2979,14 @@ function offerFor(cands, state) {
     text: `\u25e2 crosstalk: ${offerQuestion(n)} (${names.join(", ")}) Say "bring them in" to do it.`
   };
 }
-var label2 = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path12.basename(r.cwd) || r.sessionId.slice(0, 8);
-function offerOnce(self) {
+var label2 = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path18.basename(r.cwd) || r.sessionId.slice(0, 8);
+function offerOnce2(self) {
   const cands = candidates(readAll2(), { self, selfPids: ancestors(), alive: recAlive2 });
-  if (!offerFor(cands, loadState2()))
+  if (!offerFor2(cands, loadState2()))
     return null;
-  return locked(() => {
+  return locked2(() => {
     const s = loadState2();
-    const offer = offerFor(cands, s);
+    const offer = offerFor2(cands, s);
     if (!offer)
       return null;
     saveState2({ ...s, offered: { at: Date.now(), by: self, ids: [...new Set([...s.offered?.ids ?? [], ...cands.map((r) => r.sessionId)])] } });
@@ -1982,7 +2996,7 @@ function offerOnce(self) {
 function takeNote(session, id) {
   if (!loadState2().notes?.some((n) => (!session || !n.session || n.session === session) && (!id || n.id === id)))
     return null;
-  return locked(() => {
+  return locked2(() => {
     const s = loadState2();
     const i = (s.notes ?? []).findIndex((n) => (!session || !n.session || n.session === session) && (!id || n.id === id));
     if (i === -1)
@@ -1994,9 +3008,9 @@ function takeNote(session, id) {
 }
 
 // src/terminal/status.ts
-import fs9 from "node:fs";
-import path13 from "node:path";
-import { spawn as spawn5, spawnSync as spawnSync5 } from "node:child_process";
+import fs15 from "node:fs";
+import path19 from "node:path";
+import { spawn as spawn6, spawnSync as spawnSync9 } from "node:child_process";
 
 // src/attention/osc7501.ts
 var enabled = (env = process.env) => env.CROSSTALK_OSC7501 === "1";
@@ -2133,37 +3147,37 @@ function appleTint(original, state, amount = 0.25) {
   const target = COLOUR[state].map((n) => n * 257);
   return original.map((o, i) => Math.round(o + (target[i] - o) * amount));
 }
-var dir3 = () => path13.join(P.root, "tabs");
-var safe4 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
-var fileOf3 = (id) => path13.join(dir3(), `${safe4(id)}.json`);
+var dir5 = () => path19.join(P.root, "tabs");
+var safe5 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
+var fileOf5 = (id) => path19.join(dir5(), `${safe5(id)}.json`);
 function readTab(id) {
   try {
-    return JSON.parse(fs9.readFileSync(fileOf3(id), "utf8"));
+    return JSON.parse(fs15.readFileSync(fileOf5(id), "utf8"));
   } catch {
     return null;
   }
 }
 function writeTab(f) {
-  fs9.mkdirSync(dir3(), { recursive: true, mode: 448 });
-  const tmp = `${fileOf3(f.sessionId)}.${process.pid}.tmp`;
-  fs9.writeFileSync(tmp, JSON.stringify(f), { mode: 384 });
-  fs9.renameSync(tmp, fileOf3(f.sessionId));
+  fs15.mkdirSync(dir5(), { recursive: true, mode: 448 });
+  const tmp = `${fileOf5(f.sessionId)}.${process.pid}.tmp`;
+  fs15.writeFileSync(tmp, JSON.stringify(f), { mode: 384 });
+  fs15.renameSync(tmp, fileOf5(f.sessionId));
 }
-var sleepSync3 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+var sleepSync6 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 function withFile(id, fn) {
-  fs9.mkdirSync(dir3(), { recursive: true, mode: 448 });
-  const lock = `${fileOf3(id)}.lock`;
+  fs15.mkdirSync(dir5(), { recursive: true, mode: 448 });
+  const lock = `${fileOf5(id)}.lock`;
   let held = false;
   for (let i = 0;i < 50 && !held; i++) {
     try {
-      fs9.mkdirSync(lock);
+      fs15.mkdirSync(lock);
       held = true;
     } catch {
       try {
-        if (Date.now() - fs9.statSync(lock).mtimeMs > 5000)
-          fs9.rmdirSync(lock);
+        if (Date.now() - fs15.statSync(lock).mtimeMs > 5000)
+          fs15.rmdirSync(lock);
       } catch {}
-      sleepSync3(5);
+      sleepSync6(5);
     }
   }
   try {
@@ -2171,7 +3185,7 @@ function withFile(id, fn) {
   } finally {
     if (held)
       try {
-        fs9.rmdirSync(lock);
+        fs15.rmdirSync(lock);
       } catch {}
   }
 }
@@ -2203,27 +3217,27 @@ function startApplier(id, root) {
     return;
   }
   try {
-    const child = spawn5(shim(root), ["term", "apply", "--session", id], { detached: true, stdio: "ignore" });
+    const child = spawn6(shim(root), ["term", "apply", "--session", id], { detached: true, stdio: "ignore" });
     child.on("error", () => {});
     child.unref();
   } catch {}
 }
-var liveSys2 = () => ({
+var liveSys4 = () => ({
   platform: process.platform,
   run: (s) => {
-    const r = spawnSync5(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 5000 });
+    const r = spawnSync9(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 5000 });
     return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}`.trim() };
   },
   writeTty: (p, data) => {
     let fd = -1;
     try {
-      fd = fs9.openSync(p, fs9.constants.O_WRONLY | fs9.constants.O_NOCTTY | fs9.constants.O_NONBLOCK);
-      return fs9.writeSync(fd, data) === Buffer.byteLength(data);
+      fd = fs15.openSync(p, fs15.constants.O_WRONLY | fs15.constants.O_NOCTTY | fs15.constants.O_NONBLOCK);
+      return fs15.writeSync(fd, data) === Buffer.byteLength(data);
     } catch {
       return false;
     } finally {
       if (fd >= 0)
-        fs9.closeSync(fd);
+        fs15.closeSync(fd);
     }
   },
   term: (id) => readOne2(id)?.terminal ?? null
@@ -2255,20 +3269,20 @@ function applyOnce(id, state, f, sys) {
   }
   return { ok, appleOriginal };
 }
-async function applyLoop(id, sys = liveSys2(), sleep = (ms) => new Promise((r) => setTimeout(r, ms))) {
-  const lock = `${fileOf3(id)}.applier`;
+async function applyLoop(id, sys = liveSys4(), sleep = (ms) => new Promise((r) => setTimeout(r, ms))) {
+  const lock = `${fileOf5(id)}.applier`;
   const take = () => {
     try {
-      fs9.mkdirSync(dir3(), { recursive: true, mode: 448 });
-      fs9.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
+      fs15.mkdirSync(dir5(), { recursive: true, mode: 448 });
+      fs15.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
       return true;
     } catch {
       try {
-        const other = Number(fs9.readFileSync(lock, "utf8"));
+        const other = Number(fs15.readFileSync(lock, "utf8"));
         if (other && pidAlive2(other) && other !== process.pid)
           return false;
-        fs9.unlinkSync(lock);
-        fs9.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
+        fs15.unlinkSync(lock);
+        fs15.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
         return true;
       } catch {
         return false;
@@ -2297,7 +3311,7 @@ async function applyLoop(id, sys = liveSys2(), sleep = (ms) => new Promise((r) =
             return;
           if (state === "off" && cur.want === "off") {
             try {
-              fs9.unlinkSync(fileOf3(id));
+              fs15.unlinkSync(fileOf5(id));
             } catch {}
             return;
           }
@@ -2306,8 +3320,8 @@ async function applyLoop(id, sys = liveSys2(), sleep = (ms) => new Promise((r) =
       }
     } finally {
       try {
-        if (Number(fs9.readFileSync(lock, "utf8")) === process.pid)
-          fs9.unlinkSync(lock);
+        if (Number(fs15.readFileSync(lock, "utf8")) === process.pid)
+          fs15.unlinkSync(lock);
       } catch {}
     }
     if (decide(readTab(id), Date.now(), 0).act === "idle")
@@ -2329,443 +3343,8 @@ function pendingFor(sessionId, snapshot) {
   }
 }
 
-// src/uistate.ts
-import fs10 from "node:fs";
-import path14 from "node:path";
-var FINAL2 = new Set(["answered", "handed", "muted"]);
-var file3 = () => path14.join(P.root, "ui.json");
-var lockDir2 = () => path14.join(P.root, "ui.lock");
-var markers2 = () => path14.join(P.root, "ui-mod");
-var safe5 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
-var WEEK2 = 7 * 24 * 60 * 60 * 1000;
-function read2() {
-  try {
-    const f = JSON.parse(fs10.readFileSync(file3(), "utf8"));
-    if (f && f.v === 1 && f.items && typeof f.items === "object")
-      return f;
-  } catch {}
-  return { v: 1, items: {} };
-}
-function write2(f) {
-  fs10.mkdirSync(P.root, { recursive: true, mode: 448 });
-  const tmp = `${file3()}.${process.pid}.tmp`;
-  fs10.writeFileSync(tmp, JSON.stringify(f, null, 2), { mode: 384 });
-  fs10.renameSync(tmp, file3());
-}
-var sleepSync4 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-
-class StoreBusy2 extends Error {
-  constructor(holder) {
-    super(`crosstalk's ui store is locked${holder ? ` by process ${holder}` : ""}; try again`);
-    this.name = "StoreBusy";
-  }
-}
-var lockWaitMs2 = Number(process.env.CROSSTALK_UI_LOCK_WAIT_MS ?? 2000);
-var LOCK_MAX_AGE_MS2 = 1e4;
-var LOCK_UNOWNED_MS2 = 1000;
-var ownerFile2 = () => path14.join(lockDir2(), "pid");
-var alive2 = (pid) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return e.code === "EPERM";
-  }
-};
-function takeLock2() {
-  try {
-    fs10.mkdirSync(lockDir2());
-  } catch {
-    return false;
-  }
-  try {
-    fs10.writeFileSync(ownerFile2(), String(process.pid), { mode: 384 });
-  } catch {}
-  return true;
-}
-function holderOf2() {
-  try {
-    const pid = Number(fs10.readFileSync(ownerFile2(), "utf8"));
-    return pid > 0 ? pid : undefined;
-  } catch {
-    return;
-  }
-}
-function breakIfStale2() {
-  let age;
-  try {
-    age = Date.now() - fs10.statSync(lockDir2()).mtimeMs;
-  } catch {
-    return true;
-  }
-  const pid = holderOf2();
-  const stale = age > LOCK_MAX_AGE_MS2 || (pid ? pid !== process.pid && !alive2(pid) : age > LOCK_UNOWNED_MS2);
-  if (!stale)
-    return false;
-  const aside = `${lockDir2()}.stale.${process.pid}.${Date.now()}`;
-  try {
-    fs10.renameSync(lockDir2(), aside);
-  } catch {
-    return true;
-  }
-  const moved = (() => {
-    try {
-      return Number(fs10.readFileSync(path14.join(aside, "pid"), "utf8")) || undefined;
-    } catch {
-      return;
-    }
-  })();
-  if (moved !== pid)
-    try {
-      fs10.renameSync(aside, lockDir2());
-      return false;
-    } catch {}
-  try {
-    fs10.rmSync(aside, { recursive: true, force: true });
-  } catch {}
-  return true;
-}
-var depth2 = 0;
-function withStore2(fn) {
-  fs10.mkdirSync(P.root, { recursive: true, mode: 448 });
-  let held = false;
-  if (depth2 === 0) {
-    const until = Date.now() + lockWaitMs2;
-    for (;; ) {
-      if (takeLock2()) {
-        held = true;
-        break;
-      }
-      if (breakIfStale2())
-        continue;
-      if (Date.now() >= until)
-        throw new StoreBusy2(holderOf2());
-      sleepSync4(Math.min(10, Math.max(1, until - Date.now())));
-    }
-  }
-  depth2++;
-  try {
-    const f = read2();
-    const was = JSON.stringify(f);
-    const now = Date.now();
-    const out = fn(f.items, now);
-    for (const [id, it] of Object.entries(f.items))
-      if (FINAL2.has(it.state) && now - it.updatedAt > WEEK2 || now - it.updatedAt > 4 * WEEK2)
-        delete f.items[id];
-    if (JSON.stringify(f) !== was)
-      write2(f);
-    return out;
-  } finally {
-    depth2--;
-    const h = held ? holderOf2() : undefined;
-    if (held && (h === undefined || h === process.pid))
-      try {
-        fs10.rmSync(lockDir2(), { recursive: true, force: true });
-      } catch {}
-  }
-}
-function snapshot2() {
-  return read2().items;
-}
-function upsert2(items, it, now) {
-  const before = items[it.id];
-  if (!before) {
-    if (QUESTION_KINDS.has(it.kind))
-      record({ k: "asked", at: now, id: it.id, kind: it.kind, ...it.thread ? { thread: it.thread } : {} });
-    return items[it.id] = { ...it, state: "pending", createdAt: now, updatedAt: now };
-  }
-  if (FINAL2.has(before.state))
-    return before;
-  const moved = before.sessionId !== it.sessionId;
-  items[it.id] = {
-    ...before,
-    ...it,
-    state: before.state,
-    raisedAt: moved ? undefined : before.raisedAt,
-    createdAt: before.createdAt,
-    updatedAt: moved ? now : before.updatedAt
-  };
-  return items[it.id];
-}
-var MARKER_MS2 = 10 * 60 * 1000;
-function modActive2(sessionId, now = Date.now()) {
-  try {
-    return now - fs10.statSync(path14.join(markers2(), safe5(sessionId))).mtimeMs < MARKER_MS2;
-  } catch {
-    return false;
-  }
-}
-
-// src/spawn.ts
-import fs11 from "node:fs";
-import path15 from "node:path";
-import { spawnSync as spawnSync6 } from "node:child_process";
-
-// src/attention/focus.ts
-var appleFrontTtyScript = [
-  `if application "Terminal" is running then`,
-  `	tell application "Terminal"`,
-  `		if frontmost then return tty of selected tab of front window`,
-  `	end tell`,
-  `end if`,
-  `return ""`
-].join(`
-`);
-var itermFrontTtyScript = [
-  `if application "iTerm2" is running then`,
-  `	tell application "iTerm2"`,
-  `		if frontmost then return tty of current session of current window`,
-  `	end tell`,
-  `end if`,
-  `return ""`
-].join(`
-`);
-
-// src/gather.ts
-var RECHECK_MS2 = 10 * 60 * 1000;
-
-// src/threads/model.ts
-var LISTS = [
-  "people",
-  "sessions",
-  "files",
-  "branches",
-  "features",
-  "questions",
-  "decisions",
-  "facts",
-  "tasks",
-  "rules"
-];
-var SECTIONS = ["meta", "recap", ...LISTS];
-
-// src/client.ts
-import net2 from "node:net";
-function request2(req, timeoutMs = 130000) {
-  return new Promise((resolve, reject) => {
-    const sock = net2.createConnection(P.daemonSock);
-    let rest = "";
-    let settled = false;
-    const finish = (f) => {
-      if (settled)
-        return;
-      settled = true;
-      clearTimeout(t);
-      f();
-    };
-    const t = setTimeout(() => {
-      sock.destroy();
-      finish(() => reject(new Error("daemon did not answer")));
-    }, timeoutMs);
-    sock.on("connect", () => sock.write(JSON.stringify(req) + `
-`));
-    sock.on("data", (b) => {
-      rest += b.toString("utf8");
-      const i = rest.indexOf(`
-`);
-      if (i === -1)
-        return;
-      const line = rest.slice(0, i);
-      sock.end();
-      finish(() => {
-        try {
-          resolve(JSON.parse(line));
-        } catch (e) {
-          reject(e);
-        }
-      });
-    });
-    sock.on("error", (e) => finish(() => reject(e)));
-    const gone = () => finish(() => reject(new Error("daemon closed the connection without answering")));
-    sock.on("end", gone);
-    sock.on("close", gone);
-  });
-}
-
-// src/spawn.ts
-var TMUX_SOCKET = "crosstalk";
-var dir4 = () => path15.join(P.root, "spawned");
-var fileOf4 = (id) => path15.join(dir4(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
-function readSpawned() {
-  let names;
-  try {
-    names = fs11.readdirSync(dir4()).filter((f) => f.endsWith(".json"));
-  } catch {
-    return [];
-  }
-  const out = [];
-  for (const f of names)
-    try {
-      const r = JSON.parse(fs11.readFileSync(path15.join(dir4(), f), "utf8"));
-      if (r?.id && r.worktree)
-        out.push(r);
-    } catch {}
-  return out.sort((a, b) => a.createdAt - b.createdAt);
-}
-function writeSpawned(r) {
-  fs11.mkdirSync(dir4(), { recursive: true, mode: 448 });
-  const tmp = `${fileOf4(r.id)}.${process.pid}.tmp`;
-  fs11.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 384 });
-  fs11.renameSync(tmp, fileOf4(r.id));
-}
-function spawnedAt(cwd, recs = readSpawned()) {
-  const c = path15.resolve(cwd);
-  return recs.find((r) => !r.removedAt && (c === path15.resolve(r.worktree) || c.startsWith(path15.resolve(r.worktree) + path15.sep))) ?? null;
-}
-var STOP = new Set("a an the on to for and of in with at by from into onto this that it its be is are please can could would you start put get run spin up fire one two three four five six seven eight more another new agent agents session sessions claude someone somebody work working".split(" "));
-var TMUX_CONF = [
-  `# crosstalk's own tmux server (tmux -L crosstalk), for agents it runs in the background.`,
-  `set -g status-left '#[bold]\u25e2 crosstalk#[default] #S  '`,
-  `set -g status-left-length 40`,
-  `set -g status-right '#{?#{==:#{@crosstalk_state},waiting},#[fg=colour208]\u25cf waiting on you,#{?#{==:#{@crosstalk_state},working},#[fg=colour33]\u25cf working,#{?#{==:#{@crosstalk_state},done},#[fg=colour34]\u2713 done,}}}'`,
-  `set -g set-titles on`,
-  `set -g set-titles-string '#S'`,
-  `set -g detach-on-destroy on`,
-  `set -g history-limit 50000`,
-  ``
-].join(`
-`);
-function cleanEnv(env) {
-  const e = { ...env };
-  delete e.TMUX;
-  delete e.TMUX_PANE;
-  return e;
-}
-function tmuxHas(name, env = process.env) {
-  return spawnSync6("tmux", ["-L", TMUX_SOCKET, "has-session", "-t", `=${name}`], { stdio: "ignore", timeout: 3000, env: cleanEnv(env) }).status === 0;
-}
-function claim(sessionId, cwd) {
-  const rec = spawnedAt(cwd);
-  if (!rec)
-    return null;
-  if (rec.sessionId !== sessionId)
-    writeSpawned({ ...rec, sessionId });
-  return rec;
-}
-
-// src/cleanup.ts
-import fs12 from "node:fs";
-import path16 from "node:path";
-function select(recs, p) {
-  const out = [];
-  for (const r of recs) {
-    if (r.removedAt || !p.exists(r.worktree))
-      continue;
-    if (!p.ended(r))
-      continue;
-    if (!p.clean(r.worktree, r.links))
-      continue;
-    if (!p.branchExists(r.repo, r.branch))
-      out.push({ rec: r, why: "deleted" });
-    else if (p.merged(r.repo, r.branch, r.base))
-      out.push({ rec: r, why: "merged" });
-  }
-  return out;
-}
-function defaultBranch(repo, g = git) {
-  const o = g(repo, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
-  if (o.ok && o.out)
-    return o.out.replace(/^origin\//, "");
-  for (const b of ["main", "master", "trunk"])
-    if (g(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]).ok)
-      return b;
-  const h = g(repo, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
-  return h.ok && h.out ? h.out : null;
-}
-function liveProbe(g = git) {
-  const defaults = new Map;
-  const def = (repo) => {
-    if (!defaults.has(repo))
-      defaults.set(repo, defaultBranch(repo, g));
-    return defaults.get(repo);
-  };
-  return {
-    exists: (p) => fs12.existsSync(p),
-    clean: (w, ignore) => {
-      const r = g(w, ["status", "--porcelain", "--untracked-files=all"]);
-      if (!r.ok)
-        return false;
-      const skip = new Set(ignore);
-      return r.out.split(`
-`).filter(Boolean).every((l) => l.startsWith("?? ") && skip.has(l.slice(3).replace(/\/$/, "")));
-    },
-    branchExists: (repo, b) => g(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]).ok,
-    merged: (repo, b, base) => {
-      const d = def(repo);
-      if (!d || d === b)
-        return false;
-      const tip = g(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]);
-      if (!tip.ok || base && tip.out === base)
-        return false;
-      const ahead = g(repo, ["rev-list", "--count", `${d}..${b}`]);
-      if (!ahead.ok || ahead.out !== "0") {
-        const remote = g(repo, ["rev-list", "--count", `origin/${d}..${b}`]);
-        if (!remote.ok || remote.out !== "0") {
-          const cherry = g(repo, ["cherry", d, b]);
-          if (!cherry.ok || !cherry.out || !cherry.out.split(`
-`).every((l) => l.startsWith("-")))
-            return false;
-        }
-      }
-      return true;
-    },
-    ended: (r) => {
-      if (r.background && r.tmux && tmuxHas(r.tmux))
-        return false;
-      const live = readAll2().some((x) => !x.endedAt && path16.resolve(x.cwd).startsWith(path16.resolve(r.worktree)) && recAlive2(x));
-      return !live;
-    }
-  };
-}
-var cleanupId = (sessionId) => `cleanup:${sessionId}`;
-var CLEANUP_OPTIONS = ["Remove them", "Not now"];
-function offerFor2(c) {
-  const fresh = c.filter((x) => !x.rec.offeredAt);
-  if (!fresh.length)
-    return null;
-  const n = c.length;
-  const names = c.slice(0, 4).map((x) => x.rec.name).concat(n > 4 ? ["\u2026"] : []);
-  const question = `${n} agent worktree${n === 1 ? " is" : "s are"} done with: ${n === 1 ? "its" : "their"} work is merged and ${n === 1 ? "its session has" : "their sessions have"} ended. Remove ${n === 1 ? "it" : "them"}?`;
-  return { count: n, names, question, text: `\u25e2 crosstalk: ${question} (${names.join(", ")}) Say "clean up the worktrees" to do it.` };
-}
-var stamp = () => path16.join(P.root, "cleanup-stamp");
-var CHECK_EVERY_MS = () => Number(process.env.CROSSTALK_CLEANUP_EVERY_MS ?? 10 * 60 * 1000);
-function offerOnce2(o = {}) {
-  const recs = readSpawned().filter((r) => !r.removedAt);
-  if (!recs.length)
-    return null;
-  if (!o.force) {
-    try {
-      if (Date.now() - fs12.statSync(stamp()).mtimeMs < CHECK_EVERY_MS())
-        return null;
-    } catch {}
-    fs12.mkdirSync(P.root, { recursive: true, mode: 448 });
-    fs12.writeFileSync(stamp(), String(Date.now()), { mode: 384 });
-  }
-  const c = select(recs, o.probe ?? liveProbe());
-  const offer = offerFor2(c);
-  if (!offer)
-    return null;
-  const now = Date.now();
-  for (const x of c)
-    if (!x.rec.offeredAt)
-      writeSpawned({ ...x.rec, offeredAt: now });
-  return offer;
-}
-function surface(sessionId, offer, mod = modActive2(sessionId)) {
-  if (!offer)
-    return {};
-  if (!mod)
-    return { systemMessage: offer.text };
-  try {
-    withStore2((items, now) => upsert2(items, { id: cleanupId(sessionId), kind: "cleanup", sessionId, count: offer.count, names: offer.names, question: offer.question, options: CLEANUP_OPTIONS }, now));
-    return {};
-  } catch {
-    return { systemMessage: offer.text };
-  }
-}
-
 // src/terminal/hook.ts
+var withBadge = (title, badge) => title && badge ? `${title} \u00b7 ${badge.replace(/[^0-9: \u2026]/g, "")}` : title;
 var titleOf = (rec) => (rec.thread ? `${rec.thread} \u00b7 ${rec.name}` : rec.name).replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
 function fromHook(o) {
   const out = {};
@@ -2775,7 +3354,7 @@ function fromHook(o) {
     const current = readTab(o.sessionId)?.want;
     const state = stateForEvent({
       event: o.event,
-      pending: /^(Stop|Notification)$/.test(o.event) ? pendingFor(o.sessionId, snapshot2) : 0,
+      pending: /^(Stop|Notification)$/.test(o.event) ? pendingFor(o.sessionId, snapshot) : 0,
       current,
       notificationType: o.hook?.notification_type,
       message: o.hook?.message
@@ -2793,21 +3372,41 @@ function fromHook(o) {
         out.sessionTitle = titleOf(rec);
     } catch {}
     try {
-      out.systemMessage = surface(o.sessionId, offerOnce2()).systemMessage;
+      out.systemMessage = surface(o.sessionId, offerOnce()).systemMessage;
+    } catch {}
+  }
+  if (o.isSessionStart && !o.env.CROSSTALK_NO_SERVICES) {
+    try {
+      const b = brief(o.cwd);
+      if (b.systemMessage && !/^(clear|compact)$/.test(String(o.hook?.source ?? "")))
+        out.systemMessage = [out.systemMessage, b.systemMessage].filter(Boolean).join(`
+`);
+      if (b.context)
+        out.context = b.context;
+      if (b.badge)
+        out.badge = b.badge;
+    } catch {}
+  } else if (/^UserPromptSubmit$/.test(o.event) && !o.env.CROSSTALK_NO_SERVICES) {
+    try {
+      if (readAll3().some((s) => !s.stoppedAt)) {
+        const b = badge(running(rootOf(o.cwd)));
+        if (b)
+          out.badge = b;
+      }
     } catch {}
   }
   return out;
 }
 
 // src/repotrust/firstuse.ts
-import fs13 from "node:fs";
-import path18 from "node:path";
+import fs16 from "node:fs";
+import path21 from "node:path";
 
 // src/crypto.ts
 var SCRYPT = { N: 32768, r: 8, p: 1, maxmem: 256 * 1024 * 1024 };
 
 // src/repotrust/gitref.ts
-import path17 from "node:path";
+import path20 from "node:path";
 
 // src/repotrust/statement.ts
 import { execFile } from "node:child_process";
@@ -2817,7 +3416,7 @@ function quietEnv() {
   delete env.DISPLAY;
   return env;
 }
-function run(file, args, o = {}) {
+function run2(file, args, o = {}) {
   return new Promise((resolve) => {
     const child = execFile(file, args, { cwd: o.cwd, env: o.env ?? quietEnv(), timeout: o.timeoutMs ?? 15000, maxBuffer: 4 << 20, encoding: "utf8" }, (err, stdout, stderr) => {
       const code = err ? typeof err.code === "number" ? err.code : 1 : 0;
@@ -2832,7 +3431,7 @@ var LOCAL_PREFIX = "refs/crosstalk/keys/";
 var FETCHED_PREFIX = "refs/crosstalk/remote/keys/";
 var REFSPEC = `+${LOCAL_PREFIX}*:${FETCHED_PREFIX}*`;
 var MAX_BLOB = 16 * 1024;
-var git2 = (cwd, args, o = {}) => run("git", args, { cwd, input: o.input, env: o.env ?? quietEnv(), timeoutMs: o.timeoutMs ?? 15000 });
+var git2 = (cwd, args, o = {}) => run2("git", args, { cwd, input: o.input, env: o.env ?? quietEnv(), timeoutMs: o.timeoutMs ?? 15000 });
 function githubSlug(url) {
   const m = url.match(/^(?:ssh:\/\/)?git@github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i) ?? url.match(/^(?:https?|git):\/\/(?:[^@/]+@)?github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i);
   return m ? `${m[1]}/${m[2]}`.toLowerCase() : null;
@@ -2853,7 +3452,7 @@ async function findRepo(cwd) {
     const url = u.stdout.trim();
     if (u.code !== 0 || !url)
       continue;
-    const slug = githubSlug(url) ?? (process.env.CROSSTALK_REPOTRUST_ANY_REMOTE === "1" ? `local/${path17.basename(url).replace(/\.git$/, "").toLowerCase()}` : null);
+    const slug = githubSlug(url) ?? (process.env.CROSSTALK_REPOTRUST_ANY_REMOTE === "1" ? `local/${path20.basename(url).replace(/\.git$/, "").toLowerCase()}` : null);
     if (slug)
       return { top: dir, remote, url, slug };
   }
@@ -2866,31 +3465,31 @@ var BUCKET = { max: 30, perMs: 10 * 60 * 1000 };
 // src/repotrust/firstuse.ts
 var CONNECT = "Connect";
 var NOT_HERE = "Not in this repo";
-var FILE = () => path18.join(ROOT, "repotrust", "firstuse.json");
-function load() {
+var FILE = () => path21.join(ROOT, "repotrust", "firstuse.json");
+function load2() {
   try {
-    const s = JSON.parse(fs13.readFileSync(FILE(), "utf8"));
+    const s = JSON.parse(fs16.readFileSync(FILE(), "utf8"));
     if (s?.v === 1 && s.repos)
       return s;
   } catch {}
   return { v: 1, repos: {} };
 }
-function save(s) {
-  fs13.mkdirSync(path18.dirname(FILE()), { recursive: true, mode: 448 });
+function save2(s) {
+  fs16.mkdirSync(path21.dirname(FILE()), { recursive: true, mode: 448 });
   const tmp = `${FILE()}.${process.pid}.tmp`;
-  fs13.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
-  fs13.renameSync(tmp, FILE());
+  fs16.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs16.renameSync(tmp, FILE());
 }
 var off2 = () => process.env.CROSSTALK_NO_REPOTRUST === "1";
 function publishedBefore(slug) {
   try {
-    const s = JSON.parse(fs13.readFileSync(path18.join(ROOT, "repotrust", "state.json"), "utf8"));
+    const s = JSON.parse(fs16.readFileSync(path21.join(ROOT, "repotrust", "state.json"), "utf8"));
     return !!s?.repos?.[slug]?.ownPublished;
   } catch {
     return false;
   }
 }
-function consent(slug, s = load()) {
+function consent(slug, s = load2()) {
   if (process.env.CROSSTALK_REPOTRUST_AUTO === "1")
     return "yes";
   const e = s.repos[slug];
@@ -2906,11 +3505,11 @@ async function offer(cwd, sessionId, now = Date.now()) {
   const repo = await findRepo(cwd).catch(() => null);
   if (!repo)
     return null;
-  const s = load();
+  const s = load2();
   if (consent(repo.slug, s) || s.repos[repo.slug])
     return null;
   s.repos[repo.slug] = { state: "asked", at: now, session: sessionId, cwd: repo.top };
-  save(s);
+  save2(s);
   return { slug: repo.slug, question: questionText(repo.slug) };
 }
 async function surface2(cwd, sessionId, mod = modActive2(sessionId)) {
@@ -2930,9 +3529,9 @@ async function surface2(cwd, sessionId, mod = modActive2(sessionId)) {
 }
 
 // src/warn/edit.ts
-import fs14 from "node:fs";
-import path19 from "node:path";
-import { spawnSync as spawnSync7 } from "node:child_process";
+import fs17 from "node:fs";
+import path22 from "node:path";
+import { spawnSync as spawnSync10 } from "node:child_process";
 
 // src/warn/outline.ts
 var WHOLE = "*";
@@ -3009,7 +3608,7 @@ var EDIT_TOOLS = /^(Edit|MultiEdit|Write|NotebookEdit|str_replace_based_edit_too
 var MAX_DIFF = 32 * 1024;
 function git3(cwd, args) {
   try {
-    const r = spawnSync7("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 3000, maxBuffer: 8 << 20 });
+    const r = spawnSync10("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 3000, maxBuffer: 8 << 20 });
     return { ok: r.status === 0, out: r.stdout ?? "" };
   } catch {
     return { ok: false, out: "" };
@@ -3034,22 +3633,22 @@ function editedPath(o) {
   const raw = o.input?.file_path ?? o.input?.notebook_path ?? o.input?.path;
   if (typeof raw !== "string" || !raw)
     return null;
-  return path19.resolve(o.cwd || "/", raw);
+  return path22.resolve(o.cwd || "/", raw);
 }
 function editReport(o) {
   const abs = editedPath(o);
   if (!abs)
     return null;
-  const top = git3(path19.dirname(abs), ["rev-parse", "--show-toplevel"]);
+  const top = git3(path22.dirname(abs), ["rev-parse", "--show-toplevel"]);
   if (!top.ok)
     return null;
   const root = top.out.trim();
-  const file = path19.relative(root, abs).split(path19.sep).join("/");
+  const file = path22.relative(root, abs).split(path22.sep).join("/");
   if (!file || file.startsWith(".."))
     return null;
   let after = null;
   try {
-    after = fs14.readFileSync(abs, "utf8");
+    after = fs17.readFileSync(abs, "utf8");
   } catch {}
   const base = baseOf(root);
   const before = base ? (() => {
@@ -3085,12 +3684,12 @@ ${(after ?? "").split(`
 }
 
 // src/ui-extra/doctor.ts
-import fs15 from "node:fs";
-import path20 from "node:path";
+import fs18 from "node:fs";
+import path23 from "node:path";
 var FIX_IT = "Ask the agent to fix it";
 var NOT_NOW = "Not now";
 var DAY_MS = 24 * 60 * 60000;
-var stateFile3 = () => path20.join(P.root, "doctor-check.json");
+var stateFile3 = () => path23.join(P.root, "doctor-check.json");
 async function relayUp(url, ms = 1500) {
   try {
     const r = await fetch(`${url.replace(/^ws/, "http").replace(/\/ws$/, "")}/health`, { signal: AbortSignal.timeout(ms) });
@@ -3107,10 +3706,10 @@ async function quickProblems(o) {
       what: `your crosstalk identity file (${P.identity}) will not parse`,
       fix: "restore it from a backup; starting again makes you a new person to everyone you work with"
     });
-  if (o.root && fs15.existsSync(path20.join(o.root, "bin", "crosstalk")) && !fs15.existsSync(path20.join(o.root, "dist", "cli.js")))
+  if (o.root && fs18.existsSync(path23.join(o.root, "bin", "crosstalk")) && !fs18.existsSync(path23.join(o.root, "dist", "cli.js")))
     out.push({ key: "dist", what: "crosstalk's installed files are incomplete (dist/ is missing)", fix: "reinstall the plugin: claude plugin update crosstalk" });
   const sock = o.env.CLAUDE_CODE_MESSAGING_SOCKET;
-  if (sock && !fs15.existsSync(sock))
+  if (sock && !fs18.existsSync(sock))
     out.push({ key: "socket", what: "this session's inbox socket is missing, so nothing can reach it", fix: "start a new session (a session started in bare mode binds none)" });
   const id = loadIdentity();
   if (id && Object.keys(loadPeers()).length) {
@@ -3131,7 +3730,7 @@ function describeProblems(ps) {
 }
 function readSeen() {
   try {
-    return JSON.parse(fs15.readFileSync(stateFile3(), "utf8"));
+    return JSON.parse(fs18.readFileSync(stateFile3(), "utf8"));
   } catch {
     return null;
   }
@@ -3143,8 +3742,8 @@ async function atSessionStart(o) {
   if (seen && now - seen.at < every)
     return { problems: [], ran: false };
   const problems = await quickProblems(o);
-  fs15.mkdirSync(P.root, { recursive: true, mode: 448 });
-  fs15.writeFileSync(stateFile3(), JSON.stringify({ at: now, keys: problems.map((p) => p.key) }), { mode: 384 });
+  fs18.mkdirSync(P.root, { recursive: true, mode: 448 });
+  fs18.writeFileSync(stateFile3(), JSON.stringify({ at: now, keys: problems.map((p) => p.key) }), { mode: 384 });
   if (!problems.length)
     return { problems, ran: true };
   const text = describeProblems(problems);
@@ -3159,47 +3758,47 @@ async function atSessionStart(o) {
 }
 
 // src/metrics/log.ts
-import fs16 from "node:fs";
-import path21 from "node:path";
-var file4 = () => path21.join(process.env.CROSSTALK_HOME ?? ROOT, "metrics.jsonl");
+import fs19 from "node:fs";
+import path24 from "node:path";
+var file5 = () => path24.join(process.env.CROSSTALK_HOME ?? ROOT, "metrics.jsonl");
 var MAX_BYTES2 = 8 * 1024 * 1024;
 var off3 = () => process.env.CROSSTALK_NO_METRICS === "1";
 function record2(e) {
   if (off3())
     return;
   try {
-    const f = file4();
-    fs16.mkdirSync(path21.dirname(f), { recursive: true, mode: 448 });
-    fs16.appendFileSync(f, JSON.stringify(e) + `
+    const f = file5();
+    fs19.mkdirSync(path24.dirname(f), { recursive: true, mode: 448 });
+    fs19.appendFileSync(f, JSON.stringify(e) + `
 `, { mode: 384 });
-    const size = fs16.statSync(f).size;
+    const size = fs19.statSync(f).size;
     if (size > MAX_BYTES2) {
-      const lines = fs16.readFileSync(f, "utf8").split(`
+      const lines = fs19.readFileSync(f, "utf8").split(`
 `).filter(Boolean);
       const tmp = `${f}.${process.pid}.tmp`;
-      fs16.writeFileSync(tmp, lines.slice(Math.floor(lines.length / 2)).join(`
+      fs19.writeFileSync(tmp, lines.slice(Math.floor(lines.length / 2)).join(`
 `) + `
 `, { mode: 384 });
-      fs16.renameSync(tmp, f);
+      fs19.renameSync(tmp, f);
     }
   } catch {}
 }
 var QUESTION_KINDS2 = new Set(["route", "gather", "team", "cleanup", "thread", "ship", "rule", "connect", "conflict", "disk", "install", "restore"]);
 
 // src/attention/activity.ts
-import fs17 from "node:fs";
-import path22 from "node:path";
-var dir5 = () => path22.join(P.root, "typed");
+import fs20 from "node:fs";
+import path25 from "node:path";
+var dir6 = () => path25.join(P.root, "typed");
 var safe6 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
 function noteTyped(sessionId, now = Date.now()) {
   if (!sessionId)
     return;
   try {
-    fs17.mkdirSync(dir5(), { recursive: true, mode: 448 });
-    const f = path22.join(dir5(), safe6(sessionId));
-    fs17.writeFileSync(f, sessionId, { mode: 384 });
+    fs20.mkdirSync(dir6(), { recursive: true, mode: 448 });
+    const f = path25.join(dir6(), safe6(sessionId));
+    fs20.writeFileSync(f, sessionId, { mode: 384 });
     const t = new Date(now);
-    fs17.utimesSync(f, t, t);
+    fs20.utimesSync(f, t, t);
   } catch {}
 }
 
@@ -3257,12 +3856,12 @@ async function fromHook2(o) {
 }
 
 // src/sessions/names.ts
-import fs18 from "node:fs";
-import path23 from "node:path";
-var file5 = () => path23.join(P.root, "sessions", "names.json");
+import fs21 from "node:fs";
+import path26 from "node:path";
+var file6 = () => path26.join(P.root, "sessions", "names.json");
 function all() {
   try {
-    const o = JSON.parse(fs18.readFileSync(file5(), "utf8"));
+    const o = JSON.parse(fs21.readFileSync(file6(), "utf8"));
     return o && typeof o === "object" ? o : {};
   } catch {
     return {};
@@ -3274,15 +3873,15 @@ var nameOf = (sessionId) => {
 };
 
 // src/sessions/index.ts
-import fs21 from "node:fs";
-import path25 from "node:path";
+import fs24 from "node:fs";
+import path28 from "node:path";
 
 // src/sessions/transcripts.ts
-import fs20 from "node:fs";
-import path24 from "node:path";
+import fs23 from "node:fs";
+import path27 from "node:path";
 
 // src/attention/recap.ts
-import fs19 from "node:fs";
+import fs22 from "node:fs";
 var TAIL_BYTES = 512 * 1024;
 var USER_MAX = 200;
 var ASSISTANT_MAX = 300;
@@ -3292,11 +3891,11 @@ function tail(file, bytes = TAIL_BYTES) {
     return "";
   let fd = -1;
   try {
-    fd = fs19.openSync(file, "r");
-    const size = fs19.fstatSync(fd).size;
+    fd = fs22.openSync(file, "r");
+    const size = fs22.fstatSync(fd).size;
     const start = Math.max(0, size - bytes);
     const buf = Buffer.alloc(size - start);
-    fs19.readSync(fd, buf, 0, buf.length, start);
+    fs22.readSync(fd, buf, 0, buf.length, start);
     const text = buf.toString("utf8");
     return start > 0 ? text.slice(text.indexOf(`
 `) + 1) : text;
@@ -3304,7 +3903,7 @@ function tail(file, bytes = TAIL_BYTES) {
     return "";
   } finally {
     if (fd >= 0)
-      fs19.closeSync(fd);
+      fs22.closeSync(fd);
   }
 }
 function lines(text) {
@@ -3356,16 +3955,16 @@ function extract(entries) {
 var STOP2 = new Set(("a an the and or but of to in on at by for from with into onto over under is are was were be been being am it its this that these those " + "i you we they he she me my our your their them us so if then than as do does did done doing have has had having can could would should will " + "shall may might must not no yes ok okay please thanks thank just also very really let lets let's here there what which who whom when where why how " + "now all any some more most other such only own same too up down out off again further once about after before while because until both each few " + "file files code change changes changed make made use used using want need get got go going see look fix fixed fixing add added adding sure done").split(" "));
 
 // src/sessions/transcripts.ts
-var projectsDir = (env = process.env) => path24.join(claudeConfigDir2(env), "projects");
+var projectsDir = (env = process.env) => path27.join(claudeConfigDir2(env), "projects");
 var projectSlug = (cwd) => cwd.replace(/[^A-Za-z0-9]/g, "-");
 var HEAD_BYTES = 64 * 1024;
 var TAIL_BYTES2 = 256 * 1024;
 function head(file, bytes = HEAD_BYTES) {
   let fd = -1;
   try {
-    fd = fs20.openSync(file, "r");
-    const buf = Buffer.alloc(Math.min(bytes, fs20.fstatSync(fd).size));
-    fs20.readSync(fd, buf, 0, buf.length, 0);
+    fd = fs23.openSync(file, "r");
+    const buf = Buffer.alloc(Math.min(bytes, fs23.fstatSync(fd).size));
+    fs23.readSync(fd, buf, 0, buf.length, 0);
     const text = buf.toString("utf8");
     return buf.length === bytes ? text.slice(0, text.lastIndexOf(`
 `) + 1) : text;
@@ -3373,7 +3972,7 @@ function head(file, bytes = HEAD_BYTES) {
     return "";
   } finally {
     if (fd >= 0)
-      fs20.closeSync(fd);
+      fs23.closeSync(fd);
   }
 }
 function transcriptOf(sessionId, cwd, env = process.env) {
@@ -3381,14 +3980,14 @@ function transcriptOf(sessionId, cwd, env = process.env) {
     return null;
   const root = projectsDir(env);
   if (cwd) {
-    const f = path24.join(root, projectSlug(cwd), `${sessionId}.jsonl`);
-    if (fs20.existsSync(f))
+    const f = path27.join(root, projectSlug(cwd), `${sessionId}.jsonl`);
+    if (fs23.existsSync(f))
       return f;
   }
   try {
-    for (const d of fs20.readdirSync(root)) {
-      const f = path24.join(root, d, `${sessionId}.jsonl`);
-      if (fs20.existsSync(f))
+    for (const d of fs23.readdirSync(root)) {
+      const f = path27.join(root, d, `${sessionId}.jsonl`);
+      if (fs23.existsSync(f))
         return f;
     }
   } catch {}
@@ -3419,7 +4018,7 @@ function summarize(file) {
   const withCwd = all.find((e) => typeof e?.cwd === "string" && e.cwd);
   if (!withCwd)
     return null;
-  const sessionId = String(withCwd.sessionId ?? path24.basename(file, ".jsonl"));
+  const sessionId = String(withCwd.sessionId ?? path27.basename(file, ".jsonl"));
   let title;
   let summaryLine;
   let branch;
@@ -3440,7 +4039,7 @@ function summarize(file) {
         files.push(f);
   }
   const cwd = String(withCwd.cwd);
-  const rel = files.map((f) => f.startsWith(cwd + path24.sep) ? f.slice(cwd.length + 1) : f);
+  const rel = files.map((f) => f.startsWith(cwd + path27.sep) ? f.slice(cwd.length + 1) : f);
   let startedAt;
   for (const e of first)
     if (startedAt = ts(e))
@@ -3451,7 +4050,7 @@ function summarize(file) {
       break;
   if (!endedAt)
     try {
-      endedAt = fs20.statSync(file).mtimeMs;
+      endedAt = fs23.statSync(file).mtimeMs;
     } catch {}
   const r = extract(last.filter((e) => !e?.isSidechain));
   return {
@@ -3468,24 +4067,24 @@ function summarize(file) {
 }
 
 // src/sessions/index.ts
-var file6 = () => path25.join(P.root, "sessions", "past.json");
+var file7 = () => path28.join(P.root, "sessions", "past.json");
 var KEEP_MS = 180 * 24 * 3600000;
-var MAX = 3000;
-function load2() {
+var MAX2 = 3000;
+function load3() {
   try {
-    const f = JSON.parse(fs21.readFileSync(file6(), "utf8"));
+    const f = JSON.parse(fs24.readFileSync(file7(), "utf8"));
     if (f?.v === 1 && f.items && typeof f.items === "object")
       return f.items;
   } catch {}
   return {};
 }
-function save2(items) {
+function save3(items) {
   const now = Date.now();
-  const kept = Object.values(items).filter((p) => now - (p.endedAt ?? p.startedAt ?? now) < KEEP_MS).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0)).slice(0, MAX);
-  fs21.mkdirSync(path25.dirname(file6()), { recursive: true, mode: 448 });
-  const tmp = `${file6()}.${process.pid}.tmp`;
-  fs21.writeFileSync(tmp, JSON.stringify({ v: 1, items: Object.fromEntries(kept.map((p) => [p.id, p])) }), { mode: 384 });
-  fs21.renameSync(tmp, file6());
+  const kept = Object.values(items).filter((p) => now - (p.endedAt ?? p.startedAt ?? now) < KEEP_MS).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0)).slice(0, MAX2);
+  fs24.mkdirSync(path28.dirname(file7()), { recursive: true, mode: 448 });
+  const tmp = `${file7()}.${process.pid}.tmp`;
+  fs24.writeFileSync(tmp, JSON.stringify({ v: 1, items: Object.fromEntries(kept.map((p) => [p.id, p])) }), { mode: 384 });
+  fs24.renameSync(tmp, file7());
 }
 function fromRec(r, before, sum) {
   const threads = [...new Set([...before?.threads ?? [], ...r.thread ? [r.thread] : []])];
@@ -3508,7 +4107,7 @@ function fromRec(r, before, sum) {
 }
 function sweep(o = {}) {
   const alive = o.alive ?? recAlive2;
-  const items = load2();
+  const items = load3();
   let n = 0;
   for (const r of readAll2()) {
     if (r.interactive === false)
@@ -3524,7 +4123,7 @@ function sweep(o = {}) {
     n++;
   }
   if (n)
-    save2(items);
+    save3(items);
   return n;
 }
 function safeSummary(f) {
@@ -3573,8 +4172,8 @@ function agyCwd() {
   if (Array.isArray(ws) && typeof ws[0] === "string" && ws[0])
     return ws[0];
   const here = process.cwd();
-  if (AGENT_DIRS.has(path26.basename(here)))
-    return path26.dirname(here);
+  if (AGENT_DIRS.has(path29.basename(here)))
+    return path29.dirname(here);
   return here;
 }
 var cwd = hook.cwd ?? hook.working_dir ?? hook.workspace_roots?.[0] ?? (isAgy ? agyCwd() : process.cwd());
@@ -3625,7 +4224,7 @@ if (restoreClient === "claude" && sessionId && !process.env.CROSSTALK_NO_RESTORE
       watchThrottled(sessionId);
     const say = systemMessage ? [systemMessage] : [];
     if (fresh) {
-      const m = gatherSurface(sessionId, offerOnce(sessionId)).systemMessage;
+      const m = gatherSurface(sessionId, offerOnce2(sessionId)).systemMessage;
       if (m)
         say.push(m);
     }
@@ -3653,8 +4252,14 @@ var chromeOut = (hookSpecific) => {
   if (chrome.terminalSequence)
     out.terminalSequence = chrome.terminalSequence;
   const renamed = sessionId && /^(SessionStart|UserPromptSubmit)$/.test(eventName) ? nameOf(sessionId) : undefined;
-  const named = renamed ? sessionTitle ?? (threadNames?.length ? undefined : renamed) : chrome.sessionTitle && /^(SessionStart|UserPromptSubmit)$/.test(eventName) ? chrome.sessionTitle : sessionTitle;
+  const named = withBadge(renamed ? sessionTitle ?? (threadNames?.length ? undefined : renamed) : chrome.sessionTitle && /^(SessionStart|UserPromptSubmit)$/.test(eventName) ? chrome.sessionTitle : sessionTitle, chrome.badge);
   const title = named ? { sessionTitle: named } : {};
+  if (chrome.context && isSessionStart) {
+    const extra = hookSpecific?.additionalContext;
+    hookSpecific = { ...hookSpecific ?? {}, additionalContext: [chrome.context, extra].filter(Boolean).join(`
+
+`) };
+  }
   if (hookSpecific || Object.keys(title).length)
     out.hookSpecificOutput = { hookEventName: eventName, ...hookSpecific ?? {}, ...title };
   return out;
@@ -3703,10 +4308,10 @@ async function registerSession() {
   if (socket) {
     try {
       const dir = sessionsDir();
-      for (const f of fs22.readdirSync(dir)) {
+      for (const f of fs25.readdirSync(dir)) {
         if (!f.endsWith(".json"))
           continue;
-        const e = JSON.parse(fs22.readFileSync(path26.join(dir, f), "utf8"));
+        const e = JSON.parse(fs25.readFileSync(path29.join(dir, f), "utf8"));
         if (e.sessionId === sessionId) {
           name = e.name ?? name;
           break;
@@ -3714,7 +4319,7 @@ async function registerSession() {
       }
     } catch {}
   } else {
-    name = hook.thread_name ?? (path26.basename(cwd) || name);
+    name = hook.thread_name ?? (path29.basename(cwd) || name);
   }
   const registered = await request({
     op: "register",

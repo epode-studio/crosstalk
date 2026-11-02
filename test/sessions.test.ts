@@ -318,6 +318,44 @@ describe("closing", () => {
   })
 })
 
+describe("what a session started outside crosstalk (src/services/postpone.ts)", () => {
+  const server = [{ pid: 4300, args: "npm run dev", ports: [] }, { pid: 4301, args: "node vite", ports: [5173] }]
+  test("close: the question says what it would interrupt, and the receipt what it did", async () => {
+    expect(C.questionFor({ kind: "close", session: "api", services: "keep" }, live({ id: "q", name: "api" }), [], server)).toBe("Close api? It is still running npm run dev, node vite, which stop with it.")
+    const { d, kills } = deps()
+    d.sys.activity = () => server
+    R.writeRec(rec({ sessionId: "busy-close", pid: 4242, pidStart: "Mon" }))
+    const out = await C.close(live({ id: "busy-close", name: "api" }), { by: "me" }, d)
+    expect(out.ok).toBe(true)
+    expect(kills).toEqual(["SIGTERM"])
+    expect(out.text).toContain("What it was still running stopped with it (npm run dev, node vite)")
+  })
+  test("background: waits silently while it runs, then moves once it has stopped", async () => {
+    const ran: any[] = []
+    const { d, kills } = deps({ ran })
+    d.env = { ...d.env, CROSSTALK_NO_WAITER: "1" }
+    let busy = true
+    d.sys.activity = () => (busy ? server : [])
+    R.writeRec(rec({ sessionId: "busy-bg", pid: 4242, pidStart: "Mon" }))
+    const out = await C.toBackground(live({ id: "busy-bg", name: "Busy" }), { by: "me" }, d)
+    expect(out.ok).toBe(true)
+    expect(out.pending).toBe(true)
+    expect(out.text).toContain("once that has stopped")
+    expect(kills).toEqual([])
+    let slept = 0
+    const done = await C.backgroundLater("me", String(out.waiting), d, async () => {
+      if (++slept === 2) busy = false
+    })
+    expect(slept).toBe(2)
+    expect(done.ok).toBe(true)
+    expect(kills).toEqual(["SIGTERM"])
+    expect(ran.some((s) => s.args.includes("new-session"))).toBe(true)
+    // Taken once: the same yes moves nothing twice, and anything else does nothing.
+    expect((await C.backgroundLater("me", String(out.waiting), d)).text).toContain("no longer waiting")
+    expect((await C.backgroundLater("me", "sess:abc", d)).ok).toBe(false)
+  })
+})
+
 describe("background and names", () => {
   test("a tab's session ends and resumes in crosstalk's tmux, conversation and all", async () => {
     const ran: any[] = []

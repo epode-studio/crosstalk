@@ -23,6 +23,10 @@
 //   5. the next session to register in that folder is put in the same threads
 //
 // Where neither works (a terminal that cannot be typed into), nothing is ended.
+// While something the session started still runs (a dev server from a
+// backgrounded Bash call, a watcher), nothing is ended either: the restart
+// waits for it to stop, silently, and a PreCompact meanwhile compacts as
+// usual (src/services/postpone.ts, attention/service.ts).
 
 import crypto from "node:crypto"
 import fs from "node:fs"
@@ -171,7 +175,7 @@ export function markDisposed(rec: Rec, now = Date.now()) {
  * End the old session and start the fresh one. Never ends anything it cannot
  * start again. Returns what happened, in words for the receipt.
  */
-export async function restart(o: { rec: Rec; cmd: string; sys?: G.Sys; now?: () => number }): Promise<{ ok: boolean; text: string; kind?: string }> {
+export async function restart(o: { rec: Rec; cmd: string; sys?: G.Sys; now?: () => number }): Promise<{ ok: boolean; text: string; kind?: string; wait?: boolean }> {
   const sys = o.sys ?? G.liveSys()
   let { rec } = o
   if (!sys.alive(rec.pid, rec.pidStart)) return { ok: false, text: "its process has already gone" }
@@ -183,6 +187,10 @@ export async function restart(o: { rec: Rec; cmd: string; sys?: G.Sys; now?: () 
     if (!at) return { ok: false, text: "its Terminal tab could not be found by its tty" }
     rec = { ...rec, terminal: { ...rec.terminal, apple: { ...rec.terminal.apple, ...at } } }
   }
+  // Something it started still runs (a dev server, a watcher): ending the
+  // session would end that too, so it waits (src/services/postpone.ts).
+  const busy = sys.activity?.(rec.pid) ?? []
+  if (busy.length) return { ok: false, wait: true, text: `something it started is still running (${busy.length === 1 ? "1 process" : `${busy.length} processes`})` }
   const parent = Number(sys.ps(rec.pid, "ppid"))
   const inShell = R.SHELL.test(path.basename(sys.ps(parent, "comm") ?? ""))
   const p = plan(rec, o.cmd, inShell, sys.platform)

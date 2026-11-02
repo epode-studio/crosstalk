@@ -58,6 +58,8 @@ import { createAttention } from "./attention/daemon.ts"
 import type { AttentionService } from "./attention/service.ts"
 import { spawnedAt } from "./spawn.ts"
 import { createSessionOps } from "./sessions/daemon.ts"
+// Registers crosstalk services with the session manager (setServices), for close here.
+import "./services/service.ts"
 
 const identity = loadIdentity()
 if (!identity) {

@@ -703,6 +703,7 @@ Every part above has a first version on the branch, with its tests in
 | No commands, bots, editor, digest, standup, PR text | `src/ui-extra/` | `docs/tools.md` |
 | Disk budget, team install, metrics, threads across repos | `src/disk/`, `src/install/`, `src/metrics/`, `src/threads/crossrepo.ts` | `INSTALL.md` |
 | Shipping: risk, reviewers, evidence, merging, flags (Unleash first), previews, dark launch, metrics ramps, incidents | `src/shipping/` | `docs/shipping.md` |
+| Long-running processes outlive sessions: services in crosstalk's tmux, ports per worktree, waiting for what a session started, cleanup that stops services first | `src/services/` | `docs/services.md` |
 
 **Pull requests from sealed threads** carry the feature, its evidence and its
 reviewers, never the thread's recap, decisions or open questions: a PR is
@@ -713,7 +714,8 @@ thread is sealed to. Public threads put all of it in the PR. Decided 2026-11-02.
 
 - **On a Mac:** everything per terminal except restore (tested by hand in
   Terminal.app): tab tints, tab placement, focus, notifications that jump to a
-  tab, iTerm2, kitty, WezTerm, Ghostty.
+  tab, iTerm2, kitty, WezTerm, Ghostty; services' `lsof` port and folder
+  lookups.
 - **The session manager on a Mac:** closing a session in Terminal.app or iTerm2, resuming
   one into a tab there, and sending one from a tab to the background were tested only in
   tmux on Linux, with a stub claude. Whether real Claude Code exits cleanly on SIGTERM

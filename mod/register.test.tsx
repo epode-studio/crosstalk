@@ -30,6 +30,7 @@ const PANE_LINE = JSON.stringify({
     decision: { text: 'v1 tokens accepted until 0.2', who: 'paul', at: 1 },
     recent: [{ from: 'marie', text: 'token format changed to v2', ts: 1 }],
     features: [{ name: 'v2 token format', risk: 'risky', flag: 'auth-v2-tokens', stage: 'internal', state: 'merged' }],
+    services: [{ name: 'web', ports: [4100], url: 'http://localhost:4100' }],
   },
 })
 
@@ -83,7 +84,7 @@ function engine(on: any, acts: string[][], ask?: (q: { question: string; options
   return clock
 }
 
-test('the pane draws a thread: waiting, decision, features with flag stage, recent', async ($, on) => {
+test('the pane draws a thread: waiting, decision, features with flag stage, recent, services with a link', async ($, on) => {
   const acts: string[][] = []
   const clock = engine(on, acts)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -96,6 +97,7 @@ test('the pane draws a thread: waiting, decision, features with flag stage, rece
     expect((await ui.find({ type: 'Text', text: /v2 token format/ }))?.text).toContain('flag auth-v2-tokens at internal')
     await clock.settle()
     expect(await ui.find({ type: 'Text', text: /token format changed to v2/ })).toBeDefined()
+    expect((await ui.find({ type: 'Text', text: /web · :4100/ }))?.text).toContain('http://localhost:4100')
     await ui.unmount()
   }
 })

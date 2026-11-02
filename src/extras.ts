@@ -25,6 +25,7 @@ import * as Stats from "./metrics/stats.ts"
 import { firstEditOf, transcriptFor } from "./metrics/transcripts.ts"
 import { readRegistry } from "./gather.ts"
 import * as R from "./restore.ts"
+import * as Svc from "./services/service.ts"
 import { readSpawned, writeSpawned } from "./spawn.ts"
 import { findRepo } from "./repotrust/gitref.ts"
 import * as firstuse from "./repotrust/firstuse.ts"
@@ -61,6 +62,7 @@ export function createExtras(d: ExtrasDeps) {
       now: Date.now(),
       git: liveGit,
       liveCwds: Disk.liveCwds({ registry: readRegistry(), records: R.readAll().filter((r) => !r.endedAt && R.recAlive(r)) }),
+      services: (w) => Svc.runningIn(w),
       repos: Object.values(d.threads.roots()),
       sizeKb: Disk.duKb,
       threadOf: (_root, branch) => d.threads.all().find((t) => !!t.branches[branch] && !t.branches[branch].gone)?.meta.value.name,

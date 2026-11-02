@@ -12,7 +12,8 @@
 //            as the mod's picker, or a systemMessage without it, answered in
 //            plain words through crosstalk_gather.
 //   restart  after yes, each one in turn, only while the registry says it is
-//            idle: SIGTERM to its own verified pid, wait for it to exit, then
+//            idle and nothing it started still runs (a dev server, a
+//            watcher: src/services/postpone.ts): SIGTERM to its own verified pid, wait for it to exit, then
 //            `claude --resume <id>` typed into the same tab, whose shell prompt
 //            is back. Busy ones wait for idle, for up to two hours, in a
 //            detached `crosstalk gather --finish`.
@@ -29,6 +30,8 @@ import * as R from "./restore.ts"
 import type { Rec, Step, Term } from "./restore.ts"
 import { refuseBot } from "./ui-extra/bots.ts"
 import { sessionsDir } from "./registry.ts"
+import { liveActivity } from "./services/postpone.ts"
+import type { Activity } from "./services/procs.ts"
 
 // --- the registry --------------------------------------------------------------
 
@@ -148,6 +151,12 @@ export type Sys = {
   kill: (pid: number, sig: NodeJS.Signals) => void
   run: (s: Step) => { ok: boolean; out: string }
   sleep: (ms: number) => Promise<void>
+  /**
+   * What the session started that is still running (a dev server, a
+   * watcher), crosstalk's own services left out: while there is any, the
+   * session is not ended (src/services/postpone.ts). Absent, nothing is.
+   */
+  activity?: (pid: number) => Activity[]
 }
 
 function ps(pid: number, field: string): string | null {
@@ -232,6 +241,7 @@ export function liveSys(): Sys {
       return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() }
     },
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    activity: (pid) => liveActivity(pid),
   }
 }
 
@@ -640,6 +650,8 @@ export async function restartOne(
   const reg = o.registry.find((e) => e.sessionId === id)
   if (!reg || reg.pid !== rec.pid || !sys.alive(rec.pid, rec.pidStart)) return "gone"
   if (reg.status !== "idle") return "wait"
+  // Idle, but something it started still runs: ending it would end that too.
+  if (sys.activity?.(rec.pid).length) return "wait"
   const args = sys.ps(rec.pid, "args") ?? ""
   if (!isClaudeArgs(args)) return { failed: "its process is not claude" }
   const parent = Number(sys.ps(rec.pid, "ppid"))

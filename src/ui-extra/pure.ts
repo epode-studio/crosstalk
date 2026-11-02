@@ -120,7 +120,14 @@ export type PaneModel = {
   decision?: { text: string; who: string; at: number }
   recent: PaneRecent[]
   features: PaneFeature[]
+  /** crosstalk services running in this session's worktree, with where they listen (docs/services.md). */
+  services?: PaneService[]
 }
+
+export type PaneService = { name: string; ports: number[]; url?: string }
+
+/** A service's line in the pane: `web · :4100`. */
+export const serviceLine = (s: PaneService) => (s.ports.length ? `${s.name} · ${s.ports.map((p) => `:${p}`).join(" ")}` : `${s.name} · starting`)
 
 /** A feature's line in the pane: `v2 tokens · risky · flag auth-v2 at internal · merged`. */
 export function featureLine(f: PaneFeature): string {
@@ -148,5 +155,6 @@ export function paneLines(p: PaneModel, now: number): string[] {
   if (p.decision) out.push("", "Latest decision", ` ${p.decision.text} (${p.decision.who}${p.decision.at ? `, ${ago(p.decision.at, now)}` : ""})`)
   if (p.features.length) out.push("", "Features", ...p.features.map((f) => ` ${featureLine(f)}`))
   if (p.recent.length) out.push("", "Recent", ...p.recent.map((r) => ` ${r.from} ${ago(r.ts, now)} ${r.text}`))
+  if (p.services?.length) out.push("", "Services", ...p.services.map((s) => ` ${serviceLine(s)}${s.url ? ` ${s.url}` : ""}`))
   return out
 }

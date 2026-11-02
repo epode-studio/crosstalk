@@ -20,6 +20,13 @@
 // process its record names (same pid, same start time, a claude or codex
 // command line), the same checks gather makes (src/gather.ts endGracefully).
 // Its record is marked archived first, so restore never takes it for a crash.
+//
+// Something the session started outside crosstalk that still runs (a dev
+// server from a backgrounded Bash call, a watcher: src/services/postpone.ts)
+// would die with it. Closing is the person's own explicit request, so the
+// question says what it would interrupt ("It is still running npm run dev,
+// which stops with it.") and a yes goes ahead. Sending one to the background
+// waits instead, silently, in a detached waiter, until that has stopped.
 
 import crypto from "node:crypto"
 import fs from "node:fs"
@@ -40,6 +47,10 @@ import * as I from "./index.ts"
 import * as T from "./transcripts.ts"
 import * as N from "./names.ts"
 import { keepsLine, runningFor, services } from "./services.ts"
+import { spawn as spawnChild } from "node:child_process"
+import { dirOf, shim } from "../paths.ts"
+import * as PP from "../services/postpone.ts"
+import type { Activity } from "../services/procs.ts"
 
 export type Out = { ok: boolean; text: string; pending?: boolean; [k: string]: unknown }
 type Ask = (req: Record<string, unknown>, timeoutMs?: number) => Promise<any>
@@ -192,13 +203,19 @@ const VERBS: Record<Action["kind"] | RemoteAct["kind"], RegExp> = {
 }
 
 /** What the person is asked, in words. */
-export function questionFor(a: Action, target?: Live, svc: { name: string }[] = []): string {
+/** " It is still running npm run dev, which stops with it." for what a session started outside crosstalk. */
+export function interruptsLine(busy: Activity[]): string {
+  if (!busy.length) return ""
+  return ` It is still running ${PP.what(busy).replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")}, which ${busy.length === 1 ? "stops" : "stop"} with it.`
+}
+
+export function questionFor(a: Action, target?: Live, svc: { name: string }[] = [], busy: Activity[] = []): string {
   const n = target?.name ?? ("session" in a ? a.session : "")
   if (a.kind === "resume") return `Resume ${n}?`
   if (a.kind === "spawn") return `Start ${a.count && a.count > 1 ? `${a.count} agents` : "an agent"} in ${path.basename(a.cwd)}: "${a.task.length > 120 ? a.task.slice(0, 119) + "…" : a.task}"?`
   switch (a.kind) {
     case "close":
-      return `Close ${n}?${keepsLine(svc, a.services === "stop")}`
+      return `Close ${n}?${keepsLine(svc, a.services === "stop")}${interruptsLine(busy)}`
     case "background":
       return `Send ${n} to the background? It ends here and carries on in crosstalk's background tmux, conversation and all.`
     case "rename":
@@ -307,7 +324,9 @@ export function raise(o: { by: string; cwd: string; action: Action; question: st
 export async function gate(o: { by: string; cwd: string; action: Action; target?: Live }, d: Deps): Promise<Out> {
   if (!o.by) return { ok: false, text: "◢ crosstalk: this comes only from one of your own sessions." }
   const svc = o.action.kind === "close" && o.target ? runningFor({ sessionId: o.target.id, cwd: o.target.cwd }) : []
-  const q = questionFor(o.action, o.target, svc)
+  // What closing it would interrupt, said in the question: the person decides.
+  const busy = o.action.kind === "close" && o.target ? activityOf(o.target, d) : []
+  const q = questionFor(o.action, o.target, svc, busy)
   if (d.modActive(o.by)) {
     raise({ by: o.by, cwd: o.cwd, action: o.action, question: q })
     return { ok: true, pending: true, text: `Asked your user to confirm in this session: "${q}" Nothing happens unless they pick "${YES[o.action.kind]}".` }
@@ -387,6 +406,7 @@ export async function close(l: Live, o: { by?: string; services?: "keep" | "stop
   const bad = verified(l, d)
   if (bad) return { ok: false, text: `◢ crosstalk: ${bad}` }
   const svc = runningFor({ sessionId: l.id, cwd: l.cwd })
+  const busy = activityOf(l, d)
   const rec = R.readOne(l.id)
   const now = d.now()
   // Marked first: its exit, and its SessionEnd hook, are on purpose.
@@ -407,7 +427,8 @@ export async function close(l: Live, o: { by?: string; services?: "keep" | "stop
     I.mark(l.id, { archived: now })
   } catch {}
   const svcLine = o.services === "stop" ? (stopped.length ? ` Stopped ${stopped.join(", ")}.` : "") : keepsLine(svc, false)
-  return { ok: true, text: `◢ crosstalk: closed ${l.name}.${svcLine} It is archived, not lost: say "resume ${l.name}" to bring it back.`, closed: l.id }
+  const cut = busy.length ? ` What it was still running stopped with it (${PP.what(busy).replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")}).` : ""
+  return { ok: true, text: `◢ crosstalk: closed ${l.name}.${svcLine}${cut} It is archived, not lost: say "resume ${l.name}" to bring it back.`, closed: l.id }
 }
 
 /** A tmux session name in crosstalk's server that nobody has. */
@@ -438,6 +459,10 @@ export async function toBackground(l: Live, o: { by?: string }, d: Deps, from?: 
   if (!d.which("tmux")) return { ok: false, text: "◢ crosstalk: the background runs in tmux, which is not installed here." }
   const bad = verified(l, d)
   if (bad) return { ok: false, text: `◢ crosstalk: ${bad}` }
+  // Something it started still runs: ending it now would end that too, so it
+  // moves once that has stopped, by a detached waiter, without asking again.
+  const busy = activityOf(l, d)
+  if (busy.length) return waitThenBackground(l, o.by ?? "", d)
   const name = freeTmuxName(l.name, tmuxHas(d))
   const rec = R.readOne(l.id)
   if (rec) R.writeRec({ ...rec, archived: d.now() })
@@ -452,6 +477,70 @@ export async function toBackground(l: Live, o: { by?: string }, d: Deps, from?: 
     return { ok: false, text: `◢ crosstalk: ${l.name} ended, but could not start in the background: ${r.out.split("\n").pop()}. Resume it with:\n  ${R.typed({ ...(rec ?? ({} as Rec)), sessionId: l.id, cwd: l.cwd, client: l.client })}` }
   }
   return { ok: true, text: `◢ crosstalk: ${l.name} carries on in the background as ${name}, with its whole conversation. Its tab is free. Say "show me ${name}" to bring it into a tab.`, tmux: name }
+}
+
+/** What the session started outside crosstalk that still runs (src/services/postpone.ts); none where the system cannot say. */
+function activityOf(l: Live, d: Deps): Activity[] {
+  try {
+    return d.sys.activity?.(l.pid) ?? []
+  } catch {
+    return []
+  }
+}
+
+/** The plugin root, from src/sessions/ or from dist/: the folder holding bin/crosstalk. */
+function pluginRoot(): string {
+  let dir = dirOf(import.meta.url)
+  for (let i = 0; i < 4; i++) {
+    if (fs.existsSync(shim(dir))) return dir
+    dir = path.dirname(dir)
+  }
+  return path.join(dirOf(import.meta.url), "..")
+}
+
+const LATER_MS = 10 * 60_000
+
+/** The waiter is crosstalk's own, carrying on a yes already given: not an agent's shell. */
+const waiterEnv = (env: NodeJS.ProcessEnv) => {
+  const e = { ...env }
+  delete e.CLAUDECODE
+  delete e.CODEX_SANDBOX
+  delete e.CROSSTALK_AS_AGENT
+  return e
+}
+
+/**
+ * The person said send it to the background, and it is still running
+ * something it started: a pending record of that yes, and a detached waiter
+ * (`crosstalk ui bg-later`) that takes it and moves the session once nothing
+ * it started still runs, for at most PP.UNTIL_MS.
+ */
+export function waitThenBackground(l: Live, by: string, d: Deps): Out {
+  const id = `bglater:${crypto.randomBytes(6).toString("hex")}`
+  writePending({ id, by, cwd: l.cwd, action: { kind: "background", session: l.id }, at: d.now(), yes: "later" })
+  if (!d.env.CROSSTALK_NO_WAITER)
+    try {
+      const child = spawnChild(shim(pluginRoot()), ["ui", "bg-later", "--session", by, "--id", id], { detached: true, stdio: "ignore", env: waiterEnv(d.env) })
+      child.on("error", () => {})
+      child.unref()
+    } catch {}
+  return { ok: true, pending: true, waiting: id, text: `◢ crosstalk: ${l.name} is still running something it started, so it moves to the background once that has stopped; nothing is ended under it.` }
+}
+
+/** The waiter: takes the pending yes (once, while fresh), then moves the session as soon as it is free. */
+export async function backgroundLater(by: string, id: string, d: Deps = liveDeps(), sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))): Promise<Out> {
+  if (!id.startsWith("bglater:")) return { ok: false, text: "not a waiting move" }
+  const p = takePending(id)
+  if (!p || p.by !== by || p.action.kind !== "background" || d.now() - p.at > LATER_MS) return { ok: false, text: "That is no longer waiting; nothing was done." }
+  const session = p.action.session
+  const until = d.now() + PP.UNTIL_MS()
+  for (;;) {
+    const t = resolve(session, await liveSessions(d, R.readAll(), (r) => d.sys.alive(r.pid, r.pidStart)))
+    if (!t.ok) return t
+    if (!activityOf(t.live, d).length) return toBackground(t.live, { by }, d)
+    if (d.now() > until) return { ok: false, text: `◢ crosstalk: ${t.live.name} stayed in its tab: what it started never stopped.` }
+    await sleep(PP.POLL_MS())
+  }
 }
 
 /** "pop auth out": a tab of the person's terminal, attached to a background agent. */

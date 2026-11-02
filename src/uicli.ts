@@ -18,6 +18,7 @@ import * as restore from "./restore.ts"
 import * as ui from "./uistate.ts"
 import * as gather from "./gather.ts"
 import * as cleanup from "./cleanup.ts"
+import * as Svc from "./services/service.ts"
 import * as extra from "./ui-extra/uicli.ts"
 import * as sessionCtl from "./sessions/control.ts"
 
@@ -86,6 +87,7 @@ function tendGather(session: string) {
 async function watch(session: string, interval: number) {
   let last = ""
   let lastRestoreCheck = 0
+  let ports: string | undefined
   const parent = process.ppid
   for (;;) {
     // The session that started this is gone: so is the reason to run.
@@ -106,8 +108,12 @@ async function watch(session: string, interval: number) {
         // Finished agent worktrees: offered once, checked at most every ten minutes.
         cleanup.surface(session, cleanup.offerOnce(), true)
       } catch {}
+      // This worktree's services' ports, for the status line (`auth · :4100`).
+      try {
+        ports = Svc.badge(Svc.forSession(session).map((s) => ({ listening: s.ports }))) || undefined
+      } catch {}
     }
-    const w = { ...(await waiting(session, true)), note: gather.peekNote(session) ?? undefined }
+    const w = { ...(await waiting(session, true)), note: gather.peekNote(session) ?? undefined, ...(ports ? { ports } : {}) }
     const line = JSON.stringify(w)
     if (line !== last) {
       last = line
@@ -166,6 +172,12 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
       return print({ ok: true, ...(await waiting(session, false)) })
     case "watch":
       return watch(session, Math.max(250, Number(arg(argv, "--interval") ?? 1000)))
+    case "bg-later": {
+      // A move to the background the person said yes to, waiting for what the
+      // session started to stop (src/sessions/control.ts waitThenBackground).
+      if (insideAgent()) return print({ ok: false, error: "this is crosstalk's own waiter" })
+      return print(await sessionCtl.backgroundLater(session, arg(argv, "--id") ?? ""))
+    }
     case "act": {
       const id = arg(argv, "--id") ?? ""
       const action = arg(argv, "--action") ?? ""

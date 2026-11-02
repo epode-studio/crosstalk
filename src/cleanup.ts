@@ -10,6 +10,13 @@
 //
 // Worktrees crosstalk did not make are never touched unless the person
 // confirms that very set: they are listed, and only removed when named.
+//
+// Nothing in use is removed (docs/services.md): a worktree that a process
+// works in (its cwd is inside) or listens from is kept, whoever started it.
+// A crosstalk service (crosstalk_serve) running in one is the thread's own:
+// the offer says it stops first, and after the person's yes it is stopped
+// (SIGTERM, then its tmux window closed) before the worktree goes. Without
+// that yes, removing refuses while it runs.
 
 import fs from "node:fs"
 import path from "node:path"
@@ -19,6 +26,9 @@ import * as R from "./restore.ts"
 import * as ui from "./uistate.ts"
 import { readSpawned, writeSpawned, tmuxHas, type SpawnRec } from "./spawn.ts"
 import { git as liveGit, worktrees, type Git } from "./terminal/repo.ts"
+import * as Svc from "./services/service.ts"
+import * as Pt from "./services/ports.ts"
+import * as Pr from "./services/procs.ts"
 
 export type Probe = {
   exists: (p: string) => boolean
@@ -31,9 +41,19 @@ export type Probe = {
    */
   merged: (repo: string, branch: string, base?: string) => boolean
   ended: (r: SpawnRec) => boolean
+  /** Why a process outside crosstalk's services keeps it (its cwd is inside, or it listens from inside), or null. */
+  inUse?: (worktree: string) => string | null
+  /** crosstalk services running in it: they stop first, after the person's yes. */
+  services?: (worktree: string) => { name: string; listening: number[]; ports?: number[] }[]
 }
 
-export type Candidate = { rec: SpawnRec; why: "merged" | "deleted" }
+export type Candidate = { rec: SpawnRec; why: "merged" | "deleted"; services?: string[] }
+
+/** `web · :4100`: a service as the offer and the listing name it. */
+const svcLabel = (s: { name: string; listening: number[]; ports?: number[] }) => {
+  const b = Svc.badge([{ listening: s.listening, ports: s.ports }])
+  return b ? `${s.name} · ${b}` : s.name
+}
 
 /** Which crosstalk worktrees may go: done with, landed, and clean. */
 export function select(recs: SpawnRec[], p: Probe): Candidate[] {
@@ -42,8 +62,11 @@ export function select(recs: SpawnRec[], p: Probe): Candidate[] {
     if (r.removedAt || !p.exists(r.worktree)) continue
     if (!p.ended(r)) continue
     if (!p.clean(r.worktree, r.links)) continue
-    if (!p.branchExists(r.repo, r.branch)) out.push({ rec: r, why: "deleted" })
-    else if (p.merged(r.repo, r.branch, r.base)) out.push({ rec: r, why: "merged" })
+    if (p.inUse?.(r.worktree)) continue
+    const svcs = (p.services?.(r.worktree) ?? []).map(svcLabel)
+    const extra = svcs.length ? { services: svcs } : {}
+    if (!p.branchExists(r.repo, r.branch)) out.push({ rec: r, why: "deleted", ...extra })
+    else if (p.merged(r.repo, r.branch, r.base)) out.push({ rec: r, why: "merged", ...extra })
   }
   return out
 }
@@ -55,6 +78,32 @@ export function defaultBranch(repo: string, g: Git = liveGit): string | null {
   for (const b of ["main", "master", "trunk"]) if (g(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]).ok) return b
   const h = g(repo, ["symbolic-ref", "--quiet", "--short", "HEAD"])
   return h.ok && h.out ? h.out : null
+}
+
+/**
+ * What keeps a worktree in use, outside crosstalk's services: a process whose
+ * working directory is inside it (which covers one listening from inside it),
+ * this process aside. Null when nothing does.
+ */
+export function inUseBy(worktree: string, o: { cwds?: Map<number, string>; exclude?: Set<number>; table?: Pr.Proc[] } = {}): string | null {
+  const real = (() => {
+    try {
+      return fs.realpathSync(worktree)
+    } catch {
+      return path.resolve(worktree)
+    }
+  })()
+  const cwds = o.cwds ?? Pr.cwds()
+  const exclude = o.exclude ?? (Svc.readAll().length ? Svc.servicePids() : new Set<number>())
+  const self = new Set([process.pid, process.ppid])
+  const table = o.table
+  for (const [pid, cwd] of cwds) {
+    if (self.has(pid) || exclude.has(pid)) continue
+    if (!Pr.under(cwd, real) && !Pr.under(cwd, worktree)) continue
+    const args = table?.find((p) => p.pid === pid)?.args ?? Pr.psTable().find((p) => p.pid === pid)?.args ?? `pid ${pid}`
+    return `a process is running in it (${args.split(/\s+/).slice(0, 3).join(" ")}, pid ${pid})`
+  }
+  return null
 }
 
 export function liveProbe(g: Git = liveGit): Probe {
@@ -97,6 +146,8 @@ export function liveProbe(g: Git = liveGit): Probe {
       const live = R.readAll().some((x) => !x.endedAt && path.resolve(x.cwd).startsWith(path.resolve(r.worktree)) && R.recAlive(x))
       return !live
     },
+    inUse: (w) => inUseBy(w),
+    services: (w) => Svc.runningIn(w),
   }
 }
 
@@ -125,8 +176,19 @@ export const human = (kb: number) => (kb >= 1024 * 1024 ? `${(kb / 1024 / 1024).
 
 export type Removed = { path: string; kb: number; ok: boolean; why?: string }
 
-/** Remove one worktree the safe way, and prune. A crosstalk branch that merged goes too. */
-export function removeOne(o: { repo: string; worktree: string; links: string[]; branch?: string; ours: boolean }, g: Git = liveGit): Removed {
+/** What removeOne asks before anything is touched: a running service, or another process, keeps the worktree. */
+export type Guard = { services: (w: string) => { name: string }[]; inUse: (w: string) => string | null }
+export const liveGuard = (): Guard => ({ services: (w) => Svc.runningIn(w), inUse: (w) => inUseBy(w) })
+
+/**
+ * Remove one worktree the safe way, and prune. A crosstalk branch that merged
+ * goes too. Refused while a crosstalk service or any other process is in it.
+ */
+export function removeOne(o: { repo: string; worktree: string; links: string[]; branch?: string; ours: boolean }, g: Git = liveGit, guard: Guard = liveGuard()): Removed {
+  const svcs = guard.services(o.worktree)
+  if (svcs.length) return { path: o.worktree, kb: 0, ok: false, why: `a crosstalk service is running in it (${svcs.map((s) => s.name).join(", ")})` }
+  const busy = guard.inUse(o.worktree)
+  if (busy) return { path: o.worktree, kb: 0, ok: false, why: busy }
   const kb = sizeKb(o.worktree)
   for (const l of o.links) {
     const p = path.join(o.worktree, l)
@@ -145,6 +207,9 @@ export function removeOne(o: { repo: string; worktree: string; links: string[]; 
   }
   g(o.repo, ["worktree", "prune"])
   if (o.ours && o.branch) g(o.repo, ["branch", "-d", o.branch])
+  try {
+    Pt.release(fs.existsSync(o.worktree) ? fs.realpathSync(o.worktree) : path.resolve(o.worktree))
+  } catch {}
   return { path: o.worktree, kb, ok: true }
 }
 
@@ -160,7 +225,9 @@ export function offerFor(c: Candidate[]): Offer | null {
   if (!fresh.length) return null
   const n = c.length
   const names = c.slice(0, 4).map((x) => x.rec.name).concat(n > 4 ? ["…"] : [])
-  const question = `${n} agent worktree${n === 1 ? " is" : "s are"} done with: ${n === 1 ? "its" : "their"} work is merged and ${n === 1 ? "its session has" : "their sessions have"} ended. Remove ${n === 1 ? "it" : "them"}?`
+  const svcs = c.flatMap((x) => x.services ?? [])
+  const stops = svcs.length ? ` ${svcs.length === 1 ? "Its service" : "Their services"} (${svcs.join(", ")}) stop${svcs.length === 1 ? "s" : ""} first.` : ""
+  const question = `${n} agent worktree${n === 1 ? " is" : "s are"} done with: ${n === 1 ? "its" : "their"} work is merged and ${n === 1 ? "its session has" : "their sessions have"} ended.${stops} Remove ${n === 1 ? "it" : "them"}?`
   return { count: n, names, question, text: `◢ crosstalk: ${question} (${names.join(", ")}) Say "clean up the worktrees" to do it.` }
 }
 
@@ -211,8 +278,10 @@ export type Outcome = { ok: boolean; text: string; removed: Removed[] }
  * Without confirm, what could go. With it, remove every crosstalk worktree
  * that may, plus exactly the other worktrees named in `include`.
  */
-export function run(o: { confirm?: boolean; include?: string[]; cwd?: string; probe?: Probe; git?: Git }): Outcome {
+export function run(o: { confirm?: boolean; include?: string[]; cwd?: string; probe?: Probe; git?: Git; guard?: Guard; stop?: (worktree: string) => { stopped: string[]; left: string[] } }): Outcome {
   const g = o.git ?? liveGit
+  const guard = o.guard ?? liveGuard()
+  const stop = o.stop ?? Svc.stopIn
   const p = o.probe ?? liveProbe(g)
   const recs = readSpawned().filter((r) => !r.removedAt)
   const mine = select(recs, p)
@@ -225,28 +294,49 @@ export function run(o: { confirm?: boolean; include?: string[]; cwd?: string; pr
     if (!mine.length && !others.length) lines.push("◢ crosstalk: no worktree is ready to remove.")
     if (mine.length) {
       lines.push(`◢ crosstalk: ${mine.length} worktree${mine.length === 1 ? "" : "s"} crosstalk made can go (merged or branch deleted, session ended):`)
-      for (const m of mine) lines.push(`  ${m.rec.name.padEnd(16)} ${m.rec.worktree}  (${m.why === "merged" ? "merged" : "branch deleted"})`)
+      for (const m of mine) lines.push(`  ${m.rec.name.padEnd(16)} ${m.rec.worktree}  (${m.why === "merged" ? "merged" : "branch deleted"}${m.services?.length ? `; its services ${m.services.join(", ")} stop first` : ""})`)
     }
     if (others.length) {
       lines.push(`Merged worktrees crosstalk did not make, removed only if you name them:`)
       for (const w of others) lines.push(`  ${w.path}  (${w.branch})`)
     }
-    if (still.length) lines.push(`Still in use or not merged: ${still.map((r) => r.name).join(", ")}.`)
+    if (still.length)
+      lines.push(
+        `Still in use or not merged: ${still
+          .map((r) => {
+            const why = p.inUse?.(r.worktree)
+            return why ? `${r.name} (${why})` : r.name
+          })
+          .join(", ")}.`,
+      )
     return { ok: true, text: lines.join("\n"), removed: [] }
   }
 
+  // The person said yes: the thread's services stop first, then the worktree goes.
+  const stopped: string[] = []
+  const stopFirst = (w: string) => {
+    if (!guard.services(w).length) return
+    const r = stop(w)
+    stopped.push(...r.stopped)
+  }
   const removed: Removed[] = []
   for (const m of mine) {
-    const r = removeOne({ repo: m.rec.repo, worktree: m.rec.worktree, links: m.rec.links, branch: m.rec.branch, ours: true }, g)
+    stopFirst(m.rec.worktree)
+    const r = removeOne({ repo: m.rec.repo, worktree: m.rec.worktree, links: m.rec.links, branch: m.rec.branch, ours: true }, g, guard)
     removed.push(r)
     if (r.ok) writeSpawned({ ...m.rec, removedAt: Date.now() })
   }
   const asked = new Set((o.include ?? []).map((x) => path.resolve(x)))
-  for (const w of others) if (asked.has(path.resolve(w.path))) removed.push(removeOne({ repo: w.repo, worktree: w.path, links: [], ours: false }, g))
+  for (const w of others)
+    if (asked.has(path.resolve(w.path))) {
+      stopFirst(w.path)
+      removed.push(removeOne({ repo: w.repo, worktree: w.path, links: [], ours: false }, g, guard))
+    }
   const unknown = [...asked].filter((a) => !others.some((w) => path.resolve(w.path) === a))
   const ok = removed.filter((r) => r.ok)
   const kb = ok.reduce((s, r) => s + r.kb, 0)
   const parts = [ok.length ? `◢ crosstalk: removed ${ok.length} worktree${ok.length === 1 ? "" : "s"}, freeing ${human(kb)}.` : "◢ crosstalk: removed no worktree."]
+  if (stopped.length) parts.push(`  stopped ${stopped.length === 1 ? "its service" : "their services"} first: ${stopped.join(", ")}`)
   for (const r of removed.filter((x) => !x.ok)) parts.push(`  kept ${r.path}: ${r.why}`)
   if (unknown.length) parts.push(`  left alone, not a merged clean worktree: ${unknown.join(", ")}`)
   return { ok: removed.every((r) => r.ok), text: parts.join("\n"), removed }
