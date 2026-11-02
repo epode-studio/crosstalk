@@ -18,6 +18,7 @@ One record per thing to look at, in `<crosstalk home>/urls.json`:
 | `preview` | shipping's preview of a feature (`src/shipping/engine.ts`), one per thread and feature | `auth · preview` |
 | `pr` | the PR shipping opened, or a GitHub PR URL a command printed | `auth · PR #12` |
 | `link` | any other link a Bash command printed | `auth · acme.dev/cb` |
+| `shared` | a server you share with teammates, or one a teammate shares with you ([5](#5-sharing-a-running-server)) | `auth · web · shared with marie · until 18:00`, `auth · web · from paul · until 18:00` |
 
 The label starts with the thread's name, else the worktree's folder name. A
 record carries its thread, the session that printed it, its worktree, its
@@ -120,9 +121,90 @@ or a line in `/etc/hosts`: `127.0.0.1 auth.localhost web.auth.localhost`.
 | the tab and status line | the worktree's name instead of its port while the proxy is up: `auth · auth.localhost:1355` (no port on 80), else `auth · :4100` as before |
 | `crosstalk urls [--thread T] [--kind K] [--json]` | the same list, for scripts |
 
+## 5. Sharing a running server
+
+"Show marie the auth page" gives marie, and only marie, the running server,
+through crosstalk's end-to-end encrypted peer channel. Code: `src/share/`.
+Tests: `test/share.test.ts`, `test/share.sh`.
+
+```
+marie's browser ─▶ auth.paul.localhost:1355 (marie's proxy)
+                    ─▶ a listener on 127.0.0.1 in marie's daemon
+                        ─▶ sealed frames over the relay ─▶ paul's daemon
+                            ─▶ 127.0.0.1:<the auth service's port>
+```
+
+| Tool | What |
+|---|---|
+| `crosstalk_share {url \| name \| thread, with: [people], for?, public?}` | share one local server (a crosstalk service, or a localhost URL a command printed) with exactly these people, for 8 hours unless `for` says (`2h`, `30m`, `until 18:00`; a week at most) |
+| `crosstalk_unshare {id \| url \| name \| thread, with?}` | stop it now, for everyone or only `with`: open requests and websockets are cut off |
+| `crosstalk_shares` | what you share and what is shared with you, framed as data |
+
+**On the owner's machine (paul).** The share is one URL record and the people
+named in it, each by the fingerprint of their direct channel: exact crosstalk
+names (`marie`, never a prefix), never an agent, never someone muted; a person
+trusted through a repository is included on each of their machines. A
+`shared` record, `auth · web · shared with marie · until 18:00`, is in the
+pane's **Shared** links and in `crosstalk_urls`. Each frame from marie's daemon
+is checked against the share as it arrives: her fingerprint in it, not muted
+now, not an agent, the share neither expired nor stopped. A request goes to
+127.0.0.1 (then ::1) on the share's port and nowhere else: a frame names a
+share and a stream, never a host or a port, its path must be origin-form
+(`/…`; an absolute URL or CONNECT is refused), and crosstalk's own proxy port
+is never forwarded to. A crosstalk service's port is looked up afresh for each
+request, so a service that restarts on another port stays shared.
+
+**On the viewer's machine (marie).** The offer comes over the direct channel
+(never through a room, never from an agent or someone muted) and becomes:
+
+- a listener on 127.0.0.1, answering only loopback Host names
+  (`*.localhost`, `localhost`, `127.0.0.1`), so a page that reached it by DNS
+  rebinding gets a 421;
+- a name through marie's proxy, `<name>.<owner>.localhost`: `auth.paul.localhost`
+  for the thread's main server, `web-auth.paul.localhost` for another; never a
+  bare name, never shadowing one of marie's own;
+- a `shared` record, `auth · web · from paul · until 18:00`, in her pane and her
+  agent's `crosstalk_urls`, inside `<crosstalk-urls>` as data, so her agent can
+  test against it;
+- a card, **Open it / Not now / Stop it**, or a digest line without the mod.
+  Nothing is opened by itself. Stop it closes it on her side and tells paul.
+
+**HTTP over frames.** One stream per request or websocket. A request is `req`
+(method, path, headers), its body in `body` frames, `end`; the answer is `res`
+(status, headers), `body` frames, `end`, or `error`. Bodies go in 48 KB chunks,
+so a large response streams as it is written and no frame nears the relay's
+1 MB limit; websockets are `wsopen`, `wsmsg` (text or binary), `wsclose`, with
+the subprotocol the server chose. Hop-by-hop headers (Connection and what it
+names, Keep-Alive, Transfer-Encoding, Upgrade, TE, Trailer, Proxy-*) are taken
+out both ways. Cookie and Authorization pass: **marie's browser talks to paul's
+server as itself**, so paul's server sees marie's requests and cookies, marked
+`x-crosstalk-viewer: marie`, and the Host as marie's browser sent it
+(`auth.paul.localhost:1355`, which Vite, Next.js and webpack accept).
+
+**Limits.** 64 streams open per person and share, request bodies up to 32 MB,
+responses up to 256 MB, websocket messages up to 16 MB. Both daemons pace what
+they send (80 frames and 3 MB a second, with bursts), below what the relay
+takes, and paul's holds what each person sends to twice that; more gets 429.
+Frames are live: the self-hosted relay carries them as `stream` frames, with a
+budget of their own and never buffered for someone offline; a relay that
+predates them carries them as ordinary sends, much slower (60 a minute); the
+hosted relay carries them as ordinary sends.
+
+**Ending.** At its expiry each side ends it by itself; `crosstalk_unshare`
+ends it at once and tells everyone in it. Either way open requests get 410,
+websockets close with 1008, marie's listener and name go, and both records are
+marked ended. A share is in `<crosstalk home>/shares.json`; after a restart
+marie's listeners come back on new ports with the same names.
+
+**A public link** only when the person asks for one in so many words
+(`public: true`): the existing quick-tunnel path (`src/tunnel.ts`,
+cloudflared, never downloaded) pointed at the service, with a loud warning,
+an hour by default and eight at most, and it dies with the daemon. Anyone with
+the link reaches the server.
+
 ## For the builds that come next
 
-Sharing with teammates, screenshots, servers that heal themselves, the phone
+Screenshots, servers that heal themselves, the phone
 and history use the same records. `src/urls/index.ts` is the front door:
 
 ```ts
@@ -151,3 +233,7 @@ without threads (tests, another home).
   in the payload and is not read.
 - **gh pr view** against real PRs, and preview hosts (Vercel, Fly) for the
   liveness checks.
+- **Sharing between two real machines:** three identities on one machine and
+  a local relay stood in. Not run: the hosted relay, a public link through a
+  real cloudflared, Vite or Next.js HMR through a share, Safari and Chrome on
+  `*.<owner>.localhost` names, and the share card in the mod.

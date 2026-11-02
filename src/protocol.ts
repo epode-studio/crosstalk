@@ -20,6 +20,8 @@ export type Kind =
   | "rules"
   | "sessions_req"
   | "sessions_res"
+  | "share"
+  | "share_data"
 
 export type Slice = {
   kind: "diff" | "file" | "turns" | "text"
@@ -82,6 +84,12 @@ export type Envelope = {
    * ever accepted from your own machines.
    */
   sessions?: unknown
+  /**
+   * A running server shared with a teammate (src/share/): an offer, a
+   * revocation or a decline on kind "share", one HTTP frame on "share_data".
+   * Direct channels only.
+   */
+  share?: unknown
 }
 
 export type FootprintSummary = { repo?: string; branch?: string; paths?: string[] }
@@ -104,6 +112,8 @@ export type Frame =
   | { t: "ready"; fingerprint: string }
   | { t: "error"; message: string }
   | { t: "send"; to: string; body: string; id: string }
+  /** Like send, for a live peer only: never buffered, never acked, a budget of its own (src/share/). */
+  | { t: "stream"; to: string; body: string; id: string }
   | { t: "deliver"; from: string; body: string; id: string }
   | { t: "ack"; id: string }
   | { t: "presence"; peers: string[] }

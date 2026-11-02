@@ -87,10 +87,21 @@ export const urls = (o: { file?: string; now?: () => number } = {}) =>
 
 // --- the proxy's names ------------------------------------------------------------------
 
+const extra: (() => Target[])[] = []
+/** More names for the proxy, from another part of the daemon: servers shared with this machine (src/share/). */
+export const addTargets = (fn: () => Target[]) => void extra.push(fn)
+
 /** Running services, for the proxy: cheap (no port lookup; the ports last seen, else the PORT given). */
 export function targets(): Target[] {
   const st = threads()
-  return Svc.running().map((s) => ({ group: groupFor(s.root, st), service: s.name, port: s.ports?.[0] ?? s.port, root: s.root, startedAt: s.startedAt }))
+  const more = extra.flatMap((fn) => {
+    try {
+      return fn()
+    } catch {
+      return []
+    }
+  })
+  return [...Svc.running().map((s) => ({ group: groupFor(s.root, st), service: s.name, port: s.ports?.[0] ?? s.port, root: s.root, startedAt: s.startedAt })), ...more]
 }
 
 /** How good a name a route is: the group's own (`auth`), then `web.auth`, then a bare service name. */
@@ -104,7 +115,7 @@ export function nameFor(routes: Route[], root: string, service: string): string 
 
 /** The URL to show for a record: the proxy's name while it is up, else its own. */
 export function shownUrl(u: Pick<Url, "url" | "name" | "kind">, state: ProxyState | null = readState()): string {
-  return u.kind === "local" && u.name && state ? proxyUrl(u.name.replace(/\.localhost$/, ""), state.port) : u.url
+  return (u.kind === "local" || u.kind === "shared") && u.name && state ? proxyUrl(u.name.replace(/\.localhost$/, ""), state.port) : u.url
 }
 
 /**

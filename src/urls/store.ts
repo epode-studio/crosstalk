@@ -21,9 +21,10 @@ import fs from "node:fs"
 import path from "node:path"
 import { P } from "../config.ts"
 
-export type UrlKind = "local" | "preview" | "pr" | "link"
+/** `shared`: a running server shared with a teammate, or by one (src/share/); never checked for liveness. */
+export type UrlKind = "local" | "preview" | "pr" | "link" | "shared"
 /** Where crosstalk learnt of it. Only `output` links are never fetched (liveness checks local ones alone). */
-export type UrlSource = "service" | "preview" | "pr" | "output" | "manual"
+export type UrlSource = "service" | "preview" | "pr" | "output" | "manual" | "share"
 
 export type Url = {
   /** Stable for the thing it names: `svc:<service id>`, `preview:<thread>:<feature>`, `pr:<url>`, `out:<hash>`. */

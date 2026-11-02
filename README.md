@@ -537,6 +537,13 @@ The measure is time from idea to merge, and how few of your minutes it took.
   preview" work from any session; the pane lists them, clickable. Tokens in a
   printed link are taken out before it is kept, and nothing an agent printed
   is ever fetched. [How](docs/urls.md).
+- **Show a teammate the running thing.** "Show marie the auth page" gives
+  marie, and only marie, your running dev server as
+  `http://auth.paul.localhost` on her machine, through crosstalk's encrypted
+  channel: no public URL, no port forwarding, websockets and HMR included, for
+  eight hours unless you say otherwise. Her agent can test against it; she gets
+  a card and nothing opens by itself; "stop sharing it" cuts her off at once.
+  [How](docs/urls.md#5-sharing-a-running-server).
 - **Attach the thing, not a description of it.** "Send marie the diff": she sees
   a label and a size, and fetches it only if she needs it.
 - **No commands to learn.** Say it to any agent: "marie gave me words:

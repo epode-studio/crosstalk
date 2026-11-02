@@ -8,7 +8,7 @@ export type Chip = { kind: string; label: string; bytes?: number }
 /** One thing waiting on the person, as `crosstalk ui watch` reports it. */
 export type Item = {
   id: string
-  kind: 'restore' | 'message' | 'ask' | 'route' | 'gather' | 'team' | 'cleanup' | 'thread' | 'ship' | 'rule' | 'connect' | 'conflict' | 'invite' | 'doctor' | 'disk' | 'install' | 'attention' | 'steer' | 'session'
+  kind: 'restore' | 'message' | 'ask' | 'route' | 'gather' | 'team' | 'cleanup' | 'thread' | 'ship' | 'rule' | 'connect' | 'conflict' | 'invite' | 'doctor' | 'disk' | 'install' | 'attention' | 'steer' | 'session' | 'share'
   sessionId: string
   state: 'pending' | 'answered' | 'handed' | 'muted' | 'later'
   createdAt: number
@@ -48,7 +48,7 @@ export type Pane = {
   /** crosstalk services running in this session's worktree (docs/services.md). */
   services?: { name: string; ports: number[]; url?: string }[]
   /** The thread's URLs (src/urls/), each with whether it answers; in the main session, every thread's. */
-  links?: { label: string; url: string; kind: 'local' | 'preview' | 'pr' | 'link'; alive: boolean; thread?: string }[]
+  links?: { label: string; url: string; kind: 'local' | 'preview' | 'pr' | 'link' | 'shared'; alive: boolean; thread?: string }[]
 }
 
 declare module 'claude-code' {

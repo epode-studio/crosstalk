@@ -45,6 +45,8 @@ export async function openTunnel(
   port: number,
   logPath: string,
   timeoutMs = 60_000,
+  /** Whether the tunnel carries traffic yet; by default the relay's /health answering. Sharing a dev server (src/share/public.ts) takes any answer. */
+  o: { probe?: (host: string) => Promise<boolean> } = {},
 ): Promise<Tunnel> {
   fs.writeFileSync(logPath, "")
   const out = fs.openSync(logPath, "a")
@@ -115,8 +117,8 @@ export async function openTunnel(
   const carrying = Date.now() + timeoutMs
   while (Date.now() < carrying) {
     try {
-      const r = await fetch(`https://${host}/health`, { signal: AbortSignal.timeout(10_000) })
-      if (r.ok) return { url: found[0], host, subdomain: found[1], pid: child.pid! }
+      const ok = o.probe ? await o.probe(host) : (await fetch(`https://${host}/health`, { signal: AbortSignal.timeout(10_000) })).ok
+      if (ok) return { url: found[0], host, subdomain: found[1], pid: child.pid! }
     } catch {}
     await new Promise((r) => setTimeout(r, 1500))
   }

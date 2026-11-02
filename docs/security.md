@@ -285,6 +285,71 @@ counts as done only once the ref holds exactly what was written, and every
 sync compares the ref with what this replica would write, so a lost race or a
 dropped commit is written again.
 
+## Sharing a running server
+
+`crosstalk_share` lets named people reach one of your local servers through
+the sealed peer channel (`src/share/`, [urls.md](urls.md#5-sharing-a-running-server)).
+What it rests on, and what it costs:
+
+- **Only the people named, as they are now.** A share holds each person's
+  channel fingerprint, from an exact crosstalk name: never a prefix, never an
+  agent, never someone muted or at `mute`, never someone you only share a room
+  with. Every frame is checked against the share when it arrives, so muting
+  someone, or taking them out, cuts them off mid-request; a name later given to
+  a different key gets nothing. A person trusted through a repository is
+  included on each of their machines (the same person, pinned the same way).
+- **One server, nothing else here.** A frame names a share and a stream. The
+  owner's daemon decides where it goes, 127.0.0.1 or ::1 on that share's port,
+  and never takes a host, a port or an absolute URL from a frame; CONNECT and
+  TRACE are refused, and crosstalk's own proxy (through which a Host header
+  would reach every service) can be neither shared nor forwarded to. No other
+  port on the owner's machine is reachable, which `test/share.sh` checks with a
+  second server running beside the shared one.
+- **The viewer acts as themselves.** Cookies and Authorization headers pass
+  through, both ways, so the viewer logs in to your dev server as they would
+  on a deployed one, and your server sees their requests, marked
+  `x-crosstalk-viewer: <who>` (a viewer's own `x-crosstalk-*` headers are taken
+  out). Whatever your dev server lets a logged-in user do, the viewer can do.
+  It is your server's code, running with your environment and your local
+  secrets: share it only with people you would hand your laptop to for that
+  page.
+- **Frames cannot be played back.** Each stream's frames are numbered and taken
+  only in order; a stream id opens once; a frame more than two minutes old is
+  dropped. An offer or revocation is taken once and only fresh, and an offer
+  for a share that already ended here is never taken again, so a relay that
+  keeps copies cannot re-open what was stopped.
+- **Nothing opens by itself.** The viewer gets a card (Open it, Not now,
+  Stop it) or a digest line. In the viewer agent's `crosstalk_urls` the share is
+  data inside `<crosstalk-urls>`, its label cut to plain text, so a label
+  cannot pass for an instruction; the agent may test against it, as it may
+  against any local URL.
+- **The viewer's listener is loopback-only.** It listens on 127.0.0.1 and
+  answers only `*.localhost`, `localhost`, `127.0.0.1` and `[::1]` Host names,
+  so a web page that points its own domain at 127.0.0.1 (DNS rebinding) gets
+  a 421. Any local process on the viewer's machine can use the share while it
+  lasts, as it can any local server there.
+- **Bounded.** Request and response sizes, websocket messages, streams at once
+  and frames a second are capped on the owner's side, whatever the viewer
+  sends (429 beyond the budget); the relay gives live frames a budget of its
+  own and never buffers them for someone offline.
+- **Expiry and revocation.** Eight hours by default, a week at most. Both
+  sides end a share at its expiry by themselves, so a viewer whose relay link
+  dropped still loses it on time; `crosstalk_unshare` ends it at once.
+- **What the relay sees.** Sealed frames between two fingerprints, their sizes
+  and timing, as with messages: a busy share is visible as traffic, never its
+  content, URL or headers.
+- **Who can start one.** Any session on your machine, through the MCP tool,
+  as for every crosstalk tool. Its description limits it to the person's own
+  request, the people must already be trusted, and the share shows in your
+  pane and theirs. An agent talked into sharing can reach only people you
+  already trust, and only until you say stop.
+- **Public links are the exception, and loud.** `public: true`, only when the
+  person asks for a public link in so many words, runs the existing
+  cloudflared quick tunnel (never downloaded) to that one server: anyone with
+  the URL reaches it with no crosstalk check, and Cloudflare sees the traffic.
+  It warns so, lasts an hour by default and eight at most, and dies with the
+  daemon.
+
 ## Local measurements
 
 `crosstalk_stats` and the weekly digest line are computed from

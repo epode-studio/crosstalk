@@ -61,6 +61,7 @@ import { createSessionOps } from "./sessions/daemon.ts"
 // Registers crosstalk services with the session manager (setServices), for close here.
 import "./services/service.ts"
 import { createUrls } from "./urls/daemon.ts"
+import { createShares } from "./share/daemon.ts"
 
 const identity = loadIdentity()
 if (!identity) {
@@ -168,6 +169,7 @@ let coord: Coordinator
 let attention: AttentionService | undefined
 /** Rename, move, and your sessions on your other machines (src/sessions/). */
 let sessionOps: ReturnType<typeof createSessionOps> | undefined
+let shares: ReturnType<typeof createShares> | undefined
 
 const threads = new ThreadService({
   tiebreak: (sid, cands, mode) => attention?.tiebreak(sid, cands, mode),
@@ -645,6 +647,8 @@ let channel: Channel | null = null
 // A hosted relay is always wss, and TLS already hides the metadata that the
 // custom link layer exists to hide, so that handshake is skipped there.
 let workerMode = false
+/** The relay said it carries live `stream` frames (relay/relay.ts), which sharing a server uses. */
+let relayStreams = false
 let backoff = 1000
 const pendingAsks = new Map<string, { peer: string; resolve: (answer: Envelope) => void }>()
 
@@ -731,6 +735,7 @@ function connect() {
       }
       backoff = 1000
       lastHeard = Date.now()
+      relayStreams = !!(f as any).streams
       log(`relay ready as ${f.fingerprint}`)
       flushOutbox()
       publishPresence()
@@ -911,6 +916,8 @@ function onEnvelope(
   // Names the sender chose (session, thread, room) are cut to a short plain
   // charset before anything reads them: they end up in notices, tags and cards.
   cleanEnvelope(env)
+  // A shared server's offers and HTTP frames (src/share/): replay rules of their own, direct channels only.
+  if (shares?.accept(peerLabel, env, !!ctx?.room)) return
   // A parked envelope is re-run through here once a session registers, so the
   // duplicate check has to skip that path and only record an id once the
   // message is actually held.
@@ -2249,6 +2256,8 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         if (c) return c
         const x = await extras.uiAct(before, value)
         if (x) return x
+        const sh = await shares?.uiAct(before, value)
+        if (sh) return sh
       }
 
       if (before.kind === "team") {
@@ -2575,6 +2584,9 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       // Rename, move, and your sessions on your other machines.
       const so = await sessionOps?.handle(req)
       if (so !== undefined) return so
+      // A running server shared with a teammate (src/share/).
+      const sh = await shares?.handle(req)
+      if (sh !== undefined) return sh
       return { ok: false, error: `unknown op "${req.op}"` }
     }
   }
@@ -2655,6 +2667,22 @@ sessionOps = createSessionOps({
   listLocal: () => coord.sessionsList(),
   modLive: (sid) => modLive(sessions.get(sid)),
   handle: (req) => handle(req as Req) as Promise<any>,
+})
+// A running server shared with a teammate, over the sealed channel (src/share/).
+shares = createShares({
+  me: () => ({ label: identity!.label, fingerprint: myFingerprint() }),
+  peers: () => loadPeers(),
+  send: (label, env) => sendEnvelope(label, env),
+  stream: (label, env) => {
+    const peer = loadPeers()[label]
+    if (!peer) return false
+    return relaySend({ t: !workerMode && relayStreams ? "stream" : "send", to: peer.fingerprint, id: env.id, body: seal(channelKey(identity!, peer), JSON.stringify(env)) })
+  },
+  mode: () => (workerMode ? "worker" : relayStreams ? "stream" : "send"),
+  log,
+  fallbackSession: () => coord.mainId() ?? mostRecentSession()?.sessionId,
+  modLive: (sid) => modLive(sessions.get(sid)),
+  note: (id, text) => coord.note({ id, text }),
 })
 setInterval(() => attention?.tick(), Math.max(200, Number(process.env.CROSSTALK_ATTENTION_TICK_MS ?? 15_000)))
 

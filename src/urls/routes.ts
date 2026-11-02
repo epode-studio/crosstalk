@@ -10,7 +10,8 @@
 // The main service is the one named web, dev, app, frontend, site, ui or
 // server, else the one started first.
 
-export type Target = { group: string; service: string; port: number; root?: string; startedAt?: number }
+/** `shared`: a teammate's server shared with this machine (src/share/): only `<service>.<group>`, after every local name. */
+export type Target = { group: string; service: string; port: number; root?: string; startedAt?: number; shared?: boolean }
 export type Route = { host: string; port: number; group: string; service: string; root?: string; main: boolean }
 export type Table = { routes: Route[]; byHost: Map<string, Route> }
 
@@ -25,7 +26,8 @@ export const label = (s: string) =>
     .slice(0, 63)
     .replace(/-+$/, "")
 
-export function buildTable(targets: Target[]): Table {
+export function buildTable(all: Target[]): Table {
+  const targets = all.filter((t) => !t.shared)
   const groups = new Map<string, Target[]>()
   for (const t of targets) {
     const g = label(t.group)
@@ -55,6 +57,13 @@ export function buildTable(targets: Target[]): Table {
   const owners = new Map<string, Target[]>()
   for (const ts of groups.values()) for (const t of ts) owners.set(t.service, [...(owners.get(t.service) ?? []), t])
   for (const [s, ts] of owners) if (ts.length === 1 && !groups.has(s)) put({ host: s, port: ts[0].port, group: ts[0].group, service: s, root: ts[0].root, main: mains.get(ts[0].group) === ts[0] })
+  // Shared with this machine: `auth.paul`, never shadowing a local name.
+  for (const t of all) {
+    if (!t.shared) continue
+    const g = label(t.group)
+    const s = label(t.service)
+    if (g && s && t.port > 0 && t.port < 65536) put({ host: `${s}.${g}`, port: t.port, group: g, service: s, main: false })
+  }
   return { routes, byHost }
 }
 
