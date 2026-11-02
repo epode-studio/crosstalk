@@ -43,7 +43,7 @@ id=\${STUB_ID:-none}
 [ "\$1" = "--resume" ] && id=\$2
 reg="\$HOME/.claude/sessions/\$\$.json"
 printf '%s|%s|%s\n' "\$(pwd)" "\$*" "\$(tty)" >>"$TMP/calls"
-printf '{"pid":%s,"sessionId":"%s","cwd":"%s","status":"%s","kind":"interactive"}' \$\$ "\$id" "\$(pwd)" "\${STUB_STATUS:-idle}" >"\$reg"
+printf '{"pid":%s,"sessionId":"%s","cwd":"%s","status":"%s","kind":"interactive","startedAt":%s000}' \$\$ "\$id" "\$(pwd)" "\${STUB_STATUS:-idle}" "\$(date +%s)" >"\$reg"
 trap 'echo "\$id TERM" >>"$TMP/signals"; rm -f "\$reg"; exit 0' TERM
 trap 'echo "\$id INT" >>"$TMP/signals"; rm -f "\$reg"; exit 0' INT
 if [ "\$1" = "--resume" ]; then

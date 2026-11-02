@@ -36,7 +36,6 @@ import * as R from "../restore.ts"
 import type { Rec } from "../restore.ts"
 import * as M from "../threads/model.ts"
 import type { ThreadService } from "../threads/service.ts"
-import type { Question } from "../rules/key.ts"
 import * as Rc from "./recap.ts"
 import * as Cx from "./context.ts"
 import * as F from "./focus.ts"
@@ -62,10 +61,6 @@ export type Deps = {
   /** Repo-relative path → when this session last touched it. */
   touched: (sessionId: string) => Record<string, number> | undefined
   repoOf: (sessionId: string) => string | undefined
-  /** A standing rule's answer to a question, if one matches (src/rules). */
-  rule: (q: Question, repo: string | undefined) => string | undefined
-  /** A person answered: recorded, so the second identical answer offers a rule. */
-  answered: (q: Question, answer: string, o: { sid?: string; repo?: string }) => void
   spawn: (o: { task: string; name: string; cwd: string; by?: string; background: boolean; thread?: { id: string; name: string } }) => { ok: boolean; text: string; agents: { name: string }[] }
   /** Sessions crosstalk runs in the background: never where a question is put. */
   background: (sessionId: string) => string | undefined
@@ -100,6 +95,15 @@ type State = {
   told: Record<string, number>
   /** Sessions whose own hook said they are a background agent (CROSSTALK_BG_AGENT). */
   bg: Record<string, string>
+  /**
+   * The standing rule about disposal: this person's, on this machine, like
+   * the disk rule. It ends their sessions, so a rule in the repo's shared
+   * RULES.md (a teammate's) never decides it.
+   */
+  disposeRule?: typeof START_FRESH
+  /** How many times "Start fresh" was answered, for offering the rule. */
+  disposeFresh?: number
+  disposeRuleOffered?: boolean
 }
 
 const empty = (now: number): State => ({
@@ -121,13 +125,15 @@ const empty = (now: number): State => ({
 
 export const START_FRESH = "Start fresh"
 export const COMPACT = "Compact as usual"
-/** The words a standing rule about disposal is keyed on (src/rules/key.ts normalises them). */
-export const DISPOSE_RULE_TEXT = "start a fresh session from the thread instead of compacting"
+export const ALWAYS_FRESH = "Always start fresh"
+export const NOT_NOW = "Not now"
+export const DISPOSE_RULE_QUESTION = "That is twice you started a session fresh. Start sessions fresh from their thread by themselves from now on, whenever their context is spent?"
 
-export const itemId = (what: "dispose" | "staff" | "perm", key: string) => `attn:${what}:${key}`
+type What = "dispose" | "staff" | "perm" | "rule"
+export const itemId = (what: What, key: string) => `attn:${what}:${key}`
 const parseId = (id: string) => {
-  const m = /^attn:(dispose|staff|perm):(.+)$/.exec(id)
-  return m ? { what: m[1] as "dispose" | "staff" | "perm", key: m[2] } : null
+  const m = /^attn:(dispose|staff|perm|rule):(.+)$/.exec(id)
+  return m ? { what: m[1] as What, key: m[2] } : null
 }
 
 type Pending = { resolve: (d: Pm.Decision | null) => void; timer: ReturnType<typeof setTimeout>; suggestions?: unknown; sessionId: string }
@@ -366,8 +372,12 @@ export class AttentionService {
 
   // --- disposable sessions ---------------------------------------------------------
 
-  private disposeQuestion(sessionId: string): Question {
-    return { kind: "question", text: DISPOSE_RULE_TEXT, repo: this.d.repoOf(sessionId) }
+  /** The person's own standing rule about disposal (off by default); "stop starting fresh by itself" undoes it. */
+  setDisposeRule(on: boolean): string {
+    this.st.disposeRule = on ? START_FRESH : undefined
+    this.st.disposeRuleOffered = true
+    this.save()
+    return on ? "◢ crosstalk: a session whose context is spent starts fresh from its thread by itself from now on." : "◢ crosstalk: you will be asked before a session starts fresh."
   }
 
   /** Whether a fresh session can start where this one is, before anything is ended. */
@@ -391,7 +401,7 @@ export class AttentionService {
   async spent(sessionId: string, percent: number | undefined, why: "context" | "precompact"): Promise<boolean> {
     const can = this.canRestart(sessionId)
     if ("why" in can) return false
-    const rule = this.d.rule(this.disposeQuestion(sessionId), this.d.repoOf(sessionId))
+    const rule = this.st.disposeRule
     if (rule === START_FRESH) {
       this.d.log(`attention: a standing rule starts ${this.nameOf(sessionId)} fresh (${why})`)
       setTimeout(() => void this.dispose(sessionId, { rule: true }), why === "precompact" ? 300 : 0)
@@ -549,7 +559,7 @@ export class AttentionService {
     const to = this.target()
     if (!to) return Promise.resolve({ ok: true, decision: null })
     const threads = this.d.threads.namesFor(sessionId)
-    this.put({ id, sessionId: to, from: agent, thread: threads[0] ?? agent, question: Pm.question(agent, o.tool, o.input), options: Pm.OPTIONS })
+    this.put({ id, sessionId: to, from: agent, thread: threads[0] ?? agent, question: Pm.question(agent, o.tool, o.input), options: Pm.optionsFor(o.tool, o.input) })
     void this.alert({ key: id, asker: sessionId, askerName: agent, thread: threads[0] ?? agent, blocking: true, count: 1 })
     this.d.log(`attention: ${agent} asks to use ${o.tool}; asked in ${this.nameOf(to)}`)
     return new Promise((resolve) => {
@@ -628,8 +638,17 @@ export class AttentionService {
     if (!p) return { ok: false, error: `not an attention question: ${id}` }
     if (action === "raised" || action === "later") return ui.withStore((items, now) => ui.act(items, id, action as ui.UiAction, now))
     const v = (value ?? "").trim()
-    const answer = action === "mute" ? (p.what === "perm" ? Pm.DENY : p.what === "dispose" ? COMPACT : St.NOT_NOW) : v
+    const answer = action === "mute" ? (p.what === "perm" ? Pm.DENY : p.what === "dispose" ? COMPACT : p.what === "rule" ? NOT_NOW : St.NOT_NOW) : v
     if (!answer) return { ok: false, error: "an attention question is answered with one of its options" }
+    const item = ui.snapshot()[id]
+    // One of its own options, word for word: "Deny for this session" is not "Allow for this session".
+    if (action !== "mute" && item?.options && !item.options.includes(answer))
+      return { ok: false, error: `answer with one of: ${item.options.join(" / ")}`, item }
+    if (p.what === "perm" && item && answer !== Pm.DENY) {
+      // Only the session it was put to allows it, and never the agent asking (a deny may come from anywhere).
+      const asker = this.pending.get(id)?.sessionId
+      if (sessionId !== item.sessionId || (asker && sessionId === asker)) return { ok: false, error: "that permission request was asked in another session", item }
+    }
     const claim = ui.withStore((items, now) => ui.act(items, id, "answer", now, answer))
     if (!claim.ok) return claim
     if (p.what === "perm") {
@@ -642,12 +661,20 @@ export class AttentionService {
       return { ok: true, item: claim.item, text: `◢ crosstalk: ${decision.behavior === "allow" ? "allowed" : "denied"} ${claim.item.from ?? "the agent"}'s request.` }
     }
     if (p.what === "dispose") {
-      this.d.answered(this.disposeQuestion(p.key), answer === START_FRESH ? START_FRESH : COMPACT, { sid: sessionId, repo: this.d.repoOf(p.key) })
+      if (answer === START_FRESH) {
+        this.st.disposeFresh = (this.st.disposeFresh ?? 0) + 1
+        if (this.st.disposeFresh >= 2 && !this.st.disposeRuleOffered && !this.st.disposeRule) {
+          this.st.disposeRuleOffered = true
+          this.put({ id: itemId("rule", `dispose-${this.now()}`), sessionId, question: DISPOSE_RULE_QUESTION, options: [ALWAYS_FRESH, NOT_NOW] })
+        }
+        this.save()
+      }
       if (answer !== START_FRESH) return { ok: true, item: claim.item, text: `◢ crosstalk: ${this.nameOf(p.key)} compacts as usual.` }
       const r = await this.dispose(p.key)
       if (!r.ok) ui.withStore((items, now) => ui.reopen(items, id, now))
       return { ...r, item: claim.item }
     }
+    if (p.what === "rule") return { ok: true, item: claim.item, text: this.setDisposeRule(answer === ALWAYS_FRESH) }
     // staff
     if (answer !== St.ADD) return { ok: true, item: claim.item, text: "◢ crosstalk: no second agent. You will be asked again only if it gets stuck again." }
     const threadId = p.key.split(":")[0]
@@ -714,6 +741,8 @@ export class AttentionService {
         return this.act(sid, String(req.id ?? ""), String(req.action ?? "answer"), req.value === undefined ? undefined : String(req.value))
       case "attn_focus":
         return { ok: true, focus: this.focused(), target: this.target(), away: this.away() }
+      case "attn_dispose_rule":
+        return { ok: true, text: this.setDisposeRule(req.on === true) }
       case "attn_dispose":
         return this.dispose(String(req.session ?? sid))
       case "attn_tick":

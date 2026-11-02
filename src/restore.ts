@@ -24,6 +24,7 @@ import { P } from "./config.ts"
 import { rootFrom, shim } from "./paths.ts"
 import { repoKey } from "./terminal/repo.ts"
 import { refuseBot } from "./ui-extra/bots.ts"
+import { sessionsDir } from "./registry.ts"
 
 // --- records -------------------------------------------------------------------
 
@@ -241,6 +242,24 @@ export function pidAlive(pid: number, pidStart?: string): boolean {
 
 export const recAlive = (r: Rec) => pidAlive(r.pid, r.pidStart)
 
+/**
+ * For deciding whether to signal a process: "same" only when it is there and
+ * its start time is known to match. pidAlive fails open (a ps that fails or
+ * times out counts as the same process), which is right for "is it still
+ * open" but never for a kill: here that is "unknown", and nothing is sent.
+ */
+export function pidState(pid: number, pidStart?: string): "same" | "gone" | "unknown" {
+  if (!pid || pid < 1) return "gone"
+  try {
+    process.kill(pid, 0)
+  } catch (e: any) {
+    if (e?.code !== "EPERM") return "gone"
+  }
+  if (!pidStart) return "unknown"
+  const now = ps(pid, "lstart")
+  return now === null ? "unknown" : now === pidStart ? "same" : "gone"
+}
+
 export const SHELL = /^-?(sh|bash|zsh|dash|fish|ksh|tcsh|csh)$/
 
 /**
@@ -249,7 +268,7 @@ export const SHELL = /^-?(sh|bash|zsh|dash|fish|ksh|tcsh|csh)$/
  */
 export function sessionPid(sessionId: string): number {
   try {
-    const reg = path.join(os.homedir(), ".claude", "sessions")
+    const reg = sessionsDir()
     for (const f of fs.readdirSync(reg)) {
       if (!f.endsWith(".json")) continue
       try {
@@ -547,10 +566,7 @@ export function appleIntoWindowScript(cmds: string[], window: number, tabs: bool
     L.push(
       `if crosstalkFallback is "" and ${tabs ? "true" : "false"} then`,
       `\ttry`,
-      `\t\tdelay 0.3`,
-      `\t\ttell application "System Events" to keystroke "t" using command down`,
-      `\t\tdelay 0.6`,
-      `\t\ttell application "Terminal" to do script ${asq(c)} in selected tab of front window`,
+      ...appleNewTabLines(c),
       `\ton error errMsg number errNum`,
       `\t\tset crosstalkFallback to (errNum as text)`,
       `\t\ttell application "Terminal" to do script ${asq(c)}`,
@@ -627,6 +643,33 @@ const groupBy = <T>(xs: T[], key: (x: T) => string) => {
 const num = (n: number | undefined) => (n === undefined || Number.isNaN(n) ? Infinity : n)
 
 /**
+ * Cmd-T in Terminal.app, then the command in the tab it opened. Cmd-T goes to
+ * whatever is in front, so it is sent only while Terminal is, and the command
+ * is typed only once the front window has one tab more and its selected tab
+ * shows a new tty: otherwise focus moved, and typing "in selected tab" could
+ * land in a tab that is already running something (another claude). Then it
+ * gets a window of its own instead (`do script` alone), and the script
+ * reports why.
+ */
+export function appleNewTabLines(c: string): string[] {
+  return [
+    `\t\tdelay 0.3`,
+    `\t\ttell application "Terminal"`,
+    `\t\t\tif not frontmost then error "Terminal is not in front" number 1001`,
+    `\t\t\tset crosstalkWin to id of front window`,
+    `\t\t\tset crosstalkTabs to count of tabs of front window`,
+    `\t\t\tset crosstalkTty to tty of selected tab of front window`,
+    `\t\tend tell`,
+    `\t\ttell application "System Events" to keystroke "t" using command down`,
+    `\t\tdelay 0.6`,
+    `\t\ttell application "Terminal"`,
+    `\t\t\tif (id of front window) is not crosstalkWin or (count of tabs of front window) is not (crosstalkTabs + 1) or (tty of selected tab of front window) is crosstalkTty then error "the new tab did not open where expected" number 1001`,
+    `\t\t\tdo script ${asq(c)} in selected tab of front window`,
+    `\t\tend tell`,
+  ]
+}
+
+/**
  * Terminal.app, one window. The first session opens the window; each next one
  * is a new tab (Cmd-T through System Events, the only way Terminal opens a tab
  * from a script) running its command. If System Events refuses, that and every
@@ -643,10 +686,7 @@ export function appleTerminalScript(cmds: string[], tabs: boolean): string {
     L.push(
       `if crosstalkFallback is "" then`,
       `\ttry`,
-      `\t\tdelay 0.3`,
-      `\t\ttell application "System Events" to keystroke "t" using command down`,
-      `\t\tdelay 0.6`,
-      `\t\ttell application "Terminal" to do script ${asq(c)} in selected tab of front window`,
+      ...appleNewTabLines(c),
       `\ton error errMsg number errNum`,
       `\t\tset crosstalkFallback to (errNum as text)`,
       `\t\ttell application "Terminal" to do script ${asq(c)}`,
@@ -1106,6 +1146,9 @@ export type RunOpts = {
   peer?: string
 }
 
+/** Tabs only when a person just asked: an unattended restore opens a window per session. */
+export const tabsFor = (o: Pick<RunOpts, "tabs" | "userAction">): boolean => (o.userAction ? (o.tabs ?? true) : false)
+
 function runStep(s: Step): { ok: boolean; out: string } {
   const r = spawnSync(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 60_000 })
   return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() }
@@ -1126,7 +1169,11 @@ export function restore(o: RunOpts, only?: Rec[]): Outcome {
   if (!lost.length) return { ok: true, text: "◢ crosstalk: nothing to restore.", lost, restored: [] }
   claimPending() // anything waiting in the background is superseded by this
 
-  const e = liveEnv(env, o.tabs ?? true)
+  // Unattended (a background waiter, minutes or hours after the yes): one
+  // window per session through `do script`, never keystrokes through System
+  // Events, which go to whatever app is in front by then. Ghostty, which has
+  // no other way, is left to the person.
+  const e = liveEnv(env, tabsFor(o))
   let { plans, skipped } = plan(lost, e)
   const app = appName(e.current)
   const notes: string[] = []
@@ -1182,10 +1229,13 @@ export function restore(o: RunOpts, only?: Rec[]): Outcome {
     if (ok && fellBack) {
       // The script opened every session, but as separate windows from the
       // point System Events refused.
-      missing = classifyOsaError(fellBack[1]) ?? "automation"
-      notes.push(
-        `Opened ${p.sessions.length} in ${app} as separate windows: ${app} ${missing === "accessibility" ? "may not type keys (Accessibility)" : "may not control System Events (Automation)"}.`,
-      )
+      if (fellBack[1] === "1001") notes.push(`Opened ${p.sessions.length} in ${app} as separate windows: ${app} was not in front, or a new tab did not open where expected, so nothing was typed into an existing tab.`)
+      else {
+        missing = classifyOsaError(fellBack[1]) ?? "automation"
+        notes.push(
+          `Opened ${p.sessions.length} in ${app} as separate windows: ${app} ${missing === "accessibility" ? "may not type keys (Accessibility)" : "may not control System Events (Automation)"}.`,
+        )
+      }
     } else if (ok && p.needsAccessibility) saveState({ ...loadState(), tabsWorked: Date.now() })
     if (ok) restored.push(...p.sessions)
     else {

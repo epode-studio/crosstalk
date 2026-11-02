@@ -113,10 +113,23 @@ async function watch(session: string, interval: number) {
   }
 }
 
+/**
+ * The restore offer's answer: its options word for word ("Restore", "Open as
+ * windows"); anything else, "nope", "not yet", "don't", is not now.
+ */
+export function restoreWant(action: string, value: string | undefined): "yes" | "windows" | "no" {
+  const v = (value ?? "").trim()
+  if (action !== "answer") return "no"
+  return v === "Restore" ? "yes" : v === "Open as windows" ? "windows" : "no"
+}
+
+/** The gather offer's answer: only its own yes, word for word, brings them in. */
+export const gatherYes = (action: string, value: string | undefined) => action === "answer" && (value ?? "").trim() === ui.GATHER_OPTIONS[0]
+
 function restoreAct(session: string, id: string, action: string, value: string | undefined, root: string): Out {
   if (action === "raised" || action === "later") return ui.withStore((items, now) => ui.act(items, id, action, now))
   const v = (value ?? "").trim()
-  const want = action === "mute" || /^(not now|no|never|later)\b/i.test(v) ? "no" : /window/i.test(v) ? "windows" : "yes"
+  const want = restoreWant(action, value)
   const claim = ui.withStore((items, now) => ui.act(items, id, "answer", now, v || want))
   if (!claim.ok) return claim
   // Not now forgets nothing: "restore them" still brings them back.
@@ -128,7 +141,7 @@ function restoreAct(session: string, id: string, action: string, value: string |
 function gatherAct(session: string, id: string, action: string, value: string | undefined, root: string): Out {
   if (action === "raised" || action === "later") return ui.withStore((items, now) => ui.act(items, id, action, now))
   const v = (value ?? "").trim()
-  const no = action === "mute" || /^(not now|no|never|later)\b/i.test(v)
+  const no = !gatherYes(action, value)
   const claim = ui.withStore((items, now) => ui.act(items, id, "answer", now, v || (no ? "Not now" : "Bring them in")))
   if (!claim.ok) return claim
   if (no) return { ok: true, item: claim.item, text: `Left them as they are. Say "bring my other sessions into crosstalk" any time.` }

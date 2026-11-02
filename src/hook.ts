@@ -510,7 +510,8 @@ async function threadsSay(): Promise<string | undefined> {
   if (restoreClient !== "claude" || !/^(SessionStart|UserPromptSubmit)$/.test(eventName)) return undefined
   const r = await request({ op: "threads", sessionId, cwd, consume: true, mod: ui.modActive(sessionId!) }, 4000).catch(() => null)
   if (!r?.ok) return undefined
-  if (r.title) sessionTitle = r.title
+  // Same strip as src/terminal/hook.ts titleOf: a thread name can come from a peer.
+  if (r.title) sessionTitle = String(r.title).replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
   const say: string[] = []
   if (r.banner?.length) say.push(`◢ crosstalk: joined ${r.banner.join(", ")}`)
   for (const n of r.notes ?? []) say.push(n)

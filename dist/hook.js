@@ -2,7 +2,7 @@
 // @bun
 
 // src/hook.ts
-import path22 from "path";
+import path23 from "path";
 import fs18 from "fs";
 
 // src/client.ts
@@ -285,8 +285,8 @@ function pathsFromToolInput(input) {
 
 // src/restore.ts
 import fs4 from "node:fs";
-import os4 from "node:os";
-import path7 from "node:path";
+import os5 from "node:os";
+import path8 from "node:path";
 import { spawn as spawn2, spawnSync as spawnSync2 } from "node:child_process";
 
 // src/terminal/repo.ts
@@ -358,10 +358,17 @@ function refuseBot(peer, what, peers) {
   return `Refused: ${peer.split("/")[0]} is an agent, and an agent can post to threads but never ${what}.`;
 }
 
+// src/registry.ts
+import os4 from "node:os";
+import path7 from "node:path";
+var claudeConfigDir2 = (env = process.env) => env.CLAUDE_CONFIG_DIR || path7.join(os4.homedir(), ".claude");
+var sessionsDir2 = (env = process.env) => path7.join(claudeConfigDir2(env), "sessions");
+var SESSIONS2 = sessionsDir2();
+
 // src/restore.ts
-var dir = () => path7.join(P.root, "open");
+var dir = () => path8.join(P.root, "open");
 var safe = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
-var fileOf = (id) => path7.join(dir(), `${safe(id)}.json`);
+var fileOf = (id) => path8.join(dir(), `${safe(id)}.json`);
 function readAll() {
   let names;
   try {
@@ -372,7 +379,7 @@ function readAll() {
   const out = [];
   for (const f of names) {
     try {
-      const r = JSON.parse(fs4.readFileSync(path7.join(dir(), f), "utf8"));
+      const r = JSON.parse(fs4.readFileSync(path8.join(dir(), f), "utf8"));
       if (r && typeof r.sessionId === "string")
         out.push(r);
     } catch {}
@@ -402,7 +409,7 @@ function prune(now = Date.now()) {
     if (r.endedAt && now - r.endedAt > DAY || !r.endedAt && now - r.seenAt > 7 * DAY && !recAlive(r))
       removeRec(r.sessionId);
 }
-var stateFile = () => path7.join(P.root, "restore-state.json");
+var stateFile = () => path8.join(P.root, "restore-state.json");
 function loadState() {
   try {
     return JSON.parse(fs4.readFileSync(stateFile(), "utf8"));
@@ -422,7 +429,7 @@ function bootTime(env = process.env, now = Date.now()) {
   const forced = Number(env.CROSSTALK_BOOT_TIME);
   if (forced > 0)
     return forced;
-  return now - os4.uptime() * 1000;
+  return now - os5.uptime() * 1000;
 }
 function endedNormally(r, all, boot) {
   if (!r.endedAt)
@@ -481,12 +488,12 @@ var recAlive = (r) => pidAlive(r.pid, r.pidStart);
 var SHELL = /^-?(sh|bash|zsh|dash|fish|ksh|tcsh|csh)$/;
 function sessionPid(sessionId) {
   try {
-    const reg = path7.join(os4.homedir(), ".claude", "sessions");
+    const reg = sessionsDir2();
     for (const f of fs4.readdirSync(reg)) {
       if (!f.endsWith(".json"))
         continue;
       try {
-        const e = JSON.parse(fs4.readFileSync(path7.join(reg, f), "utf8"));
+        const e = JSON.parse(fs4.readFileSync(path8.join(reg, f), "utf8"));
         if (e.sessionId === sessionId && Number(e.pid) > 0)
           return Number(e.pid);
       } catch {}
@@ -495,7 +502,7 @@ function sessionPid(sessionId) {
   let pid = process.ppid;
   for (let i = 0;i < 4; i++) {
     const comm = ps(pid, "comm");
-    if (!comm || !SHELL.test(path7.basename(comm)))
+    if (!comm || !SHELL.test(path8.basename(comm)))
       break;
     const up = Number(ps(pid, "ppid"));
     if (!up || up <= 1)
@@ -604,7 +611,7 @@ function appName(t) {
   }
 }
 var CROSSTALK_TMUX = "crosstalk";
-var isCrosstalkSocket = (s) => !!s && path7.basename(s) === CROSSTALK_TMUX;
+var isCrosstalkSocket = (s) => !!s && path8.basename(s) === CROSSTALK_TMUX;
 function anchorFor(repo, o) {
   if (o.asking && kindOf(o.asking.terminal) && o.keyOf(o.asking.cwd) === repo)
     return o.asking.terminal;
@@ -697,7 +704,7 @@ function appleIntoWindowScript(cmds, window, tabs) {
     `end tell`
   ];
   for (const c of cmds)
-    L.push(`if crosstalkFallback is "" and ${tabs ? "true" : "false"} then`, `	try`, `		delay 0.3`, `		tell application "System Events" to keystroke "t" using command down`, `		delay 0.6`, `		tell application "Terminal" to do script ${asq(c)} in selected tab of front window`, `	on error errMsg number errNum`, `		set crosstalkFallback to (errNum as text)`, `		tell application "Terminal" to do script ${asq(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq(c)}`, `end if`);
+    L.push(`if crosstalkFallback is "" and ${tabs ? "true" : "false"} then`, `	try`, ...appleNewTabLines(c), `	on error errMsg number errNum`, `		set crosstalkFallback to (errNum as text)`, `		tell application "Terminal" to do script ${asq(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq(c)}`, `end if`);
   L.push(`if crosstalkFallback is "gone" then set crosstalkFallback to ""`, `return "done " & crosstalkFallback`);
   return L.join(`
 `);
@@ -747,6 +754,23 @@ var groupBy = (xs, key) => {
   return m;
 };
 var num = (n) => n === undefined || Number.isNaN(n) ? Infinity : n;
+function appleNewTabLines(c) {
+  return [
+    `		delay 0.3`,
+    `		tell application "Terminal"`,
+    `			if not frontmost then error "Terminal is not in front" number 1001`,
+    `			set crosstalkWin to id of front window`,
+    `			set crosstalkTabs to count of tabs of front window`,
+    `			set crosstalkTty to tty of selected tab of front window`,
+    `		end tell`,
+    `		tell application "System Events" to keystroke "t" using command down`,
+    `		delay 0.6`,
+    `		tell application "Terminal"`,
+    `			if (id of front window) is not crosstalkWin or (count of tabs of front window) is not (crosstalkTabs + 1) or (tty of selected tab of front window) is crosstalkTty then error "the new tab did not open where expected" number 1001`,
+    `			do script ${asq(c)} in selected tab of front window`,
+    `		end tell`
+  ];
+}
 function appleTerminalScript(cmds, tabs) {
   const L = [`set crosstalkFallback to ""`, `tell application "Terminal"`, `	activate`, `	do script ${asq(cmds[0])}`, `end tell`];
   for (const c of cmds.slice(1)) {
@@ -754,7 +778,7 @@ function appleTerminalScript(cmds, tabs) {
       L.push(`tell application "Terminal" to do script ${asq(c)}`);
       continue;
     }
-    L.push(`if crosstalkFallback is "" then`, `	try`, `		delay 0.3`, `		tell application "System Events" to keystroke "t" using command down`, `		delay 0.6`, `		tell application "Terminal" to do script ${asq(c)} in selected tab of front window`, `	on error errMsg number errNum`, `		set crosstalkFallback to (errNum as text)`, `		tell application "Terminal" to do script ${asq(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq(c)}`, `end if`);
+    L.push(`if crosstalkFallback is "" then`, `	try`, ...appleNewTabLines(c), `	on error errMsg number errNum`, `		set crosstalkFallback to (errNum as text)`, `		tell application "Terminal" to do script ${asq(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq(c)}`, `end if`);
   }
   L.push(`return "done " & crosstalkFallback`);
   return L.join(`
@@ -934,10 +958,10 @@ function openSettings(pane) {
   spawnSync2("open", [SETTINGS_URL[pane]], { timeout: 5000 });
 }
 function which(bin) {
-  for (const d of (process.env.PATH ?? "").split(path7.delimiter)) {
+  for (const d of (process.env.PATH ?? "").split(path8.delimiter)) {
     if (!d)
       continue;
-    const p = path7.join(d, bin);
+    const p = path8.join(d, bin);
     try {
       fs4.accessSync(p, fs4.constants.X_OK);
       return p;
@@ -980,9 +1004,9 @@ function noteThread(sessionId, thread) {
   const { thread: _old, ...rest } = r;
   writeRec(thread ? { ...rest, thread } : rest);
 }
-var label = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path7.basename(r.cwd) || r.sessionId.slice(0, 8);
+var label = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path8.basename(r.cwd) || r.sessionId.slice(0, 8);
 var names = (rs, max = 4) => rs.slice(0, max).map(label).join(", ") + (rs.length > max ? ", \u2026" : "");
-var commandsFile = () => path7.join(P.root, "restore-commands.sh");
+var commandsFile = () => path8.join(P.root, "restore-commands.sh");
 function ctxNow() {
   const now = Date.now();
   return { now, boot: bootTime(process.env, now), all: readAll(), alive: recAlive };
@@ -1002,7 +1026,7 @@ function askOnceOffer(self, current) {
   const lost = lostSessions(c, self);
   if (!lost.some((r) => !r.askedAt))
     return null;
-  const lock = path7.join(dir(), ".asking");
+  const lock = path8.join(dir(), ".asking");
   try {
     fs4.mkdirSync(dir(), { recursive: true, mode: 448 });
     try {
@@ -1046,7 +1070,7 @@ function forget(self) {
     restored: []
   };
 }
-var pendingFile = () => path7.join(P.root, "restore-pending.json");
+var pendingFile = () => path8.join(P.root, "restore-pending.json");
 function claimPending() {
   const mine = `${pendingFile()}.${process.pid}`;
   try {
@@ -1064,6 +1088,7 @@ function claimPending() {
     } catch {}
   }
 }
+var tabsFor = (o) => o.userAction ? o.tabs ?? true : false;
 function runStep(s) {
   const r = spawnSync2(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 60000 });
   return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
@@ -1077,7 +1102,7 @@ function restore(o, only) {
   if (!lost.length)
     return { ok: true, text: "\u25e2 crosstalk: nothing to restore.", lost, restored: [] };
   claimPending();
-  const e = liveEnv(env, o.tabs ?? true);
+  const e = liveEnv(env, tabsFor(o));
   let { plans, skipped } = plan(lost, e);
   const app = appName(e.current);
   const notes = [];
@@ -1129,8 +1154,12 @@ function restore(o, only) {
     }
     const fellBack = /done (-?\d+)/.exec(out);
     if (ok && fellBack) {
-      missing = classifyOsaError(fellBack[1]) ?? "automation";
-      notes.push(`Opened ${p.sessions.length} in ${app} as separate windows: ${app} ${missing === "accessibility" ? "may not type keys (Accessibility)" : "may not control System Events (Automation)"}.`);
+      if (fellBack[1] === "1001")
+        notes.push(`Opened ${p.sessions.length} in ${app} as separate windows: ${app} was not in front, or a new tab did not open where expected, so nothing was typed into an existing tab.`);
+      else {
+        missing = classifyOsaError(fellBack[1]) ?? "automation";
+        notes.push(`Opened ${p.sessions.length} in ${app} as separate windows: ${app} ${missing === "accessibility" ? "may not type keys (Accessibility)" : "may not control System Events (Automation)"}.`);
+      }
     } else if (ok && p.needsAccessibility)
       saveState({ ...loadState(), tabsWorked: Date.now() });
     if (ok)
@@ -1236,12 +1265,12 @@ function note(o) {
 
 // src/uistate.ts
 import fs6 from "node:fs";
-import path9 from "node:path";
+import path10 from "node:path";
 
 // src/metrics/log.ts
 import fs5 from "node:fs";
-import path8 from "node:path";
-var file = () => path8.join(process.env.CROSSTALK_HOME ?? ROOT, "metrics.jsonl");
+import path9 from "node:path";
+var file = () => path9.join(process.env.CROSSTALK_HOME ?? ROOT, "metrics.jsonl");
 var MAX_BYTES = 8 * 1024 * 1024;
 var off = () => process.env.CROSSTALK_NO_METRICS === "1";
 function record(e) {
@@ -1249,7 +1278,7 @@ function record(e) {
     return;
   try {
     const f = file();
-    fs5.mkdirSync(path8.dirname(f), { recursive: true, mode: 448 });
+    fs5.mkdirSync(path9.dirname(f), { recursive: true, mode: 448 });
     fs5.appendFileSync(f, JSON.stringify(e) + `
 `, { mode: 384 });
     const size = fs5.statSync(f).size;
@@ -1268,9 +1297,9 @@ var QUESTION_KINDS = new Set(["route", "gather", "team", "cleanup", "thread", "s
 
 // src/uistate.ts
 var FINAL = new Set(["answered", "handed", "muted"]);
-var file2 = () => path9.join(P.root, "ui.json");
-var lockDir = () => path9.join(P.root, "ui.lock");
-var markers = () => path9.join(P.root, "ui-mod");
+var file2 = () => path10.join(P.root, "ui.json");
+var lockDir = () => path10.join(P.root, "ui.lock");
+var markers = () => path10.join(P.root, "ui-mod");
 var safe2 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
 var WEEK = 7 * 24 * 60 * 60 * 1000;
 function read() {
@@ -1298,7 +1327,7 @@ class StoreBusy extends Error {
 var lockWaitMs = Number(process.env.CROSSTALK_UI_LOCK_WAIT_MS ?? 2000);
 var LOCK_MAX_AGE_MS = 1e4;
 var LOCK_UNOWNED_MS = 1000;
-var ownerFile = () => path9.join(lockDir(), "pid");
+var ownerFile = () => path10.join(lockDir(), "pid");
 var alive = (pid) => {
   try {
     process.kill(pid, 0);
@@ -1345,7 +1374,7 @@ function breakIfStale() {
   }
   const moved = (() => {
     try {
-      return Number(fs6.readFileSync(path9.join(aside, "pid"), "utf8")) || undefined;
+      return Number(fs6.readFileSync(path10.join(aside, "pid"), "utf8")) || undefined;
     } catch {
       return;
     }
@@ -1422,7 +1451,7 @@ function upsert(items, it, now) {
 var MARKER_MS = 10 * 60 * 1000;
 function modActive(sessionId, now = Date.now()) {
   try {
-    return now - fs6.statSync(path9.join(markers(), safe2(sessionId))).mtimeMs < MARKER_MS;
+    return now - fs6.statSync(path10.join(markers(), safe2(sessionId))).mtimeMs < MARKER_MS;
   } catch {
     return false;
   }
@@ -1478,18 +1507,17 @@ function storeRestore(sessionId, offer, n, when) {
 
 // src/gather.ts
 import fs8 from "node:fs";
-import os6 from "node:os";
-import path11 from "node:path";
+import path12 from "node:path";
 import { spawn as spawn4, spawnSync as spawnSync4 } from "node:child_process";
 
 // src/restore.ts
 import fs7 from "node:fs";
-import os5 from "node:os";
-import path10 from "node:path";
+import os6 from "node:os";
+import path11 from "node:path";
 import { spawn as spawn3, spawnSync as spawnSync3 } from "node:child_process";
-var dir2 = () => path10.join(P.root, "open");
+var dir2 = () => path11.join(P.root, "open");
 var safe3 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
-var fileOf2 = (id) => path10.join(dir2(), `${safe3(id)}.json`);
+var fileOf2 = (id) => path11.join(dir2(), `${safe3(id)}.json`);
 function readAll2() {
   let names;
   try {
@@ -1500,7 +1528,7 @@ function readAll2() {
   const out = [];
   for (const f of names) {
     try {
-      const r = JSON.parse(fs7.readFileSync(path10.join(dir2(), f), "utf8"));
+      const r = JSON.parse(fs7.readFileSync(path11.join(dir2(), f), "utf8"));
       if (r && typeof r.sessionId === "string")
         out.push(r);
     } catch {}
@@ -1527,7 +1555,7 @@ function bootTime2(env = process.env, now = Date.now()) {
   const forced = Number(env.CROSSTALK_BOOT_TIME);
   if (forced > 0)
     return forced;
-  return now - os5.uptime() * 1000;
+  return now - os6.uptime() * 1000;
 }
 function ps2(pid, field) {
   if (!pid || pid < 1)
@@ -1556,6 +1584,20 @@ function pidAlive2(pid, pidStart) {
   return now === null ? true : now === pidStart;
 }
 var recAlive2 = (r) => pidAlive2(r.pid, r.pidStart);
+function pidState(pid, pidStart) {
+  if (!pid || pid < 1)
+    return "gone";
+  try {
+    process.kill(pid, 0);
+  } catch (e) {
+    if (e?.code !== "EPERM")
+      return "gone";
+  }
+  if (!pidStart)
+    return "unknown";
+  const now = ps2(pid, "lstart");
+  return now === null ? "unknown" : now === pidStart ? "same" : "gone";
+}
 var appleLocateScript2 = (tty) => [
   `tell application "Terminal"`,
   `	repeat with w in windows`,
@@ -1594,7 +1636,7 @@ function kindOf2(t) {
 var REOPEN_SETTINGS_MS2 = 2 * 60 * 1000;
 
 // src/gather.ts
-var registryDir = () => path11.join(os6.homedir(), ".claude", "sessions");
+var registryDir = () => sessionsDir2();
 function readRegistry(dir = registryDir(), alive = (p) => pidAlive2(p)) {
   let files;
   try {
@@ -1605,7 +1647,7 @@ function readRegistry(dir = registryDir(), alive = (p) => pidAlive2(p)) {
   const out = [];
   for (const f of files) {
     try {
-      const e = JSON.parse(fs8.readFileSync(path11.join(dir, f), "utf8"));
+      const e = JSON.parse(fs8.readFileSync(path12.join(dir, f), "utf8"));
       const pid = Number(e.pid ?? f.slice(0, -5));
       if (!pid || typeof e.sessionId !== "string" || !e.sessionId)
         continue;
@@ -1623,6 +1665,34 @@ function readRegistry(dir = registryDir(), alive = (p) => pidAlive2(p)) {
     } catch {}
   }
   return out;
+}
+function etimeMs(etime) {
+  const m = /^\s*(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)\s*$/.exec(etime ?? "");
+  if (!m)
+    return null;
+  const [d, h, mi, se] = [m[1], m[2], m[3], m[4]].map((x) => Number(x ?? 0));
+  return (((d * 24 + h) * 60 + mi) * 60 + se) * 1000;
+}
+var START_SLACK_MS = 1e4;
+function startMatches(e, sys) {
+  if (typeof e.startedAt !== "number")
+    return false;
+  const up = etimeMs(sys.ps(e.pid, "etime"));
+  if (up === null)
+    return false;
+  return Math.abs(sys.now() - up - e.startedAt) < START_SLACK_MS;
+}
+function isClaudeArgs(args) {
+  const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length)
+    return false;
+  const base = (x) => path12.basename(x);
+  if (base(parts[0]) === "claude")
+    return true;
+  if (!/^(node|bun|deno|sh|bash|zsh)$/.test(base(parts[0])))
+    return false;
+  const script = parts.slice(1).find((a) => !a.startsWith("-"));
+  return !!script && (base(script) === "claude" || /(^|\/)@anthropic-ai\/claude-code\/cli\.m?js$/.test(script));
 }
 function registryPids(dir = registryDir()) {
   try {
@@ -1690,6 +1760,7 @@ function liveSys() {
     now: Date.now,
     ps: ps3,
     alive: pidAlive2,
+    state: pidState,
     env: procEnv,
     tmuxPanes,
     appleLocate: (tty) => {
@@ -1760,6 +1831,8 @@ function snapshot(o) {
     const pidStart = sys.ps(e.pid, "lstart") ?? undefined;
     if (!sys.alive(e.pid, pidStart))
       continue;
+    if (!startMatches(e, sys) || !isClaudeArgs(sys.ps(e.pid, "args")))
+      continue;
     const rawTty = sys.ps(e.pid, "tty");
     const tty = rawTty && !/^\?+$/.test(rawTty) ? rawTty.startsWith("/dev/") ? rawTty : `/dev/${rawTty}` : undefined;
     const same = before && before.pid === e.pid && before.pidStart === pidStart && before.terminal.tty === tty;
@@ -1805,7 +1878,7 @@ function watch(self, sys = liveSys()) {
   return recs;
 }
 var WATCH_EVERY_MS = () => Number(process.env.CROSSTALK_WATCH_EVERY_MS ?? 60000);
-var stampFile = () => path11.join(P.root, "watch-stamp");
+var stampFile = () => path12.join(P.root, "watch-stamp");
 function watchThrottled(self, now = Date.now()) {
   try {
     if (now - fs8.statSync(stampFile()).mtimeMs < WATCH_EVERY_MS())
@@ -1820,7 +1893,7 @@ function watchThrottled(self, now = Date.now()) {
     return false;
   }
 }
-var stateFile2 = () => path11.join(P.root, "gather-state.json");
+var stateFile2 = () => path12.join(P.root, "gather-state.json");
 function loadState2() {
   try {
     return JSON.parse(fs8.readFileSync(stateFile2(), "utf8"));
@@ -1836,7 +1909,7 @@ function saveState2(s) {
 }
 var sleepSync2 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 function locked(fn) {
-  const lock = path11.join(P.root, "gather.lock");
+  const lock = path12.join(P.root, "gather.lock");
   fs8.mkdirSync(P.root, { recursive: true, mode: 448 });
   let held = false;
   for (let i = 0;i < 100 && !held; i++) {
@@ -1890,7 +1963,7 @@ function offerFor(cands, state) {
     text: `\u25e2 crosstalk: ${offerQuestion(n)} (${names.join(", ")}) Say "bring them in" to do it.`
   };
 }
-var label2 = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path11.basename(r.cwd) || r.sessionId.slice(0, 8);
+var label2 = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path12.basename(r.cwd) || r.sessionId.slice(0, 8);
 function offerOnce(self) {
   const cands = candidates(readAll2(), { self, selfPids: ancestors(), alive: recAlive2 });
   if (!offerFor(cands, loadState2()))
@@ -1920,7 +1993,7 @@ function takeNote(session, id) {
 
 // src/terminal/status.ts
 import fs9 from "node:fs";
-import path12 from "node:path";
+import path13 from "node:path";
 import { spawn as spawn5, spawnSync as spawnSync5 } from "node:child_process";
 
 // src/attention/osc7501.ts
@@ -2058,9 +2131,9 @@ function appleTint(original, state, amount = 0.25) {
   const target = COLOUR[state].map((n) => n * 257);
   return original.map((o, i) => Math.round(o + (target[i] - o) * amount));
 }
-var dir3 = () => path12.join(P.root, "tabs");
+var dir3 = () => path13.join(P.root, "tabs");
 var safe4 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
-var fileOf3 = (id) => path12.join(dir3(), `${safe4(id)}.json`);
+var fileOf3 = (id) => path13.join(dir3(), `${safe4(id)}.json`);
 function readTab(id) {
   try {
     return JSON.parse(fs9.readFileSync(fileOf3(id), "utf8"));
@@ -2256,11 +2329,11 @@ function pendingFor(sessionId, snapshot) {
 
 // src/uistate.ts
 import fs10 from "node:fs";
-import path13 from "node:path";
+import path14 from "node:path";
 var FINAL2 = new Set(["answered", "handed", "muted"]);
-var file3 = () => path13.join(P.root, "ui.json");
-var lockDir2 = () => path13.join(P.root, "ui.lock");
-var markers2 = () => path13.join(P.root, "ui-mod");
+var file3 = () => path14.join(P.root, "ui.json");
+var lockDir2 = () => path14.join(P.root, "ui.lock");
+var markers2 = () => path14.join(P.root, "ui-mod");
 var safe5 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
 var WEEK2 = 7 * 24 * 60 * 60 * 1000;
 function read2() {
@@ -2288,7 +2361,7 @@ class StoreBusy2 extends Error {
 var lockWaitMs2 = Number(process.env.CROSSTALK_UI_LOCK_WAIT_MS ?? 2000);
 var LOCK_MAX_AGE_MS2 = 1e4;
 var LOCK_UNOWNED_MS2 = 1000;
-var ownerFile2 = () => path13.join(lockDir2(), "pid");
+var ownerFile2 = () => path14.join(lockDir2(), "pid");
 var alive2 = (pid) => {
   try {
     process.kill(pid, 0);
@@ -2335,7 +2408,7 @@ function breakIfStale2() {
   }
   const moved = (() => {
     try {
-      return Number(fs10.readFileSync(path13.join(aside, "pid"), "utf8")) || undefined;
+      return Number(fs10.readFileSync(path14.join(aside, "pid"), "utf8")) || undefined;
     } catch {
       return;
     }
@@ -2415,7 +2488,7 @@ function upsert2(items, it, now) {
 var MARKER_MS2 = 10 * 60 * 1000;
 function modActive2(sessionId, now = Date.now()) {
   try {
-    return now - fs10.statSync(path13.join(markers2(), safe5(sessionId))).mtimeMs < MARKER_MS2;
+    return now - fs10.statSync(path14.join(markers2(), safe5(sessionId))).mtimeMs < MARKER_MS2;
   } catch {
     return false;
   }
@@ -2423,7 +2496,7 @@ function modActive2(sessionId, now = Date.now()) {
 
 // src/spawn.ts
 import fs11 from "node:fs";
-import path14 from "node:path";
+import path15 from "node:path";
 import { spawnSync as spawnSync6 } from "node:child_process";
 
 // src/attention/focus.ts
@@ -2509,8 +2582,8 @@ function request2(req, timeoutMs = 130000) {
 
 // src/spawn.ts
 var TMUX_SOCKET = "crosstalk";
-var dir4 = () => path14.join(P.root, "spawned");
-var fileOf4 = (id) => path14.join(dir4(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+var dir4 = () => path15.join(P.root, "spawned");
+var fileOf4 = (id) => path15.join(dir4(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
 function readSpawned() {
   let names;
   try {
@@ -2521,7 +2594,7 @@ function readSpawned() {
   const out = [];
   for (const f of names)
     try {
-      const r = JSON.parse(fs11.readFileSync(path14.join(dir4(), f), "utf8"));
+      const r = JSON.parse(fs11.readFileSync(path15.join(dir4(), f), "utf8"));
       if (r?.id && r.worktree)
         out.push(r);
     } catch {}
@@ -2534,8 +2607,8 @@ function writeSpawned(r) {
   fs11.renameSync(tmp, fileOf4(r.id));
 }
 function spawnedAt(cwd, recs = readSpawned()) {
-  const c = path14.resolve(cwd);
-  return recs.find((r) => !r.removedAt && (c === path14.resolve(r.worktree) || c.startsWith(path14.resolve(r.worktree) + path14.sep))) ?? null;
+  const c = path15.resolve(cwd);
+  return recs.find((r) => !r.removedAt && (c === path15.resolve(r.worktree) || c.startsWith(path15.resolve(r.worktree) + path15.sep))) ?? null;
 }
 var STOP = new Set("a an the on to for and of in with at by from into onto this that it its be is are please can could would you start put get run spin up fire one two three four five six seven eight more another new agent agents session sessions claude someone somebody work working".split(" "));
 var TMUX_CONF = [
@@ -2570,7 +2643,7 @@ function claim(sessionId, cwd) {
 
 // src/cleanup.ts
 import fs12 from "node:fs";
-import path15 from "node:path";
+import path16 from "node:path";
 function select(recs, p) {
   const out = [];
   for (const r of recs) {
@@ -2637,7 +2710,7 @@ function liveProbe(g = git) {
     ended: (r) => {
       if (r.background && r.tmux && tmuxHas(r.tmux))
         return false;
-      const live = readAll2().some((x) => !x.endedAt && path15.resolve(x.cwd).startsWith(path15.resolve(r.worktree)) && recAlive2(x));
+      const live = readAll2().some((x) => !x.endedAt && path16.resolve(x.cwd).startsWith(path16.resolve(r.worktree)) && recAlive2(x));
       return !live;
     }
   };
@@ -2653,7 +2726,7 @@ function offerFor2(c) {
   const question = `${n} agent worktree${n === 1 ? " is" : "s are"} done with: ${n === 1 ? "its" : "their"} work is merged and ${n === 1 ? "its session has" : "their sessions have"} ended. Remove ${n === 1 ? "it" : "them"}?`;
   return { count: n, names, question, text: `\u25e2 crosstalk: ${question} (${names.join(", ")}) Say "clean up the worktrees" to do it.` };
 }
-var stamp = () => path15.join(P.root, "cleanup-stamp");
+var stamp = () => path16.join(P.root, "cleanup-stamp");
 var CHECK_EVERY_MS = () => Number(process.env.CROSSTALK_CLEANUP_EVERY_MS ?? 10 * 60 * 1000);
 function offerOnce2(o = {}) {
   const recs = readSpawned().filter((r) => !r.removedAt);
@@ -2691,6 +2764,7 @@ function surface(sessionId, offer, mod = modActive2(sessionId)) {
 }
 
 // src/terminal/hook.ts
+var titleOf = (rec) => (rec.thread ? `${rec.thread} \u00b7 ${rec.name}` : rec.name).replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
 function fromHook(o) {
   const out = {};
   if (o.env.CROSSTALK_NO_TERM)
@@ -2714,7 +2788,7 @@ function fromHook(o) {
     try {
       const rec = claim(o.sessionId, o.cwd);
       if (rec)
-        out.sessionTitle = rec.thread ? `${rec.thread} \u00b7 ${rec.name}` : rec.name;
+        out.sessionTitle = titleOf(rec);
     } catch {}
     try {
       out.systemMessage = surface(o.sessionId, offerOnce2()).systemMessage;
@@ -2725,13 +2799,13 @@ function fromHook(o) {
 
 // src/repotrust/firstuse.ts
 import fs13 from "node:fs";
-import path17 from "node:path";
+import path18 from "node:path";
 
 // src/crypto.ts
 var SCRYPT = { N: 32768, r: 8, p: 1, maxmem: 256 * 1024 * 1024 };
 
 // src/repotrust/gitref.ts
-import path16 from "node:path";
+import path17 from "node:path";
 
 // src/repotrust/statement.ts
 import { execFile } from "node:child_process";
@@ -2777,7 +2851,7 @@ async function findRepo(cwd) {
     const url = u.stdout.trim();
     if (u.code !== 0 || !url)
       continue;
-    const slug = githubSlug(url) ?? (process.env.CROSSTALK_REPOTRUST_ANY_REMOTE === "1" ? `local/${path16.basename(url).replace(/\.git$/, "").toLowerCase()}` : null);
+    const slug = githubSlug(url) ?? (process.env.CROSSTALK_REPOTRUST_ANY_REMOTE === "1" ? `local/${path17.basename(url).replace(/\.git$/, "").toLowerCase()}` : null);
     if (slug)
       return { top: dir, remote, url, slug };
   }
@@ -2790,7 +2864,7 @@ var BUCKET = { max: 30, perMs: 10 * 60 * 1000 };
 // src/repotrust/firstuse.ts
 var CONNECT = "Connect";
 var NOT_HERE = "Not in this repo";
-var FILE = () => path17.join(ROOT, "repotrust", "firstuse.json");
+var FILE = () => path18.join(ROOT, "repotrust", "firstuse.json");
 function load() {
   try {
     const s = JSON.parse(fs13.readFileSync(FILE(), "utf8"));
@@ -2800,7 +2874,7 @@ function load() {
   return { v: 1, repos: {} };
 }
 function save(s) {
-  fs13.mkdirSync(path17.dirname(FILE()), { recursive: true, mode: 448 });
+  fs13.mkdirSync(path18.dirname(FILE()), { recursive: true, mode: 448 });
   const tmp = `${FILE()}.${process.pid}.tmp`;
   fs13.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
   fs13.renameSync(tmp, FILE());
@@ -2808,7 +2882,7 @@ function save(s) {
 var off2 = () => process.env.CROSSTALK_NO_REPOTRUST === "1";
 function publishedBefore(slug) {
   try {
-    const s = JSON.parse(fs13.readFileSync(path17.join(ROOT, "repotrust", "state.json"), "utf8"));
+    const s = JSON.parse(fs13.readFileSync(path18.join(ROOT, "repotrust", "state.json"), "utf8"));
     return !!s?.repos?.[slug]?.ownPublished;
   } catch {
     return false;
@@ -2855,7 +2929,7 @@ async function surface2(cwd, sessionId, mod = modActive2(sessionId)) {
 
 // src/warn/edit.ts
 import fs14 from "node:fs";
-import path18 from "node:path";
+import path19 from "node:path";
 import { spawnSync as spawnSync7 } from "node:child_process";
 
 // src/warn/outline.ts
@@ -2958,17 +3032,17 @@ function editedPath(o) {
   const raw = o.input?.file_path ?? o.input?.notebook_path ?? o.input?.path;
   if (typeof raw !== "string" || !raw)
     return null;
-  return path18.resolve(o.cwd || "/", raw);
+  return path19.resolve(o.cwd || "/", raw);
 }
 function editReport(o) {
   const abs = editedPath(o);
   if (!abs)
     return null;
-  const top = git3(path18.dirname(abs), ["rev-parse", "--show-toplevel"]);
+  const top = git3(path19.dirname(abs), ["rev-parse", "--show-toplevel"]);
   if (!top.ok)
     return null;
   const root = top.out.trim();
-  const file = path18.relative(root, abs).split(path18.sep).join("/");
+  const file = path19.relative(root, abs).split(path19.sep).join("/");
   if (!file || file.startsWith(".."))
     return null;
   let after = null;
@@ -3010,11 +3084,11 @@ ${(after ?? "").split(`
 
 // src/ui-extra/doctor.ts
 import fs15 from "node:fs";
-import path19 from "node:path";
+import path20 from "node:path";
 var FIX_IT = "Ask the agent to fix it";
 var NOT_NOW = "Not now";
 var DAY_MS = 24 * 60 * 60000;
-var stateFile3 = () => path19.join(P.root, "doctor-check.json");
+var stateFile3 = () => path20.join(P.root, "doctor-check.json");
 async function relayUp(url, ms = 1500) {
   try {
     const r = await fetch(`${url.replace(/^ws/, "http").replace(/\/ws$/, "")}/health`, { signal: AbortSignal.timeout(ms) });
@@ -3031,7 +3105,7 @@ async function quickProblems(o) {
       what: `your crosstalk identity file (${P.identity}) will not parse`,
       fix: "restore it from a backup; starting again makes you a new person to everyone you work with"
     });
-  if (o.root && fs15.existsSync(path19.join(o.root, "bin", "crosstalk")) && !fs15.existsSync(path19.join(o.root, "dist", "cli.js")))
+  if (o.root && fs15.existsSync(path20.join(o.root, "bin", "crosstalk")) && !fs15.existsSync(path20.join(o.root, "dist", "cli.js")))
     out.push({ key: "dist", what: "crosstalk's installed files are incomplete (dist/ is missing)", fix: "reinstall the plugin: claude plugin update crosstalk" });
   const sock = o.env.CLAUDE_CODE_MESSAGING_SOCKET;
   if (sock && !fs15.existsSync(sock))
@@ -3084,8 +3158,8 @@ async function atSessionStart(o) {
 
 // src/metrics/log.ts
 import fs16 from "node:fs";
-import path20 from "node:path";
-var file4 = () => path20.join(process.env.CROSSTALK_HOME ?? ROOT, "metrics.jsonl");
+import path21 from "node:path";
+var file4 = () => path21.join(process.env.CROSSTALK_HOME ?? ROOT, "metrics.jsonl");
 var MAX_BYTES2 = 8 * 1024 * 1024;
 var off3 = () => process.env.CROSSTALK_NO_METRICS === "1";
 function record2(e) {
@@ -3093,7 +3167,7 @@ function record2(e) {
     return;
   try {
     const f = file4();
-    fs16.mkdirSync(path20.dirname(f), { recursive: true, mode: 448 });
+    fs16.mkdirSync(path21.dirname(f), { recursive: true, mode: 448 });
     fs16.appendFileSync(f, JSON.stringify(e) + `
 `, { mode: 384 });
     const size = fs16.statSync(f).size;
@@ -3112,15 +3186,15 @@ var QUESTION_KINDS2 = new Set(["route", "gather", "team", "cleanup", "thread", "
 
 // src/attention/activity.ts
 import fs17 from "node:fs";
-import path21 from "node:path";
-var dir5 = () => path21.join(P.root, "typed");
+import path22 from "node:path";
+var dir5 = () => path22.join(P.root, "typed");
 var safe6 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
 function noteTyped(sessionId, now = Date.now()) {
   if (!sessionId)
     return;
   try {
     fs17.mkdirSync(dir5(), { recursive: true, mode: 448 });
-    const f = path21.join(dir5(), safe6(sessionId));
+    const f = path22.join(dir5(), safe6(sessionId));
     fs17.writeFileSync(f, sessionId, { mode: 384 });
     const t = new Date(now);
     fs17.utimesSync(f, t, t);
@@ -3132,7 +3206,17 @@ var waitMs = (env = process.env) => {
   const n = Number(env.CROSSTALK_PERMISSION_WAIT_MS);
   return n > 0 ? n : 55 * 60000;
 };
-var hookOutput = (d) => ({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: d } });
+function sessionOnly(suggestions) {
+  if (!Array.isArray(suggestions))
+    return [];
+  return suggestions.filter((x) => x && typeof x === "object" && !Array.isArray(x)).map((x) => ({ ...x, destination: "session" }));
+}
+var hookOutput = (d) => ({
+  hookSpecificOutput: {
+    hookEventName: "PermissionRequest",
+    decision: d.behavior === "allow" && d.updatedPermissions ? { ...d, updatedPermissions: sessionOnly(d.updatedPermissions) } : d
+  }
+});
 var backgroundAgent = (env) => (env.CROSSTALK_BG_AGENT ?? "").trim();
 
 // src/attention/hook.ts
@@ -3206,8 +3290,8 @@ function agyCwd() {
   if (Array.isArray(ws) && typeof ws[0] === "string" && ws[0])
     return ws[0];
   const here = process.cwd();
-  if (AGENT_DIRS.has(path22.basename(here)))
-    return path22.dirname(here);
+  if (AGENT_DIRS.has(path23.basename(here)))
+    return path23.dirname(here);
   return here;
 }
 var cwd = hook.cwd ?? hook.working_dir ?? hook.workspace_roots?.[0] ?? (isAgy ? agyCwd() : process.cwd());
@@ -3334,7 +3418,7 @@ async function registerSession() {
       for (const f of fs18.readdirSync(dir)) {
         if (!f.endsWith(".json"))
           continue;
-        const e = JSON.parse(fs18.readFileSync(path22.join(dir, f), "utf8"));
+        const e = JSON.parse(fs18.readFileSync(path23.join(dir, f), "utf8"));
         if (e.sessionId === sessionId) {
           name = e.name ?? name;
           break;
@@ -3342,7 +3426,7 @@ async function registerSession() {
       }
     } catch {}
   } else {
-    name = hook.thread_name ?? (path22.basename(cwd) || name);
+    name = hook.thread_name ?? (path23.basename(cwd) || name);
   }
   const registered = await request({
     op: "register",
@@ -3421,7 +3505,7 @@ async function threadsSay() {
   if (!r?.ok)
     return;
   if (r.title)
-    sessionTitle = r.title;
+    sessionTitle = String(r.title).replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
   const say = [];
   if (r.banner?.length)
     say.push(`\u25E2 crosstalk: joined ${r.banner.join(", ")}`);

@@ -25,6 +25,7 @@ export const sessionsDir = (env: NodeJS.ProcessEnv = process.env): string => pat
 /** The registry as it was resolved when this module loaded; prefer sessionsDir(). */
 export const SESSIONS = sessionsDir()
 
+
 export type LocalSession = {
   pid: number
   sessionId: string

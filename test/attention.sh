@@ -104,9 +104,11 @@ rec_for() { # session pane
 cat >"$TMP/bin/claude" <<EOF
 #!/bin/sh
 printf '%s|%s|%s\n' "\$(pwd)" "\${CROSSTALK_BG_AGENT:-}" "\$*" >>"$TMP/calls"
-exec sleep 600
+exec "$TMP/sleeper/claude" 600
 EOF
 chmod +x "$TMP/bin/claude"
+# sleep under the name claude: a session is only ended when its process is claude.
+mkdir -p "$TMP/sleeper" && ln -s "$(command -v sleep)" "$TMP/sleeper/claude"
 export PATH="$TMP/bin:$PATH"
 
 REPO="$TMP/code/api"

@@ -252,11 +252,14 @@ export function run(o: { confirm?: boolean; include?: string[]; cwd?: string; pr
   return { ok: removed.every((r) => r.ok), text: parts.join("\n"), removed }
 }
 
+/** Only "Remove them", word for word, removes anything; "nope", "nah", "don't" keep them. */
+export const removeYes = (action: string, value: string | undefined) => action === "answer" && (value ?? "").trim() === CLEANUP_OPTIONS[0]
+
 /** The picker's answer. */
 export function act(session: string, id: string, action: string, value?: string): Record<string, unknown> {
   if (action === "raised" || action === "later") return ui.withStore((items, now) => ui.act(items, id, action, now))
   const v = (value ?? "").trim()
-  const no = action === "mute" || /^(not now|no|never|later|keep)\b/i.test(v)
+  const no = !removeYes(action, value)
   const claim = ui.withStore((items, now) => ui.act(items, id, "answer", now, v || (no ? "Not now" : "Remove them")))
   if (!claim.ok) return claim
   if (no) return { ok: true, item: claim.item, text: `Kept them. Say "clean up the worktrees" any time.` }

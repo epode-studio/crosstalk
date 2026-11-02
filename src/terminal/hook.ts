@@ -17,6 +17,15 @@ import * as cleanup from "../cleanup.ts"
 
 export type Chrome = { terminalSequence?: string; sessionTitle?: string; systemMessage?: string }
 
+/**
+ * A spawned agent's title, `auth · auth-2`. Control characters are stripped
+ * here: nothing says Claude Code strips them from sessionTitle before it
+ * reaches the terminal's title, and a thread name can come from a peer, so an
+ * escape sequence in one could otherwise rewrite the person's terminal.
+ */
+export const titleOf = (rec: { name: string; thread?: string }) =>
+  (rec.thread ? `${rec.thread} · ${rec.name}` : rec.name).replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+
 export function fromHook(o: { event: string; sessionId: string; cwd: string; hook: any; env: NodeJS.ProcessEnv; root: string; isSessionStart: boolean }): Chrome {
   const out: Chrome = {}
   if (o.env.CROSSTALK_NO_TERM) return out
@@ -38,7 +47,7 @@ export function fromHook(o: { event: string; sessionId: string; cwd: string; hoo
     try {
       const rec = spawn.claim(o.sessionId, o.cwd)
       // `auth · auth-2`: its thread before its name, as threads title every session.
-      if (rec) out.sessionTitle = rec.thread ? `${rec.thread} · ${rec.name}` : rec.name
+      if (rec) out.sessionTitle = titleOf(rec)
     } catch {}
     try {
       out.systemMessage = cleanup.surface(o.sessionId, cleanup.offerOnce()).systemMessage

@@ -362,6 +362,9 @@ export function spawnAgents(o: {
   const env = o.env ?? process.env
   const task = (o.task ?? "").trim()
   if (!task) return { ok: false, text: "◢ crosstalk: say what the new agent should do.", agents: [] }
+  // The task is claude's first argument: one starting with "-" would be read
+  // as a flag (--dangerously-skip-permissions), not as the prompt.
+  if (bgx.isFlagLike(task)) return { ok: false, text: `◢ crosstalk: a task cannot start with "-" (claude would read it as an option). Start it with a word.`, agents: [] }
   const top = g(o.cwd, ["rev-parse", "--show-toplevel"])
   if (!top.ok || !top.out)
     return { ok: false, text: `◢ crosstalk: ${o.cwd} is not in a git repository, and each new agent needs its own copy of the code.`, agents: [] }

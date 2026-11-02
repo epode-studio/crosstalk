@@ -228,7 +228,7 @@ describe("one window per repository", () => {
     expect(s).toContain(`\tif not (exists window id 42) then`)
     expect(s).toContain(`\t\tset index of window id 42 to 1`)
     expect(s).toContain(`\t\ttell application "System Events" to keystroke "t" using command down`)
-    expect(s).toContain(`\t\ttell application "Terminal" to do script "cd /r/wt/auth-1 && claude 'fix the '\\\\''auth'\\\\'' bug'" in selected tab of front window`)
+    expect(s).toContain(`\t\t\tdo script "cd /r/wt/auth-1 && claude 'fix the '\\\\''auth'\\\\'' bug'" in selected tab of front window`)
   })
   test("Terminal.app with no window for the repo: a new window, the rest as its tabs", () => {
     const o = L.openTabs([tab, tab], { anchor: null, current: { program: "Apple_Terminal" }, env: env({ platform: "darwin" }), repo: "/r/app" })

@@ -22,7 +22,7 @@ type RegEntry = import("../src/gather.ts").RegEntry
 const NOW = 1_800_000_000_000
 const BOOT = NOW - 60 * 60 * 1000
 
-type Proc = { start: string; tty?: string; args?: string; ppid?: number; comm?: string; env?: NodeJS.ProcessEnv; ignores?: boolean }
+type Proc = { start: string; tty?: string; args?: string; ppid?: number; comm?: string; env?: NodeJS.ProcessEnv; ignores?: boolean; etime?: string }
 function fakeSys(procs: Record<number, Proc>, o: Partial<Sys> = {}) {
   const signals: [number, string][] = []
   const ran: import("../src/restore.ts").Step[] = []
@@ -37,6 +37,8 @@ function fakeSys(procs: Record<number, Proc>, o: Partial<Sys> = {}) {
       if (f === "args") return p.args ?? "claude"
       if (f === "ppid") return String(p.ppid ?? 1)
       if (f === "comm") return p.comm ?? null
+      // Five minutes up: the registry entries below say they started then.
+      if (f === "etime") return p.etime ?? "05:00"
       return null
     },
     alive: (pid, start) => !!procs[pid] && (!start || procs[pid].start === start),
@@ -58,7 +60,7 @@ function fakeSys(procs: Record<number, Proc>, o: Partial<Sys> = {}) {
   return { sys, signals, ran }
 }
 
-const reg = (o: Partial<RegEntry> & { pid: number; sessionId: string }): RegEntry => ({ cwd: "/work/api", status: "idle", ...o })
+const reg = (o: Partial<RegEntry> & { pid: number; sessionId: string }): RegEntry => ({ cwd: "/work/api", status: "idle", startedAt: NOW - 5 * 60_000, ...o })
 const hookRec = (o: Partial<Rec> & { sessionId: string; pid: number }): Rec => ({
   cwd: "/work/x",
   client: "claude",
@@ -204,7 +206,18 @@ describe("typing into the same tab", () => {
   test("Terminal.app: do script in tab N of window id W, quoted for AppleScript", () => {
     const p = G.inPlaceSteps({ program: "Apple_Terminal", tty: "/dev/ttys001", apple: { window: 1234, tab: 2 } }, cmd, "darwin")!
     expect(p.kind).toBe("apple")
-    expect(p.steps).toEqual([{ cmd: "osascript", args: ["-"], input: String.raw`tell application "Terminal" to do script "cd '/Users/me/it'\\''s \"x\" \\ dir' && claude --resume abc" in tab 2 of window id 1234` }])
+    expect(p.steps).toEqual([
+      {
+        cmd: "osascript",
+        args: ["-"],
+        input: [
+          `tell application "Terminal"`,
+          `\tif (tty of tab 2 of window id 1234) is not "/dev/ttys001" then error "that tab no longer shows /dev/ttys001"`,
+          String.raw`	do script "cd '/Users/me/it'\\''s \"x\" \\ dir' && claude --resume abc" in tab 2 of window id 1234`,
+          `end tell`,
+        ].join("\n"),
+      },
+    ])
   })
 
   test("tmux: send-keys to the pane, literally, then Enter", () => {
@@ -306,7 +319,8 @@ describe("restarting", () => {
     watched("mac", 57, { program: "Apple_Terminal", tty: "/dev/ttys007", apple: { window: 1, tab: 1 } })
     const { sys, ran } = base(shellChild(57), { platform: "darwin", appleLocate: () => ({ window: 99, tab: 4 }) })
     expect(await G.restartOne("mac", { selfPids: [], sys, registry: [reg({ pid: 57, sessionId: "mac" })], reopen: () => false })).toBe("done")
-    expect(ran[0].input).toBe(`tell application "Terminal" to do script "cd /w && claude --resume mac" in tab 4 of window id 99`)
+    expect(ran[0].input).toContain(`if (tty of tab 4 of window id 99) is not "/dev/ttys007" then error`)
+    expect(ran[0].input).toContain(`\tdo script "cd /w && claude --resume mac" in tab 4 of window id 99`)
   })
 
   test("the receipt says it plainly", () => {
