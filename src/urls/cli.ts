@@ -4,6 +4,7 @@
 //   crosstalk urls check                              sync services and check what is due, once
 //   crosstalk urls routes                             the proxy's names, when it is up
 //   crosstalk urls proxy                              run the proxy in the foreground (without a daemon)
+//   crosstalk urls qr [name | url]                    a QR code for the phone, in this terminal
 
 import * as U from "./index.ts"
 import * as L from "./liveness.ts"
@@ -20,6 +21,8 @@ export async function urlsCmd(argv: string[]) {
   const sub = argv[1] && !argv[1].startsWith("--") ? argv[1] : "list"
   const session = flag(argv, "--session") ?? process.env.CLAUDE_CODE_SESSION_ID ?? ""
   const cwd = flag(argv, "--cwd") ?? process.cwd()
+  // The QR code in a terminal, for the person (src/urls/history/cli.ts).
+  if (sub === "qr") return void (process.exitCode = (await import("./history/cli.ts")).qrCmd(argv))
   if (sub === "check") {
     const store = U.urls()
     U.syncServices({ store, ports: true })
