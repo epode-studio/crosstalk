@@ -42,7 +42,7 @@ if [ -n "$TYPES" ] && [ -f "$TYPES" ]; then
     "noEmit": true, "skipLibCheck": true, "allowImportingTsExtensions": true,
     "jsx": "react", "jsxFactory": "h", "jsxFragmentFactory": "Fragment"
   },
-  "include": ["$TYPES", "$ROOT/mod/register.tsx", "$ROOT/mod/types/index.d.ts", "$ROOT/src/ui-extra/pure.ts"]
+  "include": ["$TYPES", "$ROOT/mod/register.tsx", "$ROOT/mod/draw.tsx", "$ROOT/mod/types/index.d.ts", "$ROOT/src/ui-extra/pure.ts"]
 }
 EOF
   if TC=$("$ROOT/node_modules/.bin/tsc" -p "$TMP/tsconfig.json" 2>&1); then pass "the mod type-checks against the engine's types"; else fail "the mod does not type-check"; echo "$TC" | head -20; fi
@@ -54,7 +54,7 @@ P="$TMP/plugin"
 mkdir -p "$P/.claude-plugin" "$P/hooks" "$P/mod/types" "$P/src/ui-extra"
 cp "$ROOT/.claude-plugin/plugin.json" "$P/.claude-plugin/"
 echo '{ "modules": ["../mod/register.tsx"] }' >"$P/hooks/hooks.json"
-cp "$ROOT/mod/register.tsx" "$ROOT/mod/register.test.tsx" "$P/mod/"
+cp "$ROOT/mod/register.tsx" "$ROOT/mod/draw.tsx" "$ROOT/mod/register.test.tsx" "$P/mod/"
 cp "$ROOT/mod/types/index.d.ts" "$P/mod/types/"
 cp "$ROOT/src/ui-extra/pure.ts" "$P/src/ui-extra/"
 RES=$(cd "$P" && timeout 300 claude plugin test . 2>&1)

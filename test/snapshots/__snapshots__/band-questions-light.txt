@@ -1,0 +1,22 @@
+┌─ band · light · 100 cols ──────────────────────────────────────────────────────────────────────────┐
+│◢ yesterday: 2 decisions, 1 merge in 2 threads · say "what happened?" for the digest                │
+│◢ ship · auth: Turn auth-v2-tokens on for your own accounts? Errors held at 0 for an hour in the da…│
+│◢ restore · 6 agents to bring back · or say "restore them"                                          │
+│◢ thread · which thread is this part of?                                                            │
+│◢ rule · always answer this way? · picker after your next turn                                      │
+│◢ api · api's context is 91% spent. Start fresh from auth?                                          │
+│◢ route · a message from ben needs an agent                                                         │
+│◢ crosstalk · found the relay unreachable: run /crosstalk:doctor                                    │
+│◢ invite 3644-cherry-horn-cataract-redwing · read the words to them; they work once, for fifteen mi…│
+└────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+styles (light theme):
+  1 [dim]◢ yesterday: 2 decisions, 1 merge in 2 threads · say "what happened?" for the digest[/]
+  2 [bold fg=suggestion:#5769f7]◢ ship[/][dim] · auth: Turn auth-v2-tokens on for your own accounts? Errors held at 0 for an hour in the da…[/]
+  3 [bold fg=suggestion:#5769f7]◢ restore[/][dim] · 6 agents to bring back · or say "restore them"[/]
+  4 [bold fg=suggestion:#5769f7]◢ thread[/][dim] · which thread is this part of?[/]
+  5 [bold fg=suggestion:#5769f7]◢ rule[/][dim] · always answer this way? · picker after your next turn[/]
+  6 [bold fg=suggestion:#5769f7]◢ api[/][dim] · api's context is 91% spent. Start fresh from auth?[/]
+  7 [bold fg=suggestion:#5769f7]◢ route[/][dim] · a message from ben needs an agent[/]
+  8 [bold fg=suggestion:#5769f7]◢ crosstalk[/][dim] · found the relay unreachable: run /crosstalk:doctor[/]
+  9 [bold fg=suggestion:#5769f7]◢ invite[/] 3644-cherry-horn-cataract-redwing[dim] · read the words to them; they work once, for fifteen mi…[/]

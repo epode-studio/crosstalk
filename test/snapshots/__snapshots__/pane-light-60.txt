@@ -1,0 +1,108 @@
+┌─ pane · light · 60 cols ───────────────────────────────────┐
+│◢ auth · active · 2 working                                 │
+│paul  marie                                                 │
+│Moving tokens to v2 format; v1 kept for one release.        │
+│                                                            │
+│On your phone · auth · preview                              │
+│█▀▀▀▀▀█ ▄▀▄ █▀▀▀▀▀█                                         │
+│█ ███ █ ▀█▀ █ ███ █                                         │
+│█ ▀▀▀ █ █▄▀ █ ▀▀▀ █                                         │
+│▀▀▀▀▀▀▀ ▀ ▀ ▀▀▀▀▀▀▀                                         │
+│https://auth-pr-12.vercel.app                               │
+│                                                            │
+│Waiting                                                     │
+│ ? keep the v1 endpoint? (blocking)                         │
+│ ? jo asks: can billing read v2 yet?                        │
+│                                                            │
+│Notes                                                       │
+│ [ ] remove the v1 parser after 0.2                         │
+│ [~] write the migration note (marie)                       │
+│ decision · v1 tokens accepted until 0.2 (paul, 3h)         │
+│ fact · staging DB is shared with the demo env (marie, 1d)  │
+│ rule · always keep one release of overlap (paul, 3d)       │
+│                                                            │
+│Features                                                    │
+│ v2 token format · risky · flag auth-v2-tokens at internal …│
+│ tidy token parser · everyday                               │
+│                                                            │
+│Running                                                     │
+│ Servers                                                    │
+│  ● auth · web http://auth.localhost:1355                   │
+│  ○ worker · broken: exited with status 1                   │
+│ Previews                                                   │
+│  ● auth · preview https://auth-pr-12.vercel.app            │
+│ Pull requests                                              │
+│  ○ auth · PR #12 · dead https://github.com/acme/api/pull/12│
+│ Shown to people                                            │
+│  ● auth · web · with marie · 7h left                       │
+│  ● billing · web · from jo · 2h left http://billing.jo.loc…│
+│ Links found in output                                      │
+│  ● auth · acme.dev/cb https://acme.dev/cb?page=2           │
+│ Screenshots                                                │
+│  auth · web /login · before 20m · after 1m                 │
+│   before /Users/paul/.claude/crosstalk/shots/auth-login-be…│
+│   after  /Users/paul/.claude/crosstalk/shots/auth-login-af…│
+│                                                            │
+│Recent                                                      │
+│ jo 1m can billing read v2 yet?                             │
+│ marie 2m token format changed to v2                        │
+│                                                            │
+│History                                                     │
+│ auth · PR #9 · pull request · 3d                           │
+│ tokens expire after 1h · fact, corrected · 5d              │
+│ add the v2 parser · task, done · 2d                        │
+└────────────────────────────────────────────────────────────┘
+
+styles (light theme):
+  1 [bold fg=suggestion:#5769f7]◢ auth[/][dim] · active · 2 working[/]
+  2 paul  marie
+  3 [dim]Moving tokens to v2 format; v1 kept for one release.[/]
+  4 
+  5 [bold]On your phone · auth · preview[/]
+  6 [fg=#ffffff bg=#000000]█▀▀▀▀▀█ ▄▀▄ █▀▀▀▀▀█[/]
+  7 [fg=#ffffff bg=#000000]█ ███ █ ▀█▀ █ ███ █[/]
+  8 [fg=#ffffff bg=#000000]█ ▀▀▀ █ █▄▀ █ ▀▀▀ █[/]
+  9 [fg=#ffffff bg=#000000]▀▀▀▀▀▀▀ ▀ ▀ ▀▀▀▀▀▀▀[/]
+ 10 [dim]https://auth-pr-12.vercel.app[/]
+ 11 
+ 12 [bold]Waiting[/]
+ 13  ? keep the v1 endpoint? (blocking)
+ 14  ? jo asks: can billing read v2 yet?
+ 15 
+ 16 [bold]Notes[/]
+ 17  [ ] remove the v1 parser after 0.2
+ 18  [~] write the migration note (marie)
+ 19  decision · v1 tokens accepted until 0.2 (paul, 3h)
+ 20  fact · staging DB is shared with the demo env (marie, 1d)
+ 21  rule · always keep one release of overlap (paul, 3d)
+ 22 
+ 23 [bold]Features[/]
+ 24  v2 token format · risky · flag auth-v2-tokens at internal …
+ 25  tidy token parser · everyday
+ 26 
+ 27 [bold]Running[/]
+ 28 [dim] Servers[/]
+ 29   ● auth · web [link=http://auth.localhost:1355]http://auth.localhost:1355[/]
+ 30 [dim]  [/][dim fg=error:#ab2b3f]○ worker · broken: exited with status 1[/]
+ 31 [dim] Previews[/]
+ 32   ● auth · preview [link=https://auth-pr-12.vercel.app]https://auth-pr-12.vercel.app[/]
+ 33 [dim] Pull requests[/]
+ 34 [dim]  ○ auth · PR #12 · dead [/][dim link=https://github.com/acme/api/pull/12]https://github.com/acme/api/pull/12[/]
+ 35 [dim] Shown to people[/]
+ 36   ● auth · web · with marie · 7h left
+ 37   ● billing · web · from jo · 2h left [link=http://billing.jo.localhost:1355]http://billing.jo.loc…[/]
+ 38 [dim] Links found in output[/]
+ 39   ● auth · acme.dev/cb [link=https://acme.dev/cb?page=2]https://acme.dev/cb?page=2[/]
+ 40 [dim] Screenshots[/]
+ 41   auth · web /login · before 20m · after 1m
+ 42 [dim]   before [/][dim link=file:///Users/paul/.claude/crosstalk/shots/auth-login-before.png]/Users/paul/.claude/crosstalk/shots/auth-login-be…[/]
+ 43 [dim]   after  [/][dim link=file:///Users/paul/.claude/crosstalk/shots/auth-login-after.png]/Users/paul/.claude/crosstalk/shots/auth-login-af…[/]
+ 44 
+ 45 [bold]Recent[/]
+ 46  jo 1m can billing read v2 yet?
+ 47  marie 2m token format changed to v2
+ 48 
+ 49 [bold]History[/]
+ 50  auth · PR #9 · pull request · 3d
+ 51  tokens expire after 1h · fact, corrected · 5d
+ 52  add the v2 parser · task, done · 2d

@@ -1,0 +1,13 @@
+┌─ pane · loading ───────────────────────────────────────────┐
+│loading the thread…                                         │
+└────────────────────────────────────────────────────────────┘
+
+styles (dark theme):
+  1 [dim]loading the thread…[/]
+
+┌─ pane · no thread ─────────────────────────────────────────┐
+│no thread called "nope"                                     │
+└────────────────────────────────────────────────────────────┘
+
+styles (dark theme):
+  1 [dim]no thread called "nope"[/]
