@@ -212,7 +212,7 @@ export type Held = {
   thread?: string
   replyTo?: string
   room?: string
-  /** Set on kind "ask": pass it back to crosstalk_answer. */
+  /** Set on kind "ask": pass it back to crosstalk_say action "reply". */
   correlation?: string
   /** A notice for this message has been shown. Unset means still silent. */
   surfaced?: boolean
@@ -224,7 +224,7 @@ export type Held = {
   auto?: boolean
   /** Handed to the agent from the mod: by the person, or passed on as its own thread's. */
   handedAt?: number
-  /** Already in the agent's context while the mod was live: handed over, or returned by crosstalk_read. */
+  /** Already in the agent's context while the mod was live: handed over, or returned by crosstalk_say action "read". */
   toolReadAt?: number
 }
 

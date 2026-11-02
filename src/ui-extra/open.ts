@@ -1,5 +1,5 @@
 // "Open auth in my editor": a thread's or a session's worktree in the person's
-// editor, the crosstalk_open tool.
+// editor, the crosstalk_work action "open" tool.
 //
 // The editor: the one named, else $VISUAL or $EDITOR when it is one that opens
 // a window, else the first of code, cursor, zed and idea on PATH, else on a Mac

@@ -70,7 +70,7 @@ export type Env = {
   sizeKb: (p: string) => Promise<number>
   /** The thread a branch of a repo belongs to, when crosstalk knows it. */
   threadOf?: (repoRoot: string, branch: string) => string | undefined
-  /** crosstalk services (crosstalk_serve) running in a worktree: it is kept while any is. */
+  /** crosstalk services (crosstalk_work action "serve") running in a worktree: it is kept while any is. */
   services?: (worktree: string) => { name: string }[]
 }
 

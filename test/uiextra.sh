@@ -63,11 +63,11 @@ RELAY="ws://127.0.0.1:$PORT"
 # --- 1. rooms, through the tool -------------------------------------------------
 echo
 echo "1. a room through crosstalk_room, no slash command"
-NEW=$(tool "$A" sa crosstalk_room "{\"action\":\"new\",\"label\":\"ana\",\"relay\":\"$RELAY\"}")
+NEW=$(tool "$A" sa crosstalk_people "{\"action\":\"room\",\"op\":\"new\",\"label\":\"ana\",\"relay\":\"$RELAY\"}")
 W=$(words "$NEW")
 [ -n "$W" ] && pass "without the mod, the words come back once" || { fail "no words in: $NEW"; exit 1; }
 has "$NEW" "never repeat them" "and the result says never to repeat them"
-JOIN=$(tool "$B" sb crosstalk_room "{\"action\":\"join\",\"words\":\"ana gave me words: $W\",\"label\":\"ben\"}")
+JOIN=$(tool "$B" sb crosstalk_people "{\"action\":\"room\",\"op\":\"join\",\"words\":\"ana gave me words: $W\",\"label\":\"ben\"}")
 has "$JOIN" 'Now in a room with "ana"' "ben joined with the words he was read"
 hasnt "$JOIN" "$(echo "$W" | cut -d' ' -f1)" "the join result never repeats the words"
 for _ in $(seq 1 40); do grep -q "Now in a room with" "$A"/ui-extra/room-*.log 2>/dev/null && break; sleep 0.5; done
@@ -75,14 +75,14 @@ has "$(cat "$A"/ui-extra/room-*.log)" 'Now in a room with "ben"' "ana's side fin
 
 # With the mod in the session, the words stay in the mod.
 CROSSTALK_HOME="$A" bun src/cli.ts ui hello --session sa >/dev/null
-NEW2=$(tool "$A" sa crosstalk_room "{\"action\":\"new\",\"relay\":\"$RELAY\"}")
+NEW2=$(tool "$A" sa crosstalk_people "{\"action\":\"room\",\"op\":\"new\",\"relay\":\"$RELAY\"}")
 has "$NEW2" "on the user's screen" "with the mod, the result says the words are on the screen"
 [ -z "$(words "$NEW2")" ] && pass "and does not carry them" || fail "the words reached the result: $NEW2"
 W2=$(CROSSTALK_HOME="$A" bun -e 'const u = await import("./src/uistate.ts"); const it = Object.values(u.snapshot()).find((i) => i.kind === "invite" && i.state === "pending"); console.log(it?.text ?? "")')
 [ -n "$W2" ] && pass "the words are in the mod's store, for the person" || fail "no invite item"
 
 # --- 3 (part). robo joins as an agent with those words ----------------------------
-ROBO=$(tool "$C" sc crosstalk_room "{\"action\":\"join\",\"words\":\"$W2\",\"label\":\"robo\",\"agent\":true}")
+ROBO=$(tool "$C" sc crosstalk_people "{\"action\":\"room\",\"op\":\"join\",\"words\":\"$W2\",\"label\":\"robo\",\"agent\":true}")
 has "$ROBO" 'Now in a room with "ana"' "robo joined, as an agent"
 for _ in $(seq 1 40); do [ "$(ls "$A"/ui-extra/room-*.log | wc -l)" -ge 2 ] && grep -q '"robo"' "$A"/ui-extra/room-*.log && break; sleep 0.5; done
 has "$(cat "$A/peers.json")" '"isMachine": true' "ana knows robo is an agent"
@@ -98,13 +98,13 @@ for _ in $(seq 1 30); do rpc "$A" '{"op":"status"}' | grep -q '"relay":"connecte
 # --- 2. mute ------------------------------------------------------------------------
 echo
 echo "2. crosstalk_mute"
-MUTE=$(tool "$A" sa crosstalk_mute '{"who":"ben","for":"2h"}')
+MUTE=$(tool "$A" sa crosstalk_people '{"action":"mute","who":"ben","for":"2h"}')
 has "$MUTE" "Muted ben until" "ben is muted for two hours"
 has "$(cat "$A/trust.json")" '"ben"' "the mute is recorded"
 rpc "$B" '{"op":"send","sessionId":"sb","to":"ana","text":"muted-canary","intent":"blocking"}' >/dev/null
 for _ in $(seq 1 30); do grep -q "held while muted" "$A/daemon.log" 2>/dev/null && break; sleep 0.5; done
 has "$(cat "$A/daemon.log")" "held while muted" "a blocking message from ben is held quietly, not dropped"
-UN=$(tool "$A" sa crosstalk_mute '{"who":"ben","for":0}')
+UN=$(tool "$A" sa crosstalk_people '{"action":"mute","who":"ben","for":0}')
 has "$UN" "Unmuted ben" "and unmuted"
 
 # --- 3. bots ------------------------------------------------------------------------
@@ -119,7 +119,7 @@ POST=$(rpc "$C" '{"op":"send","sessionId":"sc","to":"ana","text":"build 412 is g
 has "$POST" '"ok":true' "robo can still post"
 for _ in $(seq 1 30); do grep -q "inbound message/fyi from robo" "$A/daemon.log" && break; sleep 0.5; done
 has "$(cat "$A/daemon.log")" "inbound message/fyi from robo" "and ana holds what it posted"
-UP=$(tool "$A" sa crosstalk_trust '{"who":"robo","level":"deliver"}')
+UP=$(tool "$A" sa crosstalk_people '{"action":"trust","who":"robo","level":"deliver"}')
 has "$UP" "never above" "robo cannot be raised above notify"
 SHIP=$(rpc "$A" '{"op":"ship","sessionId":"sa","action":"ready","peer":"robo"}')
 has "$SHIP" "robo is an agent" "shipping refuses to act for robo"
@@ -158,7 +158,7 @@ has "$S1" "crosstalk found a problem" "the first session start says something is
 has "$S1" "To fix it" "with the fix"
 S2=$(start sd2)
 hasnt "$S2" "crosstalk found a problem" "the second one says nothing"
-DOC=$(tool "$D" sd1 crosstalk_doctor)
+DOC=$(tool "$D" sd1 crosstalk_doctor '{"action":"report"}')
 has "$DOC" "relay" "crosstalk_doctor returns the whole report"
 stop_daemon "$D"
 
@@ -176,13 +176,13 @@ CROSSTALK_HOME="$E" bun -e '
   M.put(t, "tasks", "k1", { text: "write the migration note", who: "marie", at: now - 1000, state: "done", doneBy: "marie" }, Q, now)
   fs.mkdirSync(process.env.CROSSTALK_HOME, { recursive: true })
   fs.writeFileSync(path.join(process.env.CROSSTALK_HOME, "threads.json"), JSON.stringify({ v: 1, threads: { [t.id]: t }, placed: { se: { threads: [t.id], why: {} } } }))'
-DIG=$(tool "$E" se crosstalk_digest '{"since":"2d"}')
+DIG=$(tool "$E" se crosstalk_thread '{"action":"digest","since":"2d"}')
 has "$DIG" "paul decided v1 tokens accepted until 0.2" "the digest has the decision"
 has "$DIG" "merged v2 token format" "and the merge"
-STAND=$(tool "$E" se crosstalk_standup '{}')
+STAND=$(tool "$E" se crosstalk_thread '{"action":"standup"}')
 has "$STAND" "shipped: v2 token format" "the standup has what paul shipped"
 has "$STAND" "finished: write the migration note" "and what marie finished"
-PANE=$(tool "$E" se crosstalk_pane '{"thread":"auth"}')
+PANE=$(tool "$E" se crosstalk_look '{"action":"pane","thread":"auth"}')
 has "$PANE" "auth" "crosstalk_pane answers"
 hasnt "$PANE" "PANE-RECAP-CANARY" "without a word of what the pane shows"
 hasnt "$PANE" "v1 tokens accepted" "nor its decisions"

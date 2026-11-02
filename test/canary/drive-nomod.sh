@@ -9,7 +9,7 @@
 # would do the same, but it counts only in machine-wide managed settings,
 # /etc/claude-code/managed-settings.json, which a test should not write.)
 # Checks: the restore offer is the SessionStart systemMessage, no picker comes
-# up, "restore them" reopens the sessions through crosstalk_restore, and a
+# up, "restore them" reopens the sessions through crosstalk_work action "restore", and a
 # peer's message arrives as the classic notice, none of its words in it.
 set -uo pipefail
 RUN=$1 T=$2

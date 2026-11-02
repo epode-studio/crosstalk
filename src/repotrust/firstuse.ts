@@ -14,7 +14,7 @@
 // pushed before a yes: sync (index.ts) does nothing for a repo without one.
 //
 // The question is the mod's picker when the mod is in the session, otherwise
-// a systemMessage answered in plain words through crosstalk_connect.
+// a systemMessage answered in plain words through crosstalk_people action "connect".
 // CROSSTALK_NO_REPOTRUST=1 turns all of it off; CROSSTALK_REPOTRUST_AUTO=1 is
 // a standing yes (tests, and machines set up by hand).
 
@@ -142,7 +142,7 @@ export async function record(slug: string, yes: boolean, now = Date.now()): Prom
 
 /**
  * Everything a yes sets off: recorded, an identity, the daemon, and a sync
- * that publishes. Used by `crosstalk ui act` and crosstalk_connect.
+ * that publishes. Used by `crosstalk ui act` and crosstalk_people action "connect".
  */
 export async function connect(o: {
   cwd?: string

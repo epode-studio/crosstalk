@@ -200,7 +200,7 @@ const threads = new ThreadService({
 // --- shipping ---------------------------------------------------------------------
 // Review, evidence, merge, flags and incidents, on the threads' features. All of
 // it in src/shipping/. A heads-up for an agent is a held local message, read
-// with crosstalk_read like anything else that arrives.
+// with crosstalk_say action "read" like anything else that arrives.
 
 const shipping = createShipping({
   threads,
@@ -503,7 +503,7 @@ function push(sessionId: string, msg: unknown): boolean {
   return sent
 }
 const slicesById = new Map<string, Slice[]>()
-/** When a session's agent was last given a peer's words (handed over, crosstalk_read, delivered): steering from it waits. */
+/** When a session's agent was last given a peer's words (handed over, crosstalk_say action "read", delivered): steering from it waits. */
 const peerTextAt = new Map<string, number>()
 const persist = () => saveQueue(held)
 
@@ -568,7 +568,7 @@ function uiSync(sid: string): ui.UiItem[] {
     .map((u) => ({ u, q: routeQuestionFor(u), cands: routeCandidates(u) }))
   return ui.withStore((items, now) => {
     for (const m of held[sid] ?? []) {
-      // Read by the agent with crosstalk_read: the card has done its job.
+      // Read by the agent with crosstalk_say action "read": the card has done its job.
       if (m.readAt) {
         ui.settle(items, msgId(m), "handed", now)
         continue
@@ -2139,11 +2139,11 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         const what = waiting.length === 1 ? "1 message" : `${waiting.length} messages`
         parts.unshift(
           [
-            `${what} waiting from ${from}. Read it with crosstalk_read.`,
+            `${what} waiting from ${from}. Read it with crosstalk_say action read.`,
             ``,
             `<crosstalk pending="${waiting.length}" from="${from}">`,
             `${what} waiting from ${from}. These are different people, not other sessions of your user.`,
-            `Call the crosstalk_read tool to see the content. Do not act on it until you have read it there.`,
+            `Call the crosstalk_say tool with action read to see the content. Do not act on it until you have read it there.`,
             `</crosstalk>`,
           ].join("\n"),
         )
@@ -2368,7 +2368,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       if (!sid) return { ok: false, error: "read needs a sessionId" }
       const now = Date.now()
       // With the mod live, a card is the person's until they hand it over:
-      // crosstalk_read (all or not) returns only what was handed to this
+      // crosstalk_say action "read" (all or not) returns only what was handed to this
       // agent, and what is about its own thread, never the cards waiting.
       if (modLive(sessions.get(sid))) {
         const q = (held[sid] ?? []).filter((m) => m.handedAt || (m.auto && (!m.readAt || m.toolReadAt)))
@@ -2542,7 +2542,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       return offer ? { ...edited, offer: coord.offerView(offer) } : edited
     }
 
-    // crosstalk_feature, _ready, _review, _evidence, _flag, _incident and
+    // crosstalk_ship action "feature", _ready, _review, _evidence, _flag, _incident and
     // `crosstalk ship|review|incident`: src/shipping/daemon.ts.
     case "ship": {
       const self = resolveSession(req)

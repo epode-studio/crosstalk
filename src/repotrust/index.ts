@@ -380,7 +380,7 @@ function findQuestion(s: State, ref: string): OpenQuestion | { error: string } {
   return { error: `more than one question about ${ref}; use one of: ${hits.map((q) => q.id).join(", ")}` }
 }
 
-/** The person's answer, from the mod's picker or from crosstalk_team. */
+/** The person's answer, from the mod's picker or from crosstalk_people action "team". */
 export function answerQuestion(ref: string, trust: boolean): { ok: boolean; text?: string; error?: string } {
   const id = loadIdentity()
   if (!id) return { ok: false, error: "no crosstalk identity on this machine" }
@@ -439,7 +439,7 @@ export function syncUi(items: Record<string, ui.UiItem>, sessionId: string, now:
 /**
  * For a session without the mod: the questions not yet told to anyone, as one
  * systemMessage, which the person sees and the model does not. Each is told
- * once; it stays open, and listed by crosstalk_team, until it is answered.
+ * once; it stays open, and listed by crosstalk_people action "team", until it is answered.
  */
 export function takeSystemMessage(): string | undefined {
   const s = load()

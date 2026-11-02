@@ -1,6 +1,6 @@
 // Rooms, links, trust and muting in plain words: what /crosstalk:room,
 // /crosstalk:link, /crosstalk:trust and /crosstalk:mute did, for the
-// crosstalk_room, _link, _trust and _mute tools. The slash commands stay for
+// crosstalk_people actions room, link, trust and mute. The slash commands stay for
 // scripts and people who like them.
 //
 // The words. Four words (or six, for a link) are a secret said aloud once, so
@@ -103,12 +103,12 @@ async function roomOut(a: Record<string, any>, o: { sessionId: string; root: str
       })
       return {
         ok: true,
-        text: "Started a room. The invite words are on the user's screen, in crosstalk's picker, and deliberately not here. Tell the user to read them to the other person, whose agent joins with them. They work once, for fifteen minutes; crosstalk_peers shows the person once they are in.",
+        text: "Started a room. The invite words are on the user's screen, in crosstalk's picker, and deliberately not here. Tell the user to read them to the other person, whose agent joins with them. They work once, for fifteen minutes; crosstalk_people action \"peers\" shows the person once they are in.",
       }
     }
     return once(words, {
       ok: true,
-      text: `Started a room. Show the user these words exactly once, as written, and never repeat them in a later reply: ${words}\nThey read them aloud to the other person, who tells their own agent "join crosstalk with <the words>". They work once and expire in fifteen minutes; crosstalk_peers shows the person once they are in.`,
+      text: `Started a room. Show the user these words exactly once, as written, and never repeat them in a later reply: ${words}\nThey read them aloud to the other person, who tells their own agent "join crosstalk with <the words>". They work once and expire in fifteen minutes; crosstalk_people action "peers" shows the person once they are in.`,
     })
   }
   if (action === "join") {
@@ -117,8 +117,8 @@ async function roomOut(a: Record<string, any>, o: { sessionId: string; root: str
     const r = await runCli(o.root, ["room", "join", words, ...(a.label ? ["--label", String(a.label)] : []), ...(a.agent ? ["--agent"] : [])], { timeoutMs: 170_000 })
     return { ok: r.ok, text: scrub(r.out, words) }
   }
-  if (!loadIdentity()) return { ok: false, text: 'crosstalk is not set up yet: start with action "new", or join with the words someone read you' }
-  if (!(await ensureDaemon(o.root))) return { ok: false, text: "the crosstalk daemon would not start; crosstalk_doctor says why" }
+  if (!loadIdentity()) return { ok: false, text: 'crosstalk is not set up yet: start with op "new", or join with the words someone read you' }
+  if (!(await ensureDaemon(o.root))) return { ok: false, text: "the crosstalk daemon would not start; crosstalk_doctor action \"report\" says why" }
   const name = String(a.name ?? a.room ?? "").replace(/^#/, "")
   const people = ([] as string[]).concat(a.who ?? a.people ?? []).map(String).filter(Boolean)
   switch (action) {
@@ -129,7 +129,7 @@ async function roomOut(a: Record<string, any>, o: { sessionId: string; root: str
     case "create": {
       if (!name) return { ok: false, text: "name the room" }
       const r = await request({ op: "room_create", name })
-      return r.ok ? { ok: true, text: `Created #${r.room}. Invite people you already share a room with (action "invite").` } : { ok: false, text: r.error }
+      return r.ok ? { ok: true, text: `Created #${r.room}. Invite people you already share a room with (op "invite").` } : { ok: false, text: r.error }
     }
     case "invite": {
       if (!name || !people.length) return { ok: false, text: "say which room and who" }
@@ -158,7 +158,7 @@ async function roomOut(a: Record<string, any>, o: { sessionId: string; root: str
       }
     }
     default:
-      return { ok: false, text: `unknown action "${action}": new, join, create, invite, accept, decline, leave, kick or list` }
+      return { ok: false, text: `unknown op "${action}": new, join, create, invite, accept, decline, leave, kick or list` }
   }
 }
 
@@ -234,7 +234,7 @@ export async function muteTool(a: Record<string, any>, o: { sessionId: string; r
   }
   if (who) {
     const everyone = /^(everyone|everybody|all)$/i.test(who)
-    if (!everyone && !loadPeers()[who]) return { ok: false, text: `nobody called "${who}". crosstalk_peers lists who you are connected to.` }
+    if (!everyone && !loadPeers()[who]) return { ok: false, text: `nobody called "${who}". crosstalk_people action "peers" lists who you are connected to.` }
     if (!(await ensureDaemon(o.root))) return { ok: false, text: "the crosstalk daemon would not start" }
     const r = await request({ op: "mute", peer: everyone ? undefined : who, minutes: ms / 60_000 })
     if (!r.ok) return { ok: false, text: r.error ?? "not muted" }

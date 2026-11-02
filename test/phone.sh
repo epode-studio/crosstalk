@@ -128,7 +128,7 @@ check "$(test -e "$WT/.env" && echo there || echo absent)" "absent" "nothing is 
 OUT=$(cd "$REPO" && CLAUDE_CODE_SESSION_ID=asker bun "$ROOT/src/cli.ts" spawn --background --name envy2 "run the tests" 2>&1)
 hasnt "$OUT" "Copy .env" "the second worktree does not ask again"
 WT2=$(bun -e 'const S = await import("./src/spawn.ts"); console.log(S.readSpawned().find((r) => r.name === "envy2")?.worktree ?? "")')
-ANS=$(mcp asker crosstalk_env '{"confirm":true}' "$REPO")
+ANS=$(mcp asker crosstalk_people '{"action":"env","confirm":true}' "$REPO")
 has "$ANS" "new worktrees of api get its local files (.env)" "crosstalk_env confirm: yes, naming only .env"
 has "$ANS" "Copied into envy (.env), envy2 (.env)" "and copies into the worktrees made so far"
 hasnt "$ANS" "sk-live-HUNTER2" "the result has names, not contents"
@@ -148,7 +148,7 @@ has "$SM" "copied .env into this worktree" "a Claude Code worktree's first sessi
 check "$(mode "$CC/.env")" "600" "with its mode"
 SM=$(hook "{\"hook_event_name\":\"SessionStart\",\"session_id\":\"cc-sess2\",\"cwd\":\"$CC\",\"source\":\"startup\"}")
 hasnt "$SM" "copied .env" "and only what is missing: nothing the second time"
-NO=$(mcp asker crosstalk_env '{"confirm":false}' "$REPO")
+NO=$(mcp asker crosstalk_people '{"action":"env","confirm":false}' "$REPO")
 has "$NO" "not copying local files into new worktrees of api" "a no is kept"
 OUT=$(cd "$REPO" && CLAUDE_CODE_SESSION_ID=asker bun "$ROOT/src/cli.ts" spawn --background --name envy4 "docs" 2>&1)
 WT4=$(bun -e 'const S = await import("./src/spawn.ts"); console.log(S.readSpawned().find((r) => r.name === "envy4")?.worktree ?? "")')
@@ -157,7 +157,7 @@ hasnt "$OUT" "Copy .env" "and nothing is asked"
 
 echo
 echo "history: what the thread had, kept in it"
-OUT=$(mcp asker crosstalk_serve "{\"command\":\"bun $TMP/srv.ts\",\"name\":\"web\"}" "$REPO")
+OUT=$(mcp asker crosstalk_work "{\"action\":\"serve\",\"command\":\"bun $TMP/srv.ts\",\"name\":\"web\"}" "$REPO")
 has "$OUT" "started web" "a service runs for the thread"
 bun -e '
   const U = await import("./src/urls/index.ts")
@@ -187,11 +187,11 @@ hasnt "$LINKS" "SEKRET9" "with its token taken out"
 hasnt "$(cat "$CROSSTALK_HOME/threads.json")" "sk-live-HUNTER2" "and no .env contents anywhere in the thread"
 hasnt "$(cat "$TMP/daemon.log")" "sk-live-HUNTER2" "or the daemon's log"
 # urls.json forgets; the thread keeps, across a restart.
-mcp asker crosstalk_stop '{"name":"web"}' "$REPO" >/dev/null
+mcp asker crosstalk_work '{"action":"stop","name":"web"}' "$REPO" >/dev/null
 stop_daemon
 rm -f "$CROSSTALK_HOME/urls.json"
 start_daemon
-HIST=$(mcp other crosstalk_history '{"thread":"auth","query":"login"}' "$REPO")
+HIST=$(mcp other crosstalk_look '{"action":"history","thread":"auth","query":"login"}' "$REPO")
 has "$HIST" "in auth's history matching \"login\"" "crosstalk_history finds them by a word"
 has "$HIST" "auth · preview (login) — https://auth-login.preview.acme.dev/ · preview · seen 20" "the preview, with when it was seen"
 has "$HIST" "screenshot 20" "its screenshot"
@@ -199,7 +199,7 @@ has "$HIST" "/tmp/shots/login-before.png · before the redesign" "with its path 
 has "$HIST" "(this machine)" "and the machine it is on"
 has "$HIST" "exist only there" "saying a path is only on that machine"
 has "$HIST" "<crosstalk-history>" "framed as data"
-has "$(mcp other crosstalk_history '{"thread":"auth","query":"local server"}' "$REPO")" "auth · web" "the service too, after urls.json forgot it"
+has "$(mcp other crosstalk_look '{"action":"history","thread":"auth","query":"local server"}' "$REPO")" "auth · web" "the service too, after urls.json forgot it"
 
 echo
 echo "phone: a QR in the pane"
@@ -208,7 +208,7 @@ bun -e '
   const U = await import("./src/urls/index.ts")
   U.recordPreview({ thread: "auth", feature: "login", url: "https://auth-login.preview.acme.dev/" })
 '
-QR=$(mcp asker crosstalk_qr '{"name":"auth preview"}' "$REPO")
+QR=$(mcp asker crosstalk_look '{"action":"qr","name":"auth preview"}' "$REPO")
 has "$QR" "the QR code for auth · preview (login) is on screen" "crosstalk_qr says it is on screen"
 hasnt "$QR" "auth-login.preview.acme.dev" "and not what it encodes"
 hasnt "$QR" "█" "nor the code itself"
@@ -222,7 +222,7 @@ DECODED=$(bun -e '
   console.log(JSON.stringify(Q.halfBlocks(q.modules)) === JSON.stringify(p.rows) ? "same" : "differs")
 ' "$PANE")
 check "$DECODED" "same" "the pane's code is the preview's URL"
-LOCAL=$(mcp asker crosstalk_qr '{"url":"http://localhost:3000/login"}' "$REPO")
+LOCAL=$(mcp asker crosstalk_look '{"action":"qr","url":"http://localhost:3000/login"}' "$REPO")
 has "$LOCAL" "needs a share link" "a localhost URL: the phone needs a share link"
 CLI=$(bun src/cli.ts urls qr "auth preview")
 has "$CLI" "▀" "crosstalk urls qr prints it for a terminal"

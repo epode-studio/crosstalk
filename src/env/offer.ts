@@ -1,11 +1,11 @@
 // Where the once-per-repo question (index.ts) goes: the mod's picker when the
 // mod runs in the session, else a systemMessage the agent answers with
-// crosstalk_env. Exactly one of the two.
+// crosstalk_people action "env". Exactly one of the two.
 
 import * as ui from "../uistate.ts"
 import { NO, YES, type Prepared } from "./index.ts"
 
-export const sayText = (question: string) => `◢ crosstalk: ${question} Say "copy them" or "not in this repo"; the agent answers with crosstalk_env.`
+export const sayText = (question: string) => `◢ crosstalk: ${question} Say "copy them" or "not in this repo"; the agent answers with crosstalk_people action "env".`
 
 export function surface(offer: NonNullable<Prepared["offer"]>, sessionId: string | undefined, mod = !!sessionId && ui.modActive(sessionId)): { systemMessage?: string; picker?: boolean } {
   const text = sayText(offer.question)

@@ -20,7 +20,7 @@
 //               told once, and nothing more is said until it is healthy or
 //               started again
 //   finished    exited with status 0: it ended by itself, nothing is said
-//   stopped     crosstalk_stop: forgotten
+//   stopped     crosstalk_work action "stop": forgotten
 //
 // An episode ends when the service stays healthy for STABLE_MS: what was
 // spent on it (the restart, who was told) is forgotten then. Nothing here
@@ -113,7 +113,7 @@ export function step(prev: Health | undefined, s: Seen, now: number, c: Cfg = cf
   // Already down when first seen (before the daemon started), or finished: nothing to say until it is started again.
   if (s.state === "exited" && (!prev || (prev.phase === "finished" && prev.gen === s.gen))) return { next: prev ?? { id: s.id, name: s.name, root: s.root, gen: s.gen, phase: "finished", restarts: [] }, actions }
   let h: Health = prev ? { ...prev, restarts: prev.restarts.filter((t) => now - t < HOUR) } : { id: s.id, name: s.name, root: s.root, gen: s.gen, phase: "starting", restarts: [] }
-  // A new start: crosstalk's own restart, or someone else's (the agent's crosstalk_serve).
+  // A new start: crosstalk's own restart, or someone else's (the agent's crosstalk_work action "serve").
   if (prev && s.gen !== prev.gen) {
     const ours = prev.ownGen === s.gen || prev.phase === "restarting"
     h = { ...h, gen: s.gen, phase: "starting", healthySince: undefined }

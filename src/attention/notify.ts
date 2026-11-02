@@ -14,7 +14,7 @@
 //   Linux            `notify-send`, which cannot jump either
 //
 // And always, in the session the person is in: a receipt from crosstalk's mod
-// naming the session, so "show me api" (crosstalk_show) brings it up.
+// naming the session, so "show me api" (crosstalk_work action "show") brings it up.
 //
 // When the person is away (activity.ts), the phone instead:
 //

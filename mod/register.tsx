@@ -8,9 +8,9 @@
 //   the pane       a thread beside the chat: status, people, what is waiting, the
 //                  latest decision, recent messages, features with risk and flag.
 //                  By itself in the main session (drawn from 144 columns), and
-//                  when asked: Open thread, or the agent's crosstalk_pane. Live.
+//                  when asked: Open thread, or the agent's crosstalk_look action "pane". Live.
 //   invite         the words for someone joining a room or a link, from
-//                  crosstalk_room / crosstalk_link: shown here, never to the model
+//                  crosstalk_people action "room" / crosstalk_people action "link": shown here, never to the model
 //   doctor         something broken, noticed at SessionStart, with the fix
 //   digest         at a pause (a turn ends, nothing runs; at most every two
 //                  hours), one line in the band of what happened in the threads
@@ -66,7 +66,7 @@
 // Without the mod (claude -p, the SDK, an older Claude Code, mods turned off)
 // nothing here runs, the daemon hears no poll, and every one of these falls back
 // to what the classic hooks always did: the restore question as a
-// systemMessage, a notice in the transcript, "restore them" and crosstalk_read.
+// systemMessage, a notice in the transcript, "restore them" and crosstalk_say action "read".
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
@@ -690,13 +690,13 @@ export const register: Register = on => {
     return { drop: at.kind === 'name' ? `crosstalk: answer sent to ${at.name}` : `crosstalk: ${at.kind}` }
   }).catch(($, e, next) => (next.called ? next(e) : { drop: 'crosstalk: reply failed' }))
 
-  // The agent's crosstalk_pane: the server answers it (saying nothing of what
+  // The agent's crosstalk_look action "pane": the server answers it (saying nothing of what
   // the pane shows), and the pane opens here. It is the person's words behind
   // the call, so the pane is placed even on a narrow terminal where it can be.
   on('tool.call', async ($, e, next) => {
     const ran = await next(e)
-    // crosstalk_qr too: its QR code is drawn in the pane (src/urls/history/phone.ts).
-    if (/__crosstalk_(pane|qr)$/.test(e.tool) && !ran.deny && !ran.isError && interactive) {
+    // crosstalk_look action "qr" too: its QR code is drawn in the pane (src/urls/history/phone.ts).
+    if (/__crosstalk_look$/.test(e.tool) && ['pane', 'qr'].includes(String((e as { action?: unknown }).action)) && !ran.deny && !ran.isError && interactive) {
       const thread = typeof (e as { thread?: unknown }).thread === 'string' ? ((e as { thread?: string }).thread as string) : undefined
       void openPane($, thread)
     }
@@ -749,7 +749,7 @@ export const register: Register = on => {
           </Text>
         ) : null}
         {p.qr ? (
-          // For the phone (crosstalk_qr): white on black, so it scans on any terminal theme. Never model context.
+          // For the phone (crosstalk_look action "qr"): white on black, so it scans on any terminal theme. Never model context.
           <Box key="q" flexDirection="column" marginTop={1}>
             <Text bold wrap="truncate">On your phone · {clean(p.qr.label)}</Text>
             {p.qr.rows.map((r, i) => (

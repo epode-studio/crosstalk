@@ -525,7 +525,7 @@ The measure is time from idea to merge, and how few of your minutes it took.
   in its tab, with its conversation. [How](docs/restore.md).
 - **Sessions you already had open** when you installed crosstalk are brought in
   once you say yes.
-- **Dev servers outlive the session.** Agents run them with `crosstalk_serve`,
+- **Dev servers outlive the session.** Agents run them with `crosstalk_work action "serve"`,
   in crosstalk's background tmux, on their worktree's own ports, so parallel
   worktrees never fight over :3000; the next session is told what is running
   where, and a session is never restarted, or a worktree removed, under
@@ -598,7 +598,7 @@ The measure is time from idea to merge, and how few of your minutes it took.
 - **Leaving locks the door.** Someone who leaves a thread, or is taken out or
   revoked, gets nothing written after: the thread's key is replaced for whoever
   is left.
-- **Numbers you can check.** `crosstalk_stats` shows, from this machine only, time
+- **Numbers you can check.** `crosstalk_doctor action "stats"` shows, from this machine only, time
   from first edit to merge, your minutes per merged thread, questions answered
   by rules, and tokens to the first edit with and without a thread brief. A
   line of it lands in your digest each week. Nothing is sent anywhere.
@@ -675,7 +675,7 @@ Permission relay across people is not implemented and never will be.
 
 ## Docs
 
-- [Tools](docs/tools.md), the 19 an agent gets, and what each one is for
+- [Tools](docs/tools.md), the eight an agent gets (thread, say, work, look, ship, people, answer, doctor), each with its actions
 
 - [Clients](docs/clients.md), which agents can be in a room and how each is reached
 

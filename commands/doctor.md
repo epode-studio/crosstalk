@@ -11,7 +11,7 @@ Show the output as-is, then help with whatever is marked ✗. The common ones:
   reachable from here.
 - **no identity**, nothing is set up yet; run `/crosstalk:room new`.
 - **restore**, sessions were lost to a restart or a crashed terminal. Offer to
-  bring them back, and call `crosstalk_restore` with `confirm: true` if the
+  bring them back, and call `crosstalk_work action "restore"` with `confirm: true` if the
   user wants that.
 - **accessibility / automation** (macOS), without these, restored sessions
   open as one window each, not as tabs. Show the steps printed next to them.

@@ -67,7 +67,7 @@ export function createShipping(o: {
   threads: ThreadService
   root: string
   log: (...a: unknown[]) => void
-  /** Hand text to an agent's session: held, with a notice, read with crosstalk_read. */
+  /** Hand text to an agent's session: held, with a notice, read with crosstalk_say action "read". */
   wake: (sessionId: string, text: string) => void
   /** Where a question goes when no session is in its thread. */
   fallbackSession: () => string | undefined

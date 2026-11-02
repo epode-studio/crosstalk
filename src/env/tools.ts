@@ -1,4 +1,4 @@
-// crosstalk_env, the picker's answer, and the hook's SessionStart, for the
+// crosstalk_people action "env", the picker's answer, and the hook's SessionStart, for the
 // local files a new worktree gets (index.ts). Results name files, never what
 // is in them.
 
@@ -7,20 +7,6 @@ import * as ui from "../uistate.ts"
 import { readSpawned } from "../spawn.ts"
 import * as E from "./index.ts"
 import { settle, surface } from "./offer.ts"
-
-export const TOOLS = [
-  {
-    name: "crosstalk_env",
-    description:
-      'The gitignored local files (.env, .env.*, .dev.vars, config/*.local.*, and patterns in the repo\'s .crosstalk/env) that crosstalk copies from the main checkout into new worktrees, so their dev servers start. Asked once per repository; pass confirm true when the user says "copy them" / yes, false for "not in this repo" / no. Without confirm it says what would be copied and what the user decided. Only file names are ever returned: their contents stay on this machine and must never be read into a thread, a message or a commit.',
-    inputSchema: {
-      type: "object",
-      properties: {
-        confirm: { type: "boolean", description: "The user's answer: true copies them into new worktrees of this repo (and the current one), false never" },
-      },
-    },
-  },
-]
 
 /** The worktrees a yes copies into: this one, and the ones crosstalk made of the repo. */
 function worktreesOf(main: string, here?: string): string[] {

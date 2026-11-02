@@ -108,7 +108,7 @@ echo "the MCP tool lists them without confirm"
 MCP=$( (printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
-  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"crosstalk_gather","arguments":{}}}'; sleep 2) \
+  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"crosstalk_work","arguments":{"action":"gather"}}}'; sleep 2) \
   | CLAUDE_CODE_SESSION_ID=asker timeout 10 bun src/server.ts 2>/dev/null)
 has "$MCP" 'bring my other sessions into crosstalk' "the tool says when to use it, in plain words"
 has "$MCP" '2 Claude sessions started before crosstalk' "without confirm it only lists"
@@ -118,7 +118,7 @@ echo
 echo "yes: the idle one restarts in its own pane"
 OUT=$( (printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' \
-  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"crosstalk_gather","arguments":{"confirm":true}}}'; sleep 2) \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"crosstalk_work","arguments":{"action":"gather","confirm":true}}}'; sleep 2) \
   | CLAUDE_CODE_SESSION_ID=asker CROSSTALK_NO_WAITER=1 timeout 10 bun src/server.ts 2>/dev/null)
 has "$OUT" "bringing 2 sessions into crosstalk" "with confirm it starts"
 has "$OUT" "1 is idle and restarts in its tab now" "the idle one now"

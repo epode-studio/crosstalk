@@ -1,8 +1,8 @@
 // The daemon's side of three things from docs/design/next-generation.md:
 //
 //   the main session      src/main.ts decides where things go; this applies it
-//                         and answers crosstalk_main, crosstalk_sessions and
-//                         crosstalk_steer
+//                         and answers crosstalk_work action "main", crosstalk_work action "sessions" and
+//                         crosstalk_work action "steer"
 //   answers become rules  every answered question is recorded (rules/history.ts);
 //                         the second identical answer offers "Always do this?";
 //                         yes is a rule on the ref (rules/doc.ts) that answers
@@ -206,7 +206,7 @@ export class Coordinator {
   private steers = new Map<string, { from: string; to: string; text: string; at: number }>()
 
   /**
-   * crosstalk_steer: the person's own instruction, into another of their
+   * crosstalk_work action "steer": the person's own instruction, into another of their
    * sessions, framed there as theirs. A tool description is no guard (any
    * registered session could call the op, a peer's text could talk an agent
    * into it), so nothing is injected until the person says yes in crosstalk's
@@ -371,7 +371,7 @@ export class Coordinator {
     if (!to) return
     if (this.d.modLive(to))
       ui.withStore((items, now) => ui.upsert(items, { id: `conflict:${c.id}`, kind: "conflict", sessionId: to, thread: c.file, question, options, ts: now }, now))
-    else this.digest({ id: `conflict:${c.id}`, text: `◢ crosstalk: ${question} Say which, and the agent will record it with crosstalk_conflict (id ${c.id}).` }, to)
+    else this.digest({ id: `conflict:${c.id}`, text: `◢ crosstalk: ${question} Say which, and the agent will record it with crosstalk_thread action "note" kind "conflict" (id ${c.id}).` }, to)
   }
 
   // --- answers become rules --------------------------------------------------------
@@ -385,14 +385,14 @@ export class Coordinator {
     const to = o.sid && this.d.sessions().has(o.sid) ? o.sid : this.mainId()
     if (to && this.d.modLive(to))
       ui.withStore((items, now) => ui.upsert(items, { id: offer.id, kind: "rule", sessionId: to, thread: short(repo), question: H.offerQuestion(offer), options: [H.ALWAYS, H.NOT_NOW], ts: now }, now))
-    else this.digest({ id: offer.id, text: `◢ crosstalk: ${H.offerQuestion(offer)} Say "always do that" and the agent will make it a rule with crosstalk_rule.` }, to)
+    else this.digest({ id: offer.id, text: `◢ crosstalk: ${H.offerQuestion(offer)} Say "always do that" and the agent will make it a rule with crosstalk_thread action "note" kind "rule" op "accept".` }, to)
     this.d.log(`offered a standing rule for ${offer.key}`)
     return offer
   }
 
   /** An offer as a tool result shows it, for the agent to put to the person. */
   offerView(o: H.Offer) {
-    return { id: o.id, question: H.offerQuestion(o), how: `Ask your user. On yes, call crosstalk_rule with accept "${o.id}"; on no, decline "${o.id}".` }
+    return { id: o.id, question: H.offerQuestion(o), how: `Ask your user. On yes, call crosstalk_thread action "note" kind "rule" op "accept" id "${o.id}"; on no, op "decline".` }
   }
 
   answeredThreadQuestion(sid: string | undefined, thread: string | undefined, qid: string, text: string) {

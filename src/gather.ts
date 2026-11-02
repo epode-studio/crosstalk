@@ -10,7 +10,7 @@
 //            crash brings them back too.
 //   offer    once: "4 Claude sessions started before crosstalk. Bring them in?"
 //            as the mod's picker, or a systemMessage without it, answered in
-//            plain words through crosstalk_gather.
+//            plain words through crosstalk_work action "gather".
 //   restart  after yes, each one in turn, only while the registry says it is
 //            idle and nothing it started still runs (a dev server, a
 //            watcher: src/services/postpone.ts): SIGTERM to its own verified pid, wait for it to exit, then

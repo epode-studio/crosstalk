@@ -54,7 +54,7 @@ many live stream frames everyone together has used today.
 
 ## Stream frames
 
-Sharing a running server (`crosstalk_share`, [`../docs/urls.md`](../docs/urls.md)
+Sharing a running server (`crosstalk_look action "share"`, [`../docs/urls.md`](../docs/urls.md)
 section 8) sends many small frames: a request head, 48 KB body chunks, a
 response. `ready` says `streams: 1`, as the self-hosted relay's does, plus the
 allowance below as `streamAllowance`, and the client sends those frames as

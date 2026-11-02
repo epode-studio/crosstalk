@@ -1,5 +1,5 @@
 // `crosstalk urls qr [name | url]`: the QR code in a terminal, for a session
-// with no pane. Without a name, the one crosstalk_qr last made. For a person's
+// with no pane. Without a name, the one crosstalk_look action "qr" last made. For a person's
 // own terminal only: inside an agent it is refused, since a share link's code
 // would land in the model's context.
 
@@ -36,14 +36,14 @@ export const printQr = (q: PaneQr, write = (s: string) => void process.stdout.wr
 
 export function qrCmd(argv: string[]): number {
   if (insideAgent()) {
-    console.log("◢ crosstalk: this prints a QR code for the person's eyes; inside an agent it is not shown. Ask for it with crosstalk_qr, which draws it in the pane.")
+    console.log("◢ crosstalk: this prints a QR code for the person's eyes; inside an agent it is not shown. Ask for it with crosstalk_look action \"qr\", which draws it in the pane.")
     return 1
   }
   const words = argv.slice(2).filter((a) => !a.startsWith("--")).join(" ").trim()
   if (!words) {
     const q = latest()
     if (!q) {
-      console.log("◢ crosstalk: no QR code yet. Run `crosstalk urls qr <name>` (as crosstalk_urls labels them) or pass a URL.")
+      console.log("◢ crosstalk: no QR code yet. Run `crosstalk urls qr <name>` (as crosstalk_look action \"urls\" labels them) or pass a URL.")
       return 1
     }
     printQr(q)
