@@ -154,12 +154,20 @@ export function all(o: { env?: NodeJS.ProcessEnv; transcripts?: boolean; limit?:
   const live = o.live ?? liveIds()
   const out = new Map<string, Past>()
   for (const p of Object.values(load())) if (!live.has(p.id)) out.set(p.id, p)
-  if (o.transcripts !== false)
+  if (o.transcripts !== false) {
+    const cache = loadCache()
+    const fresh: Cache = {}
     for (const f of T.recent(o.env, o.limit ?? 400)) {
       const id = path.basename(f, ".jsonl")
       const have = out.get(id)
       if (live.has(id) || (have && have.recap && have.files.length)) continue
-      const s = safeSummary(f)
+      // A transcript read once is not read again until it changes.
+      let mtime = 0
+      try {
+        mtime = fs.statSync(f).mtimeMs
+      } catch {}
+      const s = cache[f]?.mtime === mtime ? cache[f].s : safeSummary(f)
+      fresh[f] = { mtime, s }
       if (!s || live.has(s.sessionId)) continue
       if (have) {
         out.set(id, { ...have, recap: have.recap ?? s.recap, files: have.files.length ? have.files : s.files, branch: have.branch ?? s.branch, title: have.title ?? s.title })
@@ -179,7 +187,28 @@ export function all(o: { env?: NodeJS.ProcessEnv; transcripts?: boolean; limit?:
         source: "claude",
       })
     }
+    saveCache(fresh)
+  }
   return [...out.values()].filter((p) => exists(p.cwd)).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0))
+}
+
+type Cache = Record<string, { mtime: number; s: T.Summary | null }>
+const cacheFile = () => path.join(P.root, "sessions", "transcripts.json")
+function loadCache(): Cache {
+  try {
+    const c = JSON.parse(fs.readFileSync(cacheFile(), "utf8"))
+    return c && typeof c === "object" ? c : {}
+  } catch {
+    return {}
+  }
+}
+function saveCache(c: Cache) {
+  try {
+    fs.mkdirSync(path.dirname(cacheFile()), { recursive: true, mode: 0o700 })
+    const tmp = `${cacheFile()}.${process.pid}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify(c), { mode: 0o600 })
+    fs.renameSync(tmp, cacheFile())
+  } catch {}
 }
 
 const exists = (d: string) => {
