@@ -94,9 +94,10 @@ export type Sealer = (section: string, value: unknown) => string
  * Sealing uses a fresh nonce each time, so without reuse every commit would
  * rewrite every line. With a caching sealer only the sections that changed do.
  */
-export function renderSealed(t: M.Thread, key: Buffer | Sealer, wraps: Wrap[]): string {
+export function renderSealed(t: M.Thread, key: Buffer | Sealer, wraps: Wrap[], epoch = 0): string {
   const seal: Sealer = typeof key === "function" ? key : (s, v) => sealSection(key, t.id, s, v)
-  const lines = ["---", HEADER, `id: ${t.id}`, "sealed: true", "keys:"]
+  // The key's epoch (rekey.ts): absent means 0, so files from before it read the same.
+  const lines = ["---", HEADER, `id: ${t.id}`, "sealed: true", ...(epoch > 0 ? [`epoch: ${epoch}`] : []), "keys:"]
   for (const w of wraps) lines.push(`  - ${w.to} ${w.from} ${w.k}`)
   lines.push("---")
   for (const s of M.SECTIONS) lines.push(`${s}: ${seal(s, (t as any)[s])}`)
@@ -106,7 +107,7 @@ export function renderSealed(t: M.Thread, key: Buffer | Sealer, wraps: Wrap[]): 
 
 export type Parsed =
   | { kind: "public"; id: string; thread: M.Thread }
-  | { kind: "sealed"; id: string; wraps: Wrap[]; open: (key: Buffer) => M.Thread | null }
+  | { kind: "sealed"; id: string; wraps: Wrap[]; epoch: number; open: (key: Buffer) => M.Thread | null }
   | { kind: "unknown" }
 
 function frontmatter(text: string): { fm: string[]; body: string } | null {
@@ -158,6 +159,7 @@ export function parse(text: string): Parsed {
       kind: "sealed",
       id,
       wraps,
+      epoch: Number(get("epoch")) || 0,
       open: (key) => {
         try {
           const o: any = { v: 1, id }

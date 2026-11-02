@@ -29,8 +29,9 @@
 import fs from "node:fs"
 import path from "node:path"
 import { P } from "./config.ts"
+import * as metrics from "./metrics/log.ts"
 
-export type UiKind = "restore" | "message" | "ask" | "route" | "gather" | "team" | "cleanup" | "thread" | "ship" | "rule" | "connect" | "conflict" | "invite" | "doctor"
+export type UiKind = "restore" | "message" | "ask" | "route" | "gather" | "team" | "cleanup" | "thread" | "ship" | "rule" | "connect" | "conflict" | "invite" | "doctor" | "disk" | "install"
 export type UiState = "pending" | "answered" | "handed" | "muted" | "later"
 export type UiAction = "hand" | "answer" | "mute" | "later" | "raised"
 
@@ -145,7 +146,10 @@ export function snapshot(): Record<string, UiItem> {
  */
 export function upsert(items: Record<string, UiItem>, it: Omit<UiItem, "state" | "createdAt" | "updatedAt">, now: number): UiItem {
   const before = items[it.id]
-  if (!before) return (items[it.id] = { ...it, state: "pending", createdAt: now, updatedAt: now })
+  if (!before) {
+    if (metrics.QUESTION_KINDS.has(it.kind)) metrics.record({ k: "asked", at: now, id: it.id, kind: it.kind, ...(it.thread ? { thread: it.thread } : {}) })
+    return (items[it.id] = { ...it, state: "pending", createdAt: now, updatedAt: now })
+  }
   if (FINAL.has(before.state)) return before
   const moved = before.sessionId !== it.sessionId
   items[it.id] = {
@@ -185,6 +189,8 @@ export function act(items: Record<string, UiItem>, id: string, action: UiAction,
     case "answer":
       next.state = "answered"
       if (answer !== undefined) next.answer = answer
+      if (metrics.QUESTION_KINDS.has(it.kind))
+        metrics.record({ k: "answered", at: now, id, kind: it.kind, openMs: now - (it.raisedAt ?? it.createdAt), ...(it.thread ? { thread: it.thread } : {}) })
       break
     default:
       return { ok: false, error: `unknown action ${action}`, item: it }

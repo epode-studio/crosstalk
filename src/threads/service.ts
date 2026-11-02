@@ -35,6 +35,7 @@ import * as S from "./store.ts"
 import * as I from "./infer.ts"
 import { sealSection, unwrapKey, wrapKey, newKey } from "./seal.ts"
 import { botSafe } from "../ui-extra/bots.ts"
+import * as K from "./rekey.ts"
 
 export type LocalSession = {
   sessionId: string
@@ -67,6 +68,8 @@ export type Deps = {
   extra?: { file: string; read: (repo: string, text: string) => void; render: (repo: string) => string | undefined }
   /** Threads that changed, after each save: what a standing rule may answer (src/coordinator.ts). */
   onFlush?: (ids: string[]) => void
+  /** Fingerprints repo trust revoked; defaults to repotrust's state (rekey.ts). */
+  revoked?: () => Set<string>
 }
 
 /** Where a local session was placed. `name` is how its thread entry is keyed, the same way a peer sees it in presence. */
@@ -87,9 +90,14 @@ type State = {
   roots: Record<string, string>
   publicStatus: Record<string, Record<string, string>>
   blobs: Record<string, { h: string; b: string }>
+  /** Each thread key's epoch and who it may have reached (rekey.ts). */
+  epochs: Record<string, number>
+  holders: Record<string, string[]>
 }
 
 const empty = (): State => ({
+  epochs: {},
+  holders: {},
   v: 1,
   threads: {},
   keys: {},
@@ -437,6 +445,8 @@ export class ThreadService {
       // On the default branch the threads accumulate: files keep a session in each.
       if (fp.onDefault) for (const id of rec.threads) if (!want.some((w) => w.id === id)) want.push({ id, why: rec.why[id] ?? "" })
     }
+    // A thread this person left, or was taken out of, is not joined again by matching it.
+    want = want.filter((w) => !(this.st.threads[this.resolve(w.id)] && K.isRemoved(this.st.threads[this.resolve(w.id)], this.me)))
     const wantIds = want.map((w) => this.resolve(w.id))
     for (const id of rec.threads)
       if (!wantIds.includes(id)) {
@@ -559,7 +569,8 @@ export class ThreadService {
         if (!M.people(t).includes(this.me)) continue
         const why = I.matchesPeer(this.lite(t), fp)
         if (!why) continue
-        const isNew = !t.people[peer.fingerprint] || !!t.people[peer.fingerprint].gone
+        if (K.isRemoved(t, peer.fingerprint)) continue
+        const isNew =!t.people[peer.fingerprint] || !!t.people[peer.fingerprint].gone
         let changed = M.put(t, "people", peer.fingerprint, { label: peer.label }, this.me, now)
         if (isNew) {
           // Joining is reading: everyone in the thread hears who can now.
@@ -590,20 +601,21 @@ export class ThreadService {
     const peer = this.d.peers()[label]
     if (!peer) return this.d.log(`ignored a thread from ${label}: no direct channel`)
     this.capable.add(label)
-    const sync = env.threadSync as { thread?: unknown; key?: string } | undefined
+    const sync = env.threadSync as { thread?: unknown; key?: string; epoch?: number } | undefined
     const inc = botSafe(label, M.parseThread(sync?.thread), this.st.threads, this.d.peers())
     if (!inc) return this.d.log(`ignored a malformed thread from ${label}`)
     const known = this.st.threads[inc.id]
     const theirPeople = M.people(inc)
-    if (!theirPeople.includes(peer.fingerprint)) return this.d.log(`ignored thread ${inc.id} from ${label}: they are not in it`)
+    // Someone leaving sends the thread once more, without themselves in it.
+    const leaving = !!known && K.isRemoved(inc, peer.fingerprint) && inc.people[peer.fingerprint].by === peer.fingerprint && M.people(known).includes(peer.fingerprint)
+    if (!theirPeople.includes(peer.fingerprint) && !leaving) return this.d.log(`ignored thread ${inc.id} from ${label}: they are not in it`)
     if (!known && !theirPeople.includes(this.me)) return this.d.log(`ignored thread ${inc.id} from ${label}: it does not name us`)
     if (known && !M.people(known).includes(this.me) && !theirPeople.includes(this.me)) return
-    if (typeof sync?.key === "string" && Buffer.from(sync.key, "base64").length === 32) {
-      const mine = this.st.keys[inc.id]
-      // Two keys for one thread converge on the smaller, so every replica agrees.
-      if (!mine || sync.key < mine) this.st.keys[inc.id] = sync.key
-    }
+    // Someone taken out of a thread is not heard in it again.
+    if (known && K.isRemoved(known, peer.fingerprint)) return this.d.log(`ignored thread ${inc.id} from ${label}: they were taken out of it`)
     const merged = known ? M.merge(known, inc) : inc
+    // Keys converge on the higher epoch, then the smaller key (rekey.ts), so every replica agrees.
+    if (K.validKey(sync?.key)) this.adoptKey(inc.id, sync.key, Number(sync.epoch) || 0, merged)
     if (known && M.same(known, merged)) return
     this.st.threads[inc.id] = merged
     this.touched.add(inc.id)
@@ -630,7 +642,7 @@ export class ThreadService {
         kind: "thread",
         intent: "fyi",
         text: "",
-        threadSync: { thread: t, key: this.st.keys[t.id] },
+        threadSync: { thread: t, key: this.st.keys[t.id], ...(this.st.epochs[t.id] ? { epoch: this.st.epochs[t.id] } : {}) },
       })
     }
   }
@@ -885,11 +897,78 @@ export class ThreadService {
     return this.st.roots[repo]
   }
 
+  /** Every repo this machine has a clone of, with that clone. */
+  roots(): Record<string, string> {
+    return { ...this.st.roots }
+  }
+
+  // --- leaving and re-keying (rekey.ts) ---------------------------------------------
+
+  /** Revoked fingerprints; a dependency so tests need no repotrust state. */
+  private revoked = () => (this.d.revoked ? this.d.revoked() : K.revokedFingerprints())
+
+  keyEpoch = (id: string) => this.st.epochs[id] ?? 0
+
+  /**
+   * Take a person out of a thread, or leave it ("me"). Their sessions go with
+   * them, nobody's presence puts them back, and the key is replaced on the
+   * way out so nothing written from now on opens for them.
+   */
+  removePerson(id: string, fp: string): { ok: boolean; error?: string; thread?: string; rekeyed?: boolean } {
+    const t = this.thread(id)
+    if (!t) return { ok: false, error: "no such thread" }
+    if (!t.people[fp] || (t.people[fp].gone && K.isRemoved(t, fp))) return { ok: false, error: "they are not in that thread" }
+    const before = this.keyEpoch(t.id)
+    K.removePerson(t, fp, this.me, this.now())
+    if (fp === this.me)
+      for (const [sid, p] of Object.entries(this.st.placed))
+        if (p.threads.includes(t.id)) {
+          p.pinned = (p.pinned ?? p.threads).filter((x) => x !== t.id)
+          p.threads = p.threads.filter((x) => x !== t.id)
+          delete p.why[t.id]
+          const s = this.locals.get(sid)
+          if (s) this.place(s)
+        }
+    this.touched.add(t.id)
+    // Our own leaving is told to the others before we stop hearing them: they re-key.
+    if (fp === this.me) this.broadcast(t, new Set())
+    this.flush()
+    return { ok: true, thread: t.meta.value.name, rekeyed: this.keyEpoch(t.id) > before }
+  }
+
+  /** Replace the key when someone who may hold it should not any more. */
+  private checkKey(id: string) {
+    const t = this.st.threads[id]
+    if (!t || t.meta.value.public || !this.st.keys[id]) return
+    const should = K.shouldHold(M.people(t), this.revoked())
+    const r = K.check({ me: this.me, holders: this.st.holders[id], should })
+    this.st.holders[id] = r.holders
+    if (!r.rotate) return
+    this.st.keys[id] = newKey().toString("base64")
+    this.st.epochs[id] = this.keyEpoch(id) + 1
+    // Re-sealed on the next commit, whatever else changed.
+    delete this.st.committed[id]
+    this.touched.add(id)
+    this.d.log(`thread ${t.meta.value.name}: new key (epoch ${this.st.epochs[id]}) for ${should.length} ${should.length === 1 ? "person" : "people"}`)
+  }
+
+  /** Take a key from a peer's frame or the ref when it wins (rekey.ts). */
+  private adoptKey(id: string, key: string, epoch: number, t: M.Thread) {
+    if (!K.wins({ key: this.st.keys[id], epoch: this.st.epochs[id] }, { key, epoch })) return
+    if (this.st.keys[id] === key && this.keyEpoch(id) === epoch) return
+    this.st.keys[id] = key
+    if (epoch) this.st.epochs[id] = epoch
+    // Whoever gave it to us gave it to who should hold it, as far as we know.
+    this.st.holders[id] = K.shouldHold(M.people(t), this.revoked())
+    this.save()
+  }
+
   // --- after every operation -------------------------------------------------------
 
   /** Save, send what changed to the people in it, and schedule a commit for what earns one. */
   private flush() {
     const skip = new Set<string>()
+    for (const id of this.touched) this.checkKey(id)
     if (this.touched.size) {
       const ids = [...this.touched]
       this.touched.clear()
@@ -958,8 +1037,10 @@ export class ThreadService {
     this.mergeRef(root, repo, S.SYNC_REF)
     this.mergeRef(root, repo, S.REF)
     this.reconcile()
+    // Trust revoked since the last round leaves a key holder who should not be one.
+    for (const t of Object.values(this.st.threads)) if (t.meta.value.repo === repo) this.checkKey(t.id)
     this.flush()
-    const mine = Object.values(this.st.threads).filter((t) => t.meta.value.repo === repo)
+    const mine =Object.values(this.st.threads).filter((t) => t.meta.value.repo === repo)
     const due = commit || mine.some((t) => M.committedDigest(t) !== this.st.committed[t.id])
     if (!due) return
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -1007,7 +1088,8 @@ export class ThreadService {
         if (!t) {
           key = unwrapKey(this.d.identity, p.wraps, peers)
           t = key ? p.open(key) : null
-          if (t && key) this.st.keys[p.id] = key.toString("base64")
+          // An older file opens with the key it was sealed with, which is never put back over a newer one.
+          if (t && key) this.adoptKey(p.id, key.toString("base64"), p.epoch, t)
         }
       }
       if (!t || (t.meta.value.repo && t.meta.value.repo !== repo)) {
@@ -1045,10 +1127,10 @@ export class ThreadService {
       const k = this.st.keys[t.id]
       if (!k) continue
       const key = Buffer.from(k, "base64")
-      const recipients = M.people(t)
+      const recipients = K.shouldHold(M.people(t), this.revoked())
         .map((fp) => byFp.get(fp))
         .filter((p): p is Peer => !!p)
-      out[name] = F.renderSealed(t, this.sealer(t.id, key), this.wraps(t.id, key, recipients))
+      out[name] = F.renderSealed(t, this.sealer(t.id, key), this.wraps(t.id, key, recipients), this.st.epochs[t.id] ?? 0)
     }
     return out
   }

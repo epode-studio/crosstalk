@@ -242,10 +242,16 @@ Paste this into your coding agent:
 
 > **Install crosstalk from github.com/epode-studio/crosstalk**
 
-It works out which agent it is and runs the right install below.
+It works out which agent it is and runs the right install below, following
+[`INSTALL.md`](INSTALL.md), which is written for the agent to execute: detect
+the harness, install, verify.
 
-**Teammates install nothing.** Once a repository's `.claude/settings.json`
-enables crosstalk, it is there the moment they clone. *(Coming.)*
+**Teammates install nothing.** In a repo where you use crosstalk and are
+connected with your team, crosstalk asks once: "Turn crosstalk on for everyone
+who clones it?" Yes merges crosstalk's marketplace and plugin into the repo's
+`.claude/settings.json`, keeping every other setting, and leaves it for you to
+commit. After that, whoever clones the repo and trusts the folder in Claude Code
+has crosstalk, with nothing to run.
 
 Or by hand, for whichever agent you already use. Every one of these reads the
 same repository.
@@ -513,6 +519,20 @@ The measure is time from idea to merge, and how few of your minutes it took.
 - **Bots** are members that declare themselves agents (`--agent`). They post to
   threads and rooms, and nothing more: they never start or resume a session on
   anyone's machine, never answer a question, and are never above notify.
+- **Your disk back.** When Claude Code's finished worktrees and old sessions pass
+  5 GB, one question: "Worktrees and old sessions are using 18 GB; free 14 GB
+  from 6 finished threads?" Nothing is deleted without a yes; say yes twice and
+  it can become a standing rule.
+- **A library tells its users.** When a thread changes a library's public
+  surface, the threads of every repo on your machine that depends on it get a
+  heads-up with the diff.
+- **Leaving locks the door.** Someone who leaves a thread, or is taken out or
+  revoked, gets nothing written after: the thread's key is replaced for whoever
+  is left.
+- **Numbers you can check.** `crosstalk_stats` shows, from this machine only, time
+  from first edit to merge, your minutes per merged thread, questions answered
+  by rules, and tokens to the first edit with and without a thread brief. A
+  line of it lands in your digest each week. Nothing is sent anywhere.
 
 <br>
 

@@ -214,6 +214,18 @@ export class WarnService {
     }
   }
 
+  /**
+   * A heads-up decided elsewhere (src/threads/crossrepo.ts: a library's
+   * surface changed): to these local sessions, and to these peers as an
+   * ordinary heads-up their acceptHeadsUp delivers to the thread.
+   */
+  relay(o: { thread: string; local: string[]; labels: string[]; text: string; diff: { label: string; content: string }; warn: Record<string, unknown>; fromSession: string }) {
+    const slice = makeSlice(o.diff.label, o.diff.content)
+    for (const sid of o.local)
+      this.d.deliver(sid, { id: crypto.randomUUID(), kind: "heads-up", from: this.d.label, fromSession: o.fromSession, text: o.text, slices: [slice], threads: [o.thread] })
+    for (const label of o.labels) this.d.send(label, this.envelope(label, "heads-up", o.text, { thread: o.thread }, { warn: o.warn, slices: [slice], fromSession: o.fromSession }))
+  }
+
   /** A heads-up from a peer. */
   acceptHeadsUp(label: string, env: Envelope) {
     const w = env.warn as any

@@ -47,6 +47,7 @@ import type { Envelope, Frame, Intent, Kind, SessionPresence, Slice } from "./pr
 import { ThreadService } from "./threads/service.ts"
 import * as threadModel from "./threads/model.ts"
 import { createShipping } from "./shipping/daemon.ts"
+import { createExtras } from "./extras.ts"
 import { rootFrom } from "./paths.ts"
 import { Coordinator, RULES_FILE } from "./coordinator.ts"
 import { isBot } from "./ui-extra/bots.ts"
@@ -2123,6 +2124,8 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       if (action === "answer" && value !== undefined) {
         const c = coord.uiAct(sid, before, value)
         if (c) return c
+        const x = await extras.uiAct(before, value)
+        if (x) return x
       }
 
       if (before.kind === "team") {
@@ -2396,6 +2399,9 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       // The main session, standing rules, heads-ups and conflicts.
       const r = await coord.handle(req, resolveSession(req))
       if (r !== undefined) return r
+      // Disk, team install, stats, leaving a thread.
+      const x = await extras.handle(req, resolveSession(req)?.sessionId ?? (req.sessionId ? String(req.sessionId) : undefined))
+      if (x !== undefined) return x
       return { ok: false, error: `unknown op "${req.op}"` }
     }
   }
@@ -2431,6 +2437,15 @@ coord = new Coordinator({
   },
   route: (id, session) => handle({ op: "route", id, session, auto: true }),
   answerPeer: (label, correlation, text, replyTo) => handle({ op: "answer", to: label, correlation, text, replyTo, auto: true }),
+})
+
+// Disk, team install, local stats, leaving a thread (src/extras.ts).
+const extras = createExtras({
+  threads,
+  log,
+  fallbackSession: () => coord.mainId() ?? mostRecentSession()?.sessionId,
+  modLive: (sid) => modLive(sessions.get(sid)),
+  digest: (id, text) => coord.note({ id, text }),
 })
 
 fs.mkdirSync(path.dirname(P.daemonSock), { recursive: true, mode: 0o700 })
