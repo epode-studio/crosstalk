@@ -12198,6 +12198,13 @@ function project(thread, s) {
     out.push({ kind: "screenshot", label: p.label, alive: true, owner: "you", ...p.path ? { path: p.path } : {}, ...p.before ? { before: p.before } : {}, after: p.after, ...thread ? { thread } : {} });
   return out.sort((a, b) => ORDER[a.kind] - ORDER[b.kind] || Number(b.alive) - Number(a.alive));
 }
+function ofThread(store, thread) {
+  const exact = store.forThread(thread);
+  if (exact.length)
+    return exact;
+  const want = thread.toLowerCase();
+  return store.list().filter((u) => (u.thread ?? "").toLowerCase().startsWith(want) || u.label.toLowerCase().startsWith(`${want} \u00b7`));
+}
 function running2(thread, o = {}) {
   const store = urls();
   let worktree = o.worktree;
@@ -12219,7 +12226,7 @@ function running2(thread, o = {}) {
     else {
       const here = o.sessionId ? store.forSession({ sessionId: o.sessionId, worktree, thread }) : [];
       const ids = new Set(here.map((u) => u.id));
-      urls2 = [...here, ...(thread ? store.forThread(thread) : store.list()).filter((u) => !ids.has(u.id))];
+      urls2 = [...here, ...(thread ? ofThread(store, thread) : o.everyone ? store.list() : []).filter((u) => !ids.has(u.id))];
     }
   } catch {}
   let shares = { v: 1, out: [], in: [] };
@@ -24513,7 +24520,7 @@ async function callLegacy(name, a, o) {
       try {
         syncServices({ store: urls() });
       } catch {}
-      const all = running2(thread, { sessionId: SESSION_ID, worktree, max: 60 }).filter((r) => (!a.kind || r.kind === a.kind) && (a.alive === undefined || r.alive === !!a.alive));
+      const all = running2(thread, { sessionId: SESSION_ID, worktree, max: 60, everyone: !thread }).filter((r) => (!a.kind || r.kind === a.kind) && (a.alive === undefined || r.alive === !!a.alive));
       return { content: [{ type: "text", text: runningText(all, { thread }) }] };
     }
     case "crosstalk_notes": {

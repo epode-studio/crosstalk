@@ -384,7 +384,7 @@ for c in room facts tasks attention peers; do
     *) bad "$c on a fresh install said: $(echo "$OUT" | cut -c1-40)" ;;
   esac
 done
-has "$(CROSSTALK_HOME="$FRESH" bun src/cli.ts room 2>&1)" "room new" "and names room new"
+has "$(CROSSTALK_HOME="$FRESH" bun src/cli.ts room 2>&1)" "/crosstalk:join" "and names /crosstalk:join"
 rm -rf "$FRESH"
 
 # A half-written identity file reads as no identity at all, and the advice for

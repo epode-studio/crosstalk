@@ -266,9 +266,9 @@ check "$(field "$P1" 'r.outcome')" "waiting" "ana's agent proposes auth changes 
 sleep 1
 P2=$(rpc "$B" "{\"op\":\"conflict\",\"sessionId\":\"b-bill\",\"id\":\"$CID\",\"owner\":\"theirs\"}")
 check "$(field "$P2" 'r.outcome')" "agreed" "ben's agrees: no person asked"
-dec_a() { field "$(rpc "$A" '{"op":"thread_read","sessionId":"'"$ASID"'"}')" 'r.threads[0].decisions.some(d => /auth changes it/.test(d.text)) ? "yes" : ""'; }
+dec_a() { field "$(rpc "$A" '{"op":"thread_read","sessionId":"'"$ASID"'"}')" 'r.threads[0].notes.filter(n => n.kind === "decision").some(d => /auth changes it/.test(d.text)) ? "yes" : ""'; }
 check "$(wait_for 5 dec_a)" "yes" "recorded as a decision in auth"
-check "$(field "$(rpc "$B" '{"op":"thread_read","sessionId":"b-bill"}')" 'r.threads[0].decisions.some(d => /auth changes it/.test(d.text)) ? "yes" : ""')" "yes" "and in billing"
+check "$(field "$(rpc "$B" '{"op":"thread_read","sessionId":"b-bill"}')" 'r.threads[0].notes.filter(n => n.kind === "decision").some(d => /auth changes it/.test(d.text)) ? "yes" : ""')" "yes" "and in billing"
 
 # --- 5. first use, per repo ---------------------------------------------------------------
 echo

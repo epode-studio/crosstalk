@@ -245,8 +245,6 @@ export function statusLine(o: { threads: readonly string[]; cards?: readonly str
 /** `file:///…`, its path escaped, for an OSC 8 link to a screenshot. Only an absolute path of printable characters. */
 export const fileLink = (file: string) => (/^\/[^\u0000-\u001f\u007f]*$/.test(file) && file.length <= 1000 ? `file://${file.split("/").map(encodeURIComponent).join("/")}` : undefined)
 
-/** A screenshot pair's line: `auth · web /login · before 2m · after now`. */
-export const shotLine = (s: PaneShot, now: number) => `${s.label}${s.path ? ` ${s.path}` : ""} · ${s.before ? `before ${ago(s.before.at, now)}` : "no before yet"} · after ${ago(s.after.at, now)}`
 
 /** A URL the pane may make clickable: http(s), a plain host, nothing that is not printable. */
 export const linkable = (url: string) => url.length <= 500 && /^https?:\/\/[A-Za-z0-9.\[\]:-]+(\/[!-~]*)?$/.test(url)

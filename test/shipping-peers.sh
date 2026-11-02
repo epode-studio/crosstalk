@@ -165,7 +165,7 @@ check "$(until_state merged)" "merged" "ana's machine takes it and merges"
 check "$(g "$R/ana" merge-base --is-ancestor crosstalk/login main && echo in || echo out)" "in" "the branch is in ana's main"
 TA=$(rpc "$A" '{"op":"thread_read","sessionId":"a-login"}')
 has "$(field "$TA" "r.threads[0].questions.find(q => q.id === '$QID')?.answeredBy")" "ben" "the thread says ben answered it"
-has "$(field "$TA" 'r.threads[0].decisions.map(d => d.text).join(";")')" "ben agreed to merge login v2" "and the decision is ben's"
+has "$(field "$TA" 'r.threads[0].notes.filter(n => n.kind === "decision").map(d => d.text).join(";")')" "ben agreed to merge login v2" "and the decision is ben's"
 gone() { case " $(ben_items) " in *" ship:$QID:b-login "*) ;; *) echo gone ;; esac; }
 check "$(wait_for 10 gone)" "gone" "ben's picker comes down"
 

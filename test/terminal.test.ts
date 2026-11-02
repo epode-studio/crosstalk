@@ -434,13 +434,13 @@ const view = (o: Partial<View> = {}): View => ({
     { id: "q1", text: "Rotate refresh tokens too?", blocking: true, who: "ben" },
     { id: "q2", text: "Old question", blocking: false, who: "ana", answer: "yes", answeredBy: "ana" },
   ],
-  decisions: Array.from({ length: 12 }, (_, i) => ({ id: `d${i}`, text: `decision ${i}`, who: "ana", at: Date.parse("2026-10-01") + i * 86_400_000 })),
-  facts: [{ id: "f", text: "a fact", who: "ana", at: 1 }],
-  tasks: [
-    { id: "k1", text: "write the refresh endpoint", who: "ana", state: "open" },
-    { id: "k2", text: "done already", who: "ana", state: "done" },
+  notes: [
+    { id: "f", kind: "fact", text: "a fact", who: "ana", at: 1 },
+    { id: "k1", kind: "task", text: "write the refresh endpoint", who: "ana", at: 2, state: "open" },
+    { id: "k2", kind: "task", text: "done already", who: "ana", at: 3, state: "done" },
+    { id: "r1", kind: "rule", text: "never log a token", who: "ana", at: 4 },
+    ...Array.from({ length: 12 }, (_, i) => ({ id: `d${i}`, kind: "decision" as const, text: `decision ${i}`, who: "ana", at: Date.parse("2026-10-01") + i * 86_400_000 })),
   ],
-  rules: [{ id: "r1", text: "never log a token", who: "ana" }],
   touchedAt: 1,
   ...o,
 })
@@ -466,7 +466,7 @@ describe("a new agent starts from its thread", () => {
     expect(b.length).toBeLessThan(2000)
   })
   test("an empty thread says so, and is still short", () => {
-    const b = ST.threadBrief(view({ recap: "", decisions: [], questions: [], tasks: [], rules: [], files: [], people: [] }), "go")
+    const b = ST.threadBrief(view({ recap: "", notes: [], questions: [], files: [], people: [] }), "go")
     expect(b).toContain(`thread "auth".\nEverything between`)
     expect(b).toContain("Recap:\n(none yet)")
     expect(b).not.toContain("Decisions:")

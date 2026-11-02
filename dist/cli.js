@@ -10874,6 +10874,13 @@ function project(thread, s) {
     out.push({ kind: "screenshot", label: p.label, alive: true, owner: "you", ...p.path ? { path: p.path } : {}, ...p.before ? { before: p.before } : {}, after: p.after, ...thread ? { thread } : {} });
   return out.sort((a, b) => ORDER2[a.kind] - ORDER2[b.kind] || Number(b.alive) - Number(a.alive));
 }
+function ofThread(store, thread) {
+  const exact = store.forThread(thread);
+  if (exact.length)
+    return exact;
+  const want = thread.toLowerCase();
+  return store.list().filter((u) => (u.thread ?? "").toLowerCase().startsWith(want) || u.label.toLowerCase().startsWith(`${want} \u00b7`));
+}
 function running2(thread, o = {}) {
   const store = urls();
   let worktree = o.worktree;
@@ -10895,7 +10902,7 @@ function running2(thread, o = {}) {
     else {
       const here = o.sessionId ? store.forSession({ sessionId: o.sessionId, worktree, thread }) : [];
       const ids = new Set(here.map((u) => u.id));
-      urls2 = [...here, ...(thread ? store.forThread(thread) : store.list()).filter((u) => !ids.has(u.id))];
+      urls2 = [...here, ...(thread ? ofThread(store, thread) : o.everyone ? store.list() : []).filter((u) => !ids.has(u.id))];
     }
   } catch {}
   let shares = { v: 1, out: [], in: [] };

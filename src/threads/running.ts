@@ -110,12 +110,20 @@ export function project(thread: string | undefined, s: Sources): Running[] {
 }
 
 
+/** A thread's URL records; `auth` also matches a group named auth with no thread yet (a worktree's folder), as the URL list always has. */
+function ofThread(store: ReturnType<typeof Urls.urls>, thread: string): Url[] {
+  const exact = store.forThread(thread)
+  if (exact.length) return exact
+  const want = thread.toLowerCase()
+  return store.list().filter((u) => (u.thread ?? "").toLowerCase().startsWith(want) || u.label.toLowerCase().startsWith(`${want} ·`))
+}
+
 /**
  * A thread's Running, read from the stores now. With `sessionId`, that
  * session's worktree's servers and what it printed come first; with `main`,
  * every thread's URLs. At most `max` entries, answering ones first.
  */
-export function running(thread: string | undefined, o: { sessionId?: string; worktree?: string; main?: boolean; max?: number; now?: number; servers?: Svc.Shown[] } = {}): Running[] {
+export function running(thread: string | undefined, o: { sessionId?: string; worktree?: string; main?: boolean; max?: number; now?: number; servers?: Svc.Shown[]; everyone?: boolean } = {}): Running[] {
   const store = Urls.urls()
   let worktree = o.worktree
   try {
@@ -134,8 +142,8 @@ export function running(thread: string | undefined, o: { sessionId?: string; wor
     else {
       const here = o.sessionId ? store.forSession({ sessionId: o.sessionId, worktree, thread }) : []
       const ids = new Set(here.map((u) => u.id))
-      // No thread: this session's first, then everyone else's.
-      urls = [...here, ...(thread ? store.forThread(thread) : store.list()).filter((u) => !ids.has(u.id))]
+      // No thread, and asked for everyone's (the look tool): this session's first, then the rest.
+      urls = [...here, ...(thread ? ofThread(store, thread) : o.everyone ? store.list() : []).filter((u) => !ids.has(u.id))]
     }
   } catch {}
   let shares: ReturnType<typeof Share.read> = { v: 1, out: [], in: [] }

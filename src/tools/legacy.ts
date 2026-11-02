@@ -81,7 +81,7 @@ export async function callLegacy(name: string, a: any, o: Ctx): Promise<Result |
       try {
         U.syncServices({ store: U.urls() })
       } catch {}
-      const all = R.running(thread, { sessionId: SESSION_ID, worktree, max: 60 }).filter((r) => (!a.kind || r.kind === a.kind) && (a.alive === undefined || r.alive === !!a.alive))
+      const all = R.running(thread, { sessionId: SESSION_ID, worktree, max: 60, everyone: !thread }).filter((r) => (!a.kind || r.kind === a.kind) && (a.alive === undefined || r.alive === !!a.alive))
       return { content: [{ type: "text" as const, text: R.runningText(all, { thread }) }] }
     }
 

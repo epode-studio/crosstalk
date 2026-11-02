@@ -880,3 +880,35 @@ describe("history", () => {
     expect(TH.history(t).some((e) => e.label === "v1 tokens accepted until 0.2")).toBe(false)
   })
 })
+
+// --- Notes: one API for a thread's and for those kept with people joined with words ----
+
+describe("notes", () => {
+  test("facts and open tasks kept outside threads list as notes, marked with whom they are kept", async () => {
+    const N = await import("../src/notes.ts")
+    const facts = { beta: [{ id: "f_1", text: "uploads chunk at 4KB", by: "jo", at: 5, tags: [], confirmed: [{ by: "ana", at: 6 }] }, { id: "f_0", text: "old", by: "jo", at: 1, tags: [], confirmed: [], supersededBy: "f_1" }] }
+    const tasks = { beta: [{ id: "t_1", text: "wire the retry", by: "jo", at: 7, state: "claimed" as const, claimedBy: "ana", tags: [] }, { id: "t_2", text: "done one", by: "jo", at: 2, state: "done" as const, tags: [] }] }
+    expect(N.groupNotes(["beta"], { facts, tasks })).toEqual([
+      { id: "f_1", kind: "fact", text: "uploads chunk at 4KB", who: "jo", at: 5, confirmed: ["ana"], with: "beta" },
+      { id: "t_1", kind: "task", text: "wire the retry", who: "jo", at: 7, state: "claimed", claimedBy: "ana", with: "beta" },
+    ])
+    expect(N.groupNotes(["beta"], { facts, tasks, kinds: ["task"] }).map((n) => n.id)).toEqual(["t_1"])
+    expect(N.threadNotes(sample()).map((n) => `${n.thread}:${n.kind}`)).toEqual(["auth:fact", "auth:task", "auth:rule", "auth:decision"])
+  })
+
+  test("a thread's fact is confirmed and corrected in the thread; the corrected one ends in History", async () => {
+    const TH = await import("../src/threads/history.ts")
+    const [ana] = pair()
+    ana.svc.observe(sess("a", "notes-branch"))
+    const f = ana.svc.fact("a", { text: "staging is shared" })
+    if (!f.ok) throw new Error(f.error)
+    expect(ana.svc.confirmFact("a", { id: f.id }).ok).toBe(true)
+    const t = ana.svc.find("a")!
+    expect(M.noteOf(t, f.id, "fact")?.confirmed?.map((c) => c.by)).toEqual(["ana"])
+    const c = ana.svc.correctFact("a", { id: f.id, text: "staging has its own DB now", reason: "moved" })
+    if (!c.ok) throw new Error(c.error)
+    expect(M.notes(t, "fact").map((n) => n.text)).toEqual(["staging has its own DB now"])
+    expect(TH.history(t).find((e) => e.label === "staging is shared")).toMatchObject({ kind: "fact", why: "corrected" })
+    expect(ana.svc.confirmFact("a", { id: "f_nope" }).ok).toBe(false)
+  })
+})
