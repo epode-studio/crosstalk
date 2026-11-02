@@ -31,7 +31,7 @@ import path from "node:path"
 import { P } from "./config.ts"
 import * as metrics from "./metrics/log.ts"
 
-export type UiKind = "restore" | "message" | "ask" | "route" | "gather" | "team" | "cleanup" | "thread" | "ship" | "rule" | "connect" | "conflict" | "invite" | "doctor" | "disk" | "install" | "attention" | "steer"
+export type UiKind = "restore" | "message" | "ask" | "route" | "gather" | "team" | "cleanup" | "thread" | "ship" | "rule" | "connect" | "conflict" | "invite" | "doctor" | "disk" | "install" | "attention" | "steer" | "session"
 export type UiState = "pending" | "answered" | "handed" | "muted" | "later"
 export type UiAction = "hand" | "answer" | "mute" | "later" | "raised" | "unhand"
 

@@ -31,6 +31,7 @@ import * as nextTools from "./nexttools.ts"
 import * as extraTools from "./ui-extra/tools.ts"
 import * as moreTools from "./moretools.ts"
 import * as attnTools from "./attention/tools.ts"
+import * as sessionTools from "./sessions/tools.ts"
 import { rootFrom } from "./paths.ts"
 import { sessionsDir } from "./registry.ts"
 import { channelVerdict, hostArgv } from "./channels.ts"
@@ -409,6 +410,8 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     ...moreTools.TOOLS,
     // Sessions and attention: fresh sessions, staffing, background permission prompts.
     ...attnTools.TOOLS,
+    // Close, find, resume, rename, move, pop out, background; here or on your other machines (src/sessions/).
+    ...sessionTools.TOOLS,
     {
       name: "crosstalk_thread_read",
       description:
@@ -688,6 +691,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           (await moreTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
           (await terminalTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
           (await attnTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
+          (await sessionTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
           err(`unknown tool ${req.params.name}`)
         )
     }
