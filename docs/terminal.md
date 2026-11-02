@@ -18,7 +18,7 @@ report it. Without the mod, the classic hooks do:
 | a permission prompt or a question (`Notification`) | waiting on you |
 | a tool runs after that prompt | working |
 | the session ends | cleared |
-| a crosstalk service of the session's crashed or stopped answering ([urls.md](urls.md), section 6) | **broken**: red at once, and shown instead of done or waiting until it is healthy again (working still shows). OSC 9;4 error, `@crosstalk_state` = `broken`, the tab colour red |
+| a crosstalk service of the session's crashed or stopped answering ([urls.md](urls.md), section 9) | **broken**: red at once, and shown instead of done or waiting until it is healthy again (working still shows). OSC 9;4 error, `@crosstalk_state` = `broken`, the tab colour red |
 
 A hook pays for one small file write. When the state changes, it also starts one
 detached process, which changes the tab. A tab changes at most once every 750 ms, and the

@@ -26,6 +26,8 @@ export CROSSTALK_PORT_START=${CROSSTALK_PORT_START:-48500}
 export CROSSTALK_URL_TICK_MS=300 CROSSTALK_URL_SYNC_MS=300 CROSSTALK_URL_CHECK_MS=500
 export CROSSTALK_HEALTH_TICK_MS=400 CROSSTALK_HEALTH_BACKOFF_MS=300 CROSSTALK_NO_SHOT_BASELINE=1
 export CROSSTALK_SHOTS_SETTLE_MS=300 CROSSTALK_SHOTS_TURN_GAP_MS=0 CROSSTALK_TERM_SYNC=1
+# The history's drain (src/urls/history/) waits, so what a capture appended can be read here.
+export CROSSTALK_HISTORY_MS=600000
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 TMP=$(mktemp -d)
@@ -131,6 +133,7 @@ F1=$(echo "$SHOT" | grep -o '/[^ ]*\.png' | head -1)
 check "$(head -c 8 "$F1" 2>/dev/null | od -An -tx1 | tr -d ' \n')" "89504e470d0a1a0a" "a real PNG, under the crosstalk home"
 has "$F1" "$CROSSTALK_HOME/shots/auth/" "filed under the thread"
 has "$(cat "$CROSSTALK_HOME/shots/index.json")" "\"reason\": \"demand\"" "with its metadata in shots/index.json"
+has "$(cat "$CROSSTALK_HOME/history-shots.jsonl" 2>/dev/null)" "\"path\":\"$F1\"" "and noted for the thread's history"
 if CROSSTALK_SHOTS_ENGINE=chrome bun src/cli.ts shots engine | grep -q '^chrome'; then
   CH=$(CROSSTALK_SHOTS_ENGINE=chrome bun src/cli.ts shots capture --session sess-a --cwd "$WT" --path /chrome --json)
   has "$CH" '"engine":"chrome"' "without Playwright, an installed Chrome takes it (DevTools over a pipe)"

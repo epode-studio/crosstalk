@@ -23,6 +23,7 @@
 
 import crypto from "node:crypto"
 import type { FeatureShip } from "../shipping/types.ts"
+import type { Link } from "../urls/history/links.ts"
 
 export type Status = "active" | "waiting" | "done" | "archived"
 export const STATUSES: readonly Status[] = ["active", "waiting", "done", "archived"]
@@ -95,6 +96,8 @@ export type Thread = {
   facts: Items<Fact>
   tasks: Items<Task>
   rules: Items<Rule>
+  /** Every link, preview and screenshot the thread had (src/urls/history/links.ts). */
+  links: Items<Link>
   /** Highest Lamport value seen. Not a section: the max of two replicas. */
   lamport: number
   /** Wall clock of the last edit anyone made, for fading. Also merged as a max. */
@@ -112,6 +115,7 @@ export const LISTS = [
   "facts",
   "tasks",
   "rules",
+  "links",
 ] as const
 export type ListName = (typeof LISTS)[number]
 export const SECTIONS = ["meta", "recap", ...LISTS] as const
@@ -152,6 +156,7 @@ export function create(o: {
     facts: {},
     tasks: {},
     rules: {},
+    links: {},
     lamport: 1,
     touchedAt: now,
   }

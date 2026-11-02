@@ -27,6 +27,7 @@ import * as U from "../index.ts"
 import type { Url } from "../store.ts"
 import { SHIP_FILE } from "../../shipping/config.ts"
 import * as B from "./browser.ts"
+import { noteShot } from "../history/sync.ts"
 import { cleanPath, plan, planUrl, type Skipped, type Target } from "./plan.ts"
 import { fileFor, pairs, shotStore, type Pair, type Reason, type Shot, type ShotStore } from "./store.ts"
 
@@ -220,6 +221,10 @@ export async function captureFor(o: {
       failed.push({ label: t.label, error: r.error })
       continue
     }
+    // Into the thread's history of links and screenshots (src/urls/history/): one line appended.
+    try {
+      noteShot({ ...(t.urlId ? { urlId: t.urlId } : { url: t.url }), thread, path: file, at, note: `${o.reason}${t.path ? ` ${t.path}` : ""}` })
+    } catch {}
     shots.push(
       store.add({
         key: t.key,

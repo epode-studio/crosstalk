@@ -18,6 +18,7 @@ import * as R from "../restore.ts"
 import type { PaneLink, PaneService, PaneShot } from "./pure.ts"
 import * as Shots from "../urls/shots/index.ts"
 import * as Health from "../urls/health/index.ts"
+import { readPaneQr } from "../urls/history/phone.ts"
 
 const oneLine = (s: string) => s.replace(/\s+/g, " ").trim()
 
@@ -87,6 +88,9 @@ export function paneLinks(o: { sessionId?: string; thread?: string; main?: boole
 export function pane(o: { sessionId?: string; thread?: string; st?: ThreadState; items?: Record<string, ui.UiItem>; services?: Svc.Shown[] }): PaneOut {
   const st = o.st ?? readThreads()
   const t = o.thread ? findThread(st, o.thread, o.sessionId) : defaultThread(st, o.sessionId)
+  // A QR code for the phone (crosstalk_qr), shown in the pane even with no thread to show.
+  const qr = readPaneQr(o.sessionId)
+  if (!t && qr && !o.thread) return { ok: true, pane: { thread: "phone", status: "QR code", people: [], sessions: 0, waiting: [], recent: [], features: [], qr } }
   if (!t) {
     const names = Object.values(st.threads).filter((x) => !x.meta.value.combinedInto).map((x) => x.meta.value.name)
     return { ok: false, error: o.thread ? `no thread called "${o.thread}"` : "no thread yet", threads: names }
@@ -110,7 +114,7 @@ export function pane(o: { sessionId?: string; thread?: string; st?: ThreadState;
     links = paneLinks({ sessionId: o.sessionId, thread: model.thread, main: !!o.sessionId && currentMain()?.sessionId === o.sessionId })
   } catch {}
   const shots: PaneShot[] = Shots.paneShots({ thread: model.thread, worktree })
-  return { ok: true, pane: { ...model, ...(services.length ? { services } : {}), ...(links.length ? { links } : {}), ...(shots.length ? { shots } : {}) } }
+  return { ok: true, pane: { ...model, ...(services.length ? { services } : {}), ...(links.length ? { links } : {}), ...(shots.length ? { shots } : {}), ...(qr ? { qr } : {}) } }
 }
 
 /** One line now, then one each time the pane changes, while the session that started this lives. */

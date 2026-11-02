@@ -35,6 +35,8 @@ import * as svcTools from "./services/tools.ts"
 import * as sessionTools from "./sessions/tools.ts"
 import * as urlTools from "./urls/tools.ts"
 import * as shotTools from "./urls/shots/tools.ts"
+import * as historyTools from "./urls/history/tools.ts"
+import * as envTools from "./env/tools.ts"
 import { rootFrom } from "./paths.ts"
 import { sessionsDir } from "./registry.ts"
 import { channelVerdict, hostArgv } from "./channels.ts"
@@ -421,6 +423,9 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     ...urlTools.TOOLS,
     // Screenshots of them, before and after, as evidence (src/urls/shots/).
     ...shotTools.TOOLS,
+    // A thread's history of links and screenshots, QR codes for the phone, local files for new worktrees.
+    ...historyTools.TOOLS,
+    ...envTools.TOOLS,
     {
       name: "crosstalk_thread_read",
       description:
@@ -704,6 +709,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           (await sessionTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
           (await urlTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
           (await shotTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
+          (await historyTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
+          (await envTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
           err(`unknown tool ${req.params.name}`)
         )
     }

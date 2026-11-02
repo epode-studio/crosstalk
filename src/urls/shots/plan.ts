@@ -46,8 +46,8 @@ export function cleanPath(p: unknown): string | undefined {
 
 /** Recorded as someone else's: a share from a teammate (src/share/), whatever its kind. */
 export const sharedFromElsewhere = (u: Url) => {
-  const x = u as Url & { sharedBy?: string; from?: string; owner?: string; peer?: string }
-  return !!(x.sharedBy || x.from || x.owner || x.peer) || !["service", "preview", "pr", "output", "manual"].includes(u.source)
+  const x = u as Url & { sharedBy?: string; sharedFrom?: string; from?: string; owner?: string; peer?: string }
+  return !!(x.sharedBy || x.sharedFrom || x.from || x.owner || x.peer) || !["service", "preview", "pr", "output", "manual"].includes(u.source)
 }
 
 export function why(u: Url): string | undefined {

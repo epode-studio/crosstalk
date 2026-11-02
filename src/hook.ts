@@ -26,6 +26,7 @@ import * as ui from "./uistate.ts"
 import * as gather from "./gather.ts"
 import * as termHook from "./terminal/hook.ts"
 import * as firstuse from "./repotrust/firstuse.ts"
+import * as envTools from "./env/tools.ts"
 import { editReport, editedPath } from "./warn/edit.ts"
 import * as doctorCheck from "./ui-extra/doctor.ts"
 import * as metrics from "./metrics/log.ts"
@@ -345,6 +346,11 @@ if (
 ) {
   try {
     const m = (await firstuse.surface(cwd, sessionId)).systemMessage
+    if (m) systemMessage = systemMessage ? `${systemMessage}\n${m}` : m
+  } catch {}
+  // A worktree's first session: the main checkout's gitignored .env and the like, on a yes asked once per repo (src/env/).
+  try {
+    const m = envTools.atSessionStart({ cwd, sessionId }).systemMessage
     if (m) systemMessage = systemMessage ? `${systemMessage}\n${m}` : m
   } catch {}
 }

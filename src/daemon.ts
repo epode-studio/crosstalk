@@ -62,6 +62,7 @@ import { createSessionOps } from "./sessions/daemon.ts"
 import "./services/service.ts"
 import { createUrls } from "./urls/daemon.ts"
 import { createHealth } from "./urls/health/index.ts"
+import { startHistory } from "./urls/history/sync.ts"
 
 const identity = loadIdentity()
 if (!identity) {
@@ -2752,6 +2753,8 @@ control.listen(P.daemonSock, () => {
           : o.sessions.forEach((sid) => void Promise.resolve(handle({ op: "post", to: sid, source: "crosstalk health", intent: "fyi", text: o.text })).catch(() => {})),
       notifyPerson: (o) => (o.thread ? threads.notify(o.thread, o.text) : coord.note({ id: `health:${Date.now()}`, text: o.text }, o.session)),
     })
+  // Every link, preview and screenshot a thread had, kept in it (src/urls/history/).
+  if (!process.env.CROSSTALK_NO_URLS) startHistory({ threads, log })
 })
 
 setInterval(() => {

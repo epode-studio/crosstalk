@@ -23,6 +23,7 @@ import * as Urls from "./urls/index.ts"
 import { readState as readProxy } from "./urls/proxy.ts"
 import * as extra from "./ui-extra/uicli.ts"
 import * as sessionCtl from "./sessions/control.ts"
+import * as envTools from "./env/tools.ts"
 
 type Out = Record<string, unknown>
 
@@ -204,6 +205,8 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
         const out = await firstuse.connect({ slug: id.slice("connect:".length), yes, ensureDaemon: () => ensureDaemon(root), request })
         return print({ ok: out.ok, text: out.text, item: ui.snapshot()[id] })
       }
+      // Copying a repo's gitignored local files into new worktrees (src/env/): no daemon needed.
+      if (id.startsWith("env:")) return print(envTools.uiAct(session, id, action, value))
       const done = extra.act(session, id, action, value)
       if (done) return print(done)
       if (id.startsWith("gather-note:")) {

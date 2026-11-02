@@ -543,7 +543,20 @@ The measure is time from idea to merge, and how few of your minutes it took.
   after go into the evidence of that thread's features by themselves, and
   "show me the auth page before and after" opens them. A dev server that
   crashes is restarted once, its agent gets a heads-up with the log, and if it
-  keeps failing its tab turns red and stays stopped. [How](docs/urls.md#5-screenshots-as-evidence).
+  keeps failing its tab turns red and stays stopped. [How](docs/urls.md#8-screenshots-as-evidence).
+- **History.** Every link, preview, pull request and screenshot a thread ever
+  had is kept in the thread, sealed with it, local servers by name: "what did
+  the login page look like before the redesign?" finds them with their dates
+  and screenshot paths. [How](docs/urls.md#5-history).
+- **On the phone.** "Show me a QR for the billing preview" draws a QR code in
+  the pane, for your eyes only. A local server needs a share link first, and
+  crosstalk says so rather than encode a `localhost` URL a phone cannot open.
+  [How](docs/urls.md#6-on-the-phone).
+- **Servers that just start.** A new worktree gets the main checkout's
+  gitignored `.env`, `.dev.vars` and `config/*.local.*` copied in (asked once
+  per repo), with their modes, never linked, never through a symlink. They
+  stay on this machine: names in results, never contents, and nothing in a
+  thread or the relay. [How](docs/urls.md#7-servers-that-just-start).
 - **Attach the thing, not a description of it.** "Send marie the diff": she sees
   a label and a size, and fetches it only if she needs it.
 - **No commands to learn.** Say it to any agent: "marie gave me words:
