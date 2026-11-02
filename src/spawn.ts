@@ -32,6 +32,8 @@ import * as St from "./attention/staffing.ts"
 import type { View } from "./attention/dispose.ts"
 import { request } from "./client.ts"
 import * as Pt from "./services/ports.ts"
+import * as Env from "./env/index.ts"
+import * as EnvOffer from "./env/offer.ts"
 
 export const DEP_DIRS = ["node_modules", ".venv", "venv"]
 export const MAX_AGENTS = 8
@@ -398,6 +400,9 @@ export function spawnAgents(o: {
 
   const made: SpawnRec[] = []
   const notes: string[] = []
+  // The main checkout's gitignored .env and the like (src/env/): names only, never contents.
+  const envCopied = new Set<string>()
+  let envOffer: Env.Prepared["offer"]
   for (const p of plans) {
     fs.mkdirSync(path.dirname(p.worktree), { recursive: true })
     const add = g(main, ["worktree", "add", "--quiet", "-b", p.branch, p.worktree, base.out])
@@ -418,6 +423,11 @@ export function spawnAgents(o: {
       } catch {}
     }
     if (common.ok) excludeLinks(common.out, linked)
+    try {
+      const e = Env.prepare({ main, worktree: p.worktree, sessionId: o.by, cwd: o.cwd })
+      for (const f of e.copied) envCopied.add(f)
+      envOffer ??= e.offer
+    } catch {}
     fs.mkdirSync(p.cwd, { recursive: true })
     const rec: SpawnRec = {
       id: `${repoName(main)}--${p.name}`,
@@ -485,7 +495,12 @@ export function spawnAgents(o: {
   const names = made.map((m) => m.name).join(", ")
   const head = `◢ crosstalk: started ${plural(made.length, "agent")} (${names}), each in its own copy of the code, ${where}.${o.thread ? ` ${made.length === 1 ? "It is" : "They are"} in the thread ${o.thread.name}${o.thread.view ? ", starting from its brief" : ""}.` : ""}`
   const deps = made[0].links.length ? ` ${made[0].links.join(" and ")} ${made[0].links.length === 1 ? "is" : "are"} shared with the main checkout, not copied.` : ""
-  return { ok, text: head + deps + (notes.length ? `\n  ${notes.join("\n  ")}` : ""), agents: made }
+  let envNote = envCopied.size ? ` ${Env.names([...envCopied])} ${envCopied.size === 1 ? "was" : "were"} copied in from the main checkout (gitignored; they stay on this machine).` : ""
+  if (envOffer) {
+    const s = EnvOffer.surface(envOffer, o.by)
+    envNote += s.picker ? ` crosstalk is asking the user whether to copy ${envOffer.files[0]}${envOffer.files.length > 1 ? " and the other local files" : ""} into new worktrees (in its picker).` : `\n  ${s.systemMessage}`
+  }
+  return { ok, text: head + deps + envNote + (notes.length ? `\n  ${notes.join("\n  ")}` : ""), agents: made }
 }
 
 // --- show me ----------------------------------------------------------------------

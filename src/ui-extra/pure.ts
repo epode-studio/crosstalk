@@ -124,6 +124,8 @@ export type PaneModel = {
   services?: PaneService[]
   /** The thread's URLs (src/urls/): in the main session, every thread's. */
   links?: PaneLink[]
+  /** A QR code crosstalk_qr made for the phone (src/urls/history/phone.ts): half-block rows, drawn white on black. */
+  qr?: { label: string; caption: string; rows: string[]; at: number; why?: string }
 }
 
 export type PaneService = { name: string; ports: number[]; url?: string }
