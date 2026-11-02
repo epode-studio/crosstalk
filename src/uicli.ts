@@ -18,6 +18,7 @@ import * as restore from "./restore.ts"
 import * as ui from "./uistate.ts"
 import * as gather from "./gather.ts"
 import * as cleanup from "./cleanup.ts"
+import * as extra from "./ui-extra/uicli.ts"
 
 type Out = Record<string, unknown>
 
@@ -152,6 +153,8 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
         const out = await firstuse.connect({ slug: id.slice("connect:".length), yes, ensureDaemon: () => ensureDaemon(root), request })
         return print({ ok: out.ok, text: out.text, item: ui.snapshot()[id] })
       }
+      const done = extra.act(session, id, action, value)
+      if (done) return print(done)
       if (id.startsWith("gather-note:")) {
         const n = gather.takeNote(session, id)
         return print(n ? { ok: true, text: n.text } : { ok: false, error: "already shown" })
@@ -164,6 +167,8 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
       }
     }
     default:
+      // The pane, @ shortcuts and the digest: src/ui-extra/uicli.ts.
+      if (await extra.uiExtraCmd(sub, argv, session, root, print)) return
       return print({ ok: false, error: `unknown: crosstalk ui ${sub ?? ""}` })
   }
 }

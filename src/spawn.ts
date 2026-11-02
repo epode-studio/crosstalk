@@ -25,6 +25,7 @@ import { P } from "./config.ts"
 import * as R from "./restore.ts"
 import { git as liveGit, repoName, slug, worktrees, type Git, type Worktree } from "./terminal/repo.ts"
 import { openForRepo, type Tab } from "./terminal/layout.ts"
+import { refuseBot } from "./ui-extra/bots.ts"
 
 export const DEP_DIRS = ["node_modules", ".venv", "venv"]
 export const MAX_AGENTS = 8
@@ -275,7 +276,11 @@ export function spawnAgents(o: {
   by?: string
   env?: NodeJS.ProcessEnv
   git?: Git
+  /** The peer this is done for, if any: an agent (a bot) is refused. */
+  peer?: string
 }): SpawnOutcome {
+  const bot = refuseBot(o.peer, "start an agent on this machine")
+  if (bot) return { ok: false, text: `◢ crosstalk: ${bot}`, agents: [] }
   const g = o.git ?? liveGit
   const env = o.env ?? process.env
   const task = (o.task ?? "").trim()

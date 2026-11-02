@@ -9,6 +9,7 @@ import * as cleanup from "../cleanup.ts"
 import type { ThreadService } from "../threads/service.ts"
 import { ShipEngine, type Out, type Question, type ThreadPort } from "./engine.ts"
 import { cliCommand } from "./reviewer.ts"
+import { refuseBot } from "../ui-extra/bots.ts"
 
 export const uiId = (q: string, sid: string) => `ship:${q}:${sid}`
 export const qOf = (uiItemId: string) => uiItemId.split(":")[1] ?? ""
@@ -89,6 +90,8 @@ export function createShipping(o: {
   sweep.unref?.()
 
   const op = async (req: Record<string, any>, sid: string | undefined): Promise<Out> => {
+    const bot = refuseBot(req.peer ? String(req.peer) : undefined, "start reviewers, merge or change a flag here")
+    if (bot) return { ok: false, text: bot }
     switch (req.action) {
       case "feature":
         return engine.feature(sid, { thread: req.thread, name: req.name ?? req.feature, risk: req.risk, why: req.why, flag: req.flag, branch: req.branch })

@@ -26,6 +26,7 @@ import * as gather from "./gather.ts"
 import * as termHook from "./terminal/hook.ts"
 import * as firstuse from "./repotrust/firstuse.ts"
 import { editReport } from "./warn/edit.ts"
+import * as doctorCheck from "./ui-extra/doctor.ts"
 
 const input = await new Promise<string>((resolve) => {
   let raw = ""
@@ -297,6 +298,17 @@ if (
 ) {
   try {
     const m = (await firstuse.surface(cwd, sessionId)).systemMessage
+    if (m) systemMessage = systemMessage ? `${systemMessage}\n${m}` : m
+  } catch {}
+}
+
+/**
+ * Something broken, noticed without being asked (src/ui-extra/doctor.ts): a
+ * few cheap checks, at most once a day, said once and only when one fails.
+ */
+if (restoreClient === "claude" && sessionId && isSessionStart && !/^(clear|compact)$/.test(String(hook.source ?? "")) && !process.env.CROSSTALK_NO_DOCTOR) {
+  try {
+    const m = (await doctorCheck.atSessionStart({ sessionId, env: process.env, root: rootFrom(import.meta.url) })).systemMessage
     if (m) systemMessage = systemMessage ? `${systemMessage}\n${m}` : m
   } catch {}
 }

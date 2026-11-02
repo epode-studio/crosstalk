@@ -28,6 +28,7 @@ import * as H from "./rules/history.ts"
 import { describe, neverAuto, ruleKey, type Question } from "./rules/key.ts"
 import { WarnService, type LocalMessage } from "./warn/service.ts"
 import type { Conflict } from "./warn/conflict.ts"
+import { isBot } from "./ui-extra/bots.ts"
 
 export { RULES_FILE }
 
@@ -247,6 +248,7 @@ export class Coordinator {
     try {
       if (env.kind === "heads-up") this.warn.acceptHeadsUp(label, env)
       else if (env.kind === "conflict") this.warn.acceptConflict(label, env)
+      else if (isBot(label, this.d.peers())) this.d.log(`ignored rules from ${label}: an agent cannot answer for anyone`)
       else this.acceptRules(label, env)
     } catch (e) {
       this.d.log(`${env.kind}: ${(e as Error).message}`)

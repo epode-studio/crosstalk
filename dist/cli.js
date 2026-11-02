@@ -2764,6 +2764,7 @@ var saveIdentity2 = (id) => {
     throw new Error(`${P2.identity} exists but will not parse, so crosstalk will not write over it. ` + `Move it somewhere safe first: it holds the only copy of your private key.`);
   writeJson2(P2.identity, id);
 };
+var loadPeers2 = () => readJson2(P2.peers, {});
 
 // src/paths.ts
 import path3 from "node:path";
@@ -3053,6 +3054,19 @@ var repoKey = (cwd, g = git) => repoOf(cwd, g) ?? path8.resolve(cwd);
 var repoName = (root) => slug(path8.basename(root)) || "repo";
 function slug(s, max = 32) {
   return s.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, max).replace(/-+$/g, "");
+}
+
+// src/ui-extra/bots.ts
+function isBot(label, peers = loadPeers2()) {
+  if (!label)
+    return false;
+  const name = label.replace(/^@/, "").split("/")[0];
+  return !!peers[name]?.isMachine;
+}
+function refuseBot(peer, what, peers) {
+  if (!peer || !isBot(peer, peers))
+    return null;
+  return `Refused: ${peer.split("/")[0]} is an agent, and an agent can post to threads but never ${what}.`;
 }
 
 // src/restore.ts
@@ -3619,6 +3633,9 @@ function runStep(s) {
   return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
 }
 function restore(o, only) {
+  const bot = refuseBot(o.peer, "resume a session on this machine");
+  if (bot)
+    return { ok: false, text: `\u25e2 crosstalk: ${bot}`, lost: [], restored: [] };
   const env = o.env ?? process.env;
   const lost = only ?? lostSessions(ctxNow(), o.self);
   if (!lost.length)
@@ -4262,6 +4279,17 @@ function ctxNow2() {
   const now = Date.now();
   return { now, boot: bootTime2(process.env, now), all: readAll2(), alive: recAlive2 };
 }
+function forget2(self) {
+  const lost = lostSessions2(ctxNow2(), self);
+  for (const r of lost)
+    removeRec2(r.sessionId);
+  return {
+    ok: true,
+    text: lost.length ? `\u25e2 crosstalk: left ${lost.length} session${lost.length === 1 ? "" : "s"} closed.` : "\u25e2 crosstalk: nothing to restore.",
+    lost,
+    restored: []
+  };
+}
 var pendingFile2 = () => path10.join(P2.root, "restore-pending.json");
 function claimPending2() {
   const mine = `${pendingFile2()}.${process.pid}`;
@@ -4285,6 +4313,9 @@ function runStep2(s) {
   return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
 }
 function restore2(o, only) {
+  const bot = refuseBot(o.peer, "resume a session on this machine");
+  if (bot)
+    return { ok: false, text: `\u25e2 crosstalk: ${bot}`, lost: [], restored: [] };
   const env = o.env ?? process.env;
   const lost = only ?? lostSessions2(ctxNow2(), o.self);
   if (!lost.length)
@@ -4823,6 +4854,9 @@ function describe2(self) {
 `), sessions: cands };
 }
 function start(o) {
+  const bot = refuseBot(o.peer, "restart sessions on this machine");
+  if (bot)
+    return { ok: false, text: `\u25e2 crosstalk: ${bot}`, sessions: [] };
   watch(o.self);
   const selfPids = ancestors();
   const cands = candidates(readAll2(), { self: o.self, selfPids, alive: recAlive2 });
@@ -5708,6 +5742,9 @@ function startWaiter4(root) {
   } catch {}
 }
 function start2(o) {
+  const bot = refuseBot(o.peer, "restart sessions on this machine");
+  if (bot)
+    return { ok: false, text: `\u25e2 crosstalk: ${bot}`, sessions: [] };
   watch2(o.self);
   const selfPids = ancestors2();
   const cands = candidates2(readAll2(), { self: o.self, selfPids, alive: recAlive2 });
@@ -6050,6 +6087,9 @@ ${add.join(`
 }
 var plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 function spawnAgents(o) {
+  const bot = refuseBot(o.peer, "start an agent on this machine");
+  if (bot)
+    return { ok: false, text: `\u25e2 crosstalk: ${bot}`, agents: [] };
   const g = o.git ?? git;
   const env = o.env ?? process.env;
   const task = (o.task ?? "").trim();
@@ -6414,8 +6454,482 @@ function act2(session, id, action, value) {
   return { ok: out.ok, item: claim.item, text: out.text };
 }
 
-// src/uicli.ts
+// src/threads/model.ts
+var STATUSES = ["active", "waiting", "done", "archived"];
+var LISTS = [
+  "people",
+  "sessions",
+  "files",
+  "branches",
+  "features",
+  "questions",
+  "decisions",
+  "facts",
+  "tasks",
+  "rules"
+];
+var SECTIONS = ["meta", "recap", ...LISTS];
+function live(t, list) {
+  return Object.values(t[list]).filter((i) => !i.gone).sort((a, b) => (a.at ?? 0) - (b.at ?? 0) || (a.id < b.id ? -1 : 1));
+}
+var isLive = (t) => !t.meta.value.combinedInto && t.meta.value.status !== "archived";
+function slug2(s, max = 40) {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, max).replace(/-+$/g, "") || "thread";
+}
+function parseThread(v) {
+  if (!v || typeof v !== "object")
+    return null;
+  const o = v;
+  if (o.v !== 1 || typeof o.id !== "string" || !/^[0-9a-f]{8,32}$/.test(o.id))
+    return null;
+  const stamp = (s) => s && typeof s.l === "number" && typeof s.by === "string";
+  if (!stamp(o.meta) || !o.meta.value || typeof o.meta.value.name !== "string" || !STATUSES.includes(o.meta.value.status))
+    return null;
+  if (!stamp(o.recap) || typeof o.recap.value !== "string")
+    return null;
+  const out = {
+    v: 1,
+    id: o.id,
+    meta: { l: o.meta.l, by: o.meta.by, value: { ...o.meta.value, name: slug2(o.meta.value.name), public: !!o.meta.value.public, repo: String(o.meta.value.repo ?? "") } },
+    recap: { l: o.recap.l, by: o.recap.by, value: o.recap.value.slice(0, 4000) },
+    lamport: Number(o.lamport) || 0,
+    touchedAt: Number(o.touchedAt) || 0
+  };
+  for (const k of LISTS) {
+    const src = o[k] && typeof o[k] === "object" ? o[k] : {};
+    const items = {};
+    for (const [id, it] of Object.entries(src).slice(0, 2000))
+      if (stamp(it) && typeof id === "string" && id.length <= 300 && it.id === id)
+        items[id] = it;
+    out[k] = items;
+  }
+  for (const k of [out.meta, out.recap, ...LISTS.flatMap((k) => Object.values(out[k]))])
+    out.lamport = Math.max(out.lamport, k.l);
+  return out;
+}
+
+// src/ui-extra/pure.ts
+function parseAt(prompt) {
+  const m = /^@([A-Za-z0-9_][\w.-]*)(?:\s+([\s\S]*))?$/.exec(prompt.trim());
+  if (!m)
+    return null;
+  const word = m[1].toLowerCase();
+  const rest = (m[2] ?? "").trim();
+  if (word === "main") {
+    if (!rest || /^(on|yes|y)$/i.test(rest))
+      return { kind: "main", on: true };
+    if (/^(off|no|n|stop)$/i.test(rest))
+      return { kind: "main", on: false };
+    return null;
+  }
+  if (word === "restore") {
+    const w = rest.toLowerCase();
+    if (!w || w === "yes" || w === "y")
+      return { kind: "restore", want: "yes" };
+    if (w === "no" || w === "n" || w === "not now")
+      return { kind: "restore", want: "no" };
+    if (w === "windows")
+      return { kind: "restore", want: "windows" };
+    return null;
+  }
+  if (!rest)
+    return null;
+  return { kind: "name", name: word, text: rest };
+}
+function matchOption(typed, options) {
+  const t = typed.trim().toLowerCase();
+  if (!t || !options.length)
+    return;
+  const exact = options.find((o) => o.toLowerCase() === t);
+  if (exact)
+    return exact;
+  if (t === "y" || t === "yes")
+    return options[0];
+  if (t === "n" || t === "no")
+    return options.find((o) => /^(no|not|don't|dont|hold|cancel)\b/i.test(o)) ?? options[options.length - 1];
+  const starts = options.filter((o) => o.toLowerCase().startsWith(t));
+  return starts.length === 1 ? starts[0] : undefined;
+}
+
+// src/ui-extra/threadfile.ts
+import fs16 from "node:fs";
+import path18 from "node:path";
+var threadsFile = () => path18.join(P2.root, "threads.json");
+function readThreads(file = threadsFile()) {
+  try {
+    const raw = JSON.parse(fs16.readFileSync(file, "utf8"));
+    const threads = {};
+    for (const [id, t] of Object.entries(raw?.threads ?? {})) {
+      const ok = parseThread(t);
+      if (ok)
+        threads[id] = ok;
+    }
+    return { threads, placed: raw?.placed ?? {}, roots: raw?.roots ?? {} };
+  } catch {
+    return { threads: {}, placed: {}, roots: {} };
+  }
+}
+var liveThreads = (st) => Object.values(st.threads).filter((t) => !t.meta.value.combinedInto);
+function findThread(st, nameOrId, sessionId) {
+  const mine = sessionId ? (st.placed[sessionId]?.threads ?? []).map((id) => st.threads[id]).filter(Boolean) : [];
+  if (!nameOrId)
+    return mine[0];
+  const n = slug2(nameOrId);
+  const all = [...mine, ...liveThreads(st)];
+  const hit = all.find((t) => t.id === nameOrId || t.meta.value.name === n) ?? all.find((t) => t.meta.value.name.startsWith(n));
+  if (!hit)
+    return;
+  let t = hit;
+  for (let i = 0;i < 10 && t.meta.value.combinedInto && st.threads[t.meta.value.combinedInto]; i++)
+    t = st.threads[t.meta.value.combinedInto];
+  return t;
+}
+function defaultThread(st, sessionId) {
+  return findThread(st, undefined, sessionId) ?? liveThreads(st).filter(isLive).sort((a, b) => b.touchedAt - a.touchedAt)[0];
+}
+function labelOf(st, fp) {
+  for (const t of Object.values(st.threads)) {
+    const p = t.people[fp];
+    if (p && !p.gone)
+      return p.label;
+  }
+  return fp.slice(0, 9);
+}
+
+// src/ui-extra/pane.ts
+var oneLine = (s) => s.replace(/\s+/g, " ").trim();
+function paneModel(t, items, o = {}) {
+  const name = t.meta.value.name;
+  const about = (it) => (it.thread ?? "").toLowerCase() === name;
+  const open = Object.values(items).filter((i) => !FINAL.has(i.state) && about(i));
+  const waiting = [
+    ...live(t, "questions").filter((q) => !q.answer).sort((a, b) => Number(!!b.blocking) - Number(!!a.blocking)).map((q) => `${oneLine(q.text)}${q.blocking ? " (blocking)" : ""}`),
+    ...open.filter((i) => i.kind === "ask").map((i) => `${i.from} asks: ${oneLine(i.text ?? "")}`),
+    ...open.filter((i) => i.question && i.kind !== "message" && i.kind !== "ask").map((i) => oneLine(i.question))
+  ];
+  const decisions = live(t, "decisions").sort((a, b) => b.at - a.at);
+  const recent = Object.values(items).filter((i) => (i.kind === "message" || i.kind === "ask") && about(i)).sort((a, b) => (b.ts ?? b.createdAt) - (a.ts ?? a.createdAt)).slice(0, o.recent ?? 5).map((i) => ({ from: i.from ?? "someone", text: oneLine(i.text ?? ""), ts: i.ts ?? i.createdAt }));
+  return {
+    thread: name,
+    status: t.meta.value.status,
+    repo: t.meta.value.repo || undefined,
+    recap: t.recap.value ? oneLine(t.recap.value) : undefined,
+    people: live(t, "people").map((p) => p.label),
+    sessions: live(t, "sessions").length,
+    waiting,
+    decision: decisions[0] ? { text: oneLine(decisions[0].text), who: decisions[0].who, at: decisions[0].at } : undefined,
+    recent,
+    features: live(t, "features").map((f) => ({
+      name: f.name,
+      risk: f.risk,
+      ...f.flag ? { flag: f.flag } : {},
+      ...f.ship?.stage ? { stage: f.ship.stage } : {},
+      ...f.ship?.state ? { state: f.ship.state } : {}
+    }))
+  };
+}
+function pane(o) {
+  const st = o.st ?? readThreads();
+  const t = o.thread ? findThread(st, o.thread, o.sessionId) : defaultThread(st, o.sessionId);
+  if (!t) {
+    const names = Object.values(st.threads).filter((x) => !x.meta.value.combinedInto).map((x) => x.meta.value.name);
+    return { ok: false, error: o.thread ? `no thread called "${o.thread}"` : "no thread yet", threads: names };
+  }
+  return { ok: true, pane: paneModel(t, o.items ?? snapshot2()) };
+}
+async function watchPane(o) {
+  const write = o.write ?? ((s) => void process.stdout.write(s));
+  const parent = o.parent ?? process.ppid;
+  let last = "";
+  for (;; ) {
+    try {
+      process.kill(parent, 0);
+    } catch {
+      return;
+    }
+    const line = JSON.stringify(pane(o));
+    if (line !== last) {
+      last = line;
+      write(line + `
+`);
+    }
+    await new Promise((r) => setTimeout(r, Math.max(250, o.interval ?? 1000)));
+  }
+}
+
+// src/ui-extra/digest.ts
+import fs17 from "node:fs";
+import path19 from "node:path";
+var HOUR = 60 * 60000;
+var DAY3 = 24 * HOUR;
+var cut = (s, n = 140) => {
+  const t = s.replace(/\s+/g, " ").trim();
+  return t.length > n ? t.slice(0, n - 1) + "\u2026" : t;
+};
+function ruleNotes(file = path19.join(P2.root, "rules.json")) {
+  try {
+    const h = JSON.parse(fs17.readFileSync(file, "utf8"));
+    const out = new Set;
+    for (const list of Object.values(h?.digest ?? {}))
+      for (const n of list ?? [])
+        if (/^auto:/.test(n.id) && typeof n.text === "string")
+          out.add(n.text.replace(/^\u25e2 crosstalk: /, ""));
+    return [...out];
+  } catch {
+    return [];
+  }
+}
+function events(st, since) {
+  const out = [];
+  for (const t of Object.values(st.threads)) {
+    if (t.meta.value.combinedInto)
+      continue;
+    const name = t.meta.value.name;
+    for (const d of live(t, "decisions"))
+      if (d.at >= since)
+        out.push({ at: d.at, thread: name, kind: "decision", who: d.who, text: cut(d.text) });
+    for (const f of live(t, "features")) {
+      const m = f.ship?.merged;
+      if (m && m.at >= since)
+        out.push({ at: m.at, thread: name, kind: "merged", who: labelOf(st, f.by), text: `${f.name}${f.flag ? ` (behind ${f.flag})` : ""}${m.pr ? `, ${m.pr}` : ""}` });
+      if (f.ship?.state === "shipped" && f.flag && t.touchedAt >= since)
+        out.push({ at: Math.max(m?.at ?? 0, Math.min(t.touchedAt, Date.now())), thread: name, kind: "shipped", who: labelOf(st, f.by), text: `${f.name}: ${f.flag} is fully on` });
+    }
+    for (const q of live(t, "questions"))
+      if (q.answer && q.at >= since)
+        out.push({ at: q.at, thread: name, kind: "answered", who: q.answeredBy, text: `"${cut(q.text, 90)}": ${cut(q.answer, 80)}` });
+    for (const k of live(t, "tasks")) {
+      if (k.at < since)
+        continue;
+      if (/incident/i.test(k.text))
+        out.push({ at: k.at, thread: name, kind: "incident", who: k.who, text: cut(k.text) });
+      else if (k.state === "done")
+        out.push({ at: k.at, thread: name, kind: "done", who: k.doneBy ?? k.who, text: cut(k.text) });
+    }
+    if (/^incident-/.test(name) && t.meta.value.createdAt >= since && !out.some((e) => e.thread === name && e.kind === "incident"))
+      out.push({ at: t.meta.value.createdAt, thread: name, kind: "incident", text: cut(t.recap.value || name) });
+  }
+  return out.sort((a, b) => a.at - b.at);
+}
+function when(since, now) {
+  const h = Math.round((now - since) / HOUR);
+  if (h < 1)
+    return "in the last hour";
+  if (h < 36)
+    return `in the last ${h} hour${h === 1 ? "" : "s"}`;
+  return `in the last ${Math.round(h / 24)} days`;
+}
+var VERB = {
+  decision: "decided",
+  merged: "merged",
+  shipped: "shipped",
+  answered: "answered",
+  rule: "a standing rule answered",
+  incident: "incident",
+  done: "finished",
+  task: "task"
+};
+function digest(o = {}) {
+  const now = o.now ?? Date.now();
+  const since = o.since ?? now - DAY3;
+  const ev = events(o.st ?? readThreads(), since);
+  const rules = o.rules ?? ruleNotes();
+  if (!ev.length && !rules.length)
+    return { text: `Nothing happened across your threads ${when(since, now)}.`, events: ev, rules };
+  const lines = [`Across your threads ${when(since, now)}:`];
+  const byThread = new Map;
+  for (const e of ev)
+    byThread.set(e.thread, [...byThread.get(e.thread) ?? [], e]);
+  for (const [thread, list] of byThread) {
+    lines.push("", thread);
+    for (const e of list)
+      lines.push(e.kind === "incident" ? `- an incident: ${e.text}` : e.kind === "answered" ? `- ${e.who ?? "someone"} answered ${e.text}` : `- ${e.who ? `${e.who} ` : ""}${VERB[e.kind]} ${e.text}`);
+  }
+  if (rules.length)
+    lines.push("", "Answered by standing rules", ...rules.map((r) => `- ${cut(r, 200)}`));
+  return { text: lines.join(`
+`), events: ev, rules };
+}
+function bandLine(ev, rules, since, now) {
+  const n = (k) => ev.filter((e) => e.kind === k).length;
+  const parts = [];
+  const add = (count, one, many = `${one}s`) => count && parts.push(`${count} ${count === 1 ? one : many}`);
+  add(n("decision"), "decision");
+  add(n("merged") + n("shipped"), "merge");
+  add(n("answered"), "answer");
+  add(rules.length, "answered by a rule", "answered by rules");
+  add(n("incident"), "incident");
+  add(n("done"), "task done", "tasks done");
+  if (!parts.length)
+    return null;
+  const threads = new Set(ev.map((e) => e.thread)).size;
+  return `\u25e2 ${when(since, now).replace(/^in the /, "")}: ${parts.join(", ")}${threads ? ` in ${threads} thread${threads === 1 ? "" : "s"}` : ""} \u00b7 say "what happened?" for the digest`;
+}
+var shownFile = () => path19.join(P2.root, "ui-extra", "digest-shown.json");
+var BAND_EVERY_MS = 2 * HOUR;
+function bandForSession(sessionId, o = {}) {
+  const now = o.now ?? Date.now();
+  let shown = {};
+  try {
+    shown = JSON.parse(fs17.readFileSync(shownFile(), "utf8"));
+  } catch {}
+  const last = shown[sessionId];
+  if (last && now - last < (o.everyMs ?? BAND_EVERY_MS))
+    return null;
+  const since = last ?? now - DAY3;
+  const ev = events(o.st ?? readThreads(), since);
+  const line = bandLine(ev, o.rules ?? ruleNotes(), since, now);
+  if (!line)
+    return null;
+  shown[sessionId] = now;
+  for (const [k, v] of Object.entries(shown))
+    if (now - v > 7 * DAY3)
+      delete shown[k];
+  fs17.mkdirSync(path19.dirname(shownFile()), { recursive: true, mode: 448 });
+  fs17.writeFileSync(shownFile(), JSON.stringify(shown), { mode: 384 });
+  return line;
+}
+
+// src/ui-extra/doctor.ts
+var FIX_IT = "Ask the agent to fix it";
+var DAY_MS = 24 * 60 * 60000;
+function act3(id, action, value) {
+  const claim = withStore((items, now) => act(items, id, action === "raised" || action === "later" ? action : "answer", now, value));
+  if (!claim.ok || action === "raised" || action === "later")
+    return claim;
+  const it = claim.item;
+  if (value === FIX_IT)
+    return {
+      ok: true,
+      item: it,
+      prompt: `crosstalk says something is wrong. ${it.question ?? ""} Help me fix it; crosstalk_doctor has the whole report.`,
+      text: "handed to the agent"
+    };
+  return { ok: true, item: it, text: `Left as it is. Say "is crosstalk OK?" any time.` };
+}
+
+// src/trust.ts
+import path20 from "node:path";
+var FILE4 = path20.join(ROOT2, "trust.json");
+
+// src/ui-extra/mute.ts
+var HOUR2 = 60 * 60000;
+var DEFAULT_MS = 24 * HOUR2;
+var FOREVER_MS = 10 * 365 * 24 * HOUR2;
+
+// src/ui-extra/people.ts
+var CANCEL = "Cancel it";
+function inviteAct(id, action, value) {
+  if (action === "raised" || action === "later")
+    return withStore((items, now) => act(items, id, action, now));
+  const claim = withStore((items, now) => act(items, id, "answer", now, value));
+  if (!claim.ok)
+    return claim;
+  if (value === CANCEL || action === "mute") {
+    const pid = Number(claim.item.names?.[0] ?? 0);
+    if (pid > 1)
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {}
+    return { ok: true, item: claim.item, text: "Cancelled: those words no longer work." };
+  }
+  return { ok: true, item: claim.item, text: "They can join with the words for fifteen minutes." };
+}
+
+// src/ui-extra/uicli.ts
 function arg(argv, f) {
+  const i = argv.indexOf(f);
+  return i === -1 ? undefined : argv[i + 1];
+}
+function act4(session, id, action, value) {
+  if (id.startsWith("invite:"))
+    return inviteAct(id, action, value);
+  if (id.startsWith("doctor:"))
+    return act3(id, action, value);
+  return null;
+}
+var OPTION_KINDS = new Set(["ship", "rule", "conflict", "thread", "route", "team"]);
+async function openItems(session) {
+  if (daemonRunning2())
+    try {
+      const r = await request2({ op: "ui", sessionId: session }, 3000);
+      if (r?.ok)
+        return r.items;
+    } catch {}
+  return openFor(snapshot2(), session);
+}
+async function at(session, text, root) {
+  const a = parseAt(text);
+  if (!a)
+    return { handled: false };
+  if (a.kind === "main") {
+    if (!await ensureDaemon2(root))
+      return { handled: true, ok: false, toast: "the crosstalk daemon would not start", drop: "crosstalk: main" };
+    const r = await request2({ op: "main", sessionId: session, on: a.on });
+    return { handled: true, ok: !!r.ok, toast: oneLine2(r.text ?? r.error ?? (a.on ? "this is your main session" : "this is a working session again")), drop: "crosstalk: main session" };
+  }
+  if (a.kind === "restore") {
+    const out = a.want === "no" ? forget2(session) : restore2({ self: session, tabs: a.want !== "windows", userAction: true, root });
+    withStore((items, now) => settle(items, restoreId(session), "answered", now));
+    return { handled: true, ok: out.ok, toast: oneLine2(out.text.replace(/^\u25e2 crosstalk: /, "")), drop: "crosstalk: restore" };
+  }
+  const name = a.name;
+  const drop = `crosstalk: answer sent to ${name}`;
+  const open = await openItems(session);
+  const about = open.filter((i) => (i.thread ?? "").toLowerCase() === name);
+  const from = open.filter((i) => (i.from ?? "").toLowerCase() === name && (i.kind === "message" || i.kind === "ask"));
+  const card = [...about, ...from].find((i) => i.kind === "ask") ?? [...about, ...from].find((i) => i.kind === "message");
+  const choice = about.find((i) => OPTION_KINDS.has(i.kind) && i.options?.length);
+  if (card) {
+    const r = await request2({ op: "ui_act", sessionId: session, id: card.id, action: "answer", value: a.text }, 60000).catch((e) => ({ ok: false, error: e.message }));
+    return { handled: true, ok: !!r.ok, toast: r.ok ? `${card.kind === "ask" ? "answered" : "replied to"} ${card.from}${card.thread ? ` \u00b7 ${card.thread}` : ""}` : `not sent: ${r.error ?? "no answer"}`, drop };
+  }
+  if (choice) {
+    const pick = matchOption(a.text, choice.options);
+    if (!pick)
+      return { handled: true, ok: false, toast: `${name}: answer with one of ${choice.options.join(" / ")}`, drop };
+    const r = await request2({ op: "ui_act", sessionId: session, id: choice.id, action: "answer", value: pick }, 60000).catch((e) => ({ ok: false, error: e.message }));
+    return { handled: true, ok: !!r.ok, toast: oneLine2(r.ok ? `${name}: ${pick}${r.text ? ` \u00b7 ${String(r.text).replace(/^\u25e2 crosstalk: /, "")}` : ""}` : `not answered: ${r.error ?? r.text ?? "no answer"}`), drop };
+  }
+  const t = findThread(readThreads(), name, session);
+  const q = t ? live(t, "questions").filter((x) => !x.answer).sort((x, y) => Number(!!y.blocking) - Number(!!x.blocking) || x.at - y.at)[0] : undefined;
+  if (t && q) {
+    if (!await ensureDaemon2(root))
+      return { handled: true, ok: false, toast: "the crosstalk daemon would not start", drop };
+    const r = await request2({ op: "thread", sessionId: session, thread: t.id, answer: { id: q.id, text: a.text } });
+    return { handled: true, ok: !!r.ok, toast: r.ok ? `answered "${cut2(q.text, 60)}" in ${t.meta.value.name}` : `not answered: ${r.error ?? "no answer"}`, drop };
+  }
+  return { handled: false };
+}
+var oneLine2 = (s) => s.replace(/\s+/g, " ").trim();
+var cut2 = (s, n) => s.length > n ? s.slice(0, n - 1) + "\u2026" : s;
+async function uiExtraCmd(sub, argv, session, root, print) {
+  switch (sub) {
+    case "pane": {
+      const thread = arg(argv, "--thread") || undefined;
+      if (argv.includes("--watch"))
+        await watchPane({ sessionId: session, thread, interval: Number(arg(argv, "--interval") ?? 1000) });
+      else
+        print(pane({ sessionId: session, thread }));
+      return true;
+    }
+    case "at":
+      print(await at(session, arg(argv, "--text") ?? "", root));
+      return true;
+    case "digest": {
+      if (argv.includes("--band"))
+        print({ ok: true, line: bandForSession(session) ?? undefined });
+      else
+        print({ ok: true, text: digest().text });
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+// src/uicli.ts
+function arg2(argv, f) {
   const i = argv.indexOf(f);
   return i === -1 ? undefined : argv[i + 1];
 }
@@ -6516,7 +7030,7 @@ function gatherAct(session, id, action, value, root) {
 }
 async function uiCmd(argv, root) {
   const sub = argv[1];
-  const session = arg(argv, "--session") ?? process.env.CLAUDE_CODE_SESSION_ID ?? "";
+  const session = arg2(argv, "--session") ?? process.env.CLAUDE_CODE_SESSION_ID ?? "";
   if (!session)
     return print({ ok: false, error: "--session is needed" });
   switch (sub) {
@@ -6527,11 +7041,11 @@ async function uiCmd(argv, root) {
     case "list":
       return print({ ok: true, ...await waiting(session, false) });
     case "watch":
-      return watch3(session, Math.max(250, Number(arg(argv, "--interval") ?? 1000)));
+      return watch3(session, Math.max(250, Number(arg2(argv, "--interval") ?? 1000)));
     case "act": {
-      const id = arg(argv, "--id") ?? "";
-      const action = arg(argv, "--action") ?? "";
-      const value = arg(argv, "--value");
+      const id = arg2(argv, "--id") ?? "";
+      const action = arg2(argv, "--action") ?? "";
+      const value = arg2(argv, "--value");
       if (id.startsWith("restore:"))
         return print(restoreAct(session, id, action, value, root));
       if (id.startsWith("gather:"))
@@ -6545,6 +7059,9 @@ async function uiCmd(argv, root) {
         const out = await connect({ slug: id.slice("connect:".length), yes, ensureDaemon: () => ensureDaemon2(root), request: request2 });
         return print({ ok: out.ok, text: out.text, item: snapshot2()[id] });
       }
+      const done = act4(session, id, action, value);
+      if (done)
+        return print(done);
       if (id.startsWith("gather-note:")) {
         const n = takeNote(session, id);
         return print(n ? { ok: true, text: n.text } : { ok: false, error: "already shown" });
@@ -6558,13 +7075,15 @@ async function uiCmd(argv, root) {
       }
     }
     default:
+      if (await uiExtraCmd(sub, argv, session, root, print))
+        return;
       return print({ ok: false, error: `unknown: crosstalk ui ${sub ?? ""}` });
   }
 }
 
 // src/terminal/status.ts
-import fs16 from "node:fs";
-import path18 from "node:path";
+import fs18 from "node:fs";
+import path21 from "node:path";
 import { spawn as spawn8, spawnSync as spawnSync9 } from "node:child_process";
 var COLOUR = {
   working: [47, 111, 214],
@@ -6677,35 +7196,35 @@ function appleTint(original, state, amount = 0.25) {
   const target = COLOUR[state].map((n) => n * 257);
   return original.map((o, i) => Math.round(o + (target[i] - o) * amount));
 }
-var dir4 = () => path18.join(P2.root, "tabs");
+var dir4 = () => path21.join(P2.root, "tabs");
 var safe4 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
-var fileOf4 = (id) => path18.join(dir4(), `${safe4(id)}.json`);
+var fileOf4 = (id) => path21.join(dir4(), `${safe4(id)}.json`);
 function readTab(id) {
   try {
-    return JSON.parse(fs16.readFileSync(fileOf4(id), "utf8"));
+    return JSON.parse(fs18.readFileSync(fileOf4(id), "utf8"));
   } catch {
     return null;
   }
 }
 function writeTab(f) {
-  fs16.mkdirSync(dir4(), { recursive: true, mode: 448 });
+  fs18.mkdirSync(dir4(), { recursive: true, mode: 448 });
   const tmp = `${fileOf4(f.sessionId)}.${process.pid}.tmp`;
-  fs16.writeFileSync(tmp, JSON.stringify(f), { mode: 384 });
-  fs16.renameSync(tmp, fileOf4(f.sessionId));
+  fs18.writeFileSync(tmp, JSON.stringify(f), { mode: 384 });
+  fs18.renameSync(tmp, fileOf4(f.sessionId));
 }
 var sleepSync4 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 function withFile(id, fn) {
-  fs16.mkdirSync(dir4(), { recursive: true, mode: 448 });
+  fs18.mkdirSync(dir4(), { recursive: true, mode: 448 });
   const lock = `${fileOf4(id)}.lock`;
   let held = false;
   for (let i = 0;i < 50 && !held; i++) {
     try {
-      fs16.mkdirSync(lock);
+      fs18.mkdirSync(lock);
       held = true;
     } catch {
       try {
-        if (Date.now() - fs16.statSync(lock).mtimeMs > 5000)
-          fs16.rmdirSync(lock);
+        if (Date.now() - fs18.statSync(lock).mtimeMs > 5000)
+          fs18.rmdirSync(lock);
       } catch {}
       sleepSync4(5);
     }
@@ -6715,7 +7234,7 @@ function withFile(id, fn) {
   } finally {
     if (held)
       try {
-        fs16.rmdirSync(lock);
+        fs18.rmdirSync(lock);
       } catch {}
   }
 }
@@ -6761,13 +7280,13 @@ var liveSys3 = () => ({
   writeTty: (p, data) => {
     let fd = -1;
     try {
-      fd = fs16.openSync(p, fs16.constants.O_WRONLY | fs16.constants.O_NOCTTY | fs16.constants.O_NONBLOCK);
-      return fs16.writeSync(fd, data) === Buffer.byteLength(data);
+      fd = fs18.openSync(p, fs18.constants.O_WRONLY | fs18.constants.O_NOCTTY | fs18.constants.O_NONBLOCK);
+      return fs18.writeSync(fd, data) === Buffer.byteLength(data);
     } catch {
       return false;
     } finally {
       if (fd >= 0)
-        fs16.closeSync(fd);
+        fs18.closeSync(fd);
     }
   },
   term: (id) => readOne2(id)?.terminal ?? null
@@ -6803,16 +7322,16 @@ async function applyLoop(id, sys = liveSys3(), sleep = (ms) => new Promise((r) =
   const lock = `${fileOf4(id)}.applier`;
   const take = () => {
     try {
-      fs16.mkdirSync(dir4(), { recursive: true, mode: 448 });
-      fs16.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
+      fs18.mkdirSync(dir4(), { recursive: true, mode: 448 });
+      fs18.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
       return true;
     } catch {
       try {
-        const other = Number(fs16.readFileSync(lock, "utf8"));
+        const other = Number(fs18.readFileSync(lock, "utf8"));
         if (other && pidAlive2(other) && other !== process.pid)
           return false;
-        fs16.unlinkSync(lock);
-        fs16.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
+        fs18.unlinkSync(lock);
+        fs18.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
         return true;
       } catch {
         return false;
@@ -6841,7 +7360,7 @@ async function applyLoop(id, sys = liveSys3(), sleep = (ms) => new Promise((r) =
             return;
           if (state === "off" && cur.want === "off") {
             try {
-              fs16.unlinkSync(fileOf4(id));
+              fs18.unlinkSync(fileOf4(id));
             } catch {}
             return;
           }
@@ -6850,8 +7369,8 @@ async function applyLoop(id, sys = liveSys3(), sleep = (ms) => new Promise((r) =
       }
     } finally {
       try {
-        if (Number(fs16.readFileSync(lock, "utf8")) === process.pid)
-          fs16.unlinkSync(lock);
+        if (Number(fs18.readFileSync(lock, "utf8")) === process.pid)
+          fs18.unlinkSync(lock);
       } catch {}
     }
     if (decide(readTab(id), Date.now(), 0).act === "idle")
@@ -6958,7 +7477,7 @@ async function cleanupCmd(argv) {
 }
 
 // src/shipping/cli.ts
-import fs17 from "node:fs";
+import fs19 from "node:fs";
 var flag2 = (argv, f) => {
   const i = argv.indexOf(f);
   return i === -1 ? undefined : argv[i + 1];
@@ -6996,7 +7515,7 @@ var json = (argv) => {
   if (j)
     return JSON.parse(j);
   if (argv.includes("--stdin"))
-    return JSON.parse(fs17.readFileSync(0, "utf8"));
+    return JSON.parse(fs19.readFileSync(0, "utf8"));
   return {};
 };
 async function shipCmd(argv) {
@@ -7061,8 +7580,8 @@ async function incidentCmd(argv) {
 }
 
 // src/cli.ts
-import fs18 from "fs";
-import path19 from "path";
+import fs20 from "fs";
+import path22 from "path";
 import os9 from "os";
 import { spawn as spawn9, execFileSync as execFileSync6 } from "child_process";
 var argv = process.argv.slice(2);
@@ -7122,8 +7641,8 @@ var positional3 = (() => {
   return out;
 })();
 var ROOT_DIR = rootFrom2(import.meta.url);
-var RELAY_PID = path19.join(ROOT, "relay.pid");
-var TUNNEL_PID = path19.join(ROOT, "tunnel.pid");
+var RELAY_PID = path22.join(ROOT, "relay.pid");
+var TUNNEL_PID = path22.join(ROOT, "tunnel.pid");
 var httpBase = (ws = loadRelay().url) => ws.replace(/^ws/, "http").replace(/\/ws$/, "");
 var die = (m) => {
   console.error(m);
@@ -7153,7 +7672,7 @@ function identityOrCreate() {
 }
 var relayPid = () => {
   try {
-    const pid = Number(fs18.readFileSync(RELAY_PID, "utf8"));
+    const pid = Number(fs20.readFileSync(RELAY_PID, "utf8"));
     process.kill(pid, 0);
     return pid;
   } catch {
@@ -7188,14 +7707,14 @@ async function startRelay(port = Number(flag3("--port", "8787"))) {
     if (await relayReachable(url))
       return url;
   }
-  const out = fs18.openSync(path19.join(ROOT, "relay.log"), "a");
+  const out = fs20.openSync(path22.join(ROOT, "relay.log"), "a");
   const child = spawn9(shim2(ROOT_DIR), ["relay-server", "--host", "0.0.0.0", "--port", String(port)], {
     detached: true,
     stdio: ["ignore", out, out]
   });
   child.unref();
-  fs18.mkdirSync(ROOT, { recursive: true, mode: 448 });
-  fs18.writeFileSync(RELAY_PID, String(child.pid), { mode: 384 });
+  fs20.mkdirSync(ROOT, { recursive: true, mode: 448 });
+  fs20.writeFileSync(RELAY_PID, String(child.pid), { mode: 384 });
   const url = `ws://${addr.host}:${port}`;
   saveRelay(url);
   for (let i = 0;i < 40; i++) {
@@ -7214,14 +7733,14 @@ Or drop --public and use --host, which runs the relay on this machine for
 anyone on the same network.`);
     console.log("opening a public tunnel, this takes a few seconds");
     try {
-      const t = await openTunnel(bin, port, path19.join(ROOT, "tunnel.log"));
-      fs18.writeFileSync(TUNNEL_PID, String(t.pid), { mode: 384 });
+      const t = await openTunnel(bin, port, path22.join(ROOT, "tunnel.log"));
+      fs20.writeFileSync(TUNNEL_PID, String(t.pid), { mode: 384 });
       saveRelay(`wss://${t.host}`);
       console.log(`relay reachable at ${t.url}`);
       return `wss://${t.host}`;
     } catch (e) {
       die(`the tunnel did not come up: ${e.message}
-See ${path19.join(ROOT, "tunnel.log")}`);
+See ${path22.join(ROOT, "tunnel.log")}`);
     }
   }
   console.log(`relay running on ${url}   (${addr.kind}, ${addr.note})`);
@@ -7238,10 +7757,10 @@ async function relay() {
     if (!pid)
       return console.log("no relay started by crosstalk is running");
     process.kill(pid, "SIGTERM");
-    fs18.rmSync(RELAY_PID, { force: true });
+    fs20.rmSync(RELAY_PID, { force: true });
     try {
-      process.kill(Number(fs18.readFileSync(TUNNEL_PID, "utf8")), "SIGTERM");
-      fs18.rmSync(TUNNEL_PID, { force: true });
+      process.kill(Number(fs20.readFileSync(TUNNEL_PID, "utf8")), "SIGTERM");
+      fs20.rmSync(TUNNEL_PID, { force: true });
       console.log("tunnel closed");
     } catch {}
     return console.log("relay stopped");
@@ -7492,7 +8011,7 @@ async function doctor() {
   const rows = [];
   const id = loadIdentity();
   const socket = process.env.CLAUDE_CODE_MESSAGING_SOCKET;
-  rows.push(["runtime", true, `${path19.basename(process.execPath)} ${process.version ?? ""}`.trim()]);
+  rows.push(["runtime", true, `${path22.basename(process.execPath)} ${process.version ?? ""}`.trim()]);
   rows.push([
     "identity",
     !!id,
@@ -7505,7 +8024,7 @@ async function doctor() {
   ]);
   rows.push([
     "inbox socket",
-    socket ? fs18.existsSync(socket) : null,
+    socket ? fs20.existsSync(socket) : null,
     socket ?? "not provided; sessions without a Claude Code socket receive notices through hooks"
   ]);
   rows.push([
@@ -7513,10 +8032,10 @@ async function doctor() {
     socket ? !!process.env.CLAUDE_CODE_MESSAGING_TOKEN : null,
     process.env.CLAUDE_CODE_MESSAGING_TOKEN ? "present" : socket ? "missing, messages arrive as anonymous peers" : "only used with a Claude Code inbox socket"
   ]);
-  const sessionsDir = path19.join(process.env.HOME ?? "", ".claude", "sessions");
+  const sessionsDir = path22.join(process.env.HOME ?? "", ".claude", "sessions");
   let visible = 0;
   try {
-    visible = fs18.readdirSync(sessionsDir).filter((f) => f.endsWith(".json")).length;
+    visible = fs20.readdirSync(sessionsDir).filter((f) => f.endsWith(".json")).length;
   } catch {}
   rows.push(["session registry", visible > 0 ? true : null, `${visible} Claude Code entries in ${sessionsDir}`]);
   {
@@ -7633,7 +8152,7 @@ async function daemon() {
   const sub = positional3[0] ?? "start";
   if (sub === "stop" || sub === "restart") {
     try {
-      process.kill(Number(fs18.readFileSync(P.daemonLock, "utf8")), "SIGTERM");
+      process.kill(Number(fs20.readFileSync(P.daemonLock, "utf8")), "SIGTERM");
       console.log("daemon stopped");
     } catch {
       console.log("daemon was not running");
@@ -7800,24 +8319,24 @@ usage: /crosstalk:rename <current> <new>
   }
   save(t);
   try {
-    const uPath = path19.join(ROOT, "usage.json");
-    const u = JSON.parse(fs18.readFileSync(uPath, "utf8"));
+    const uPath = path22.join(ROOT, "usage.json");
+    const u = JSON.parse(fs20.readFileSync(uPath, "utf8"));
     if (u[a]) {
       u[b] = u[a];
       delete u[a];
-      fs18.writeFileSync(uPath, JSON.stringify(u, null, 2), { mode: 384 });
+      fs20.writeFileSync(uPath, JSON.stringify(u, null, 2), { mode: 384 });
     }
   } catch {}
   try {
-    const qPath = path19.join(ROOT, "queue.json");
-    const q = JSON.parse(fs18.readFileSync(qPath, "utf8"));
+    const qPath = path22.join(ROOT, "queue.json");
+    const q = JSON.parse(fs20.readFileSync(qPath, "utf8"));
     let touched = 0;
     for (const msgs of Object.values(q))
       for (const m of msgs)
         if (m.from === a)
           m.from = b, touched++;
     if (touched)
-      fs18.writeFileSync(qPath, JSON.stringify(q, null, 2), { mode: 384 });
+      fs20.writeFileSync(qPath, JSON.stringify(q, null, 2), { mode: 384 });
   } catch {}
   console.log(`"${a}" is "${b}" now, still ${peer.fingerprint}.`);
   if (daemonRunning())
@@ -8051,8 +8570,8 @@ you are sure.`);
     }
     if (!bundle)
       die("the other machine never sent anything. Start again.");
-    fs18.mkdirSync(ROOT, { recursive: true, mode: 448 });
-    const write = (name, value) => fs18.writeFileSync(path19.join(ROOT, name), JSON.stringify(value, null, 2), { mode: 384 });
+    fs20.mkdirSync(ROOT, { recursive: true, mode: 448 });
+    const write = (name, value) => fs20.writeFileSync(path22.join(ROOT, name), JSON.stringify(value, null, 2), { mode: 384 });
     write("identity.json", { ...bundle.identity, machine: machineName() });
     write("peers.json", bundle.peers ?? {});
     if (bundle.rooms)
@@ -8085,7 +8604,7 @@ and a message reaches whichever machine you are sitting at.`);
     peers: loadPeers(),
     rooms: (() => {
       try {
-        return JSON.parse(fs18.readFileSync(path19.join(ROOT, "rooms.json"), "utf8"));
+        return JSON.parse(fs20.readFileSync(path22.join(ROOT, "rooms.json"), "utf8"));
       } catch {
         return {};
       }
@@ -8135,13 +8654,13 @@ two machines and nowhere else.`);
 async function installAgy() {
   const root = rootFrom2(import.meta.url);
   const bin = shim2(root);
-  const dir = path19.join(os9.homedir(), ".gemini", "config");
-  const file = path19.join(dir, "hooks.json");
-  fs18.mkdirSync(dir, { recursive: true });
+  const dir = path22.join(os9.homedir(), ".gemini", "config");
+  const file = path22.join(dir, "hooks.json");
+  fs20.mkdirSync(dir, { recursive: true });
   let all = {};
-  if (fs18.existsSync(file)) {
+  if (fs20.existsSync(file)) {
     try {
-      all = JSON.parse(fs18.readFileSync(file, "utf8"));
+      all = JSON.parse(fs20.readFileSync(file, "utf8"));
     } catch {
       die(`${file} is not valid JSON. Fix or move it, then run this again.`);
     }
@@ -8151,7 +8670,7 @@ async function installAgy() {
       { type: "command", command: `"${bin}" hook PreInvocation`, timeout: 20 }
     ]
   };
-  fs18.writeFileSync(file, JSON.stringify(all, null, 2) + `
+  fs20.writeFileSync(file, JSON.stringify(all, null, 2) + `
 `);
   console.log(`hooks    ${file}`);
   try {
@@ -8174,13 +8693,13 @@ If \`crosstalk facts\` looks unscoped, launch agy with --add-dir "$PWD".`);
 }
 async function installQwen() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path19.join(os9.homedir(), ".qwen");
-  const file = path19.join(dir, "settings.json");
-  fs18.mkdirSync(dir, { recursive: true });
+  const dir = path22.join(os9.homedir(), ".qwen");
+  const file = path22.join(dir, "settings.json");
+  fs20.mkdirSync(dir, { recursive: true });
   let cfg = {};
-  if (fs18.existsSync(file)) {
+  if (fs20.existsSync(file)) {
     try {
-      cfg = JSON.parse(fs18.readFileSync(file, "utf8"));
+      cfg = JSON.parse(fs20.readFileSync(file, "utf8"));
     } catch {
       die(`${file} is not valid JSON. Fix or move it, then run this again.`);
     }
@@ -8191,17 +8710,17 @@ async function installQwen() {
     const others = (cfg.hooks[event] ?? []).filter((g) => !JSON.stringify(g).includes("crosstalk"));
     cfg.hooks[event] = [...others, entry];
   }
-  fs18.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
+  fs20.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
 `);
   console.log(`hooks    ${file}`);
   registerMcp("qwen", ["mcp", "add", "crosstalk", bin, "server"], bin);
 }
 async function installKimi() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path19.join(os9.homedir(), ".kimi-code");
-  const file = path19.join(dir, "config.toml");
-  fs18.mkdirSync(dir, { recursive: true });
-  const existing = fs18.existsSync(file) ? fs18.readFileSync(file, "utf8") : "";
+  const dir = path22.join(os9.homedir(), ".kimi-code");
+  const file = path22.join(dir, "config.toml");
+  fs20.mkdirSync(dir, { recursive: true });
+  const existing = fs20.existsSync(file) ? fs20.readFileSync(file, "utf8") : "";
   const kept = existing.replace(/\n*# crosstalk\n(?:\[\[hooks\]\][^[]*)+/g, `
 `);
   const blocks = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"].map((event) => `[[hooks]]
@@ -8210,20 +8729,20 @@ command = "${bin} hook --client kimi"
 timeout = 20
 `).join(`
 `);
-  fs18.writeFileSync(file, `${kept.trimEnd()}
+  fs20.writeFileSync(file, `${kept.trimEnd()}
 
 # crosstalk
 ${blocks}`);
   console.log(`hooks    ${file}`);
-  console.log(`tools    add the MCP server in ${path19.join(dir, "mcp.json")}`);
+  console.log(`tools    add the MCP server in ${path22.join(dir, "mcp.json")}`);
 }
 async function installHermes() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path19.join(os9.homedir(), ".hermes");
-  const file = path19.join(dir, "config.yaml");
-  if (!fs18.existsSync(file))
+  const dir = path22.join(os9.homedir(), ".hermes");
+  const file = path22.join(dir, "config.yaml");
+  if (!fs20.existsSync(file))
     die(`no ${file}. Run hermes once first, then run this again.`);
-  const existing = fs18.readFileSync(file, "utf8");
+  const existing = fs20.readFileSync(file, "utf8");
   if (existing.includes("crosstalk hook"))
     die(`${file} already has crosstalk hooks. Remove them by hand to reinstall.`);
   if (/^hooks:/m.test(existing))
@@ -8236,7 +8755,7 @@ hooks:
   pre_llm_call:
     - command: "${bin} hook pre_llm_call"
       timeout: 20`);
-  fs18.writeFileSync(file, `${existing.trimEnd()}
+  fs20.writeFileSync(file, `${existing.trimEnd()}
 
 # crosstalk
 hooks:
@@ -8256,19 +8775,19 @@ terminal and answer yes twice, or run it with --accept-hooks. Check with:
 }
 async function installGoose() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path19.join(os9.homedir(), ".agents", "plugins", "crosstalk");
-  fs18.mkdirSync(path19.join(dir, "hooks"), { recursive: true });
-  fs18.writeFileSync(path19.join(dir, "plugin.json"), JSON.stringify({
+  const dir = path22.join(os9.homedir(), ".agents", "plugins", "crosstalk");
+  fs20.mkdirSync(path22.join(dir, "hooks"), { recursive: true });
+  fs20.writeFileSync(path22.join(dir, "plugin.json"), JSON.stringify({
     name: "crosstalk",
     version: "0.1.0",
     description: "Messages from other people's coding agents, delivered into this session."
   }, null, 2) + `
 `);
   const group = (command) => ({ hooks: [{ type: "command", command }] });
-  fs18.writeFileSync(path19.join(dir, "hooks", "hooks.json"), JSON.stringify({ hooks: { SessionStart: [group(`"${bin}" hook`)], Stop: [group(`"${bin}" hook`)] } }, null, 2) + `
+  fs20.writeFileSync(path22.join(dir, "hooks", "hooks.json"), JSON.stringify({ hooks: { SessionStart: [group(`"${bin}" hook`)], Stop: [group(`"${bin}" hook`)] } }, null, 2) + `
 `);
-  console.log(`hooks    ${path19.join(dir, "hooks", "hooks.json")}`);
-  const gooseConf = path19.join(os9.homedir(), ".config", "goose", "config.yaml");
+  console.log(`hooks    ${path22.join(dir, "hooks", "hooks.json")}`);
+  const gooseConf = path22.join(os9.homedir(), ".config", "goose", "config.yaml");
   const entry = [
     `  crosstalk:`,
     `    enabled: true`,
@@ -8282,12 +8801,12 @@ async function installGoose() {
 `);
   let conf = "";
   try {
-    conf = fs18.readFileSync(gooseConf, "utf8");
+    conf = fs20.readFileSync(gooseConf, "utf8");
   } catch {}
   if (conf.includes(`cmd: ${bin}`)) {
     console.log(`tools    already in ${gooseConf}`);
   } else if (/^extensions:\n/m.test(conf)) {
-    fs18.writeFileSync(gooseConf, conf.replace(/^extensions:\n/m, `extensions:
+    fs20.writeFileSync(gooseConf, conf.replace(/^extensions:\n/m, `extensions:
 ${entry}
 `));
     console.log(`tools    ${gooseConf}`);
@@ -8297,8 +8816,8 @@ ${entry}
 ${entry}
 `);
   } else {
-    fs18.mkdirSync(path19.dirname(gooseConf), { recursive: true });
-    fs18.writeFileSync(gooseConf, `${conf.trimEnd()}
+    fs20.mkdirSync(path22.dirname(gooseConf), { recursive: true });
+    fs20.writeFileSync(gooseConf, `${conf.trimEnd()}
 
 extensions:
 ${entry}
@@ -8313,13 +8832,13 @@ set of facts on start.`);
 }
 async function installCursor() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path19.join(os9.homedir(), ".cursor");
-  const file = path19.join(dir, "hooks.json");
-  fs18.mkdirSync(dir, { recursive: true });
+  const dir = path22.join(os9.homedir(), ".cursor");
+  const file = path22.join(dir, "hooks.json");
+  fs20.mkdirSync(dir, { recursive: true });
   let cfg = { version: 1, hooks: {} };
-  if (fs18.existsSync(file)) {
+  if (fs20.existsSync(file)) {
     try {
-      cfg = JSON.parse(fs18.readFileSync(file, "utf8"));
+      cfg = JSON.parse(fs20.readFileSync(file, "utf8"));
     } catch {
       die(`${file} is not valid JSON. Fix or move it, then run this again.`);
     }
@@ -8330,10 +8849,10 @@ async function installCursor() {
     const others = (cfg.hooks[step] ?? []).filter((h) => !String(h?.command ?? "").includes("crosstalk"));
     cfg.hooks[step] = [...others, { type: "command", command: `"${bin}" hook` }];
   }
-  fs18.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
+  fs20.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
 `);
   console.log(`hooks    ${file}`);
-  console.log(`tools    add the MCP server in ${path19.join(dir, "mcp.json")}`);
+  console.log(`tools    add the MCP server in ${path22.join(dir, "mcp.json")}`);
   console.log(`
 Cursor drops any injected text over 10,000 characters rather than shortening
 it, so crosstalk trims to fit and says so where it cut.`);
@@ -8346,19 +8865,19 @@ var CODEX_EVENT_KEY = {
   Stop: "stop"
 };
 function codexHooksNeedingTrust() {
-  const file = path19.join(os9.homedir(), ".codex", "hooks.json");
-  const conf = path19.join(os9.homedir(), ".codex", "config.toml");
-  if (!fs18.existsSync(file))
+  const file = path22.join(os9.homedir(), ".codex", "hooks.json");
+  const conf = path22.join(os9.homedir(), ".codex", "config.toml");
+  if (!fs20.existsSync(file))
     return [];
   let hooks;
   try {
-    hooks = JSON.parse(fs18.readFileSync(file, "utf8")).hooks ?? {};
+    hooks = JSON.parse(fs20.readFileSync(file, "utf8")).hooks ?? {};
   } catch {
     return [];
   }
   let toml = "";
   try {
-    toml = fs18.readFileSync(conf, "utf8");
+    toml = fs20.readFileSync(conf, "utf8");
   } catch {}
   const untrusted = [];
   for (const [event, groups] of Object.entries(hooks)) {
@@ -8379,13 +8898,13 @@ function codexHooksNeedingTrust() {
 }
 async function installCodex() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path19.join(os9.homedir(), ".codex");
-  const file = path19.join(dir, "hooks.json");
-  fs18.mkdirSync(dir, { recursive: true });
+  const dir = path22.join(os9.homedir(), ".codex");
+  const file = path22.join(dir, "hooks.json");
+  fs20.mkdirSync(dir, { recursive: true });
   let cfg = {};
-  if (fs18.existsSync(file)) {
+  if (fs20.existsSync(file)) {
     try {
-      cfg = JSON.parse(fs18.readFileSync(file, "utf8"));
+      cfg = JSON.parse(fs20.readFileSync(file, "utf8"));
     } catch {
       die(`${file} is not valid JSON. Fix or move it, then run this again.`);
     }
@@ -8395,7 +8914,7 @@ async function installCodex() {
     const others = (cfg.hooks[event] ?? []).filter((g) => !JSON.stringify(g).includes("crosstalk"));
     cfg.hooks[event] = [...others, { hooks: [{ type: "command", command: `"${bin}" hook` }] }];
   }
-  fs18.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
+  fs20.writeFileSync(file, JSON.stringify(cfg, null, 2) + `
 `);
   console.log(`hooks    ${file}`);
   console.log(`
@@ -8417,22 +8936,22 @@ function registerMcp(cli, args, bin) {
 }
 async function installPath() {
   const bin = shim2(rootFrom2(import.meta.url));
-  const dir = path19.join(os9.homedir(), ".local", "bin");
-  const link = path19.join(dir, "crosstalk");
-  fs18.mkdirSync(dir, { recursive: true });
+  const dir = path22.join(os9.homedir(), ".local", "bin");
+  const link = path22.join(dir, "crosstalk");
+  fs20.mkdirSync(dir, { recursive: true });
   let existing = "";
   try {
-    existing = fs18.readlinkSync(link);
+    existing = fs20.readlinkSync(link);
   } catch {
-    if (fs18.existsSync(link))
+    if (fs20.existsSync(link))
       die(`${link} already exists and is not a link. Move it, then run this again.`);
   }
   if (existing && existing !== bin)
     console.log(`replacing a link to ${existing}`);
   try {
-    fs18.unlinkSync(link);
+    fs20.unlinkSync(link);
   } catch {}
-  fs18.symlinkSync(bin, link);
+  fs20.symlinkSync(bin, link);
   console.log(`linked   ${link} -> ${bin}`);
   const onPath = (process.env.PATH ?? "").split(":").includes(dir);
   console.log(onPath ? `

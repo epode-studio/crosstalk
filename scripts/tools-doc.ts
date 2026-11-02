@@ -44,6 +44,8 @@ const GROUPS: [string, string, string[]][] = [
   ["Facts", "What the room keeps deriving and would rather not derive again.", ["crosstalk_facts", "crosstalk_remember", "crosstalk_confirm", "crosstalk_correct"]],
   ["Decisions", "What was settled, written where the code lives.", ["crosstalk_decide"]],
   ["Threads", "A piece of work and the conversation about it, found from what each session works on.", ["crosstalk_thread_read", "crosstalk_thread"]],
+  ["No commands", "What used to need a slash command, from plain words (src/ui-extra/).", ["crosstalk_room", "crosstalk_mute", "crosstalk_trust", "crosstalk_doctor", "crosstalk_link"]],
+  ["Looking around", "A thread beside the chat, a worktree in the editor, what happened, what shipped.", ["crosstalk_pane", "crosstalk_open", "crosstalk_digest", "crosstalk_standup"]],
 ]
 
 const byName = new Map(tools.map((t) => [t.name, t]))

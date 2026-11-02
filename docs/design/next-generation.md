@@ -86,8 +86,12 @@ text is presented to your agent.
 This is a clean break: existing rooms are not converted. Collaborators need
 nothing; anyone outside a shared repo is verified again with four words.
 
-Bots need a decision: probably a bot is a member that can post to a thread but
-cannot start sessions on your machine.
+**Bots** (decided): a member that declares itself an agent (`--agent`) can
+post to threads and rooms, and nothing more. It never starts or resumes a
+session on anyone's machine (spawn, gather, restore and shipping refuse to act
+for it), never answers a question (its answers, in a reply or written into a
+thread, are not taken, and its rules are ignored), and is never above notify.
+See `src/ui-extra/bots.ts`.
 
 ## Threads
 
@@ -311,9 +315,11 @@ actions come up as Claude Code's picker, numbered on screen:
   ❯ 1 Hand to agent
     2 Reply
     3 Open thread
-    4 Mute
-    5 Later
+    4 More…           → Mute / Later
 ```
+
+Claude Code's picker takes four options, so Mute and Later sit one step
+further, behind More….
 
 If you are busy, the card waits in the band and the picker comes when you
 stop. Saying "hand marie's message to the agent" works too. Handing it over
@@ -642,4 +648,4 @@ Technical, each with a proposal:
    anything is committed.
 4. **Recaps stay local.** Matching runs on each person's machine against the
    shared thread file, so only the recap ever leaves it, sealed.
-5. **Bots.** Whether a bot is just a verified member or something narrower.
+5. **Bots.** Decided: something narrower than a member (see People).

@@ -34,6 +34,7 @@ import * as F from "./format.ts"
 import * as S from "./store.ts"
 import * as I from "./infer.ts"
 import { sealSection, unwrapKey, wrapKey, newKey } from "./seal.ts"
+import { botSafe } from "../ui-extra/bots.ts"
 
 export type LocalSession = {
   sessionId: string
@@ -590,7 +591,7 @@ export class ThreadService {
     if (!peer) return this.d.log(`ignored a thread from ${label}: no direct channel`)
     this.capable.add(label)
     const sync = env.threadSync as { thread?: unknown; key?: string } | undefined
-    const inc = M.parseThread(sync?.thread)
+    const inc = botSafe(label, M.parseThread(sync?.thread), this.st.threads, this.d.peers())
     if (!inc) return this.d.log(`ignored a malformed thread from ${label}`)
     const known = this.st.threads[inc.id]
     const theirPeople = M.people(inc)

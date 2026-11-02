@@ -28,6 +28,7 @@ import { P } from "./config.ts"
 import { rootFrom, shim } from "./paths.ts"
 import * as R from "./restore.ts"
 import type { Rec, Step, Term } from "./restore.ts"
+import { refuseBot } from "./ui-extra/bots.ts"
 
 // --- the registry --------------------------------------------------------------
 
@@ -647,7 +648,9 @@ export function describe(self?: string): Outcome {
  * Yes: queue every candidate and start the waiter, which restarts the idle
  * ones now and the busy ones once they go idle.
  */
-export function start(o: { self?: string; root?: string }): Outcome {
+export function start(o: { self?: string; root?: string; peer?: string }): Outcome {
+  const bot = refuseBot(o.peer, "restart sessions on this machine")
+  if (bot) return { ok: false, text: `◢ crosstalk: ${bot}`, sessions: [] }
   watch(o.self)
   const selfPids = ancestors()
   const cands = candidates(R.readAll(), { self: o.self, selfPids, alive: R.recAlive })
