@@ -60,6 +60,7 @@ import { spawnedAt } from "./spawn.ts"
 import { createSessionOps } from "./sessions/daemon.ts"
 // Registers crosstalk services with the session manager (setServices), for close here.
 import "./services/service.ts"
+import { createUrls } from "./urls/daemon.ts"
 
 const identity = loadIdentity()
 if (!identity) {
@@ -2729,6 +2730,9 @@ control.listen(P.daemonSock, () => {
   for (const reg of sessions.values()) observeThreads(reg)
   threads.fade()
   void threads.syncAll()
+  // URLs: the proxy behind <thread>.localhost, services' URLs, liveness (src/urls/).
+  if (!process.env.CROSSTALK_NO_URLS)
+    void createUrls({ log, live: () => [...sessions.values()].map((s) => ({ sessionId: s.sessionId, cwd: s.cwd })) }).catch((e) => log(`urls: ${(e as Error).message}`))
 })
 
 setInterval(() => {

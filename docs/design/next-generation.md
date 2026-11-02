@@ -704,6 +704,7 @@ Every part above has a first version on the branch, with its tests in
 | Disk budget, team install, metrics, threads across repos | `src/disk/`, `src/install/`, `src/metrics/`, `src/threads/crossrepo.ts` | `INSTALL.md` |
 | Shipping: risk, reviewers, evidence, merging, flags (Unleash first), previews, dark launch, metrics ramps, incidents | `src/shipping/` | `docs/shipping.md` |
 | Long-running processes outlive sessions: services in crosstalk's tmux, ports per worktree, waiting for what a session started, cleanup that stops services first | `src/services/` | `docs/services.md` |
+| URLs: every URL collected and labelled (services, previews, PRs, links in command output, tokens taken out), liveness, names instead of ports through a local proxy, one list in the pane, on the tab and from any session | `src/urls/` | `docs/urls.md` |
 
 **Pull requests from sealed threads** carry the feature, its evidence and its
 reviewers, never the thread's recap, decisions or open questions: a PR is
@@ -729,6 +730,10 @@ thread is sealed to. Public threads put all of it in the PR. Decided 2026-11-02.
 - **Real reviewer runs:** `claude -p` and `codex exec` as reviewers were
   replaced by stubs; whether Codex's default sandbox lets a review finish is
   open.
+- **URLs on a Mac and with real dev servers:** port 80 without root, `open`,
+  browsers' `*.localhost` with a port, the pane's OSC 8 links; Vite, Next.js
+  and webpack HMR through the proxy (a bun server and a raw websocket stood
+  in); real PostToolUse payloads; `gh pr view` on real PRs.
 - **Phone push:** Claude Code's own push needs Remote Control paired; ntfy was
   tested against a local stand-in.
 

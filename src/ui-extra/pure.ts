@@ -122,9 +122,32 @@ export type PaneModel = {
   features: PaneFeature[]
   /** crosstalk services running in this session's worktree, with where they listen (docs/services.md). */
   services?: PaneService[]
+  /** The thread's URLs (src/urls/): in the main session, every thread's. */
+  links?: PaneLink[]
 }
 
 export type PaneService = { name: string; ports: number[]; url?: string }
+
+/** One URL in the pane: what it is, where (the proxy's name for a local server), and whether it answers. */
+export type PaneLink = { label: string; url: string; kind: "local" | "preview" | "pr" | "link"; alive: boolean; thread?: string }
+
+export const LINK_KINDS = [
+  ["local", "Local"],
+  ["preview", "Previews"],
+  ["pr", "Pull requests"],
+  ["link", "Links found in output"],
+] as const
+
+/** The pane's links by kind, in the order above, empty kinds left out. */
+export function linkGroups(links: readonly PaneLink[]): { kind: PaneLink["kind"]; title: string; links: PaneLink[] }[] {
+  return LINK_KINDS.map(([kind, title]) => ({ kind, title, links: links.filter((l) => l.kind === kind) })).filter((g) => g.links.length)
+}
+
+/** A URL the pane may make clickable: http(s), a plain host, nothing that is not printable. */
+export const linkable = (url: string) => url.length <= 500 && /^https?:\/\/[A-Za-z0-9.\[\]:-]+(\/[!-~]*)?$/.test(url)
+
+/** A link's line: `● auth · dev server`, or `○ auth · dev server · dead`. */
+export const linkLine = (l: PaneLink) => `${l.alive ? "●" : "○"} ${l.label}${l.alive ? "" : " · dead"}`
 
 /** A service's line in the pane: `web · :4100`. */
 export const serviceLine = (s: PaneService) => (s.ports.length ? `${s.name} · ${s.ports.map((p) => `:${p}`).join(" ")}` : `${s.name} · starting`)
@@ -156,5 +179,9 @@ export function paneLines(p: PaneModel, now: number): string[] {
   if (p.features.length) out.push("", "Features", ...p.features.map((f) => ` ${featureLine(f)}`))
   if (p.recent.length) out.push("", "Recent", ...p.recent.map((r) => ` ${r.from} ${ago(r.ts, now)} ${r.text}`))
   if (p.services?.length) out.push("", "Services", ...p.services.map((s) => ` ${serviceLine(s)}${s.url ? ` ${s.url}` : ""}`))
+  if (p.links?.length) {
+    out.push("", "Links")
+    for (const g of linkGroups(p.links)) out.push(` ${g.title}`, ...g.links.map((l) => `  ${linkLine(l)} ${l.url}`))
+  }
   return out
 }

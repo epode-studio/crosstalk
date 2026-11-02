@@ -2,8 +2,8 @@
 // @bun
 
 // src/hook.ts
-import path29 from "path";
-import fs25 from "fs";
+import path33 from "path";
+import fs28 from "fs";
 
 // src/client.ts
 import net from "node:net";
@@ -93,6 +93,7 @@ var loadPeers = () => readJson(P.peers, {});
 var loadRelay = () => readJson(P.relay, {
   url: process.env.CROSSTALK_RELAY ?? "wss://crosstalk-relay.billowing-poetry-4cd6.workers.dev"
 });
+var loadRegistered = () => readJson(P.sessions, {});
 
 // src/paths.ts
 import path2 from "node:path";
@@ -1833,6 +1834,7 @@ var itermFrontTtyScript = [
 var RECHECK_MS = 10 * 60 * 1000;
 
 // src/threads/model.ts
+var STATUSES = ["active", "waiting", "done", "archived"];
 var LISTS = [
   "people",
   "sessions",
@@ -1846,6 +1848,40 @@ var LISTS = [
   "rules"
 ];
 var SECTIONS = ["meta", "recap", ...LISTS];
+function slug(s, max = 40) {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, max).replace(/-+$/g, "") || "thread";
+}
+function parseThread(v) {
+  if (!v || typeof v !== "object")
+    return null;
+  const o = v;
+  if (o.v !== 1 || typeof o.id !== "string" || !/^[0-9a-f]{8,32}$/.test(o.id))
+    return null;
+  const stamp = (s) => s && typeof s.l === "number" && typeof s.by === "string";
+  if (!stamp(o.meta) || !o.meta.value || typeof o.meta.value.name !== "string" || !STATUSES.includes(o.meta.value.status))
+    return null;
+  if (!stamp(o.recap) || typeof o.recap.value !== "string")
+    return null;
+  const out = {
+    v: 1,
+    id: o.id,
+    meta: { l: o.meta.l, by: o.meta.by, value: { ...o.meta.value, name: slug(o.meta.value.name), public: !!o.meta.value.public, repo: String(o.meta.value.repo ?? "") } },
+    recap: { l: o.recap.l, by: o.recap.by, value: o.recap.value.slice(0, 4000) },
+    lamport: Number(o.lamport) || 0,
+    touchedAt: Number(o.touchedAt) || 0
+  };
+  for (const k of LISTS) {
+    const src = o[k] && typeof o[k] === "object" ? o[k] : {};
+    const items = {};
+    for (const [id, it] of Object.entries(src).slice(0, 2000))
+      if (stamp(it) && typeof id === "string" && id.length <= 300 && it.id === id)
+        items[id] = it;
+    out[k] = items;
+  }
+  for (const k of [out.meta, out.recap, ...LISTS.flatMap((k) => Object.values(out[k]))])
+    out.lamport = Math.max(out.lamport, k.l);
+  return out;
+}
 
 // src/client.ts
 import net2 from "node:net";
@@ -3343,8 +3379,452 @@ function pendingFor(sessionId, snapshot) {
   }
 }
 
+// src/ui-extra/threadfile.ts
+import fs16 from "node:fs";
+import path20 from "node:path";
+var threadsFile = () => path20.join(P.root, "threads.json");
+function readThreads(file = threadsFile()) {
+  try {
+    const raw = JSON.parse(fs16.readFileSync(file, "utf8"));
+    const threads = {};
+    for (const [id, t] of Object.entries(raw?.threads ?? {})) {
+      const ok = parseThread(t);
+      if (ok)
+        threads[id] = ok;
+    }
+    return { threads, placed: raw?.placed ?? {}, roots: raw?.roots ?? {} };
+  } catch {
+    return { threads: {}, placed: {}, roots: {} };
+  }
+}
+
+// src/urls/store.ts
+import crypto from "node:crypto";
+import fs17 from "node:fs";
+import path21 from "node:path";
+var DAY3 = 24 * 60 * 60 * 1000;
+var KEEP_DEAD_MS = 7 * DAY3;
+var KEEP_UNSEEN_LINK_MS = 7 * DAY3;
+var CAP_PER_GROUP = 40;
+var CAP_ALL = 400;
+var graceMs = () => Number(process.env.CROSSTALK_URL_GRACE_MS ?? 10 * 60000);
+var idFor = (kind, url, scope = "") => `${kind === "link" || kind === "local" ? "out" : kind}:${crypto.createHash("sha1").update(`${url}\x00${scope}`).digest("hex").slice(0, 16)}`;
+var groupKey = (u) => u.thread ?? u.worktree ?? u.sessionId ?? "";
+var shown = (u, now, grace = graceMs()) => u.alive || (u.deadSince ?? u.lastCheck) > now - grace;
+function pruned(all, now, o = {}) {
+  const perGroup = o.perGroup ?? CAP_PER_GROUP;
+  const total = o.total ?? CAP_ALL;
+  let keep = all.filter((u) => {
+    if (!u.alive && now - (u.deadSince ?? u.lastSeen) > KEEP_DEAD_MS)
+      return false;
+    if (u.source === "output" && now - u.lastSeen > KEEP_UNSEEN_LINK_MS)
+      return false;
+    return true;
+  });
+  const worth = (u) => [u.alive ? 1 : 0, u.source === "output" ? 0 : 1, u.lastSeen];
+  const cmp = (a, b) => {
+    const x = worth(a);
+    const y = worth(b);
+    return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+  };
+  const groups = new Map;
+  for (const u of keep)
+    groups.set(groupKey(u), [...groups.get(groupKey(u)) ?? [], u]);
+  const drop = new Set;
+  for (const g of groups.values())
+    if (g.length > perGroup)
+      for (const u of [...g].sort(cmp).slice(0, g.length - perGroup))
+        drop.add(u.id);
+  keep = keep.filter((u) => !drop.has(u.id));
+  if (keep.length > total) {
+    const out = new Set([...keep].sort(cmp).slice(0, keep.length - total).map((u) => u.id));
+    keep = keep.filter((u) => !out.has(u.id));
+  }
+  return keep;
+}
+var sleepSync7 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+class UrlStore {
+  file;
+  now;
+  threadOf;
+  constructor(o = {}) {
+    this.file = o.file ?? path21.join(P.root, "urls.json");
+    this.now = o.now ?? Date.now;
+    this.threadOf = o.threadOf;
+  }
+  read() {
+    try {
+      const raw = JSON.parse(fs17.readFileSync(this.file, "utf8"));
+      return Array.isArray(raw?.urls) ? raw.urls.filter((u) => u && typeof u.id === "string" && typeof u.url === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+  write(all) {
+    fs17.mkdirSync(path21.dirname(this.file), { recursive: true, mode: 448 });
+    const tmp = `${this.file}.${process.pid}.tmp`;
+    fs17.writeFileSync(tmp, JSON.stringify({ v: 1, urls: all }, null, 1), { mode: 384 });
+    fs17.renameSync(tmp, this.file);
+  }
+  mutate(fn) {
+    fs17.mkdirSync(path21.dirname(this.file), { recursive: true, mode: 448 });
+    const lock = `${this.file}.lock`;
+    let held = false;
+    for (let i = 0;i < 300 && !held; i++) {
+      try {
+        fs17.mkdirSync(lock);
+        held = true;
+      } catch {
+        try {
+          if (Date.now() - fs17.statSync(lock).mtimeMs > 5000)
+            fs17.rmdirSync(lock);
+        } catch {}
+        sleepSync7(10);
+      }
+    }
+    try {
+      const all = this.read();
+      const now = this.now();
+      const out = fn(all, now);
+      this.write(pruned(all, now));
+      return out;
+    } finally {
+      if (held)
+        try {
+          fs17.rmdirSync(lock);
+        } catch {}
+    }
+  }
+  add(n) {
+    return this.mutate((all, now) => {
+      const id = n.id ?? idFor(n.kind, n.url, n.worktree ?? n.thread ?? n.sessionId ?? "");
+      const i = all.findIndex((u) => u.id === id);
+      const given = Object.fromEntries(Object.entries(n).filter(([, v]) => v !== undefined));
+      if (i === -1) {
+        const u = { ...given, id, firstSeen: now, lastSeen: now, lastCheck: n.lastCheck ?? 0, alive: n.alive ?? true };
+        all.push(u);
+        return u;
+      }
+      const was = all[i];
+      const moved = was.url !== n.url;
+      const u = {
+        ...was,
+        ...given,
+        id,
+        firstSeen: was.firstSeen,
+        lastSeen: now,
+        lastCheck: moved ? 0 : was.lastCheck,
+        alive: n.alive ?? (moved ? true : was.alive)
+      };
+      if (u.alive) {
+        delete u.deadSince;
+        if (moved)
+          delete u.fails;
+      }
+      all[i] = u;
+      return u;
+    });
+  }
+  update(id, patch) {
+    return this.mutate((all) => {
+      const i = all.findIndex((u) => u.id === id);
+      if (i === -1)
+        return;
+      all[i] = { ...all[i], ...patch };
+      return all[i];
+    });
+  }
+  get(id) {
+    return this.read().find((u) => u.id === id);
+  }
+  remove(id) {
+    return this.mutate((all) => {
+      const i = all.findIndex((u) => u.id === id);
+      if (i !== -1)
+        all.splice(i, 1);
+      return i !== -1;
+    });
+  }
+  markOk(id, o = {}) {
+    return this.mutate((all, now) => {
+      const u = all.find((x) => x.id === id);
+      if (!u)
+        return;
+      const at = o.at ?? now;
+      Object.assign(u, { alive: true, lastOk: at, lastCheck: at, fails: 0 }, o.status !== undefined ? { status: o.status } : {}, o.state !== undefined ? { state: o.state } : {});
+      delete u.deadSince;
+      return u;
+    });
+  }
+  markDead(id, o = {}) {
+    return this.mutate((all, now) => {
+      const u = all.find((x) => x.id === id);
+      if (!u)
+        return;
+      const at = o.at ?? now;
+      u.lastCheck = at;
+      if (u.alive || u.deadSince === undefined)
+        u.deadSince = at;
+      u.alive = false;
+      if (o.state !== undefined)
+        u.state = o.state;
+      if (o.status !== undefined)
+        u.status = o.status;
+      return u;
+    });
+  }
+  markFailed(id, after = 2) {
+    const u = this.mutate((all, now) => {
+      const x = all.find((y) => y.id === id);
+      if (!x)
+        return;
+      x.fails = (x.fails ?? 0) + 1;
+      x.lastCheck = now;
+      return { ...x };
+    });
+    return u && (u.fails ?? 0) >= after ? this.markDead(id) : u;
+  }
+  prune() {
+    return this.mutate((all, now) => all.length - pruned(all, now).length);
+  }
+  thread(u) {
+    if (u.thread)
+      return u.thread;
+    try {
+      return this.threadOf?.(u);
+    } catch {
+      return;
+    }
+  }
+  list(f = {}) {
+    const now = this.now();
+    const want = f.thread?.toLowerCase();
+    return this.read().filter((u) => f.all || f.alive === false ? true : shown(u, now)).filter((u) => f.alive === undefined || u.alive === f.alive).filter((u) => !f.kind || u.kind === f.kind).filter((u) => !f.sessionId || u.sessionId === f.sessionId).filter((u) => !f.worktree || u.worktree === f.worktree).map((u) => u.thread ? u : { ...u, ...this.thread(u) ? { thread: this.thread(u) } : {} }).filter((u) => !want || (u.thread ?? "").toLowerCase() === want).sort((a, b) => Number(b.alive) - Number(a.alive) || b.lastSeen - a.lastSeen);
+  }
+  forThread(name, f = {}) {
+    return this.list({ ...f, thread: name });
+  }
+  forSession(o, f = {}) {
+    const all = this.list(f);
+    return all.filter((u) => u.sessionId === o.sessionId || o.worktree && u.worktree === o.worktree || o.thread && u.thread === o.thread);
+  }
+}
+
+// src/urls/extract.ts
+var MAX_PER_CALL = 10;
+var MAX_URL = 400;
+var stripAnsi = (s) => s.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[@-_]/g, "");
+var LOCAL = /^(localhost|127(?:\.\d{1,3}){3}|\[::1\]|0\.0\.0\.0|\[::\]|[a-z0-9-]+(?:\.[a-z0-9-]+)*\.localhost)$/i;
+var isLocalHost = (host) => LOCAL.test(host);
+var NOISE_HOSTS = [
+  "registry.npmjs.org",
+  "docs.npmjs.com",
+  "npmjs.com",
+  "www.npmjs.com",
+  "npm.community",
+  "registry.yarnpkg.com",
+  "yarnpkg.com",
+  "classic.yarnpkg.com",
+  "pnpm.io",
+  "opencollective.com",
+  "nodejs.org",
+  "bun.sh",
+  "deno.land",
+  "pypi.org",
+  "files.pythonhosted.org",
+  "pip.pypa.io",
+  "crates.io",
+  "static.crates.io",
+  "index.crates.io",
+  "docs.rs",
+  "go.dev",
+  "pkg.go.dev",
+  "proxy.golang.org",
+  "rubygems.org",
+  "json-schema.org",
+  "www.w3.org",
+  "w3.org",
+  "schemas.xmlsoap.org",
+  "example.com",
+  "example.org",
+  "example.net",
+  "git-scm.com",
+  "aka.ms",
+  "docs.github.com",
+  "help.github.com",
+  "cli.github.com",
+  "githubusercontent.com",
+  "brew.sh",
+  "formulae.brew.sh",
+  "hub.docker.com",
+  "registry-1.docker.io",
+  "docs.docker.com",
+  "nextjs.org",
+  "vitejs.dev",
+  "vite.dev",
+  "react.dev",
+  "reactjs.org",
+  "typescriptlang.org",
+  "www.typescriptlang.org",
+  "eslint.org",
+  "prettier.io",
+  "webpack.js.org",
+  "babeljs.io",
+  "jestjs.io",
+  "vitest.dev",
+  "playwright.dev",
+  "developer.mozilla.org",
+  "stackoverflow.com",
+  "fonts.googleapis.com",
+  "fonts.gstatic.com",
+  "cdn.jsdelivr.net",
+  "unpkg.com"
+];
+var NOISE_PATHS = [/^github\.com\/(sponsors|advisories)\b/, /^github\.com\/[^/]+\/[^/]+\/(issues|discussions)\/new\b/, /^github\.com\/settings\b/, /^nextjs\.org\/telemetry/];
+function isNoise(u) {
+  const h = u.hostname.toLowerCase();
+  if (NOISE_HOSTS.some((n) => h === n || h.endsWith(`.${n}`)))
+    return true;
+  const hp = `${h}${u.pathname}`;
+  return NOISE_PATHS.some((r) => r.test(hp));
+}
+var SECRET_PARAM = /(token|key|secret|sig|auth|code|pass(word|wd)?|pwd|credential|session|jwt|bearer|otp|nonce|ticket)/i;
+var SECRET_VALUE = /^(eyJ[\w-]{8,}|gh[pousr]_\w{10,}|github_pat_\w+|sk-[\w-]{10,}|xox[abprs]-[\w-]+|AKIA[0-9A-Z]{12,}|[A-Za-z0-9+/_=-]{32,})$/;
+function stripSecrets(u) {
+  const out = new URL(u.href);
+  out.username = "";
+  out.password = "";
+  for (const [k, v] of [...out.searchParams])
+    if (SECRET_PARAM.test(k) || SECRET_VALUE.test(v))
+      out.searchParams.delete(k);
+  if (out.hash.includes("=") || SECRET_VALUE.test(out.hash.slice(1)))
+    out.hash = "";
+  if (![...out.searchParams].length)
+    out.search = "";
+  return out;
+}
+function kindOf3(u) {
+  if (isLocalHost(u.hostname))
+    return "local";
+  if (/^(www\.)?github\.com$/i.test(u.hostname) && /^\/[^/]+\/[^/]+\/pull\/\d+/.test(u.pathname))
+    return "pr";
+  return "link";
+}
+var prNumber = (url) => /\/pull\/(\d+)/.exec(url)?.[1];
+var RE = /https?:\/\/[^\s"'<>`\\{}|^]+/gi;
+function extractUrls(text, o = {}) {
+  const max = o.max ?? MAX_PER_CALL;
+  const out = [];
+  const seen = new Set;
+  const clean = stripAnsi(text);
+  for (const m of clean.matchAll(RE)) {
+    if (out.length >= max)
+      break;
+    let raw = m[0].replace(/[.,;:!?]+$/, "");
+    for (const [open, close] of [["(", ")"], ["[", "]"]])
+      while (raw.endsWith(close) && raw.split(open).length < raw.split(close).length)
+        raw = raw.slice(0, -1).replace(/[.,;:!?]+$/, "");
+    if (raw.length > 2000)
+      continue;
+    let u;
+    try {
+      u = new URL(raw);
+    } catch {
+      continue;
+    }
+    if (u.protocol !== "http:" && u.protocol !== "https:")
+      continue;
+    if (!u.hostname || !isLocalHost(u.hostname) && !u.hostname.includes("."))
+      continue;
+    if (isNoise(u))
+      continue;
+    u = stripSecrets(u);
+    if (u.hostname === "0.0.0.0" || u.hostname === "[::]")
+      u.hostname = "localhost";
+    const url = u.href.length > MAX_URL ? null : u.href;
+    if (!url || seen.has(url))
+      continue;
+    seen.add(url);
+    out.push({ url, kind: kindOf3(u), host: u.hostname.toLowerCase(), ...u.port ? { port: Number(u.port) } : {}, path: u.pathname });
+  }
+  return out;
+}
+var serviceWhat = (name) => /^(dev|serve|server|start)$/.test(name) ? "dev server" : name;
+var prefix = (group, what) => group ? `${group} \u00b7 ${what}` : what;
+function labelFor(o) {
+  if (o.service)
+    return prefix(o.group, serviceWhat(o.service));
+  if (o.kind === "preview")
+    return prefix(o.group, o.feature && o.feature !== o.group ? `preview (${o.feature})` : "preview");
+  if (o.kind === "pr") {
+    const n = prNumber(o.url);
+    return prefix(o.group, n ? `PR #${n}` : "PR");
+  }
+  let u;
+  try {
+    u = new URL(o.url);
+  } catch {
+    return prefix(o.group, o.url.slice(0, 60));
+  }
+  const p = u.pathname === "/" ? "" : u.pathname.length > 32 ? `${u.pathname.slice(0, 31)}\u2026` : u.pathname;
+  if (o.kind === "local")
+    return prefix(o.group, `${u.hostname === "localhost" || /^127\./.test(u.hostname) || u.hostname === "[::1]" ? "" : u.hostname}${u.port ? `:${u.port}` : ""}${p}` || u.hostname);
+  return prefix(o.group, `${u.hostname.replace(/^www\./, "")}${p}`);
+}
+
+// src/urls/routes.ts
+var label3 = (s) => s.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63).replace(/-+$/, "");
+
+// src/urls/proxy.ts
+import fs18 from "node:fs";
+import path22 from "node:path";
+var HEAD_MAX = 32 * 1024;
+var stateFile3 = () => path22.join(P.root, "proxy.json");
+var alive3 = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+};
+function readState(file = stateFile3()) {
+  try {
+    const s = JSON.parse(fs18.readFileSync(file, "utf8"));
+    if (!(s?.port > 0) || !(s?.pid > 0) || !alive3(s.pid))
+      return null;
+    return { port: s.port, pid: s.pid, at: s.at ?? 0, routes: Array.isArray(s.routes) ? s.routes : [] };
+  } catch {
+    return null;
+  }
+}
+// src/urls/index.ts
+var roots2 = new Map;
+var rank = (r) => r.host === r.group ? 0 : r.host === `${r.service}.${r.group}` ? 1 : 2;
+function badge2(root, state = readState()) {
+  if (!state)
+    return;
+  const mine = state.routes.filter((r) => r.root === root);
+  if (!mine.length)
+    return;
+  const best = [...mine].sort((a, b) => Number(b.main) - Number(a.main) || rank(a) - rank(b))[0];
+  return `${best.host}.localhost${state.port === 80 ? "" : `:${state.port}`}`;
+}
+
 // src/terminal/hook.ts
-var withBadge = (title, badge) => title && badge ? `${title} \u00b7 ${badge.replace(/[^0-9: \u2026]/g, "")}` : title;
+var badgeText = (b) => b.replace(/[^a-z0-9.:\- \u2026]/gi, "").slice(0, 80);
+var withBadge = (title, badge) => title && badge ? `${title} \u00b7 ${badgeText(badge)}` : title;
+function named(cwd, ports) {
+  if (!ports)
+    return ports;
+  try {
+    const s = readState();
+    return s && badge2(rootOf(cwd), s) || ports;
+  } catch {
+    return ports;
+  }
+}
 var titleOf = (rec) => (rec.thread ? `${rec.thread} \u00b7 ${rec.name}` : rec.name).replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
 function fromHook(o) {
   const out = {};
@@ -3384,14 +3864,14 @@ function fromHook(o) {
       if (b.context)
         out.context = b.context;
       if (b.badge)
-        out.badge = b.badge;
+        out.badge = named(o.cwd, b.badge);
     } catch {}
   } else if (/^UserPromptSubmit$/.test(o.event) && !o.env.CROSSTALK_NO_SERVICES) {
     try {
       if (readAll3().some((s) => !s.stoppedAt)) {
         const b = badge(running(rootOf(o.cwd)));
         if (b)
-          out.badge = b;
+          out.badge = named(o.cwd, b);
       }
     } catch {}
   }
@@ -3399,14 +3879,14 @@ function fromHook(o) {
 }
 
 // src/repotrust/firstuse.ts
-import fs16 from "node:fs";
-import path21 from "node:path";
+import fs19 from "node:fs";
+import path24 from "node:path";
 
 // src/crypto.ts
 var SCRYPT = { N: 32768, r: 8, p: 1, maxmem: 256 * 1024 * 1024 };
 
 // src/repotrust/gitref.ts
-import path20 from "node:path";
+import path23 from "node:path";
 
 // src/repotrust/statement.ts
 import { execFile } from "node:child_process";
@@ -3452,7 +3932,7 @@ async function findRepo(cwd) {
     const url = u.stdout.trim();
     if (u.code !== 0 || !url)
       continue;
-    const slug = githubSlug(url) ?? (process.env.CROSSTALK_REPOTRUST_ANY_REMOTE === "1" ? `local/${path20.basename(url).replace(/\.git$/, "").toLowerCase()}` : null);
+    const slug = githubSlug(url) ?? (process.env.CROSSTALK_REPOTRUST_ANY_REMOTE === "1" ? `local/${path23.basename(url).replace(/\.git$/, "").toLowerCase()}` : null);
     if (slug)
       return { top: dir, remote, url, slug };
   }
@@ -3465,25 +3945,25 @@ var BUCKET = { max: 30, perMs: 10 * 60 * 1000 };
 // src/repotrust/firstuse.ts
 var CONNECT = "Connect";
 var NOT_HERE = "Not in this repo";
-var FILE = () => path21.join(ROOT, "repotrust", "firstuse.json");
+var FILE = () => path24.join(ROOT, "repotrust", "firstuse.json");
 function load2() {
   try {
-    const s = JSON.parse(fs16.readFileSync(FILE(), "utf8"));
+    const s = JSON.parse(fs19.readFileSync(FILE(), "utf8"));
     if (s?.v === 1 && s.repos)
       return s;
   } catch {}
   return { v: 1, repos: {} };
 }
 function save2(s) {
-  fs16.mkdirSync(path21.dirname(FILE()), { recursive: true, mode: 448 });
+  fs19.mkdirSync(path24.dirname(FILE()), { recursive: true, mode: 448 });
   const tmp = `${FILE()}.${process.pid}.tmp`;
-  fs16.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
-  fs16.renameSync(tmp, FILE());
+  fs19.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs19.renameSync(tmp, FILE());
 }
 var off2 = () => process.env.CROSSTALK_NO_REPOTRUST === "1";
 function publishedBefore(slug) {
   try {
-    const s = JSON.parse(fs16.readFileSync(path21.join(ROOT, "repotrust", "state.json"), "utf8"));
+    const s = JSON.parse(fs19.readFileSync(path24.join(ROOT, "repotrust", "state.json"), "utf8"));
     return !!s?.repos?.[slug]?.ownPublished;
   } catch {
     return false;
@@ -3529,8 +4009,8 @@ async function surface2(cwd, sessionId, mod = modActive2(sessionId)) {
 }
 
 // src/warn/edit.ts
-import fs17 from "node:fs";
-import path22 from "node:path";
+import fs20 from "node:fs";
+import path25 from "node:path";
 import { spawnSync as spawnSync10 } from "node:child_process";
 
 // src/warn/outline.ts
@@ -3633,22 +4113,22 @@ function editedPath(o) {
   const raw = o.input?.file_path ?? o.input?.notebook_path ?? o.input?.path;
   if (typeof raw !== "string" || !raw)
     return null;
-  return path22.resolve(o.cwd || "/", raw);
+  return path25.resolve(o.cwd || "/", raw);
 }
 function editReport(o) {
   const abs = editedPath(o);
   if (!abs)
     return null;
-  const top = git3(path22.dirname(abs), ["rev-parse", "--show-toplevel"]);
+  const top = git3(path25.dirname(abs), ["rev-parse", "--show-toplevel"]);
   if (!top.ok)
     return null;
   const root = top.out.trim();
-  const file = path22.relative(root, abs).split(path22.sep).join("/");
+  const file = path25.relative(root, abs).split(path25.sep).join("/");
   if (!file || file.startsWith(".."))
     return null;
   let after = null;
   try {
-    after = fs17.readFileSync(abs, "utf8");
+    after = fs20.readFileSync(abs, "utf8");
   } catch {}
   const base = baseOf(root);
   const before = base ? (() => {
@@ -3684,12 +4164,12 @@ ${(after ?? "").split(`
 }
 
 // src/ui-extra/doctor.ts
-import fs18 from "node:fs";
-import path23 from "node:path";
+import fs21 from "node:fs";
+import path26 from "node:path";
 var FIX_IT = "Ask the agent to fix it";
 var NOT_NOW = "Not now";
 var DAY_MS = 24 * 60 * 60000;
-var stateFile3 = () => path23.join(P.root, "doctor-check.json");
+var stateFile4 = () => path26.join(P.root, "doctor-check.json");
 async function relayUp(url, ms = 1500) {
   try {
     const r = await fetch(`${url.replace(/^ws/, "http").replace(/\/ws$/, "")}/health`, { signal: AbortSignal.timeout(ms) });
@@ -3706,10 +4186,10 @@ async function quickProblems(o) {
       what: `your crosstalk identity file (${P.identity}) will not parse`,
       fix: "restore it from a backup; starting again makes you a new person to everyone you work with"
     });
-  if (o.root && fs18.existsSync(path23.join(o.root, "bin", "crosstalk")) && !fs18.existsSync(path23.join(o.root, "dist", "cli.js")))
+  if (o.root && fs21.existsSync(path26.join(o.root, "bin", "crosstalk")) && !fs21.existsSync(path26.join(o.root, "dist", "cli.js")))
     out.push({ key: "dist", what: "crosstalk's installed files are incomplete (dist/ is missing)", fix: "reinstall the plugin: claude plugin update crosstalk" });
   const sock = o.env.CLAUDE_CODE_MESSAGING_SOCKET;
-  if (sock && !fs18.existsSync(sock))
+  if (sock && !fs21.existsSync(sock))
     out.push({ key: "socket", what: "this session's inbox socket is missing, so nothing can reach it", fix: "start a new session (a session started in bare mode binds none)" });
   const id = loadIdentity();
   if (id && Object.keys(loadPeers()).length) {
@@ -3730,7 +4210,7 @@ function describeProblems(ps) {
 }
 function readSeen() {
   try {
-    return JSON.parse(fs18.readFileSync(stateFile3(), "utf8"));
+    return JSON.parse(fs21.readFileSync(stateFile4(), "utf8"));
   } catch {
     return null;
   }
@@ -3742,8 +4222,8 @@ async function atSessionStart(o) {
   if (seen && now - seen.at < every)
     return { problems: [], ran: false };
   const problems = await quickProblems(o);
-  fs18.mkdirSync(P.root, { recursive: true, mode: 448 });
-  fs18.writeFileSync(stateFile3(), JSON.stringify({ at: now, keys: problems.map((p) => p.key) }), { mode: 384 });
+  fs21.mkdirSync(P.root, { recursive: true, mode: 448 });
+  fs21.writeFileSync(stateFile4(), JSON.stringify({ at: now, keys: problems.map((p) => p.key) }), { mode: 384 });
   if (!problems.length)
     return { problems, ran: true };
   const text = describeProblems(problems);
@@ -3758,9 +4238,9 @@ async function atSessionStart(o) {
 }
 
 // src/metrics/log.ts
-import fs19 from "node:fs";
-import path24 from "node:path";
-var file5 = () => path24.join(process.env.CROSSTALK_HOME ?? ROOT, "metrics.jsonl");
+import fs22 from "node:fs";
+import path27 from "node:path";
+var file5 = () => path27.join(process.env.CROSSTALK_HOME ?? ROOT, "metrics.jsonl");
 var MAX_BYTES2 = 8 * 1024 * 1024;
 var off3 = () => process.env.CROSSTALK_NO_METRICS === "1";
 function record2(e) {
@@ -3768,37 +4248,37 @@ function record2(e) {
     return;
   try {
     const f = file5();
-    fs19.mkdirSync(path24.dirname(f), { recursive: true, mode: 448 });
-    fs19.appendFileSync(f, JSON.stringify(e) + `
+    fs22.mkdirSync(path27.dirname(f), { recursive: true, mode: 448 });
+    fs22.appendFileSync(f, JSON.stringify(e) + `
 `, { mode: 384 });
-    const size = fs19.statSync(f).size;
+    const size = fs22.statSync(f).size;
     if (size > MAX_BYTES2) {
-      const lines = fs19.readFileSync(f, "utf8").split(`
+      const lines = fs22.readFileSync(f, "utf8").split(`
 `).filter(Boolean);
       const tmp = `${f}.${process.pid}.tmp`;
-      fs19.writeFileSync(tmp, lines.slice(Math.floor(lines.length / 2)).join(`
+      fs22.writeFileSync(tmp, lines.slice(Math.floor(lines.length / 2)).join(`
 `) + `
 `, { mode: 384 });
-      fs19.renameSync(tmp, f);
+      fs22.renameSync(tmp, f);
     }
   } catch {}
 }
 var QUESTION_KINDS2 = new Set(["route", "gather", "team", "cleanup", "thread", "ship", "rule", "connect", "conflict", "disk", "install", "restore"]);
 
 // src/attention/activity.ts
-import fs20 from "node:fs";
-import path25 from "node:path";
-var dir6 = () => path25.join(P.root, "typed");
+import fs23 from "node:fs";
+import path28 from "node:path";
+var dir6 = () => path28.join(P.root, "typed");
 var safe6 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
 function noteTyped(sessionId, now = Date.now()) {
   if (!sessionId)
     return;
   try {
-    fs20.mkdirSync(dir6(), { recursive: true, mode: 448 });
-    const f = path25.join(dir6(), safe6(sessionId));
-    fs20.writeFileSync(f, sessionId, { mode: 384 });
+    fs23.mkdirSync(dir6(), { recursive: true, mode: 448 });
+    const f = path28.join(dir6(), safe6(sessionId));
+    fs23.writeFileSync(f, sessionId, { mode: 384 });
     const t = new Date(now);
-    fs20.utimesSync(f, t, t);
+    fs23.utimesSync(f, t, t);
   } catch {}
 }
 
@@ -3856,12 +4336,12 @@ async function fromHook2(o) {
 }
 
 // src/sessions/names.ts
-import fs21 from "node:fs";
-import path26 from "node:path";
-var file6 = () => path26.join(P.root, "sessions", "names.json");
+import fs24 from "node:fs";
+import path29 from "node:path";
+var file6 = () => path29.join(P.root, "sessions", "names.json");
 function all() {
   try {
-    const o = JSON.parse(fs21.readFileSync(file6(), "utf8"));
+    const o = JSON.parse(fs24.readFileSync(file6(), "utf8"));
     return o && typeof o === "object" ? o : {};
   } catch {
     return {};
@@ -3873,15 +4353,15 @@ var nameOf = (sessionId) => {
 };
 
 // src/sessions/index.ts
-import fs24 from "node:fs";
-import path28 from "node:path";
+import fs27 from "node:fs";
+import path31 from "node:path";
 
 // src/sessions/transcripts.ts
-import fs23 from "node:fs";
-import path27 from "node:path";
+import fs26 from "node:fs";
+import path30 from "node:path";
 
 // src/attention/recap.ts
-import fs22 from "node:fs";
+import fs25 from "node:fs";
 var TAIL_BYTES = 512 * 1024;
 var USER_MAX = 200;
 var ASSISTANT_MAX = 300;
@@ -3891,11 +4371,11 @@ function tail(file, bytes = TAIL_BYTES) {
     return "";
   let fd = -1;
   try {
-    fd = fs22.openSync(file, "r");
-    const size = fs22.fstatSync(fd).size;
+    fd = fs25.openSync(file, "r");
+    const size = fs25.fstatSync(fd).size;
     const start = Math.max(0, size - bytes);
     const buf = Buffer.alloc(size - start);
-    fs22.readSync(fd, buf, 0, buf.length, start);
+    fs25.readSync(fd, buf, 0, buf.length, start);
     const text = buf.toString("utf8");
     return start > 0 ? text.slice(text.indexOf(`
 `) + 1) : text;
@@ -3903,7 +4383,7 @@ function tail(file, bytes = TAIL_BYTES) {
     return "";
   } finally {
     if (fd >= 0)
-      fs22.closeSync(fd);
+      fs25.closeSync(fd);
   }
 }
 function lines(text) {
@@ -3955,16 +4435,16 @@ function extract(entries) {
 var STOP2 = new Set(("a an the and or but of to in on at by for from with into onto over under is are was were be been being am it its this that these those " + "i you we they he she me my our your their them us so if then than as do does did done doing have has had having can could would should will " + "shall may might must not no yes ok okay please thanks thank just also very really let lets let's here there what which who whom when where why how " + "now all any some more most other such only own same too up down out off again further once about after before while because until both each few " + "file files code change changes changed make made use used using want need get got go going see look fix fixed fixing add added adding sure done").split(" "));
 
 // src/sessions/transcripts.ts
-var projectsDir = (env = process.env) => path27.join(claudeConfigDir2(env), "projects");
+var projectsDir = (env = process.env) => path30.join(claudeConfigDir2(env), "projects");
 var projectSlug = (cwd) => cwd.replace(/[^A-Za-z0-9]/g, "-");
 var HEAD_BYTES = 64 * 1024;
 var TAIL_BYTES2 = 256 * 1024;
 function head(file, bytes = HEAD_BYTES) {
   let fd = -1;
   try {
-    fd = fs23.openSync(file, "r");
-    const buf = Buffer.alloc(Math.min(bytes, fs23.fstatSync(fd).size));
-    fs23.readSync(fd, buf, 0, buf.length, 0);
+    fd = fs26.openSync(file, "r");
+    const buf = Buffer.alloc(Math.min(bytes, fs26.fstatSync(fd).size));
+    fs26.readSync(fd, buf, 0, buf.length, 0);
     const text = buf.toString("utf8");
     return buf.length === bytes ? text.slice(0, text.lastIndexOf(`
 `) + 1) : text;
@@ -3972,7 +4452,7 @@ function head(file, bytes = HEAD_BYTES) {
     return "";
   } finally {
     if (fd >= 0)
-      fs23.closeSync(fd);
+      fs26.closeSync(fd);
   }
 }
 function transcriptOf(sessionId, cwd, env = process.env) {
@@ -3980,14 +4460,14 @@ function transcriptOf(sessionId, cwd, env = process.env) {
     return null;
   const root = projectsDir(env);
   if (cwd) {
-    const f = path27.join(root, projectSlug(cwd), `${sessionId}.jsonl`);
-    if (fs23.existsSync(f))
+    const f = path30.join(root, projectSlug(cwd), `${sessionId}.jsonl`);
+    if (fs26.existsSync(f))
       return f;
   }
   try {
-    for (const d of fs23.readdirSync(root)) {
-      const f = path27.join(root, d, `${sessionId}.jsonl`);
-      if (fs23.existsSync(f))
+    for (const d of fs26.readdirSync(root)) {
+      const f = path30.join(root, d, `${sessionId}.jsonl`);
+      if (fs26.existsSync(f))
         return f;
     }
   } catch {}
@@ -4018,7 +4498,7 @@ function summarize(file) {
   const withCwd = all.find((e) => typeof e?.cwd === "string" && e.cwd);
   if (!withCwd)
     return null;
-  const sessionId = String(withCwd.sessionId ?? path27.basename(file, ".jsonl"));
+  const sessionId = String(withCwd.sessionId ?? path30.basename(file, ".jsonl"));
   let title;
   let summaryLine;
   let branch;
@@ -4039,7 +4519,7 @@ function summarize(file) {
         files.push(f);
   }
   const cwd = String(withCwd.cwd);
-  const rel = files.map((f) => f.startsWith(cwd + path27.sep) ? f.slice(cwd.length + 1) : f);
+  const rel = files.map((f) => f.startsWith(cwd + path30.sep) ? f.slice(cwd.length + 1) : f);
   let startedAt;
   for (const e of first)
     if (startedAt = ts(e))
@@ -4050,7 +4530,7 @@ function summarize(file) {
       break;
   if (!endedAt)
     try {
-      endedAt = fs23.statSync(file).mtimeMs;
+      endedAt = fs26.statSync(file).mtimeMs;
     } catch {}
   const r = extract(last.filter((e) => !e?.isSidechain));
   return {
@@ -4067,12 +4547,12 @@ function summarize(file) {
 }
 
 // src/sessions/index.ts
-var file7 = () => path28.join(P.root, "sessions", "past.json");
+var file7 = () => path31.join(P.root, "sessions", "past.json");
 var KEEP_MS = 180 * 24 * 3600000;
 var MAX2 = 3000;
 function load3() {
   try {
-    const f = JSON.parse(fs24.readFileSync(file7(), "utf8"));
+    const f = JSON.parse(fs27.readFileSync(file7(), "utf8"));
     if (f?.v === 1 && f.items && typeof f.items === "object")
       return f.items;
   } catch {}
@@ -4081,10 +4561,10 @@ function load3() {
 function save3(items) {
   const now = Date.now();
   const kept = Object.values(items).filter((p) => now - (p.endedAt ?? p.startedAt ?? now) < KEEP_MS).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0)).slice(0, MAX2);
-  fs24.mkdirSync(path28.dirname(file7()), { recursive: true, mode: 448 });
+  fs27.mkdirSync(path31.dirname(file7()), { recursive: true, mode: 448 });
   const tmp = `${file7()}.${process.pid}.tmp`;
-  fs24.writeFileSync(tmp, JSON.stringify({ v: 1, items: Object.fromEntries(kept.map((p) => [p.id, p])) }), { mode: 384 });
-  fs24.renameSync(tmp, file7());
+  fs27.writeFileSync(tmp, JSON.stringify({ v: 1, items: Object.fromEntries(kept.map((p) => [p.id, p])) }), { mode: 384 });
+  fs27.renameSync(tmp, file7());
 }
 function fromRec(r, before, sum) {
   const threads = [...new Set([...before?.threads ?? [], ...r.thread ? [r.thread] : []])];
@@ -4136,6 +4616,109 @@ function safeSummary(f) {
   }
 }
 
+// src/urls/index.ts
+import path32 from "node:path";
+var threadsMemo = null;
+function threads() {
+  const now = Date.now();
+  if (!threadsMemo || now - threadsMemo.at > 1000)
+    threadsMemo = { at: now, st: readThreads() };
+  return threadsMemo.st;
+}
+function threadOfSession(sessionId, st = threads()) {
+  if (!sessionId)
+    return;
+  for (const id of st.placed[sessionId]?.threads ?? []) {
+    let t = st.threads[id];
+    for (let i = 0;t && t.meta.value.combinedInto && i < 10; i++)
+      t = st.threads[t.meta.value.combinedInto];
+    if (t)
+      return t.meta.value.name;
+  }
+  return;
+}
+var roots3 = new Map;
+function rootOf2(cwd) {
+  const hit = roots3.get(cwd);
+  if (hit)
+    return hit;
+  const r = rootOf(cwd);
+  roots3.set(cwd, r);
+  return r;
+}
+function threadOfRoot(root, st = threads()) {
+  if (!root)
+    return;
+  const ids = [];
+  try {
+    for (const s of readAll3())
+      if (s.root === root && s.by)
+        ids.push(s.by);
+  } catch {}
+  try {
+    for (const [sid, reg] of Object.entries(loadRegistered()))
+      if (reg?.cwd && (reg.cwd === root || rootOf2(reg.cwd) === root))
+        ids.push(sid);
+  } catch {}
+  for (const sid of ids) {
+    const t = threadOfSession(sid, st);
+    if (t)
+      return t;
+  }
+  return;
+}
+var urls = (o = {}) => new UrlStore({
+  ...o,
+  threadOf: (u) => threadOfSession(u.sessionId) ?? threadOfRoot(u.worktree)
+});
+function collectFromOutput(o) {
+  if (!/https?:\/\//i.test(o.text))
+    return [];
+  const found = extractUrls(o.text);
+  if (!found.length)
+    return [];
+  const store = o.store ?? urls();
+  const root = rootOf2(o.cwd);
+  const st = threads();
+  const thread = threadOfSession(o.sessionId, st) ?? threadOfRoot(root, st);
+  const group = thread ?? (label3(path32.basename(root)) || undefined);
+  const svcPorts = new Set;
+  try {
+    for (const s of readAll3())
+      if (!s.stoppedAt && s.root === root)
+        for (const p of [s.port, ...s.ports ?? []])
+          svcPorts.add(p);
+  } catch {}
+  const out = [];
+  for (const f of found) {
+    if (f.kind === "local" && f.port && svcPorts.has(f.port) && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(f.host))
+      continue;
+    out.push(store.add({
+      ...f.kind === "pr" ? { id: `pr:${f.url}` } : {},
+      url: f.url,
+      kind: f.kind,
+      source: "output",
+      label: labelFor({ kind: f.kind, group, url: f.url }),
+      sessionId: o.sessionId,
+      worktree: root,
+      ...thread ? { thread } : {}
+    }));
+  }
+  return out;
+}
+function outputOf(hook) {
+  const tool = String(hook?.tool_name ?? hook?.toolName ?? "");
+  if (tool !== "Bash")
+    return "";
+  const r = hook?.tool_response ?? hook?.toolResponse ?? hook?.tool_output;
+  if (typeof r === "string")
+    return r.slice(0, 256 * 1024);
+  if (r && typeof r === "object")
+    return [r.stdout, r.stderr, r.output].filter((x) => typeof x === "string").join(`
+`).slice(0, 256 * 1024);
+  return "";
+}
+
 // src/hook.ts
 var input = await new Promise((resolve) => {
   let raw = "";
@@ -4172,8 +4755,8 @@ function agyCwd() {
   if (Array.isArray(ws) && typeof ws[0] === "string" && ws[0])
     return ws[0];
   const here = process.cwd();
-  if (AGENT_DIRS.has(path29.basename(here)))
-    return path29.dirname(here);
+  if (AGENT_DIRS.has(path33.basename(here)))
+    return path33.dirname(here);
   return here;
 }
 var cwd = hook.cwd ?? hook.working_dir ?? hook.workspace_roots?.[0] ?? (isAgy ? agyCwd() : process.cwd());
@@ -4247,6 +4830,13 @@ if (restoreClient === "claude" && sessionId) {
 ${chrome.systemMessage}` : chrome.systemMessage;
   } catch {}
 }
+if (/^post_?tool_?use$/i.test(eventName) && sessionId && !process.env.CROSSTALK_NO_URLS) {
+  try {
+    const out = outputOf(hook);
+    if (out)
+      collectFromOutput({ sessionId, cwd, text: out });
+  } catch {}
+}
 var chromeOut = (hookSpecific) => {
   const out = {};
   if (chrome.terminalSequence)
@@ -4308,10 +4898,10 @@ async function registerSession() {
   if (socket) {
     try {
       const dir = sessionsDir();
-      for (const f of fs25.readdirSync(dir)) {
+      for (const f of fs28.readdirSync(dir)) {
         if (!f.endsWith(".json"))
           continue;
-        const e = JSON.parse(fs25.readFileSync(path29.join(dir, f), "utf8"));
+        const e = JSON.parse(fs28.readFileSync(path33.join(dir, f), "utf8"));
         if (e.sessionId === sessionId) {
           name = e.name ?? name;
           break;
@@ -4319,7 +4909,7 @@ async function registerSession() {
       }
     } catch {}
   } else {
-    name = hook.thread_name ?? (path29.basename(cwd) || name);
+    name = hook.thread_name ?? (path33.basename(cwd) || name);
   }
   const registered = await request({
     op: "register",

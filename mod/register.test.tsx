@@ -31,6 +31,11 @@ const PANE_LINE = JSON.stringify({
     recent: [{ from: 'marie', text: 'token format changed to v2', ts: 1 }],
     features: [{ name: 'v2 token format', risk: 'risky', flag: 'auth-v2-tokens', stage: 'internal', state: 'merged' }],
     services: [{ name: 'web', ports: [4100], url: 'http://localhost:4100' }],
+    links: [
+      { label: 'auth · dev server', url: 'http://auth.localhost:1355', kind: 'local', alive: true, thread: 'auth' },
+      { label: 'auth · PR #12', url: 'https://github.com/acme/app/pull/12', kind: 'pr', alive: false, thread: 'auth' },
+      { label: 'auth · acme.dev/cb', url: 'https://acme.dev/cb?page=2', kind: 'link', alive: true, thread: 'auth' },
+    ],
   },
 })
 
@@ -100,6 +105,22 @@ test('the pane draws a thread: waiting, decision, features with flag stage, rece
     expect((await ui.find({ type: 'Text', text: /web · :4100/ }))?.text).toContain('http://localhost:4100')
     await ui.unmount()
   }
+})
+
+test('the pane has a Links section: by kind, clickable, dead ones marked', async ($, on) => {
+  const acts: string[][] = []
+  const clock = engine(on, acts)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.tool.call({ tool: 'mcp__plugin_crosstalk_crosstalk__crosstalk_pane', thread: 'auth' } as any)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await clock.settle()
+  expect(await ui.find({ type: 'Text', text: /^Links$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Pull requests/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Links found in output/ })).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: /auth · dev server/ }))?.text).toContain('http://auth.localhost:1355')
+  expect((await ui.find({ type: 'Text', text: /PR #12/ }))?.text).toContain('dead')
+  await ui.unmount()
 })
 
 test('the card picker: Hand to agent / Reply / Open thread / More…, and More… opens Mute / Later', async ($, on) => {

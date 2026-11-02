@@ -11,6 +11,11 @@ import * as ui from "../uistate.ts"
 import type { PaneModel } from "./pure.ts"
 import { defaultThread, findThread, readThreads, type ThreadState } from "./threadfile.ts"
 import * as Svc from "../services/service.ts"
+import * as Urls from "../urls/index.ts"
+import { readState } from "../urls/proxy.ts"
+import { currentMain } from "../main.ts"
+import * as R from "../restore.ts"
+import type { PaneLink } from "./pure.ts"
 
 const oneLine = (s: string) => s.replace(/\s+/g, " ").trim()
 
@@ -54,6 +59,28 @@ export function paneModel(t: M.Thread, items: Record<string, ui.UiItem>, o: { re
 
 export type PaneOut = { ok: true; pane: PaneModel } | { ok: false; error: string; threads: string[] }
 
+/**
+ * The pane's links: the thread's, and what this session printed or runs in its
+ * worktree; in the main session, every thread's. At most 30, answering first.
+ */
+export function paneLinks(o: { sessionId?: string; thread?: string; main?: boolean; store?: Urls.UrlStore }): PaneLink[] {
+  const store = o.store ?? Urls.urls()
+  const state = readState()
+  let list: Urls.Url[]
+  if (o.main) list = store.list()
+  else {
+    const cwd = o.sessionId ? R.readOne(o.sessionId)?.cwd : undefined
+    let worktree: string | undefined
+    try {
+      worktree = cwd ? Urls.rootOf(cwd) : undefined
+    } catch {}
+    const mine = o.sessionId ? store.forSession({ sessionId: o.sessionId, worktree, thread: o.thread }) : []
+    const ids = new Set(mine.map((u) => u.id))
+    list = [...mine, ...(o.thread ? store.forThread(o.thread).filter((u) => !ids.has(u.id)) : [])]
+  }
+  return list.slice(0, 30).map((u) => ({ label: u.label, url: Urls.shownUrl(u, state), kind: u.kind, alive: u.alive, ...(u.thread ? { thread: u.thread } : {}) }))
+}
+
 /** The pane for a thread by name, or this session's own. */
 export function pane(o: { sessionId?: string; thread?: string; st?: ThreadState; items?: Record<string, ui.UiItem>; services?: Svc.Shown[] }): PaneOut {
   const st = o.st ?? readThreads()
@@ -68,7 +95,11 @@ export function pane(o: { sessionId?: string; thread?: string; st?: ThreadState;
   try {
     services = o.services ?? Svc.forSession(o.sessionId)
   } catch {}
-  return { ok: true, pane: services.length ? { ...model, services } : model }
+  let links: PaneLink[] = []
+  try {
+    links = paneLinks({ sessionId: o.sessionId, thread: model.thread, main: !!o.sessionId && currentMain()?.sessionId === o.sessionId })
+  } catch {}
+  return { ok: true, pane: { ...model, ...(services.length ? { services } : {}), ...(links.length ? { links } : {}) } }
 }
 
 /** One line now, then one each time the pane changes, while the session that started this lives. */

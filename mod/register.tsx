@@ -39,7 +39,11 @@
 //   own thread     a message about this session's own thread is handed to the
 //                  agent by itself (as data), when the prompt is empty and idle
 //   status line    ◢ <threads or repo> · :4100 · <n> waiting, the ports of this
-//                  worktree's crosstalk services (docs/services.md) after the name
+//                  worktree's crosstalk services (docs/services.md) after the name,
+//                  or its name through crosstalk's proxy, auth.localhost:1355
+//   links          the pane's Links: the thread's URLs by kind (local, previews,
+//                  PRs, links found in output), clickable, alive or dead
+//                  (docs/urls.md); in the main session every thread's
 //   tab status     working / waiting on you / done on this session's own tab,
 //                  through `crosstalk term status` (src/terminal/status.ts)
 //
@@ -65,7 +69,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Item, Pane, Receipt } from './types'
-import { HANDED_PROMPT, LATER, MORE, MORE_OPTIONS, MUTE, OPEN_THREAD, ago, cardOptions, featureLine, parseAt, takesAt } from '../src/ui-extra/pure.ts'
+import { HANDED_PROMPT, LATER, MORE, MORE_OPTIONS, MUTE, OPEN_THREAD, ago, cardOptions, featureLine, linkGroups, linkLine, linkable, parseAt, takesAt } from '../src/ui-extra/pure.ts'
 
 const items = atom({ plugin: 'crosstalk', key: 'items' } as const, [])
 const receipts = atom({ plugin: 'crosstalk', key: 'receipts' } as const, [])
@@ -84,7 +88,7 @@ let session = ''
 let bin = ''
 let label = ''
 let repo = ''
-/** This worktree's services' ports, `:4100`, from the watch. */
+/** This worktree's services' ports, `:4100`, or its proxy name, `auth.localhost:1355`, from the watch. */
 let ports = ''
 /** This session's threads, from the daemon: what the status line leads with. */
 let threadNames: string[] = []
@@ -214,7 +218,7 @@ async function received($: EngineInterface, line: string) {
   }
   lastLineAt = await $.clock.now()
   label = w.label ?? ''
-  ports = typeof w.ports === 'string' ? w.ports.replace(/[^0-9: …]/g, '') : ''
+  ports = typeof w.ports === 'string' ? w.ports.replace(/[^a-z0-9.:\- …]/gi, '').slice(0, 80) : ''
   threadNames = Array.isArray(w.threads) ? w.threads.filter((t): t is string => typeof t === 'string') : []
   mainTotals = w.main && typeof w.main.sessions === 'number' ? w.main : null
   for (const n of w.threadNotes ?? [])
@@ -752,6 +756,23 @@ export const register: Register = on => {
                 {s.ports.length ? ` · ${s.ports.map(n => `:${n}`).join(' ')} ` : ' · starting'}
                 {s.url && /^http:\/\/localhost:\d+$/.test(s.url) ? <Link href={s.url}>{s.url}</Link> : null}
               </Text>
+            ))}
+          </Box>
+        ) : null}
+        {p.links?.length ? (
+          <Box key="l" flexDirection="column" marginTop={1}>
+            <Text bold>Links</Text>
+            {linkGroups(p.links).map(g => (
+              <Box key={`l${g.kind}`} flexDirection="column">
+                <Text dimColor> {g.title}</Text>
+                {g.links.map((l, i) => (
+                  <Text key={`l${g.kind}${i}`} wrap="truncate" dimColor={!l.alive}>
+                    {'  '}
+                    {clean(linkLine(l))}{' '}
+                    {linkable(l.url) ? <Link href={l.url}>{l.url}</Link> : clean(l.url)}
+                  </Text>
+                ))}
+              </Box>
             ))}
           </Box>
         ) : null}

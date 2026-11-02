@@ -42,6 +42,7 @@ import type { Env, Fetch } from "./providers/types.ts"
 import { readSpawned, writeSpawned } from "../spawn.ts"
 import { prBody } from "../ui-extra/prbody.ts"
 import * as Pv from "./preview.ts"
+import * as Urls from "../urls/index.ts"
 import * as Mx from "./metrics.ts"
 import * as Sh from "./shadow.ts"
 import * as Rm from "./remote.ts"
@@ -197,6 +198,12 @@ export class ShipEngine {
   }
 
   private now = () => (this.d.now ? this.d.now() : Date.now())
+  /** Previews and PRs go into crosstalk's URL list (src/urls/), beside shipping's own home. Never in the way of shipping. */
+  private url = (fn: (store: Urls.UrlStore) => unknown) => {
+    try {
+      fn(Urls.urls({ file: path.join(path.dirname(this.d.home), "urls.json") }))
+    } catch {}
+  }
   private T = () => this.d.threads
 
   // --- local state -----------------------------------------------------------------
@@ -812,6 +819,7 @@ export class ShipEngine {
     })
     const at = this.now()
     this.patch(t, f.id, { preview: { ...(r.url ? { url: r.url } : {}), ok: r.ok, at, ...(sha ? { sha } : {}), ...(r.check ? { check: r.check.cmd } : {}) } })
+    this.url((store) => Urls.recordPreview({ store, thread: t.meta.value.name, feature: f.name, url: r.url, worktree: root }))
     if (!r.ok) {
       this.patch(t, f.id, { state: "red", last: `preview: ${r.error}` })
       this.fact(t, `The preview of ${f.name}${r.url ? ` at ${r.url}` : ""} failed: ${r.error}`)
@@ -839,6 +847,7 @@ export class ShipEngine {
     }
     const r = await Pv.teardown({ root, cmd: cfg.previewTeardown, branch: f.ship.branch, url: p.url, flag: f.flag, feature: f.name, timeoutS: cfg.previewTimeoutS })
     this.patch(t, f.id, { preview: { ...p, down: r.ok } })
+    if (r.ok) this.url((store) => Urls.recordPreview({ store, thread: t.meta.value.name, feature: f.name, url: p.url, down: true }))
     if (!r.ok) this.T().notify(t.id, `◢ crosstalk: the preview of ${f.name}${p.url ? ` at ${p.url}` : ""} could not be taken down: ${oneLine(r.out, 200)}`)
     else this.fact(t, `The preview of ${f.name}${p.url ? ` at ${p.url}` : ""} is taken down: it has merged`)
   }
@@ -920,6 +929,7 @@ export class ShipEngine {
       let flagNote = ""
       if (f.flag && this.isRisky(t, f)) flagNote = (await this.forceOff(root, cfg, f, "its PR is open")).note
       this.patch(t, f.id, { state: "pr-open", merged, last: m.text })
+      this.url((store) => Urls.recordPr({ store, thread: t.meta.value.name, feature: f.name, url: m.pr, worktree: root }))
       this.decision(t, `${f.name} is in a PR that merges itself (${m.pr ?? ""})`)
       this.T().notify(t.id, `◢ crosstalk: ${f.name} is in a PR set to merge itself once checks pass.${flagNote}`)
       this.tellAuthor(key, `${f.name} is in a PR set to merge itself: ${m.pr ?? ""}.${flagNote} Nothing more to do for it${f.flag ? " until its flag steps" : ""}.`)

@@ -47,6 +47,8 @@ export type Pane = {
   features: PaneFeature[]
   /** crosstalk services running in this session's worktree (docs/services.md). */
   services?: { name: string; ports: number[]; url?: string }[]
+  /** The thread's URLs (src/urls/), each with whether it answers; in the main session, every thread's. */
+  links?: { label: string; url: string; kind: 'local' | 'preview' | 'pr' | 'link'; alive: boolean; thread?: string }[]
 }
 
 declare module 'claude-code' {
