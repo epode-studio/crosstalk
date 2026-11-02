@@ -1138,7 +1138,7 @@ export function forget(self: string | undefined): Outcome {
 }
 
 const pendingFile = () => path.join(P.root, "restore-pending.json")
-type Pending = { ids: string[]; current: Term; until: number; self?: string }
+type Pending = { ids: string[]; current: Term; until: number; self?: string; tabs?: false }
 
 /**
  * Take the pending restore for this process, atomically, so the background
@@ -1171,12 +1171,17 @@ export type RunOpts = {
   userAction: boolean
   /** Where the plugin lives, for starting the background waiter. */
   root?: string
+  /**
+   * The waiter finishing a restore a person asked for minutes ago: tabs as
+   * they asked, each Cmd-T only after Terminal is checked to be in front.
+   */
+  asked?: boolean
   /** The peer this is done for, if any: an agent (a bot) is refused. */
   peer?: string
 }
 
 /** Tabs only when a person just asked: an unattended restore opens a window per session. */
-export const tabsFor = (o: Pick<RunOpts, "tabs" | "userAction">): boolean => (o.userAction ? (o.tabs ?? true) : false)
+export const tabsFor = (o: Pick<RunOpts, "tabs" | "userAction" | "asked">): boolean => (o.userAction || o.asked ? (o.tabs ?? true) : false)
 
 function runStep(s: Step): { ok: boolean; out: string } {
   const r = spawnSync(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 60_000 })
@@ -1194,14 +1199,18 @@ export function restore(o: RunOpts, only?: Rec[]): Outcome {
   const bot = refuseBot(o.peer, "resume a session on this machine")
   if (bot) return { ok: false, text: `◢ crosstalk: ${bot}`, lost: [], restored: [] }
   const env = o.env ?? process.env
-  const lost = only ?? lostSessions(ctxNow(), o.self)
+  // Those handed in were lost when someone asked; any that came back since
+  // (another restore, the person by hand) are running again and left alone.
+  const lost = only ? only.filter((r) => !recAlive(r)) : lostSessions(ctxNow(), o.self)
   if (!lost.length) return { ok: true, text: "◢ crosstalk: nothing to restore.", lost, restored: [] }
   claimPending() // anything waiting in the background is superseded by this
 
-  // Unattended (a background waiter, minutes or hours after the yes): one
-  // window per session through `do script`, never keystrokes through System
-  // Events, which go to whatever app is in front by then. Ghostty, which has
-  // no other way, is left to the person.
+  // Unattended, with nobody having asked: one window per session through
+  // `do script`, never keystrokes through System Events. The waiter finishing
+  // a restore someone asked for at most a few minutes ago (`asked`) uses
+  // tabs, and each Cmd-T is sent only after Terminal is checked to be in
+  // front, so no keystroke lands in another app. Ghostty, without a person or
+  // an ask, is left to the person.
   const e = liveEnv(env, tabsFor(o))
   let { plans, skipped } = plan(lost, e)
   const app = appName(e.current)
@@ -1216,7 +1225,7 @@ export function restore(o: RunOpts, only?: Rec[]): Outcome {
       openSettings("accessibility")
       saveState({ ...state, settingsOpened: { ...state.settingsOpened, accessibility: Date.now() } })
     }
-    const p: Pending = { ids: lost.map((r) => r.sessionId), current: e.current, until: Date.now() + WAIT_MS(), self: o.self }
+    const p: Pending = { ids: lost.map((r) => r.sessionId), current: e.current, until: Date.now() + WAIT_MS(), self: o.self, ...(o.tabs === false ? { tabs: false } : {}) }
     fs.mkdirSync(P.root, { recursive: true, mode: 0o700 })
     fs.writeFileSync(pendingFile(), JSON.stringify(p), { mode: 0o600 })
     startWaiter(o.root)
@@ -1341,7 +1350,7 @@ export async function finishWhenPermitted(): Promise<string> {
   }
   const recs = mine.ids.map(readOne).filter((r): r is Rec => !!r)
   const env = { ...process.env, ...termEnv(mine.current) }
-  const out = restore({ self: mine.self, env, userAction: false }, recs)
+  const out = restore({ self: mine.self, env, userAction: false, asked: true, ...(mine.tabs === false ? { tabs: false } : {}) }, recs)
   notify(out.restored.length ? `Reopened ${out.restored.length} session${out.restored.length === 1 ? "" : "s"}.` : out.text)
   return out.text
 }

@@ -380,3 +380,19 @@ describe("asking", () => {
     expect(R.parseShortcut("!restore")).toBe(null)
   })
 })
+
+describe("a restore finished later", () => {
+  test("a session already running again is never opened a second time", () => {
+    // The waiter hands in what was lost when the person asked; this one has
+    // come back since, under the same id, in a live process.
+    const back = rec({ sessionId: "back", pid: process.pid })
+    const out = R.restore({ userAction: false, asked: true, env: {} }, [back])
+    expect(out.restored).toEqual([])
+    expect(out.text).toContain("nothing to restore")
+  })
+  test("tabs when the person asked, windows when nobody did", () => {
+    expect(R.tabsFor({ userAction: false })).toBe(false)
+    expect(R.tabsFor({ userAction: false, asked: true })).toBe(true)
+    expect(R.tabsFor({ userAction: false, asked: true, tabs: false })).toBe(false)
+  })
+})

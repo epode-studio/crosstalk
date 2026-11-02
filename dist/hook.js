@@ -1100,7 +1100,7 @@ function claimPending() {
     } catch {}
   }
 }
-var tabsFor = (o) => o.userAction ? o.tabs ?? true : false;
+var tabsFor = (o) => o.userAction || o.asked ? o.tabs ?? true : false;
 function runStep(s) {
   const r = spawnSync2(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 60000 });
   return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
@@ -1110,7 +1110,7 @@ function restore(o, only) {
   if (bot)
     return { ok: false, text: `\u25e2 crosstalk: ${bot}`, lost: [], restored: [] };
   const env = o.env ?? process.env;
-  const lost = only ?? lostSessions(ctxNow(), o.self);
+  const lost = only ? only.filter((r) => !recAlive(r)) : lostSessions(ctxNow(), o.self);
   if (!lost.length)
     return { ok: true, text: "\u25e2 crosstalk: nothing to restore.", lost, restored: [] };
   claimPending();
@@ -1125,7 +1125,7 @@ function restore(o, only) {
       openSettings("accessibility");
       saveState({ ...state, settingsOpened: { ...state.settingsOpened, accessibility: Date.now() } });
     }
-    const p = { ids: lost.map((r) => r.sessionId), current: e.current, until: Date.now() + WAIT_MS(), self: o.self };
+    const p = { ids: lost.map((r) => r.sessionId), current: e.current, until: Date.now() + WAIT_MS(), self: o.self, ...o.tabs === false ? { tabs: false } : {} };
     fs4.mkdirSync(P.root, { recursive: true, mode: 448 });
     fs4.writeFileSync(pendingFile(), JSON.stringify(p), { mode: 384 });
     startWaiter(o.root);

@@ -7841,7 +7841,7 @@ function restore(o, only) {
   if (bot)
     return { ok: false, text: `\u25e2 crosstalk: ${bot}`, lost: [], restored: [] };
   const env = o.env ?? process.env;
-  const lost = only ?? lostSessions(ctxNow(), o.self);
+  const lost = only ? only.filter((r) => !recAlive(r)) : lostSessions(ctxNow(), o.self);
   if (!lost.length)
     return { ok: true, text: "\u25e2 crosstalk: nothing to restore.", lost, restored: [] };
   claimPending();
@@ -7856,7 +7856,7 @@ function restore(o, only) {
       openSettings("accessibility");
       saveState({ ...state, settingsOpened: { ...state.settingsOpened, accessibility: Date.now() } });
     }
-    const p = { ids: lost.map((r) => r.sessionId), current: e.current, until: Date.now() + WAIT_MS(), self: o.self };
+    const p = { ids: lost.map((r) => r.sessionId), current: e.current, until: Date.now() + WAIT_MS(), self: o.self, ...o.tabs === false ? { tabs: false } : {} };
     fs6.mkdirSync(P2.root, { recursive: true, mode: 448 });
     fs6.writeFileSync(pendingFile(), JSON.stringify(p), { mode: 384 });
     startWaiter(o.root);
@@ -7973,7 +7973,7 @@ var dir = () => path7.join(P2.root, "open"), safe = (id) => id.replace(/[^A-Za-z
   for (const x of xs)
     m.set(key(x), [...m.get(key(x)) ?? [], x]);
   return m;
-}, num = (n) => n === undefined || Number.isNaN(n) ? Infinity : n, wtArg = (s) => s.replace(/;/g, "\\;"), SETTINGS_URL, REOPEN_SETTINGS_MS, JXA_AX = `ObjC.import("ApplicationServices"); var f; try { f = $.AXIsProcessTrusted() } catch (e) { ObjC.bindFunction("AXIsProcessTrusted", ["bool", []]); f = $.AXIsProcessTrusted() } f ? "yes" : "no"`, tmuxWindowIndex = (t, env = process.env) => tmuxWindowOf(t, env)?.index, label = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path7.basename(r.cwd) || r.sessionId.slice(0, 8), names = (rs, max = 4) => rs.slice(0, max).map(label).join(", ") + (rs.length > max ? ", \u2026" : ""), commandsFile = () => path7.join(P2.root, "restore-commands.sh"), pendingFile = () => path7.join(P2.root, "restore-pending.json"), tabsFor = (o) => o.userAction ? o.tabs ?? true : false, WAIT_MS = () => Number(process.env.CROSSTALK_RESTORE_WAIT_MS ?? 2 * 60 * 1000);
+}, num = (n) => n === undefined || Number.isNaN(n) ? Infinity : n, wtArg = (s) => s.replace(/;/g, "\\;"), SETTINGS_URL, REOPEN_SETTINGS_MS, JXA_AX = `ObjC.import("ApplicationServices"); var f; try { f = $.AXIsProcessTrusted() } catch (e) { ObjC.bindFunction("AXIsProcessTrusted", ["bool", []]); f = $.AXIsProcessTrusted() } f ? "yes" : "no"`, tmuxWindowIndex = (t, env = process.env) => tmuxWindowOf(t, env)?.index, label = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path7.basename(r.cwd) || r.sessionId.slice(0, 8), names = (rs, max = 4) => rs.slice(0, max).map(label).join(", ") + (rs.length > max ? ", \u2026" : ""), commandsFile = () => path7.join(P2.root, "restore-commands.sh"), pendingFile = () => path7.join(P2.root, "restore-pending.json"), tabsFor = (o) => o.userAction || o.asked ? o.tabs ?? true : false, WAIT_MS = () => Number(process.env.CROSSTALK_RESTORE_WAIT_MS ?? 2 * 60 * 1000);
 var init_restore = __esm(() => {
   init_config();
   init_paths();

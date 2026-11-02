@@ -921,7 +921,7 @@ function restore(o, only) {
   if (bot)
     return { ok: false, text: `\u25e2 crosstalk: ${bot}`, lost: [], restored: [] };
   const env = o.env ?? process.env;
-  const lost = only ?? lostSessions(ctxNow(), o.self);
+  const lost = only ? only.filter((r) => !recAlive(r)) : lostSessions(ctxNow(), o.self);
   if (!lost.length)
     return { ok: true, text: "\u25e2 crosstalk: nothing to restore.", lost, restored: [] };
   claimPending();
@@ -936,7 +936,7 @@ function restore(o, only) {
       openSettings("accessibility");
       saveState({ ...state, settingsOpened: { ...state.settingsOpened, accessibility: Date.now() } });
     }
-    const p = { ids: lost.map((r) => r.sessionId), current: e.current, until: Date.now() + WAIT_MS(), self: o.self };
+    const p = { ids: lost.map((r) => r.sessionId), current: e.current, until: Date.now() + WAIT_MS(), self: o.self, ...o.tabs === false ? { tabs: false } : {} };
     fs3.mkdirSync(P.root, { recursive: true, mode: 448 });
     fs3.writeFileSync(pendingFile(), JSON.stringify(p), { mode: 384 });
     startWaiter(o.root);
@@ -1053,7 +1053,7 @@ var dir = () => path5.join(P.root, "open"), safe = (id) => id.replace(/[^A-Za-z0
   for (const x of xs)
     m.set(key(x), [...m.get(key(x)) ?? [], x]);
   return m;
-}, num = (n) => n === undefined || Number.isNaN(n) ? Infinity : n, wtArg = (s) => s.replace(/;/g, "\\;"), SETTINGS_URL, REOPEN_SETTINGS_MS, JXA_AX = `ObjC.import("ApplicationServices"); var f; try { f = $.AXIsProcessTrusted() } catch (e) { ObjC.bindFunction("AXIsProcessTrusted", ["bool", []]); f = $.AXIsProcessTrusted() } f ? "yes" : "no"`, tmuxWindowIndex = (t, env = process.env) => tmuxWindowOf(t, env)?.index, label = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path5.basename(r.cwd) || r.sessionId.slice(0, 8), names = (rs, max = 4) => rs.slice(0, max).map(label).join(", ") + (rs.length > max ? ", \u2026" : ""), commandsFile = () => path5.join(P.root, "restore-commands.sh"), pendingFile = () => path5.join(P.root, "restore-pending.json"), tabsFor = (o) => o.userAction ? o.tabs ?? true : false, WAIT_MS = () => Number(process.env.CROSSTALK_RESTORE_WAIT_MS ?? 2 * 60 * 1000);
+}, num = (n) => n === undefined || Number.isNaN(n) ? Infinity : n, wtArg = (s) => s.replace(/;/g, "\\;"), SETTINGS_URL, REOPEN_SETTINGS_MS, JXA_AX = `ObjC.import("ApplicationServices"); var f; try { f = $.AXIsProcessTrusted() } catch (e) { ObjC.bindFunction("AXIsProcessTrusted", ["bool", []]); f = $.AXIsProcessTrusted() } f ? "yes" : "no"`, tmuxWindowIndex = (t, env = process.env) => tmuxWindowOf(t, env)?.index, label = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path5.basename(r.cwd) || r.sessionId.slice(0, 8), names = (rs, max = 4) => rs.slice(0, max).map(label).join(", ") + (rs.length > max ? ", \u2026" : ""), commandsFile = () => path5.join(P.root, "restore-commands.sh"), pendingFile = () => path5.join(P.root, "restore-pending.json"), tabsFor = (o) => o.userAction || o.asked ? o.tabs ?? true : false, WAIT_MS = () => Number(process.env.CROSSTALK_RESTORE_WAIT_MS ?? 2 * 60 * 1000);
 var init_restore = __esm(() => {
   init_config();
   init_paths();
@@ -8759,7 +8759,7 @@ function claimPending2() {
     } catch {}
   }
 }
-var tabsFor2 = (o) => o.userAction ? o.tabs ?? true : false;
+var tabsFor2 = (o) => o.userAction || o.asked ? o.tabs ?? true : false;
 function runStep3(s) {
   const r = spawnSync13(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 60000 });
   return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
@@ -8769,7 +8769,7 @@ function restore2(o, only) {
   if (bot)
     return { ok: false, text: `\u25e2 crosstalk: ${bot}`, lost: [], restored: [] };
   const env = o.env ?? process.env;
-  const lost = only ?? lostSessions2(ctxNow2(), o.self);
+  const lost = only ? only.filter((r) => !recAlive2(r)) : lostSessions2(ctxNow2(), o.self);
   if (!lost.length)
     return { ok: true, text: "\u25e2 crosstalk: nothing to restore.", lost, restored: [] };
   claimPending2();
@@ -8784,7 +8784,7 @@ function restore2(o, only) {
       openSettings2("accessibility");
       saveState3({ ...state, settingsOpened: { ...state.settingsOpened, accessibility: Date.now() } });
     }
-    const p = { ids: lost.map((r) => r.sessionId), current: e.current, until: Date.now() + WAIT_MS2(), self: o.self };
+    const p = { ids: lost.map((r) => r.sessionId), current: e.current, until: Date.now() + WAIT_MS2(), self: o.self, ...o.tabs === false ? { tabs: false } : {} };
     fs20.mkdirSync(P.root, { recursive: true, mode: 448 });
     fs20.writeFileSync(pendingFile2(), JSON.stringify(p), { mode: 384 });
     startWaiter3(o.root);
@@ -8909,7 +8909,7 @@ async function finishWhenPermitted() {
   }
   const recs = mine.ids.map(readOne2).filter((r) => !!r);
   const env = { ...process.env, ...termEnv(mine.current) };
-  const out = restore2({ self: mine.self, env, userAction: false }, recs);
+  const out = restore2({ self: mine.self, env, userAction: false, asked: true, ...mine.tabs === false ? { tabs: false } : {} }, recs);
   notify(out.restored.length ? `Reopened ${out.restored.length} session${out.restored.length === 1 ? "" : "s"}.` : out.text);
   return out.text;
 }
