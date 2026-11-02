@@ -12,7 +12,7 @@ import * as U from "./index.ts"
 import type { Url, UrlKind } from "./store.ts"
 import { readState, type ProxyState } from "./proxy.ts"
 
-const KINDS = ["local", "preview", "pr", "link"] as const
+const KINDS = ["local", "preview", "pr", "link", "shared"] as const
 
 export const TOOLS = [
   {
@@ -23,7 +23,7 @@ export const TOOLS = [
       type: "object",
       properties: {
         thread: { type: "string", description: "Only this thread's (by name); default this session's first, then the rest" },
-        kind: { type: "string", enum: [...KINDS], description: "local, preview, pr or link" },
+        kind: { type: "string", enum: [...KINDS], description: "local, preview, pr, link, or shared (a teammate's server shared with you, or yours shared with them)" },
         alive: { type: "boolean", description: "true: only what answers; false: only dead ones" },
       },
     },
@@ -51,13 +51,13 @@ function ago(ts: number | undefined, now: number) {
   return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)}m ago` : s < 86400 ? `${Math.round(s / 3600)}h ago` : `${Math.round(s / 86400)}d ago`
 }
 
-const KIND_WORD: Record<UrlKind, string> = { local: "local", preview: "preview", pr: "pull request", link: "link found in output" }
+const KIND_WORD: Record<UrlKind, string> = { local: "local", preview: "preview", pr: "pull request", link: "link found in output", shared: "shared" }
 
 export function line(u: Url, state: ProxyState | null, now = Date.now()): string {
   const shown = U.shownUrl(u, state)
   const also = shown !== u.url ? ` (${u.url})` : ""
   const what = u.kind === "local" && u.source === "output" ? "local, found in output" : KIND_WORD[u.kind]
-  const health = u.kind === "link" || (u.source === "output" && u.kind !== "local" && u.kind !== "pr") ? "not checked" : u.alive ? (u.lastCheck ? `answering, checked ${ago(u.lastCheck, now)}` : "not checked yet") : `dead since ${ago(u.deadSince, now)}`
+  const health = u.kind === "shared" ? (u.alive ? "open" : `ended${u.state ? "" : ` ${ago(u.deadSince, now)}`}`) : u.kind === "link" || (u.source === "output" && u.kind !== "local" && u.kind !== "pr") ? "not checked" : u.alive ? (u.lastCheck ? `answering, checked ${ago(u.lastCheck, now)}` : "not checked yet") : `dead since ${ago(u.deadSince, now)}`
   return `  ${clean(u.label)} — ${clean(shown)}${clean(also)} · ${what}${u.state ? ` · ${clean(u.state.toLowerCase())}` : ""} · ${health}`
 }
 

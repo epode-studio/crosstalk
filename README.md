@@ -550,6 +550,13 @@ The measure is time from idea to merge, and how few of your minutes it took.
   per repo), with their modes, never linked, never through a symlink. They
   stay on this machine: names in results, never contents, and nothing in a
   thread or the relay. [How](docs/urls.md#7-servers-that-just-start).
+- **Show a teammate the running thing.** "Show marie the auth page" gives
+  marie, and only marie, your running dev server as
+  `http://auth.paul.localhost` on her machine, through crosstalk's encrypted
+  channel: no public URL, no port forwarding, websockets and HMR included, for
+  eight hours unless you say otherwise. Her agent can test against it; she gets
+  a card and nothing opens by itself; "stop sharing it" cuts her off at once.
+  [How](docs/urls.md#8-sharing-a-running-server).
 - **Attach the thing, not a description of it.** "Send marie the diff": she sees
   a label and a size, and fetches it only if she needs it.
 - **No commands to learn.** Say it to any agent: "marie gave me words:

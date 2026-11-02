@@ -4172,7 +4172,8 @@ var init_extract = __esm(() => {
 });
 
 // src/urls/routes.ts
-function buildTable(targets) {
+function buildTable(all) {
+  const targets = all.filter((t) => !t.shared);
   const groups = new Map;
   for (const t of targets) {
     const g = label5(t.group);
@@ -4209,6 +4210,14 @@ function buildTable(targets) {
   for (const [s, ts] of owners)
     if (ts.length === 1 && !groups.has(s))
       put({ host: s, port: ts[0].port, group: ts[0].group, service: s, root: ts[0].root, main: mains.get(ts[0].group) === ts[0] });
+  for (const t of all) {
+    if (!t.shared)
+      continue;
+    const g = label5(t.group);
+    const s = label5(t.service);
+    if (g && s && t.port > 0 && t.port < 65536)
+      put({ host: `${s}.${g}`, port: t.port, group: g, service: s, main: false });
+  }
   return { routes, byHost };
 }
 function hostLabel(hostHeader) {
@@ -4471,14 +4480,21 @@ function threadOfRoot(root, st = threads()) {
 }
 function targets() {
   const st = threads();
-  return running().map((s) => ({ group: groupFor(s.root, st), service: s.name, port: s.ports?.[0] ?? s.port, root: s.root, startedAt: s.startedAt }));
+  const more = extra.flatMap((fn) => {
+    try {
+      return fn();
+    } catch {
+      return [];
+    }
+  });
+  return [...running().map((s) => ({ group: groupFor(s.root, st), service: s.name, port: s.ports?.[0] ?? s.port, root: s.root, startedAt: s.startedAt })), ...more];
 }
 function nameFor(routes, root, service) {
   const s = label5(service);
   return routes.filter((r) => r.root === root && r.service === s).sort((a, b) => rank(a) - rank(b))[0]?.host;
 }
 function shownUrl(u, state = readState()) {
-  return u.kind === "local" && u.name && state ? proxyUrl(u.name.replace(/\.localhost$/, ""), state.port) : u.url;
+  return (u.kind === "local" || u.kind === "shared") && u.name && state ? proxyUrl(u.name.replace(/\.localhost$/, ""), state.port) : u.url;
 }
 function badge2(root, state = readState()) {
   if (!state)
@@ -4531,7 +4547,7 @@ function syncServices(o = {}) {
 var threadsMemo = null, roots2, groupFor = (root, st) => threadOfRoot(root, st) ?? (label5(path30.basename(root)) || "local"), urls = (o = {}) => new UrlStore({
   ...o,
   threadOf: (u) => threadOfSession(u.sessionId) ?? threadOfRoot(u.worktree)
-}), rank = (r) => r.host === r.group ? 0 : r.host === `${r.service}.${r.group}` ? 1 : 2;
+}), extra, rank = (r) => r.host === r.group ? 0 : r.host === `${r.service}.${r.group}` ? 1 : 2;
 var init_urls = __esm(() => {
   init_config();
   init_service();
@@ -4543,6 +4559,7 @@ var init_urls = __esm(() => {
   init_proxy();
   init_store();
   roots2 = new Map;
+  extra = [];
 });
 
 // src/urls/history/qr.ts
@@ -4929,7 +4946,7 @@ function line(u, state, now = Date.now()) {
   const shown = shownUrl(u, state);
   const also = shown !== u.url ? ` (${u.url})` : "";
   const what = u.kind === "local" && u.source === "output" ? "local, found in output" : KIND_WORD[u.kind];
-  const health = u.kind === "link" || u.source === "output" && u.kind !== "local" && u.kind !== "pr" ? "not checked" : u.alive ? u.lastCheck ? `answering, checked ${ago2(u.lastCheck, now)}` : "not checked yet" : `dead since ${ago2(u.deadSince, now)}`;
+  const health = u.kind === "shared" ? u.alive ? "open" : `ended${u.state ? "" : ` ${ago2(u.deadSince, now)}`}` : u.kind === "link" || u.source === "output" && u.kind !== "local" && u.kind !== "pr" ? "not checked" : u.alive ? u.lastCheck ? `answering, checked ${ago2(u.lastCheck, now)}` : "not checked yet" : `dead since ${ago2(u.deadSince, now)}`;
   return `  ${clean3(u.label)} \u2014 ${clean3(shown)}${clean3(also)} \u00b7 ${what}${u.state ? ` \u00b7 ${clean3(u.state.toLowerCase())}` : ""} \u00b7 ${health}`;
 }
 function gather(o) {
@@ -4980,7 +4997,7 @@ var KINDS, TOOLS, clean3 = (s) => s.replace(/[\u0000-\u001f\u007f-\u009f]/g, " "
 var init_tools = __esm(() => {
   init_urls();
   init_proxy();
-  KINDS = ["local", "preview", "pr", "link"];
+  KINDS = ["local", "preview", "pr", "link", "shared"];
   TOOLS = [
     {
       name: "crosstalk_urls",
@@ -4989,7 +5006,7 @@ var init_tools = __esm(() => {
         type: "object",
         properties: {
           thread: { type: "string", description: "Only this thread's (by name); default this session's first, then the rest" },
-          kind: { type: "string", enum: [...KINDS], description: "local, preview, pr or link" },
+          kind: { type: "string", enum: [...KINDS], description: "local, preview, pr, link, or shared (a teammate's server shared with you, or yours shared with them)" },
           alive: { type: "boolean", description: "true: only what answers; false: only dead ones" }
         }
       }
@@ -5007,7 +5024,7 @@ var init_tools = __esm(() => {
       }
     }
   ];
-  KIND_WORD = { local: "local", preview: "preview", pr: "pull request", link: "link found in output" };
+  KIND_WORD = { local: "local", preview: "preview", pr: "pull request", link: "link found in output", shared: "shared" };
 });
 
 // src/urls/history/cli.ts
@@ -5553,7 +5570,7 @@ var asPeer = (o) => ({
   joinedAt: Date.now()
 });
 
-// node_modules/@noble/hashes/_u64.js
+// ../../../node_modules/@noble/hashes/_u64.js
 var U32_MASK64 = /* @__PURE__ */ (() => BigInt(2 ** 32 - 1))();
 var _32n = /* @__PURE__ */ BigInt(32);
 function fromBig(n, le = false) {
@@ -5596,7 +5613,7 @@ var add4H = (low, Ah, Bh, Ch, Dh) => Ah + Bh + Ch + Dh + (low / 2 ** 32 | 0) | 0
 var add5L = (Al, Bl, Cl, Dl, El) => (Al >>> 0) + (Bl >>> 0) + (Cl >>> 0) + (Dl >>> 0) + (El >>> 0);
 var add5H = (low, Ah, Bh, Ch, Dh, Eh) => Ah + Bh + Ch + Dh + Eh + (low / 2 ** 32 | 0) | 0;
 
-// node_modules/@noble/hashes/utils.js
+// ../../../node_modules/@noble/hashes/utils.js
 function isBytes(a) {
   return a instanceof Uint8Array || ArrayBuffer.isView(a) && a.constructor.name === "Uint8Array" && "BYTES_PER_ELEMENT" in a && a.BYTES_PER_ELEMENT === 1;
 }
@@ -5745,7 +5762,7 @@ var oidNist = (suffix) => ({
   oid: Uint8Array.from([6, 9, 96, 134, 72, 1, 101, 3, 4, 2, suffix])
 });
 
-// node_modules/@noble/hashes/_md.js
+// ../../../node_modules/@noble/hashes/_md.js
 class HashMD {
   blockLen;
   outputLen;
@@ -5859,7 +5876,7 @@ var SHA512_IV = /* @__PURE__ */ Uint32Array.from([
   327033209
 ]);
 
-// node_modules/@noble/hashes/sha2.js
+// ../../../node_modules/@noble/hashes/sha2.js
 var K512 = /* @__PURE__ */ (() => split([
   "0x428a2f98d728ae22",
   "0x7137449123ef65cd",
@@ -6085,7 +6102,7 @@ class _SHA512 extends SHA2_64B {
 }
 var sha512 = /* @__PURE__ */ createHasher(() => new _SHA512, /* @__PURE__ */ oidNist(3));
 
-// node_modules/@noble/curves/utils.js
+// ../../../node_modules/@noble/curves/utils.js
 /*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) */
 function aarray(item, title, inner = () => {}) {
   if (!Array.isArray(item))
@@ -6229,7 +6246,7 @@ var notImplemented = () => {
   throw new Error("not implemented");
 };
 
-// node_modules/@noble/curves/abstract/modular.js
+// ../../../node_modules/@noble/curves/abstract/modular.js
 /*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) */
 var _0n2 = /* @__PURE__ */ BigInt(0);
 var _1n2 = /* @__PURE__ */ BigInt(1);
@@ -6655,7 +6672,7 @@ function Field(ORDER, opts = {}) {
   return new _Field(ORDER, opts);
 }
 
-// node_modules/@noble/curves/abstract/curve.js
+// ../../../node_modules/@noble/curves/abstract/curve.js
 /*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) */
 var _0n3 = /* @__PURE__ */ BigInt(0);
 var _1n3 = /* @__PURE__ */ BigInt(1);
@@ -6989,7 +7006,7 @@ function createCurveFields(type, CURVE, curveOpts = {}, FpFnLE) {
   return { CURVE, Fp, Fn };
 }
 
-// node_modules/@noble/curves/abstract/edwards.js
+// ../../../node_modules/@noble/curves/abstract/edwards.js
 /*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) */
 var _0n4 = /* @__PURE__ */ BigInt(0);
 var _1n4 = /* @__PURE__ */ BigInt(1);
@@ -7325,7 +7342,7 @@ class PrimeEdwardsPoint {
   }
 }
 
-// node_modules/@noble/curves/abstract/hash-to-curve.js
+// ../../../node_modules/@noble/curves/abstract/hash-to-curve.js
 function i2osp(value, length) {
   asafenumber(value);
   asafenumber(length);
@@ -7384,7 +7401,7 @@ function expand_message_xmd(msg, DST, lenInBytes, H) {
 }
 var _DST_scalar = "HashToScalar-";
 
-// node_modules/@noble/curves/ed25519.js
+// ../../../node_modules/@noble/curves/ed25519.js
 /*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) */
 var _1n5 = /* @__PURE__ */ BigInt(1);
 var _2n3 = /* @__PURE__ */ BigInt(2);
@@ -7889,7 +7906,7 @@ function onPath() {
 async function ensureCloudflared() {
   return onPath();
 }
-async function openTunnel(bin, port, logPath, timeoutMs = 60000) {
+async function openTunnel(bin, port, logPath, timeoutMs = 60000, o = {}) {
   fs17.writeFileSync(logPath, "");
   const out = fs17.openSync(logPath, "a");
   const child = spawn6(bin, ["tunnel", "--no-autoupdate", "--config", "/dev/null", "--url", `http://127.0.0.1:${port}`], {
@@ -7935,8 +7952,8 @@ async function openTunnel(bin, port, logPath, timeoutMs = 60000) {
   const carrying = Date.now() + timeoutMs;
   while (Date.now() < carrying) {
     try {
-      const r = await fetch(`https://${host}/health`, { signal: AbortSignal.timeout(1e4) });
-      if (r.ok)
+      const ok = o.probe ? await o.probe(host) : (await fetch(`https://${host}/health`, { signal: AbortSignal.timeout(1e4) })).ok;
+      if (ok)
         return { url: found[0], host, subdomain: found[1], pid: child.pid };
     } catch {}
     await new Promise((r) => setTimeout(r, 1500));

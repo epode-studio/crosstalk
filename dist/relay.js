@@ -371,6 +371,18 @@ function sweep() {
       seen.delete(id);
 }
 setInterval(sweep, 60000);
+var STREAM_FRAMES = 1500;
+var STREAM_BYTES = 48 * 1024 * 1024;
+var streamRate = new Map;
+function streamOk(fp, bytes) {
+  const now = Date.now();
+  let w = streamRate.get(fp);
+  if (!w || now - w.at > 1e4)
+    streamRate.set(fp, w = { at: now, frames: 0, bytes: 0 });
+  w.frames++;
+  w.bytes += bytes;
+  return w.frames <= STREAM_FRAMES && w.bytes <= STREAM_BYTES;
+}
 function rateOk(fp) {
   const now = Date.now();
   const win = (rate.get(fp) ?? []).filter((t) => now - t < 60000);
@@ -589,7 +601,7 @@ function onMessage(ws, raw) {
     if (!live.has(d.fp))
       live.set(d.fp, new Set);
     live.get(d.fp).add(ws);
-    send(ws, { t: "ready", fingerprint: d.fp, sig: signWith(relayIdentity.priv, t) });
+    send(ws, { t: "ready", fingerprint: d.fp, sig: signWith(relayIdentity.priv, t), streams: 1 });
     log(`link up ${d.label} ${d.fp}`);
     drain(d.fp, ws);
     announce(d.fp);
@@ -606,6 +618,18 @@ function onMessage(ws, raw) {
     return send(ws, { t: "pong" });
   if (typeof f.t === "string" && f.t.startsWith("room_") && handleRoom(ws, d, f))
     return;
+  if (f.t === "stream") {
+    if (typeof f.body !== "string" || f.body.length > MAX_BODY || typeof f.to !== "string")
+      return;
+    if (!streamOk(d.fp, f.body.length))
+      return;
+    const targets = live.get(f.to);
+    if (!targets?.size)
+      return;
+    for (const t of targets)
+      send(t, { t: "deliver", from: d.fp, body: f.body, id: f.id });
+    return;
+  }
   if (f.t === "send") {
     if (!rateOk(d.fp))
       return send(ws, { t: "error", message: "rate limited" });

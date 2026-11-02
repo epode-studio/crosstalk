@@ -131,13 +131,14 @@ export type PaneModel = {
 export type PaneService = { name: string; ports: number[]; url?: string }
 
 /** One URL in the pane: what it is, where (the proxy's name for a local server), and whether it answers. */
-export type PaneLink = { label: string; url: string; kind: "local" | "preview" | "pr" | "link"; alive: boolean; thread?: string }
+export type PaneLink = { label: string; url: string; kind: "local" | "preview" | "pr" | "link" | "shared"; alive: boolean; thread?: string }
 
 export const LINK_KINDS = [
   ["local", "Local"],
   ["preview", "Previews"],
   ["pr", "Pull requests"],
   ["link", "Links found in output"],
+  ["shared", "Shared"],
 ] as const
 
 /** The pane's links by kind, in the order above, empty kinds left out. */
@@ -149,7 +150,7 @@ export function linkGroups(links: readonly PaneLink[]): { kind: PaneLink["kind"]
 export const linkable = (url: string) => url.length <= 500 && /^https?:\/\/[A-Za-z0-9.\[\]:-]+(\/[!-~]*)?$/.test(url)
 
 /** A link's line: `● auth · dev server`, or `○ auth · dev server · dead`. */
-export const linkLine = (l: PaneLink) => `${l.alive ? "●" : "○"} ${l.label}${l.alive ? "" : " · dead"}`
+export const linkLine = (l: PaneLink) => `${l.alive ? "●" : "○"} ${l.label}${l.alive ? "" : l.kind === "shared" ? " · ended" : " · dead"}`
 
 /** A service's line in the pane: `web · :4100`. */
 export const serviceLine = (s: PaneService) => (s.ports.length ? `${s.name} · ${s.ports.map((p) => `:${p}`).join(" ")}` : `${s.name} · starting`)

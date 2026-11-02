@@ -34,6 +34,7 @@ import * as attnTools from "./attention/tools.ts"
 import * as svcTools from "./services/tools.ts"
 import * as sessionTools from "./sessions/tools.ts"
 import * as urlTools from "./urls/tools.ts"
+import * as shareTools from "./share/tools.ts"
 import * as historyTools from "./urls/history/tools.ts"
 import * as envTools from "./env/tools.ts"
 import { rootFrom } from "./paths.ts"
@@ -420,6 +421,8 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     ...sessionTools.TOOLS,
     // Every URL the threads have, labelled, by name through the local proxy (src/urls/).
     ...urlTools.TOOLS,
+    // A running server shared with named teammates, over the sealed channel (src/share/).
+    ...shareTools.TOOLS,
     // A thread's history of links and screenshots, QR codes for the phone, local files for new worktrees.
     ...historyTools.TOOLS,
     ...envTools.TOOLS,
@@ -705,6 +708,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           (await svcTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
           (await sessionTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
           (await urlTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
+          (await shareTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
           (await historyTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
           (await envTools.callTool(req.params.name, a, { sessionId: SESSION_ID, cwd: CWD })) ??
           err(`unknown tool ${req.params.name}`)

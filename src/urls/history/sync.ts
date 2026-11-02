@@ -85,7 +85,7 @@ function byName(all: M.Thread[], name: string): M.Thread | undefined {
 
 export const seenOf = (u: Url, shot?: H.Shot): H.Seen => ({
   url: u.url,
-  kind: u.kind,
+  kind: u.kind === "shared" ? "local" : u.kind,
   label: u.label,
   ...(u.name ? { name: u.name } : {}),
   ...(u.service ? { service: u.service } : {}),
@@ -106,7 +106,8 @@ export function syncOnce(o: { threads: Threads; store?: UrlStore; log?: (s: stri
     if (!H.next(t, s)) return
     pending.set(t.id, [...(pending.get(t.id) ?? []), s])
   }
-  for (const u of records) if (u.thread) add(byName(all, u.thread), seenOf(u))
+  // A share (src/share/) is access to a server, not a thing of its own: the server's record is kept already.
+  for (const u of records) if (u.thread && u.kind !== "shared") add(byName(all, u.thread), seenOf(u))
   for (const s of takeShots()) {
     const u = records.find((r) => r.id === s.urlId) ?? records.find((r) => r.url === s.url)
     const shot: H.Shot = { path: String(s.path).slice(0, 500), at: s.at, machine: s.machine.slice(0, 64), ...(s.note ? { note: String(s.note).slice(0, 200) } : {}) }

@@ -102,6 +102,20 @@ function sweep() {
 }
 setInterval(sweep, 60_000)
 
+// Live frames (a shared server's HTTP, src/share/): a budget of their own, in
+// frames and bytes per ten seconds, never buffered, never acked.
+const STREAM_FRAMES = 1500
+const STREAM_BYTES = 48 * 1024 * 1024
+const streamRate = new Map<string, { at: number; frames: number; bytes: number }>()
+function streamOk(fp: string, bytes: number): boolean {
+  const now = Date.now()
+  let w = streamRate.get(fp)
+  if (!w || now - w.at > 10_000) streamRate.set(fp, (w = { at: now, frames: 0, bytes: 0 }))
+  w.frames++
+  w.bytes += bytes
+  return w.frames <= STREAM_FRAMES && w.bytes <= STREAM_BYTES
+}
+
 function rateOk(fp: string): boolean {
   const now = Date.now()
   const win = (rate.get(fp) ?? []).filter((t) => now - t < 60_000)
@@ -341,7 +355,7 @@ if (!live.has(d.fp)) live.set(d.fp, new Set())
 live.get(d.fp)!.add(ws)
 // The relay's own signature travels inside the channel, which the client
 // can only open if the relay held the matching ephemeral private key.
-send(ws, { t: "ready", fingerprint: d.fp, sig: signWith(relayIdentity.priv, t) })
+send(ws, { t: "ready", fingerprint: d.fp, sig: signWith(relayIdentity.priv, t), streams: 1 })
 log(`link up ${d.label} ${d.fp}`)
 drain(d.fp, ws)
 announce(d.fp)
@@ -359,6 +373,15 @@ return ws.close()
   if (f.t === "ping") return send(ws, { t: "pong" })
 
   if (typeof f.t === "string" && f.t.startsWith("room_") && handleRoom(ws, d, f)) return
+
+  if (f.t === "stream") {
+if (typeof f.body !== "string" || f.body.length > MAX_BODY || typeof f.to !== "string") return
+if (!streamOk(d.fp!, f.body.length)) return
+const targets = live.get(f.to)
+if (!targets?.size) return
+for (const t of targets) send(t, { t: "deliver", from: d.fp, body: f.body, id: f.id })
+return
+  }
 
   if (f.t === "send") {
 if (!rateOk(d.fp!)) return send(ws, { t: "error", message: "rate limited" })
