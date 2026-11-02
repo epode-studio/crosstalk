@@ -7795,6 +7795,8 @@ async function shipCmd(argv) {
       return send({ action: "status", thread: flag3(argv, "--thread") });
     case "questions":
       return send({ action: "questions" });
+    case "watch":
+      return send({ action: "watch" });
     case "answer": {
       const [id, ...rest] = pos;
       if (!id || !rest.length) {

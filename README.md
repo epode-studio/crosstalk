@@ -471,11 +471,16 @@ only for people outside your repositories. [How it holds up](docs/security.md).
 
 - **Everyday work** merges on green checks and a review by a separate agent.
 - **Risky work** (auth, payments, migrations, whatever you list) gets an
-  adversarial reviewer on a different model and ships behind a flag. Each step
-  of turning it on is a question, with evidence of what it does.
+  adversarial reviewer on a different model, a preview deploy with its flag on,
+  and ships behind a flag: dark first (the new path in shadow, mismatches
+  counted), then your own accounts, then everyone. Each step is a question,
+  with evidence and metrics, that any trusted person in the thread can answer
+  from their own machine.
 - **Flags instead of staging.** Merged means off; shipped means on. Rolling back
-  is turning a flag off, which any agent may do the moment something regresses.
-  Flags live in `.crosstalk/flags`, or in LaunchDarkly or PostHog.
+  is turning a flag off, which any agent may do, and crosstalk does by itself
+  when metrics regress. An everyday flag goes to everyone by itself once its
+  metrics hold. Flags live in Unleash, or in LaunchDarkly, PostHog, GrowthBook,
+  Statsig, or a plain `.crosstalk/flags` file.
 - **Production reopens threads.** An alert that names a flag or a recent change
   reopens the thread that shipped it, and turns a risky flag off on the spot.
 - **Merging is out of sight.** Straight to main, through a pull request that
@@ -556,7 +561,7 @@ The measure is time from idea to merge, and how few of your minutes it took.
 | Threads, found automatically, synced and kept on a hidden git ref | **here**, first version |
 | Trust through repository access, no words | **here** |
 | Main session, answers become rules, agents warning each other | **here**, first version |
-| Shipping: reviewer agents, evidence, flags, production reopening threads | **here**, first version (LaunchDarkly and PostHog adapters; GrowthBook and Statsig coming) |
+| Shipping: reviewer agents, evidence, flags, production reopening threads | **here**: Unleash first, plus LaunchDarkly, PostHog, GrowthBook and Statsig; previews, dark launches, metrics-driven ramps and kills |
 
 The full design, and why each part works the way it does, is in
 [The next generation](docs/design/next-generation.md).

@@ -1,9 +1,19 @@
 // Shipping, plugged into the daemon: the engine over the daemon's threads,
 // its questions as the mod's pickers, its heads-ups as held messages, and the
 // `ship` op every tool and command goes through.
+//
+// Also on timers here: reviewers that never answered (every 10 minutes), the
+// watch over flags being ramped (every 5 minutes, CROSSTALK_RAMP_POLL_MS),
+// and answers to this machine's questions from people on other machines,
+// plus pickers for other machines' questions (every 2 seconds,
+// CROSSTALK_SHIP_VOTE_MS).
+//
+// CROSSTALK_SHIP_CLOCK names a file holding a time in ms since the epoch: the
+// engine's clock while it is there (tests use it to move time forward).
 
+import fs from "node:fs"
 import path from "node:path"
-import { P } from "../config.ts"
+import { P, loadIdentity, loadPeers } from "../config.ts"
 import * as ui from "../uistate.ts"
 import * as cleanup from "../cleanup.ts"
 import type { ThreadService } from "../threads/service.ts"
@@ -30,6 +40,19 @@ export function portFor(svc: ThreadService): ThreadPort {
   }
 }
 
+/** The engine's clock: the test clock file while there is one, else the wall. */
+export function clock(file = process.env.CROSSTALK_SHIP_CLOCK): () => number {
+  if (!file) return () => Date.now()
+  return () => {
+    try {
+      const n = Number(fs.readFileSync(file, "utf8").trim())
+      return Number.isFinite(n) && n > 0 ? n : Date.now()
+    } catch {
+      return Date.now()
+    }
+  }
+}
+
 export type Shipping = {
   engine: ShipEngine
   op: (req: Record<string, any>, sessionId: string | undefined) => Promise<Out>
@@ -52,17 +75,18 @@ export function createShipping(o: {
     ui.withStore((items, now) => {
       for (const it of Object.values(items)) if (it.kind === "ship" && it.id.startsWith(`ship:${qid}:`)) ui.settle(items, it.id, "answered", now)
     })
-  const ask = (q: Question) => {
-    const sessions = q.sessions.length ? q.sessions : [o.fallbackSession()].filter((s): s is string => !!s)
-    const t = o.threads.thread(q.thread)
+  const picker = (q: { id: string; text: string; options: string[]; at: number }, sessions: string[], threadName?: string) => {
     try {
       ui.withStore((items, now) => {
-        for (const sid of sessions)
-          ui.upsert(items, { id: uiId(q.id, sid), kind: "ship", sessionId: sid, thread: t?.meta.value.name, question: q.text, options: q.options, ts: q.at }, now)
+        for (const sid of sessions) ui.upsert(items, { id: uiId(q.id, sid), kind: "ship", sessionId: sid, thread: threadName, question: q.text, options: q.options, ts: q.at }, now)
       })
     } catch (e) {
       o.log(`ship: picker not stored: ${(e as Error).message}`)
     }
+  }
+  const ask = (q: Question) => {
+    const sessions = q.sessions.length ? q.sessions : [o.fallbackSession()].filter((s): s is string => !!s)
+    picker(q, sessions, o.threads.thread(q.thread)?.meta.value.name)
   }
   const engine = new ShipEngine({
     threads: portFor(o.threads),
@@ -79,15 +103,57 @@ export function createShipping(o: {
       } catch {}
     },
     log: o.log,
+    now: clock(),
+    identity: () => loadIdentity(),
+    peers: () => Object.values(loadPeers()),
   })
-  const sweep = setInterval(() => {
+  const every = (ms: number, fn: () => unknown) => {
+    const t = setInterval(async () => {
+      try {
+        await fn()
+      } catch (e) {
+        o.log(`ship: ${(e as Error).message}`)
+      }
+    }, ms)
+    t.unref?.()
+    return t
+  }
+  every(10 * 60_000, () => engine.sweep())
+  let watching = false
+  every(Number(process.env.CROSSTALK_RAMP_POLL_MS) || 5 * 60_000, async () => {
+    if (watching) return
+    watching = true
     try {
-      engine.sweep()
-    } catch (e) {
-      o.log(`ship: ${(e as Error).message}`)
+      await engine.watch()
+    } finally {
+      watching = false
     }
-  }, 10 * 60_000)
-  sweep.unref?.()
+  })
+  // Other machines' questions get a picker here too; one answered anywhere comes down.
+  const shown = new Set<string>()
+  let voting = false
+  every(Number(process.env.CROSSTALK_SHIP_VOTE_MS) || 2000, async () => {
+    if (voting) return
+    voting = true
+    try {
+      await engine.pollVotes()
+      const open = engine.elsewhere()
+      for (const q of open) {
+        if (shown.has(q.id)) continue
+        shown.add(q.id)
+        const sessions = o.threads.sessionsIn([q.thread])
+        if (sessions.length) picker({ id: q.id, text: q.text, options: q.options, at: Date.now() }, sessions, q.threadName)
+      }
+      const still = new Set(open.map((q) => q.id))
+      for (const id of [...shown])
+        if (!still.has(id)) {
+          shown.delete(id)
+          settle(id)
+        }
+    } finally {
+      voting = false
+    }
+  })
 
   const op = async (req: Record<string, any>, sid: string | undefined): Promise<Out> => {
     const bot = refuseBot(req.peer ? String(req.peer) : undefined, "start reviewers, merge or change a flag here")
@@ -118,8 +184,14 @@ export function createShipping(o: {
         )
       case "status":
         return engine.status(sid, { thread: req.thread })
-      case "questions":
-        return { ok: true, text: `${engine.open().length} waiting`, questions: engine.open().map((q) => ({ id: q.id, kind: q.kind, text: q.text, options: q.options })) }
+      case "watch":
+        // One pass of the ramp watch now, instead of at the next five minutes.
+        return engine.watch()
+      case "questions": {
+        const here = engine.open().map((q) => ({ id: q.id, kind: q.kind, text: q.text, options: q.options }))
+        const there = engine.elsewhere().map((q) => ({ id: q.id, kind: q.kind, text: q.text, options: q.options, thread: q.threadName, elsewhere: true }))
+        return { ok: true, text: `${here.length + there.length} waiting${there.length ? ` (${there.length} asked on another machine)` : ""}`, questions: [...here, ...there] }
+      }
       case "answer":
         // Only `crosstalk ship answer` in a person's terminal says person.
         return engine.answer(String(req.id ?? ""), String(req.value ?? ""), { person: req.person === true })
@@ -132,12 +204,13 @@ export function createShipping(o: {
     const claim = ui.withStore((items, now) => ui.act(items, itemId, "answer", now, value))
     if (!claim.ok) return { ok: false, text: claim.error, item: claim.item }
     const r = await engine.answer(qOf(itemId), value, { person: true })
-    if (!r.ok && engine.question(qOf(itemId))) ui.withStore((items, now) => ui.reopen(items, itemId, now))
+    if (!r.ok && (engine.question(qOf(itemId)) || engine.elsewhere().some((q) => q.id === qOf(itemId)))) ui.withStore((items, now) => ui.reopen(items, itemId, now))
     return { ...r, item: claim.item }
   }
 
   const guardThreadEdit = async (sid: string | undefined, req: Record<string, any>) => {
-    if (typeof req.answer?.id === "string" && engine.question(req.answer.id))
+    const qid = typeof req.answer?.id === "string" ? req.answer.id : undefined
+    if (qid && (engine.question(qid) || o.threads.all().some((t) => t.questions[qid]?.ship)))
       return { stop: { ok: false, error: "that is a shipping question, and a person answers it themselves: in crosstalk's picker, or with `crosstalk ship answer` in a terminal" }, req }
     if (req.feature?.name && req.feature.risk === "everyday" && !req.feature.remove) {
       const t = o.threads.find(sid, req.thread)

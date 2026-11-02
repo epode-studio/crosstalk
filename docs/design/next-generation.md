@@ -513,7 +513,7 @@ agents watching to turn it off on any regression.
 
 Flags live in one of two places:
 
-- **Your flag provider** (LaunchDarkly, PostHog, GrowthBook, Statsig): crosstalk
+- **Your flag provider** (Unleash, LaunchDarkly, PostHog, GrowthBook, Statsig): crosstalk
   drives it and reads its metrics. Turning a flag off is instant. Preferred for
   risky features.
 - **A built-in flags file** for teams with nothing: `.crosstalk/flags`, read by

@@ -1,8 +1,22 @@
 // Which flag provider a repo uses (`flags:` in .crosstalk/ship), built from
 // tokens in the daemon's environment. The flags file needs nothing.
+//
+// Unleash (the first-class provider) has dark as a strategy variant of its
+// own. On the others:
+//
+// Dark, on a provider: a boolean flag has no third value, so a flag at
+// `dark` is two flags: the flag itself off (nobody gets the new path's
+// result) and a companion, `<flag>-dark`, on for everyone (the app runs the
+// new path in shadow). PostHog, GrowthBook and Statsig create the companion
+// when it is missing; in LaunchDarkly create a boolean flag `<flag>-dark`
+// once. Every other stage turns the companion off. The flags file has
+// `dark` as a value of its own.
 
+import { Unleash } from "./unleash.ts"
 import { LaunchDarkly } from "./launchdarkly.ts"
 import { PostHog } from "./posthog.ts"
+import { GrowthBook } from "./growthbook.ts"
+import { Statsig } from "./statsig.ts"
 import { NotConfigured, type Env, type Fetch, type FlagProvider } from "./types.ts"
 import type { Stage } from "../flags.ts"
 import * as F from "../flags.ts"
@@ -12,20 +26,8 @@ import type { PushMode, ProviderName } from "../config.ts"
 
 export { NotConfigured, type FlagProvider } from "./types.ts"
 
-/** Not built yet: says so instead of pretending. */
-class NotYet implements FlagProvider {
-  readonly instant = true
-  constructor(readonly name: string) {}
-  private no(): never {
-    throw new NotConfigured(`${this.name} is not supported yet; use flags: launchdarkly, posthog or file in .crosstalk/ship`)
-  }
-  async get(): Promise<Stage | undefined> {
-    this.no()
-  }
-  async set(): Promise<string> {
-    this.no()
-  }
-}
+export const DARK_SUFFIX = "-dark"
+export const darkFlag = (flag: string) => `${flag}${DARK_SUFFIX}`
 
 /** The built-in flags file on the default branch, changed with a commit. */
 export class FileFlags implements FlagProvider {
@@ -50,17 +52,62 @@ export class FileFlags implements FlagProvider {
   }
 }
 
+/** A provider whose flags are on or off, given `dark` through a companion flag. */
+export class WithDark implements FlagProvider {
+  readonly name: string
+  readonly instant: boolean
+  readonly metrics?: (flag: string) => Promise<Record<string, number> | undefined>
+  constructor(readonly inner: FlagProvider) {
+    this.name = inner.name
+    this.instant = inner.instant
+    if (inner.metrics) this.metrics = (flag) => inner.metrics!(flag)
+  }
+
+  private async companion(flag: string): Promise<Stage | undefined> {
+    try {
+      return await this.inner.get(darkFlag(flag))
+    } catch {
+      return undefined
+    }
+  }
+
+  async get(flag: string): Promise<Stage | undefined> {
+    const main = await this.inner.get(flag)
+    if ((main === undefined || main === "off") && (await this.companion(flag)) === "on") return "dark"
+    return main
+  }
+
+  async set(flag: string, stage: Stage, why: string): Promise<string> {
+    if (stage === "dark") {
+      let shadow: string
+      try {
+        shadow = await this.inner.set(darkFlag(flag), "on", `${why} (dark launch of ${flag})`)
+      } catch (e) {
+        throw new Error(`${flag} cannot go dark in ${this.name} without its companion flag ${darkFlag(flag)}: ${(e as Error).message}`)
+      }
+      const main = await this.inner.get(flag).catch(() => undefined)
+      if (main !== undefined && main !== "off") await this.inner.set(flag, "off", why)
+      return `${flag} is dark in ${this.name}: ${darkFlag(flag)} is on, so the new path runs in shadow, and ${flag} is off, so nobody gets its result (${shadow})`
+    }
+    if ((await this.companion(flag)) === "on") await this.inner.set(darkFlag(flag), "off", `${why} (${flag} leaves dark)`)
+    return this.inner.set(flag, stage, why)
+  }
+}
+
 export function providerFor(name: ProviderName, o: { root: string; env?: Env; fetcher?: Fetch; push?: PushMode }): FlagProvider {
   const env = o.env ?? process.env
   switch (name) {
+    case "unleash":
+      // Dark is native in Unleash: a strategy variant (providers/unleash.ts), no companion toggle.
+      return new Unleash(env, o.fetcher)
     case "launchdarkly":
-      return new LaunchDarkly(env, o.fetcher)
+      return new WithDark(new LaunchDarkly(env, o.fetcher))
     case "posthog":
-      return new PostHog(env, o.fetcher)
+      return new WithDark(new PostHog(env, o.fetcher))
     case "growthbook":
-      return new NotYet("GrowthBook")
+      return new WithDark(new GrowthBook(env, o.fetcher))
     case "statsig":
-      return new NotYet("Statsig")
+      return new WithDark(new Statsig(env, o.fetcher))
     default:
       return new FileFlags(o.root, { push: o.push })
   }

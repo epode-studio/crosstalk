@@ -70,14 +70,14 @@ export const TOOLS = [
       "Move a feature's flag. stage \"off\" works at once, from any agent, at any time: do it on any regression and say so; no question is needed. Turning a risky feature's flag up (internal, N%, on) is a question crosstalk puts to a person with the evidence from the step before; an everyday feature's flag moves at once.",
     inputSchema: {
       type: "object",
-      properties: { flag: { type: "string" }, feature, thread, stage: { type: "string", description: "off, internal, a percentage like 10%, or on" }, why: { type: "string" } },
+      properties: { flag: { type: "string" }, feature, thread, stage: { type: "string", description: "off, dark (the new path in shadow, results unused), internal, a percentage like 10%, or on" }, why: { type: "string" } },
       required: ["stage"],
     },
   },
   {
     name: "crosstalk_incident",
     description:
-      "Report something wrong in production, from an alert, an error tracker or the user. crosstalk reopens the thread that shipped it when the flag, commit or files point clearly at one (its agents have the context), else starts an incident thread to find the cause. Naming the flag of a risky feature turns that flag off at once. When an incident thread finds its cause, call this with link: {incident, cause} to tie it to the thread that shipped it.",
+      "Report something wrong in production, from an alert, an error tracker or the user. crosstalk reopens the thread that shipped it when the flag, commit or files point clearly at one (its agents have the context), else starts an incident thread to find the cause. Naming the flag of a risky feature turns that flag off at once. source \"shadow\" is a dark launch's mismatch (the new path disagreed with the old one while its results were not used): it is only counted. When an incident thread finds its cause, call this with link: {incident, cause} to tie it to the thread that shipped it.",
     inputSchema: {
       type: "object",
       properties: {

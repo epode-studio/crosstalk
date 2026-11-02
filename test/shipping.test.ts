@@ -494,9 +494,9 @@ describe("PostHog against a mock", () => {
 })
 
 describe("the other providers and the flags file", () => {
-  test("GrowthBook and Statsig say not yet", async () => {
-    await expect(providerFor("growthbook", { root: TMP }).get("x")).rejects.toThrow("not supported yet")
-    await expect(providerFor("statsig", { root: TMP }).set("x", "on", "y")).rejects.toThrow("not supported yet")
+  test("GrowthBook and Statsig need their keys (they are tested against mocks in shipping-next.test.ts)", async () => {
+    expect(() => providerFor("growthbook", { root: TMP, env: {} })).toThrow(NotConfigured)
+    expect(() => providerFor("statsig", { root: TMP, env: {} })).toThrow(NotConfigured)
   })
   test("the flags file: read from main, changed with a commit", async () => {
     const { dir, bare } = repo()
@@ -622,7 +622,7 @@ describe("the engine", () => {
   })
 
   test("risky by path; lowering is a question no agent can answer; changes go back to the author; evidence gates the merge", async () => {
-    const { dir } = repo({ "README.md": "hi\n", ".crosstalk/ship": "push: local\nrounds: 2\n", ".crosstalk/risk": "high: src/auth/**\n" })
+    const { dir } = repo({ "README.md": "hi\n", ".crosstalk/ship": "push: local\nrounds: 2\nramp: internal 10% on\n", ".crosstalk/risk": "high: src/auth/**\n" })
     const wt = commitOn(dir, "crosstalk/auth", "src/auth/login.ts", "export const login = 1\n")
     const { e, port, launches, woke, asked } = engineWith({ root: dir })
     const t = port.open({ name: "auth", repo: "r" })

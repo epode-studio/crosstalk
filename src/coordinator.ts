@@ -372,7 +372,7 @@ export class Coordinator {
         const t = this.d.threads.thread(id)
         if (!t || !M.isLive(t)) continue
         for (const q of M.live(t, "questions")) {
-          if (q.answer) continue
+          if (q.answer || q.ship) continue // a shipping question is a person's, never a rule's
           const rule = this.matchRule({ kind: "question", text: q.text, risky: riskyIn(t, q.text) }, t.meta.value.repo)
           if (!rule) continue
           const r = this.d.threads.edit(undefined, { thread: t.id, answer: { id: q.id, text: rule.then! } })
