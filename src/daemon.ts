@@ -49,6 +49,8 @@ import * as threadModel from "./threads/model.ts"
 import { createShipping } from "./shipping/daemon.ts"
 import { rootFrom } from "./paths.ts"
 import { Coordinator, RULES_FILE } from "./coordinator.ts"
+import { createAttention } from "./attention/daemon.ts"
+import type { AttentionService } from "./attention/service.ts"
 
 const identity = loadIdentity()
 if (!identity) {
@@ -127,10 +129,16 @@ persistSessions()
 // The main session, standing rules and agents warning each other
 // (src/coordinator.ts), made once everything it calls back into exists.
 let coord: Coordinator
+// Recaps, disposable sessions, staffing, focus and notifications (src/attention/).
+let attention: AttentionService | undefined
 
 const threads = new ThreadService({
+  tiebreak: (sid, cands, mode) => attention?.tiebreak(sid, cands, mode),
   extra: { file: RULES_FILE, read: (repo, text) => coord?.readRules(repo, text), render: (repo) => coord?.renderRules(repo) },
-  onFlush: (ids) => coord?.onThreadsFlush(ids),
+  onFlush: (ids) => {
+    coord?.onThreadsFlush(ids)
+    attention?.onThreadsFlush(ids)
+  },
   identity,
   peers: () => loadPeers(),
   send: (label, env) => sendEnvelope(label, env),
@@ -348,7 +356,7 @@ function holdUnrouted(
   seenIds.set(env.id, Date.now())
   if (unrouted.some((u) => u.id === env.id)) return
   // With a main session open, that is where the question goes (src/main.ts).
-  const asked = sessions.get(coord.mainId() ?? "") ?? mostRecentSession()
+  const asked = sessions.get(coord.mainId() ?? "") ?? sessions.get(attention?.focusedId() ?? "") ?? mostRecentSession()
   const u: Unrouted = {
     id: env.id,
     label: peerLabel,
@@ -1482,6 +1490,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         threads.forget(id)
       }
       observeThreads(sessions.get(sessionId)!)
+      attention?.registered(sessions.get(sessionId)!)
       persistSessions()
       log(
         `registered session ${req.name} (${req.cwd})${req.socket ? "" : " [pull mode, no inbox socket]"}`,
@@ -2085,14 +2094,17 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       if (!sid) return { ok: false, error: "ui needs a sessionId" }
       const reg = sessions.get(sid)
       if (reg && req.mod) reg.modSeenAt = Date.now()
+      // A sealed line for Claude's own push, which only the mod can send.
+      const push = req.mod ? attention?.takePush(sid) : undefined
       return {
         ok: true,
         items: uiSync(sid),
         label: identity!.label,
         threads: threads.namesFor(sid),
         // The mod toasts these; taken here, the hook does not show them again.
-        ...(req.mod ? { threadNotes: coord.notesFor(sid, threads.takeNotes(sid)) } : {}),
+        ...(req.mod ? { threadNotes: [...coord.notesFor(sid, threads.takeNotes(sid)), ...(attention?.takeNotes(sid) ?? [])] } : {}),
         ...(coord.mainStatus(sid) ? { main: coord.mainStatus(sid) } : {}),
+        ...(push ? { push } : {}),
       }
     }
 
@@ -2107,6 +2119,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       const before = ui.snapshot()[id]
       if (!before) return { ok: false, error: `nothing waiting with id ${id}` }
       if (before.kind === "restore") return { ok: false, error: "the restore offer is answered by crosstalk ui act, not the daemon" }
+      if (before.kind === "attention") return attention ? attention.act(sid, id, action, value) : { ok: false, error: "not ready" }
 
       if (action === "raised" || action === "later" || action === "mute") {
         const r = ui.withStore((items, now) => ui.act(items, id, action, now))
@@ -2391,6 +2404,9 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       // The main session, standing rules, heads-ups and conflicts.
       const r = await coord.handle(req, resolveSession(req))
       if (r !== undefined) return r
+      // Recaps, fresh sessions, staffing, focus and permission prompts.
+      const a = await attention?.handle(req, resolveSession(req))
+      if (a !== undefined) return a
       return { ok: false, error: `unknown op "${req.op}"` }
     }
   }
@@ -2427,6 +2443,21 @@ coord = new Coordinator({
   route: (id, session) => handle({ op: "route", id, session, auto: true }),
   answerPeer: (label, correlation, text, replyTo) => handle({ op: "answer", to: label, correlation, text, replyTo, auto: true }),
 })
+
+attention = createAttention({
+  threads,
+  coord: () => coord,
+  root: rootFrom(import.meta.url),
+  log,
+  sessions: () => sessions,
+  status: statusOf,
+  modLive: (sid) => modLive(sessions.get(sid)),
+  repoOf: (sid) => {
+    const reg = sessions.get(sid)
+    return reg ? footprintOf(reg).repo : undefined
+  },
+})
+setInterval(() => attention?.tick(), Math.max(200, Number(process.env.CROSSTALK_ATTENTION_TICK_MS ?? 15_000)))
 
 fs.mkdirSync(path.dirname(P.daemonSock), { recursive: true, mode: 0o700 })
 
@@ -2496,6 +2527,7 @@ control.listen(P.daemonSock, () => {
   // with threads catches up with its remote. Neither can hold anything up.
   threads.retain([...sessions.keys()])
   coord.start()
+  attention?.start()
   for (const reg of sessions.values()) observeThreads(reg)
   threads.fade()
   void threads.syncAll()

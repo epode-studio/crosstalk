@@ -26,6 +26,7 @@ import * as gather from "./gather.ts"
 import * as termHook from "./terminal/hook.ts"
 import * as firstuse from "./repotrust/firstuse.ts"
 import { editReport } from "./warn/edit.ts"
+import * as attnHook from "./attention/hook.ts"
 
 const input = await new Promise<string>((resolve) => {
   let raw = ""
@@ -316,6 +317,23 @@ if (!loadIdentity() || !sessionId) {
 }
 
 const root = rootFrom(import.meta.url)
+
+/**
+ * Sessions and attention (src/attention/hook.ts): where the person typed last,
+ * a recap at Stop, a fresh session instead of a compaction, and a background
+ * agent's permission prompt held until the person answers it. Claude Code only.
+ */
+if (restoreClient === "claude" && /^(SessionStart|UserPromptSubmit|Stop|PreCompact|PermissionRequest)$/.test(eventName)) {
+  try {
+    if (/^(Stop|PreCompact|PermissionRequest)$/.test(eventName) || process.env.CROSSTALK_BG_AGENT) await ensureDaemon(root)
+    const a = await attnHook.fromHook({ event: eventName, sessionId, cwd, hook, env: process.env, mod: ui.modActive(sessionId) })
+    if (a.exit) {
+      process.stdout.write(JSON.stringify(a.exit))
+      process.exit(0)
+    }
+    if (a.systemMessage) systemMessage = systemMessage ? `${systemMessage}\n${a.systemMessage}` : a.systemMessage
+  } catch {}
+}
 
 // Claude Code hands every hook the session's inbox socket. Codex has none, and
 // that absence is what tells the daemon to hold messages for the hook to pull.

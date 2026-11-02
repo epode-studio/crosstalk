@@ -37,6 +37,7 @@ import { P } from "../config.ts"
 import { shim } from "../paths.ts"
 import * as R from "../restore.ts"
 import type { Step, Term } from "../restore.ts"
+import * as osc7501 from "../attention/osc7501.ts"
 
 export type TabState = "working" | "waiting" | "done" | "off"
 
@@ -180,6 +181,8 @@ export function actionsFor(t: Term, state: TabState, platform: NodeJS.Platform =
   else if (k === "iterm" && t.tty) out.push({ kind: "tty", path: t.tty, data: itermTabColour(state) + userVar(state) })
   else if (k === "wezterm" && t.tty) out.push({ kind: "tty", path: t.tty, data: userVar(state) })
   else if (k === "apple" && t.tty && platform === "darwin") out.push({ kind: "apple", tty: t.tty })
+  // The Program Status Protocol, opt-in, for the terminals that read it (src/attention/osc7501.ts).
+  if (osc7501.enabled() && osc7501.reads7501(t) && t.tty) out.push({ kind: "tty", path: t.tty, data: osc7501.sequence(state) })
   return out
 }
 

@@ -24,6 +24,7 @@
 //   crosstalk relay start|stop|status
 //   crosstalk daemon start|stop|restart
 //
+import * as attnCli from "./attention/cli.ts"
 import {
   loadIdentity,
   saveIdentity,
@@ -1754,5 +1755,7 @@ const commands: Record<string, () => Promise<void>> = {
   incident: async () => (await ready(), shipCli.incidentCmd(argv)),
   // For crosstalk's mod, not for people: see src/uicli.ts.
   ui: () => uiCmd(argv, ROOT_DIR),
+  // Sessions and attention, for the mod and notifications: src/attention/cli.ts.
+  attn: () => attnCli.attnCmd(argv),
 }
 await (commands[cmd] ?? (async () => die(`unknown command "${cmd}"`)))()

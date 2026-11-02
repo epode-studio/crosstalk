@@ -15,6 +15,13 @@
 //   rule           "You answered … twice. Always do this?": Always do this / Not now
 //   connect        "Connect with your team in <repo>?": Connect / Not in this repo
 //   conflict       "auth and billing cannot agree who changes parse()": the threads
+//   attention      "api's context is 91% spent. Start fresh from auth?", "auth has
+//                  been stuck for 2 hours. Add a second agent?", "bg-1 (in the
+//                  background) wants to use Bash: …": its options (src/attention)
+//   push           away from the keyboard: Claude Code's own PushNotification, a
+//                  sealed line with no question text in it
+//   context        after each turn, how much of the window is spent, to
+//                  `crosstalk attn context` (a fresh session instead of compacting)
 //   main           the status line of a main session counts every session
 //   own thread     a message about this session's own thread is handed to the
 //                  agent by itself (as data), when the prompt is empty and idle
@@ -122,6 +129,7 @@ function header(it: Item): string {
   if (it.kind === 'rule') return 'Rule'
   if (it.kind === 'connect') return 'Connect'
   if (it.kind === 'conflict') return 'Conflict'
+  if (it.kind === 'attention') return it.id.startsWith('attn:perm:') ? 'Permission' : it.id.startsWith('attn:staff:') ? 'Staffing' : 'Fresh start'
   return cut(it.thread ? `${it.from} · ${it.thread}` : it.from ?? 'crosstalk', 12)
 }
 
@@ -159,6 +167,7 @@ async function received($: EngineInterface, line: string) {
     threads?: string[]
     threadNotes?: { id: string; text: string }[]
     main?: { sessions: number; threads: number; waiting: number }
+    push?: { id: string; text: string }
   }
   try {
     w = JSON.parse(line)
@@ -182,12 +191,42 @@ async function received($: EngineInterface, line: string) {
     if (lastOpen !== -1 && !busy) tabStatus($, 'refresh')
     lastOpen = open.length
   }
+  if (w.push && !toasted.has(w.push.id)) {
+    toasted.add(w.push.id)
+    void phone($, w.push.text)
+  }
   if (w.note && !toasted.has(w.note.id)) {
     toasted.add(w.note.id)
     void tookNote($, w.note)
   }
   // Not awaited: a picker can stay up for minutes, and the watch must keep reading.
   void maybeRaise($)
+}
+
+/**
+ * Claude Code's own push to the phone (its PushNotification tool, there when
+ * Remote Control push is set up). The line is crosstalk's sealed one: a count
+ * and a thread name, never the question.
+ */
+async function phone($: EngineInterface, text: string) {
+  try {
+    const tools = await $.tool.list()
+    if (!tools.some(t => t.name === 'PushNotification')) return
+    await $.tool.call({ tool: 'PushNotification', message: text.slice(0, 180), status: 'proactive' } as never)
+  } catch {}
+}
+
+/** How much of the window is spent, for a fresh session instead of a compaction. Never awaited. */
+function reportContext($: EngineInterface) {
+  if (!bin || !session) return
+  void (async () => {
+    try {
+      const u = await $.session.usage()
+      const pct = u.context.percent
+      if (pct === undefined) return
+      await $.process.run([bin, 'attn', 'context', '--session', session, '--percent', String(pct), '--tokens', String(u.context.tokens ?? 0), '--window', String(u.context.window)], { timeoutMs: 10_000 })
+    } catch {}
+  })()
 }
 
 /** Receipts already toasted in this process. */
@@ -279,7 +318,7 @@ async function raise($: EngineInterface, it: Item) {
       answer = await $.ui.ask(it.question ?? 'crosstalk has a shipping question', { options: it.options ?? ['Not yet'], header: header(it) })
     else if (it.kind === 'thread')
       answer = await $.ui.ask(it.question ?? 'Which thread is this session part of?', { options: it.options ?? ['New thread', 'No thread'], header: header(it) })
-    else if (it.kind === 'rule' || it.kind === 'connect' || it.kind === 'conflict')
+    else if (it.kind === 'rule' || it.kind === 'connect' || it.kind === 'conflict' || it.kind === 'attention')
       answer = await $.ui.ask(it.question ?? 'crosstalk has a question', { options: it.options ?? ['Not now'], header: header(it) })
     else {
       const what = it.kind === 'ask' ? 'asks' : 'says'
@@ -329,7 +368,7 @@ async function answered($: EngineInterface, it: Item, answer: string) {
     await receipt($, `ship-${it.id}`, r.text ?? r.error ?? 'crosstalk: the shipping question did not answer')
     return
   }
-  if (it.kind === 'rule' || it.kind === 'connect' || it.kind === 'conflict') {
+  if (it.kind === 'rule' || it.kind === 'connect' || it.kind === 'conflict' || it.kind === 'attention') {
     const r = await step($, it, 'answer', answer)
     $.ui.toast(oneLine((r.text ?? r.error ?? 'crosstalk did not answer').replace(/^◢ crosstalk: /, '')))
     return
@@ -447,6 +486,7 @@ export const register: Register = on => {
       busy = false
       if (turns.delete(e.turnId)) lastTurnEnd = await $.clock.now()
       tabStatus($, 'Stop')
+      reportContext($)
       $.clock.after(300, () => maybeRaise($))
     }
     return out
@@ -577,6 +617,17 @@ export const register: Register = on => {
                 <Text dimColor>
                   {' '}
                   · {it.kind === 'rule' ? 'always answer this way?' : it.kind === 'connect' ? `connect with your team in ${it.thread ?? 'this repo'}?` : `who changes ${it.thread ?? 'it'}?`}
+                  {later(it)}
+                </Text>
+              </Text>
+            )
+          if (it.kind === 'attention')
+            return (
+              <Text key={it.id} wrap="truncate">
+                <Text color={THREAD} bold>◢ {it.from ?? it.thread ?? 'crosstalk'}</Text>
+                <Text dimColor>
+                  {' '}
+                  · {cut(oneLine(it.question ?? 'a question for you'), 90)}
                   {later(it)}
                 </Text>
               </Text>

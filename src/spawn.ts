@@ -25,6 +25,8 @@ import { P } from "./config.ts"
 import * as R from "./restore.ts"
 import { git as liveGit, repoName, slug, worktrees, type Git, type Worktree } from "./terminal/repo.ts"
 import { openForRepo, type Tab } from "./terminal/layout.ts"
+import * as bgx from "./attention/background.ts"
+import { focusSession } from "./attention/show.ts"
 
 export const DEP_DIRS = ["node_modules", ".venv", "venv"]
 export const MAX_AGENTS = 8
@@ -46,6 +48,8 @@ export type SpawnRec = {
   background: boolean
   /** The tmux session in crosstalk's own server, for a background agent. */
   tmux?: string
+  /** A background agent that is Claude Code's own (`claude --bg`), where there is no tmux. */
+  claudeBg?: boolean
   /** The session that asked. */
   by?: string
   /** The agent's own session, once its first hook has run. */
@@ -215,7 +219,8 @@ export function cleanEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 export const backgroundSteps = (p: Planned): R.Step[] => [
-  { cmd: "tmux", args: ["-L", TMUX_SOCKET, "-f", tmuxConf(), "new-session", "-d", "-s", p.name, "-c", p.cwd, p.tab.argv.map(R.shq).join(" ")] },
+  // Marked, so its permission prompts come to the person as questions (src/attention/permission.ts).
+  { cmd: "tmux", args: ["-L", TMUX_SOCKET, "-f", tmuxConf(), "new-session", "-d", "-s", p.name, "-c", p.cwd, bgx.tmuxArgv(p.tab.argv, p.name).map(R.shq).join(" ")] },
 ]
 
 export const attachArgv = (name: string) => ["env", "-u", "TMUX", "-u", "TMUX_PANE", "tmux", "-L", TMUX_SOCKET, "attach-session", "-t", `=${name}`]
@@ -288,7 +293,10 @@ export function spawnAgents(o: {
   const wts = worktrees(o.cwd, g)
   const main = wts[0]?.path ?? top.out
   const common = g(o.cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
-  if (o.background && !which("tmux", env))
+  // No tmux (native Windows, mostly): Claude Code's own background sessions, if this claude has them.
+  const claudeBin = which("claude", env) ?? "claude"
+  const claudeBg = !!o.background && !which("tmux", env) && bgx.claudeBackground(claudeBin, env).bg
+  if (o.background && !which("tmux", env) && !claudeBg)
     return { ok: false, text: "◢ crosstalk: background agents run in tmux, which is not installed here. Install tmux, or start the agent in a tab instead.", agents: [] }
 
   const plans = planSpawn({
@@ -334,7 +342,7 @@ export function spawnAgents(o: {
       base: base.out,
       createdAt: Date.now(),
       background: !!o.background,
-      ...(o.background ? { tmux: p.name } : {}),
+      ...(o.background ? (claudeBg ? { claudeBg: true } : { tmux: p.name }) : {}),
       by: o.by,
       links: linked,
     }
@@ -346,7 +354,19 @@ export function spawnAgents(o: {
   const started = plans.filter((p) => made.some((m) => m.name === p.name))
   let where = ""
   let ok = true
-  if (o.background) {
+  if (o.background && claudeBg) {
+    const failed: string[] = []
+    for (const p of started) {
+      const st = bgx.bgStep({ claude: claudeBin, name: p.name, task, cwd: p.cwd })
+      const r = spawnSync(st.cmd, st.args, { cwd: st.cwd, encoding: "utf8", timeout: 60_000, env: { ...env, ...st.env } })
+      if (r.status !== 0) failed.push(`${p.name} (${`${r.stderr ?? ""}${r.error ?? ""}`.trim().split("\n").pop()})`)
+    }
+    if (failed.length) {
+      ok = false
+      notes.push(`could not start in the background: ${failed.join(", ")}`)
+    }
+    where = `in the background as Claude Code's own background session${started.length === 1 ? "" : "s"}. Say "show me ${started[0].name}" to watch ${started.length === 1 ? "it" : "one"}`
+  } else if (o.background) {
     ensureConf()
     const failed: string[] = []
     for (const p of started) {
@@ -391,8 +411,20 @@ export function findAgent(name: string, recs = readSpawned()): SpawnRec | null {
 export function show(o: { name: string; cwd: string; env?: NodeJS.ProcessEnv; by?: string }): { ok: boolean; text: string } {
   const env = o.env ?? process.env
   const rec = findAgent(o.name)
+  if (rec?.claudeBg) {
+    // Claude Code's own background session: `claude attach` in a new tab.
+    const claude = which("claude", env) ?? "claude"
+    const r = openForRepo([{ cwd: rec.cwd, argv: bgx.attachArgv(claude, rec.name), name: rec.name }], { cwd: rec.cwd, envVars: env, by: o.by })
+    if (r.opened.kind === "manual" || !r.ok) return { ok: r.opened.kind === "manual", text: `◢ crosstalk: to watch ${rec.name}, run:\n  ${R.shq(claude)} attach ${R.shq(rec.name)}` }
+    return { ok: true, text: `◢ crosstalk: opened ${rec.name} in a new tab in ${r.opened.where}. Leaving it leaves it running.` }
+  }
   const session = rec?.tmux ?? (tmuxHas(slug(o.name), env) ? slug(o.name) : null)
   if (!session) {
+    // One of the person's own sessions: its tab, brought to the front.
+    if (!rec || !rec.background) {
+      const f = focusSession({ name: rec?.name ?? o.name, env })
+      if (f.found) return { ok: f.ok, text: f.text }
+    }
     if (rec && !rec.background) return { ok: true, text: `◢ crosstalk: ${rec.name} runs in a tab of its own already, in ${rec.cwd}.` }
     const bg = readSpawned().filter((r) => r.background && !r.removedAt && tmuxHas(r.tmux!, env)).map((r) => r.name)
     return { ok: false, text: `◢ crosstalk: no background agent called ${o.name}.${bg.length ? ` Running in the background: ${bg.join(", ")}.` : ""}` }

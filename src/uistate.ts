@@ -30,7 +30,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { P } from "./config.ts"
 
-export type UiKind = "restore" | "message" | "ask" | "route" | "gather" | "team" | "cleanup" | "thread" | "ship" | "rule" | "connect" | "conflict"
+export type UiKind = "restore" | "message" | "ask" | "route" | "gather" | "team" | "cleanup" | "thread" | "ship" | "rule" | "connect" | "conflict" | "attention"
 export type UiState = "pending" | "answered" | "handed" | "muted" | "later"
 export type UiAction = "hand" | "answer" | "mute" | "later" | "raised"
 

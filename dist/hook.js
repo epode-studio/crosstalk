@@ -2,9 +2,9 @@
 // @bun
 
 // src/hook.ts
-import path17 from "path";
+import path18 from "path";
 import os6 from "os";
-import fs13 from "fs";
+import fs14 from "fs";
 
 // src/client.ts
 import net from "node:net";
@@ -1590,6 +1590,21 @@ function takeNote(session, id) {
 import fs7 from "node:fs";
 import path10 from "node:path";
 import { spawn as spawn5, spawnSync as spawnSync5 } from "node:child_process";
+
+// src/attention/osc7501.ts
+var enabled = (env = process.env) => env.CROSSTALK_OSC7501 === "1";
+function reads7501(t) {
+  if (t.tmux)
+    return false;
+  const p = (t.program ?? "").toLowerCase();
+  return p === "ghostty" || p.startsWith("rex");
+}
+function sequence(state, id = "crosstalk") {
+  const s = state === "working" ? "state=working" : state === "waiting" ? "state=blocked:kind=question" : state === "done" ? "state=done" : "state=idle";
+  return `\x1B]7501;${s}:app=crosstalk:id=${id.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32) || "crosstalk"}\x1B\\`;
+}
+
+// src/terminal/status.ts
 var COLOUR = {
   working: [47, 111, 214],
   waiting: [229, 140, 10],
@@ -1680,6 +1695,8 @@ function actionsFor(t, state, platform = process.platform) {
     out.push({ kind: "tty", path: t.tty, data: userVar(state) });
   else if (k === "apple" && t.tty && platform === "darwin")
     out.push({ kind: "apple", tty: t.tty });
+  if (enabled() && reads7501(t) && t.tty)
+    out.push({ kind: "tty", path: t.tty, data: sequence(state) });
   return out;
 }
 var appleTab = (tty, body) => [
@@ -1995,6 +2012,28 @@ function modActive2(sessionId, now = Date.now()) {
 import fs9 from "node:fs";
 import path12 from "node:path";
 import { spawnSync as spawnSync6 } from "node:child_process";
+
+// src/attention/focus.ts
+var appleFrontTtyScript = [
+  `if application "Terminal" is running then`,
+  `	tell application "Terminal"`,
+  `		if frontmost then return tty of selected tab of front window`,
+  `	end tell`,
+  `end if`,
+  `return ""`
+].join(`
+`);
+var itermFrontTtyScript = [
+  `if application "iTerm2" is running then`,
+  `	tell application "iTerm2"`,
+  `		if frontmost then return tty of current session of current window`,
+  `	end tell`,
+  `end if`,
+  `return ""`
+].join(`
+`);
+
+// src/spawn.ts
 var TMUX_SOCKET = "crosstalk";
 var dir4 = () => path12.join(P.root, "spawned");
 var fileOf4 = (id) => path12.join(dir4(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
@@ -2490,6 +2529,100 @@ ${(after ?? "").split(`
   return { file, root, symbols, pending, diff };
 }
 
+// src/client.ts
+import net2 from "node:net";
+function request2(req, timeoutMs = 130000) {
+  return new Promise((resolve, reject) => {
+    const sock = net2.createConnection(P.daemonSock);
+    let rest = "";
+    const t = setTimeout(() => {
+      sock.destroy();
+      reject(new Error("daemon did not answer"));
+    }, timeoutMs);
+    sock.on("connect", () => sock.write(JSON.stringify(req) + `
+`));
+    sock.on("data", (b) => {
+      rest += b.toString("utf8");
+      const i = rest.indexOf(`
+`);
+      if (i === -1)
+        return;
+      clearTimeout(t);
+      const line = rest.slice(0, i);
+      sock.end();
+      try {
+        resolve(JSON.parse(line));
+      } catch (e) {
+        reject(e);
+      }
+    });
+    sock.on("error", (e) => {
+      clearTimeout(t);
+      reject(e);
+    });
+  });
+}
+
+// src/attention/activity.ts
+import fs13 from "node:fs";
+import path17 from "node:path";
+var dir5 = () => path17.join(P.root, "typed");
+var safe6 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
+function noteTyped(sessionId, now = Date.now()) {
+  if (!sessionId)
+    return;
+  try {
+    fs13.mkdirSync(dir5(), { recursive: true, mode: 448 });
+    const f = path17.join(dir5(), safe6(sessionId));
+    fs13.writeFileSync(f, sessionId, { mode: 384 });
+    const t = new Date(now);
+    fs13.utimesSync(f, t, t);
+  } catch {}
+}
+
+// src/attention/permission.ts
+var waitMs = (env = process.env) => {
+  const n = Number(env.CROSSTALK_PERMISSION_WAIT_MS);
+  return n > 0 ? n : 55 * 60000;
+};
+var hookOutput = (d) => ({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: d } });
+var backgroundAgent = (env) => (env.CROSSTALK_BG_AGENT ?? "").trim();
+
+// src/attention/hook.ts
+async function fromHook2(o) {
+  if (o.env.CROSSTALK_NO_ATTENTION === "1")
+    return {};
+  const { event, sessionId, hook } = o;
+  const out = {};
+  try {
+    const agent = backgroundAgent(o.env);
+    if (agent && /^(SessionStart|Stop)$/.test(event))
+      await request2({ op: "attn_bg", sessionId, agent }, 3000).catch(() => null);
+    if (event === "UserPromptSubmit" && !agent)
+      noteTyped(sessionId);
+    if (event === "Stop" && !hook.stop_hook_active) {
+      await request2({ op: "attn_stop", sessionId, cwd: o.cwd, transcript: hook.transcript_path }, 5000).catch(() => null);
+    }
+    if (event === "PreCompact") {
+      const r = await request2({ op: "attn_precompact", sessionId, cwd: o.cwd, trigger: hook.trigger ?? "auto" }, 1e4).catch(() => null);
+      if (r?.block)
+        out.exit = { decision: "block", reason: String(r.block) };
+    }
+    if (event === "PermissionRequest") {
+      if (!agent)
+        return out;
+      const r = await request2({ op: "attn_permission", sessionId, cwd: o.cwd, agent, tool: hook.tool_name, input: hook.tool_input, suggestions: hook.permission_suggestions }, waitMs(o.env) + 30000).catch(() => null);
+      out.exit = r?.decision ? hookOutput(r.decision) : {};
+    }
+    if (!o.mod && /^(SessionStart|UserPromptSubmit)$/.test(event)) {
+      const r = await request2({ op: "attn_notes", sessionId }, 3000).catch(() => null);
+      if (r?.systemMessage)
+        out.systemMessage = String(r.systemMessage);
+    }
+  } catch {}
+  return out;
+}
+
 // src/hook.ts
 var input = await new Promise((resolve) => {
   let raw = "";
@@ -2526,8 +2659,8 @@ function agyCwd() {
   if (Array.isArray(ws) && typeof ws[0] === "string" && ws[0])
     return ws[0];
   const here = process.cwd();
-  if (AGENT_DIRS.has(path17.basename(here)))
-    return path17.dirname(here);
+  if (AGENT_DIRS.has(path18.basename(here)))
+    return path18.dirname(here);
   return here;
 }
 var cwd = hook.cwd ?? hook.working_dir ?? hook.workspace_roots?.[0] ?? (isAgy ? agyCwd() : process.cwd());
@@ -2619,6 +2752,20 @@ if (!loadIdentity() || !sessionId) {
   process.exit(0);
 }
 var root = rootFrom2(import.meta.url);
+if (restoreClient === "claude" && /^(SessionStart|UserPromptSubmit|Stop|PreCompact|PermissionRequest)$/.test(eventName)) {
+  try {
+    if (/^(Stop|PreCompact|PermissionRequest)$/.test(eventName) || process.env.CROSSTALK_BG_AGENT)
+      await ensureDaemon(root);
+    const a = await fromHook2({ event: eventName, sessionId, cwd, hook, env: process.env, mod: modActive(sessionId) });
+    if (a.exit) {
+      process.stdout.write(JSON.stringify(a.exit));
+      process.exit(0);
+    }
+    if (a.systemMessage)
+      systemMessage = systemMessage ? `${systemMessage}
+${a.systemMessage}` : a.systemMessage;
+  } catch {}
+}
 var socket = process.env.CLAUDE_CODE_MESSAGING_SOCKET;
 async function registerSession() {
   if (!await ensureDaemon(root))
@@ -2626,11 +2773,11 @@ async function registerSession() {
   let name = `session-${process.ppid}`;
   if (socket) {
     try {
-      const dir = path17.join(os6.homedir(), ".claude", "sessions");
-      for (const f of fs13.readdirSync(dir)) {
+      const dir = path18.join(os6.homedir(), ".claude", "sessions");
+      for (const f of fs14.readdirSync(dir)) {
         if (!f.endsWith(".json"))
           continue;
-        const e = JSON.parse(fs13.readFileSync(path17.join(dir, f), "utf8"));
+        const e = JSON.parse(fs14.readFileSync(path18.join(dir, f), "utf8"));
         if (e.sessionId === sessionId) {
           name = e.name ?? name;
           break;
@@ -2638,7 +2785,7 @@ async function registerSession() {
       }
     } catch {}
   } else {
-    name = hook.thread_name ?? (path17.basename(cwd) || name);
+    name = hook.thread_name ?? (path18.basename(cwd) || name);
   }
   const registered = await request({
     op: "register",
