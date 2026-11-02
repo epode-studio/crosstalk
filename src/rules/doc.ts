@@ -22,12 +22,14 @@ import type { Identity, Peer } from "../config.ts"
 import * as M from "../threads/model.ts"
 import * as F from "../threads/format.ts"
 import { newKey, unwrapKey, wrapKey } from "../threads/seal.ts"
+import { check, validKey, wins } from "../threads/rekey.ts"
 
 export const RULES_FILE = "RULES.md"
 
 export type Rule = M.Item<M.Rule>
 
-type State = { v: 1; docs: Record<string, M.Thread>; keys: Record<string, string> }
+/** epochs and holders: the key's generation and who it may have reached (threads/rekey.ts). */
+type State = { v: 1; docs: Record<string, M.Thread>; keys: Record<string, string>; epochs?: Record<string, number>; holders?: Record<string, string[]> }
 
 export const docId = (repo: string) => crypto.createHash("sha256").update(`crosstalk-rules:${repo}`).digest("hex").slice(0, 16)
 export const ruleId = (key: string) => `r_${crypto.createHash("sha256").update(key).digest("hex").slice(0, 12)}`
@@ -54,7 +56,7 @@ export class RuleDocs {
           const ok = M.parseThread(t)
           if (ok) docs[repo] = ok
         }
-        return { v: 1, docs, keys: raw.keys ?? {} }
+        return { v: 1, docs, keys: raw.keys ?? {}, epochs: raw.epochs ?? {}, holders: raw.holders ?? {} }
       }
     } catch {}
     return { v: 1, docs: {}, keys: {} }
@@ -130,11 +132,14 @@ export class RuleDocs {
   }
 
   /** Merge another replica in. Returns the rules that appeared and went. */
-  merge(repo: string, inc: M.Thread, key?: string): Change {
+  merge(repo: string, inc: M.Thread, key?: string, epoch = 0): Change {
     if (inc.id !== docId(repo)) return { added: [], removed: [] }
-    if (key && Buffer.from(key, "base64").length === 32) {
-      const mine = this.st.keys[repo]
-      if (!mine || key < mine) this.st.keys[repo] = key
+    if (validKey(key) && wins({ key: this.st.keys[repo], epoch: this.epoch(repo) }, { key, epoch })) {
+      const changed = this.st.keys[repo] !== key
+      this.st.keys[repo] = key
+      if (epoch) (this.st.epochs ??= {})[repo] = epoch
+      if (changed) delete (this.st.holders ??= {})[repo]
+      this.save()
     }
     const known = this.st.docs[repo]
     const before = new Map((known ? (M.live(known, "rules") as Rule[]) : []).map((r) => [r.id, r]))
@@ -153,7 +158,30 @@ export class RuleDocs {
   /** What travels over the relay. */
   frame(repo: string): { repo: string; doc: M.Thread; key?: string } | undefined {
     const t = this.st.docs[repo]
-    return t ? { repo, doc: t, key: this.st.keys[repo] } : undefined
+    return t ? { repo, doc: t, key: this.st.keys[repo], ...(this.epoch(repo) ? { epoch: this.epoch(repo) } : {}) } : undefined
+  }
+
+  epoch = (repo: string) => this.st.epochs?.[repo] ?? 0
+
+  /**
+   * A new key when someone who may hold this one is no longer among `should`
+   * (everyone in the repo's threads, minus revoked keys). True when it changed:
+   * the caller sends the rules again, and RULES.md is re-sealed on the commit.
+   */
+  ensureKey(repo: string, should: string[]): boolean {
+    if (!this.st.docs[repo] || this.st.docs[repo].meta.value.public || !this.st.keys[repo]) return false
+    const holders = (this.st.holders ??= {})
+    const r = check({ me: this.me, holders: holders[repo], should: [...new Set([...should, this.me])].sort() })
+    const same = M.canonical(holders[repo]) === M.canonical(r.holders)
+    holders[repo] = r.holders
+    if (!r.rotate) {
+      if (!same) this.save()
+      return false
+    }
+    this.st.keys[repo] = newKey().toString("base64")
+    ;(this.st.epochs ??= {})[repo] = this.epoch(repo) + 1
+    this.save()
+    return true
   }
 
   /** RULES.md for this repo, sealed to `recipients` unless the rules were made public. */
@@ -164,7 +192,7 @@ export class RuleDocs {
     const k = this.st.keys[repo]
     if (!k) return undefined
     const key = Buffer.from(k, "base64")
-    return F.renderSealed(t, key, wrapKey(this.d.identity, key, recipients))
+    return F.renderSealed(t, key, wrapKey(this.d.identity, key, recipients), this.epoch(repo))
   }
 
   /** RULES.md as read from the ref. A copy nobody gave us the key to changes nothing. */
@@ -183,6 +211,6 @@ export class RuleDocs {
       }
     }
     if (!t) return { added: [], removed: [] }
-    return this.merge(repo, t, key)
+    return this.merge(repo, t, key, p.kind === "sealed" ? p.epoch : 0)
   }
 }

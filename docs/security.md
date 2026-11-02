@@ -173,3 +173,38 @@ its own ref, with your usual git credentials and without running your git hooks,
 uses plumbing only (the working tree, index, HEAD and branches are never
 touched), and adds the fetch refspec to `.git/config` so an ordinary fetch keeps
 the statements current.
+
+## Leaving a thread
+
+A sealed thread has one random content key, wrapped for each of its people
+(`src/threads/seal.ts`). Taking a person out of the wraps alone would not be
+enough: they already hold the key. So the key is replaced whenever someone who
+may hold it should no longer (`src/threads/rekey.ts`):
+
+- **When.** A person leaves (`crosstalk_thread_person` with "me"), is taken out
+  by someone in the thread, or has their crosstalk key revoked through repo
+  trust. Each daemon checks after every change to a thread and on every sync
+  with the ref.
+- **What.** A new random key, one epoch up, wrapped only for the people left.
+  It travels in the thread frame, sealed pairwise like everything else, and the
+  next commit seals every section with it. A removed person is not sent the
+  frame, is not added back by matching the thread's files, and their frames
+  are ignored.
+- **Converging.** Two people may replace the key at once. Every replica keeps
+  the higher epoch, then the smaller key, so they agree, and a stale copy from
+  git or the relay can never put an old key back.
+- **RULES.md** works the same way: its key is replaced when someone is no
+  longer in any of the repo's threads, or is revoked.
+
+**What it does not do.** Old commits on `refs/crosstalk/threads` are not
+rewritten. Whoever held the old key can still open what was committed before
+they left, as they could the day they read it: that data was already handed
+over, and rewriting shared history would break everyone else's clones without
+taking it back. What is written after the new key is sealed is closed to them.
+
+## Local measurements
+
+`crosstalk_stats` and the weekly digest line are computed from
+`<crosstalk home>/metrics.jsonl` and Claude Code's own transcripts on this
+machine. Nothing is sent anywhere: not over the relay, not to the ref. Set
+`CROSSTALK_NO_METRICS=1` to record nothing.

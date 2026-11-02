@@ -28,6 +28,9 @@ import * as H from "./rules/history.ts"
 import { describe, neverAuto, ruleKey, type Question } from "./rules/key.ts"
 import { WarnService, type LocalMessage } from "./warn/service.ts"
 import type { Conflict } from "./warn/conflict.ts"
+import { revokedFingerprints, shouldHold } from "./threads/rekey.ts"
+import * as metrics from "./metrics/log.ts"
+import { CrossRepo } from "./threads/crossrepo.ts"
 
 export { RULES_FILE }
 
@@ -83,7 +86,10 @@ export class Coordinator {
       ask: (sids, c) => this.askConflict(sids, c),
       sessionsNamed: (name) => [...d.sessions().values()].filter((s) => s.name === name).map((s) => s.sessionId),
     })
+    this.cross = new CrossRepo({ me: this.me, label: d.identity.label, threads: d.threads, peers: d.peers, relay: (o) => this.warn.relay(o), log: d.log })
   }
+
+  readonly cross: CrossRepo
 
   private save = () => H.saveHistory(this.hist)
 
@@ -143,7 +149,12 @@ export class Coordinator {
     this.save()
   }
 
-  mainStatus(sid: string): { sessions: number; threads: number; waiting: number } | undefined {
+  /** A digest line from another module (src/extras.ts): disk, stats. */
+  note(n: Note, to?: string) {
+    this.digest(n, to)
+  }
+
+  mainStatus(sid: string):{ sessions: number; threads: number; waiting: number } | undefined {
     if (this.mainId() !== sid) return undefined
     const all = [...this.d.sessions().keys()].filter((s) => s !== sid)
     const threads = new Set(all.flatMap((s) => this.d.threads.idsFor(s)))
@@ -225,7 +236,15 @@ export class Coordinator {
         const e = req.edit ?? {}
         if (typeof e.file !== "string") return { ok: false, error: "edited needs a file" }
         const strs = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").slice(0, 100) : [])
-        return { ok: true, ...this.warn.edited({ sessionId: sid, name: self?.name ?? sid, repo, edit: { file: e.file, symbols: strs(e.symbols), pending: strs(e.pending), diff: String(e.diff ?? "").slice(0, 64 * 1024) } }) }
+        const out = this.warn.edited({ sessionId: sid, name: self?.name ?? sid, repo, edit: { file: e.file, symbols: strs(e.symbols), pending: strs(e.pending), diff: String(e.diff ?? "").slice(0, 64 * 1024) } })
+        // A library's public surface: the repos that depend on it hear too (threads/crossrepo.ts).
+        let dependents: string[] = []
+        try {
+          dependents = this.cross.edited({ sessionId: sid, name: self?.name ?? sid, repo, root: typeof e.root === "string" ? e.root : this.d.threads.rootFor(repo), file: e.file, diff: String(e.diff ?? "") })
+        } catch (err) {
+          this.d.log(`cross-repo: ${(err as Error).message}`)
+        }
+        return { ok: true, ...out, ...(dependents.length ? { dependents } : {}) }
       }
       case "conflict": {
         if (!req.id) return { ok: true, conflicts: this.warn.list(self?.sessionId) }
@@ -338,6 +357,7 @@ export class Coordinator {
   }
 
   private autoNote(id: string, what: string, answer: string, rule: { text: string }) {
+    metrics.record({ k: "auto", at: Date.now(), id, what: what.slice(0, 120) })
     this.digest({ id: `auto:${id}`, text: `◢ crosstalk: answered ${what} with "${answer}", by the standing rule (${rule.text}).` })
   }
 
@@ -498,7 +518,7 @@ export class Coordinator {
     const doc = M.parseThread(f?.doc)
     if (!peer || !f || typeof f.repo !== "string" || !doc) return this.d.log(`ignored malformed rules from ${label}`)
     if (!this.d.threads.peopleIn(f.repo).includes(peer.fingerprint)) return this.d.log(`ignored rules for ${f.repo} from ${label}: not in any of its threads here`)
-    const change = this.docs.merge(f.repo, doc, typeof f.key === "string" ? f.key : undefined)
+    const change = this.docs.merge(f.repo, doc, typeof f.key === "string" ? f.key : undefined, Number((f as any).epoch) || 0)
     this.announce(f.repo, change)
     if (change.added.length) this.onThreadsFlush(this.d.threads.list().filter((t) => t.repo === f.repo).map((t) => t.id))
   }
@@ -510,8 +530,13 @@ export class Coordinator {
 
   renderRules(repo: string): string | undefined {
     const byFp = new Map(Object.values(this.d.peers()).map((p) => [p.fingerprint, p]))
-    const recipients = this.d.threads
-      .peopleIn(repo)
+    // Someone no longer in any of the repo's threads, or revoked, gets no key that opens what is written next.
+    const should = shouldHold(this.d.threads.peopleIn(repo), revokedFingerprints())
+    if (this.docs.ensureKey(repo, should)) {
+      this.d.log(`rules for ${repo}: new key (epoch ${this.docs.epoch(repo)})`)
+      this.publish(repo)
+    }
+    const recipients = should
       .map((fp) => byFp.get(fp))
       .filter((p): p is Peer => !!p)
     return this.docs.render(repo, recipients)

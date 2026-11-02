@@ -2,9 +2,9 @@
 // @bun
 
 // src/daemon.ts
-import fs30 from "fs";
+import fs39 from "fs";
 import net3 from "net";
-import path38 from "path";
+import path47 from "path";
 import crypto19 from "crypto";
 
 // src/config.ts
@@ -469,8 +469,8 @@ function choose(candidates, msg) {
 var bindingKey = (sender, msg) => `${sender}\x00${msg.repo ?? ""}\x00${msg.branch ?? ""}`;
 
 // src/uistate.ts
-import fs4 from "node:fs";
-import path5 from "node:path";
+import fs5 from "node:fs";
+import path6 from "node:path";
 
 // src/config.ts
 import fs3 from "node:fs";
@@ -554,45 +554,88 @@ var loadIdentity2 = () => {
 var loadPeers2 = () => readJson2(P2.peers, {});
 var savePeers = (peers) => writeJson2(P2.peers, peers);
 
+// src/metrics/log.ts
+import fs4 from "node:fs";
+import path5 from "node:path";
+var file = () => path5.join(process.env.CROSSTALK_HOME ?? ROOT2, "metrics.jsonl");
+var MAX_BYTES = 8 * 1024 * 1024;
+var off = () => process.env.CROSSTALK_NO_METRICS === "1";
+function record(e) {
+  if (off())
+    return;
+  try {
+    const f = file();
+    fs4.mkdirSync(path5.dirname(f), { recursive: true, mode: 448 });
+    fs4.appendFileSync(f, JSON.stringify(e) + `
+`, { mode: 384 });
+    const size = fs4.statSync(f).size;
+    if (size > MAX_BYTES) {
+      const lines = fs4.readFileSync(f, "utf8").split(`
+`).filter(Boolean);
+      const tmp = `${f}.${process.pid}.tmp`;
+      fs4.writeFileSync(tmp, lines.slice(Math.floor(lines.length / 2)).join(`
+`) + `
+`, { mode: 384 });
+      fs4.renameSync(tmp, f);
+    }
+  } catch {}
+}
+function read(f = file()) {
+  try {
+    return fs4.readFileSync(f, "utf8").split(`
+`).filter(Boolean).flatMap((l) => {
+      try {
+        const e = JSON.parse(l);
+        return e && typeof e.k === "string" && typeof e.at === "number" ? [e] : [];
+      } catch {
+        return [];
+      }
+    });
+  } catch {
+    return [];
+  }
+}
+var QUESTION_KINDS = new Set(["route", "gather", "team", "cleanup", "thread", "ship", "rule", "connect", "conflict", "disk", "install", "restore"]);
+
 // src/uistate.ts
 var FINAL = new Set(["answered", "handed", "muted"]);
-var file = () => path5.join(P2.root, "ui.json");
-var lockDir = () => path5.join(P2.root, "ui.lock");
-var markers = () => path5.join(P2.root, "ui-mod");
+var file2 = () => path6.join(P2.root, "ui.json");
+var lockDir = () => path6.join(P2.root, "ui.lock");
+var markers = () => path6.join(P2.root, "ui-mod");
 var safe = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
 var WEEK = 7 * 24 * 60 * 60 * 1000;
-function read() {
+function read2() {
   try {
-    const f = JSON.parse(fs4.readFileSync(file(), "utf8"));
+    const f = JSON.parse(fs5.readFileSync(file2(), "utf8"));
     if (f && f.v === 1 && f.items && typeof f.items === "object")
       return f;
   } catch {}
   return { v: 1, items: {} };
 }
 function write(f) {
-  fs4.mkdirSync(P2.root, { recursive: true, mode: 448 });
-  const tmp = `${file()}.${process.pid}.tmp`;
-  fs4.writeFileSync(tmp, JSON.stringify(f, null, 2), { mode: 384 });
-  fs4.renameSync(tmp, file());
+  fs5.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  const tmp = `${file2()}.${process.pid}.tmp`;
+  fs5.writeFileSync(tmp, JSON.stringify(f, null, 2), { mode: 384 });
+  fs5.renameSync(tmp, file2());
 }
 var sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 function withStore(fn) {
-  fs4.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  fs5.mkdirSync(P2.root, { recursive: true, mode: 448 });
   let held = false;
   for (let i = 0;i < 200 && !held; i++) {
     try {
-      fs4.mkdirSync(lockDir());
+      fs5.mkdirSync(lockDir());
       held = true;
     } catch {
       try {
-        if (Date.now() - fs4.statSync(lockDir()).mtimeMs > 1e4)
-          fs4.rmdirSync(lockDir());
+        if (Date.now() - fs5.statSync(lockDir()).mtimeMs > 1e4)
+          fs5.rmdirSync(lockDir());
       } catch {}
       sleepSync(10);
     }
   }
   try {
-    const f = read();
+    const f = read2();
     const was = JSON.stringify(f);
     const now = Date.now();
     const out = fn(f.items, now);
@@ -605,17 +648,20 @@ function withStore(fn) {
   } finally {
     if (held)
       try {
-        fs4.rmdirSync(lockDir());
+        fs5.rmdirSync(lockDir());
       } catch {}
   }
 }
 function snapshot() {
-  return read().items;
+  return read2().items;
 }
 function upsert(items, it, now) {
   const before = items[it.id];
-  if (!before)
+  if (!before) {
+    if (QUESTION_KINDS.has(it.kind))
+      record({ k: "asked", at: now, id: it.id, kind: it.kind, ...it.thread ? { thread: it.thread } : {} });
     return items[it.id] = { ...it, state: "pending", createdAt: now, updatedAt: now };
+  }
   if (FINAL.has(before.state))
     return before;
   const moved = before.sessionId !== it.sessionId;
@@ -656,6 +702,8 @@ function act(items, id, action, now, answer) {
       next.state = "answered";
       if (answer !== undefined)
         next.answer = answer;
+      if (QUESTION_KINDS.has(it.kind))
+        record({ k: "answered", at: now, id, kind: it.kind, openMs: now - (it.raisedAt ?? it.createdAt), ...it.thread ? { thread: it.thread } : {} });
       break;
     default:
       return { ok: false, error: `unknown action ${action}`, item: it };
@@ -679,18 +727,18 @@ function openFor(items, sessionId) {
 var MARKER_MS = 10 * 60 * 1000;
 function modActive(sessionId, now = Date.now()) {
   try {
-    return now - fs4.statSync(path5.join(markers(), safe(sessionId))).mtimeMs < MARKER_MS;
+    return now - fs5.statSync(path6.join(markers(), safe(sessionId))).mtimeMs < MARKER_MS;
   } catch {
     return false;
   }
 }
 
 // src/trust.ts
-import path6 from "node:path";
+import path7 from "node:path";
 var LEVELS = ["mute", "notify", "ask", "handoff", "deliver"];
 var rank = (l) => LEVELS.indexOf(l);
 var atLeast = (have, need) => rank(have) >= rank(need);
-var FILE = path6.join(ROOT2, "trust.json");
+var FILE = path7.join(ROOT2, "trust.json");
 
 // src/policy.ts
 var REQUIRES = {
@@ -720,14 +768,14 @@ function triage(level, intent, kind, receiverStatus, muted = false) {
 }
 
 // src/trust.ts
-import fs5 from "node:fs";
-import path7 from "node:path";
+import fs6 from "node:fs";
+import path8 from "node:path";
 var LEVELS2 = ["mute", "notify", "ask", "handoff", "deliver"];
 var rank2 = (l) => LEVELS2.indexOf(l);
 var atLeast2 = (have, need) => rank2(have) >= rank2(need);
 var lower = (a, b) => rank2(a) <= rank2(b) ? a : b;
 var isLevel = (s) => LEVELS2.includes(s);
-var FILE2 = path7.join(ROOT2, "trust.json");
+var FILE2 = path8.join(ROOT2, "trust.json");
 var DEFAULT_TRUST = {
   rooms: {},
   people: {},
@@ -737,7 +785,7 @@ var DEFAULT_TRUST = {
 var ROOM_DEFAULT = "notify";
 function load() {
   try {
-    const raw = JSON.parse(fs5.readFileSync(FILE2, "utf8"));
+    const raw = JSON.parse(fs6.readFileSync(FILE2, "utf8"));
     return {
       rooms: raw.rooms ?? {},
       people: raw.people ?? {},
@@ -749,10 +797,10 @@ function load() {
   }
 }
 function save(t) {
-  fs5.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+  fs6.mkdirSync(ROOT2, { recursive: true, mode: 448 });
   const tmp = `${FILE2}.tmp`;
-  fs5.writeFileSync(tmp, JSON.stringify(t, null, 2), { mode: 384 });
-  fs5.renameSync(tmp, FILE2);
+  fs6.writeFileSync(tmp, JSON.stringify(t, null, 2), { mode: 384 });
+  fs6.renameSync(tmp, FILE2);
 }
 function levelFor(person, ctx, t = load()) {
   const pinned = t.people[person];
@@ -781,26 +829,26 @@ function isMuted(person, ctx, t = load(), now = Date.now()) {
 }
 
 // src/outbound.ts
-import fs6 from "node:fs";
-import path8 from "node:path";
-var FILE3 = path8.join(ROOT2, "outbound.json");
+import fs7 from "node:fs";
+import path9 from "node:path";
+var FILE3 = path9.join(ROOT2, "outbound.json");
 var WINDOW_MS = 60 * 60000;
 var UNPROMPTED_PER_HOUR = Number(process.env.CROSSTALK_UNPROMPTED_PER_HOUR ?? 5);
-var read2 = () => {
+var read3 = () => {
   try {
-    return JSON.parse(fs6.readFileSync(FILE3, "utf8"));
+    return JSON.parse(fs7.readFileSync(FILE3, "utf8"));
   } catch {
     return {};
   }
 };
 var write2 = (l) => {
   try {
-    fs6.mkdirSync(ROOT2, { recursive: true, mode: 448 });
-    fs6.writeFileSync(FILE3, JSON.stringify(l), { mode: 384 });
+    fs7.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+    fs7.writeFileSync(FILE3, JSON.stringify(l), { mode: 384 });
   } catch {}
 };
 function spend(peer, now = Date.now()) {
-  const log = read2();
+  const log = read3();
   const recent = (log[peer] ?? []).filter((t) => now - t < WINDOW_MS);
   if (recent.length >= UNPROMPTED_PER_HOUR)
     return { ok: false, left: 0 };
@@ -811,31 +859,31 @@ function spend(peer, now = Date.now()) {
 }
 
 // src/decisions.ts
-import fs7 from "node:fs";
-import path9 from "node:path";
+import fs8 from "node:fs";
+import path10 from "node:path";
 var HEADER = `# Decisions
 
 Appended by crosstalk when either side marks something settled. Newest last.
 `;
 function appendDecision(repoRoot, d, file = "DECISIONS.md") {
-  const target = path9.join(repoRoot, file);
-  if (!fs7.existsSync(target))
-    fs7.writeFileSync(target, HEADER);
+  const target = path10.join(repoRoot, file);
+  if (!fs8.existsSync(target))
+    fs8.writeFileSync(target, HEADER);
   const when = new Date(d.ts).toISOString().replace("T", " ").slice(0, 16);
   const who = d.session ? `${d.by}/${d.session}` : d.by;
   const lines = [``, `## ${d.text}`, ``, `- ${when} \u00b7 ${who}`];
   if (d.rationale)
     lines.push(`- ${d.rationale}`);
-  fs7.appendFileSync(target, lines.join(`
+  fs8.appendFileSync(target, lines.join(`
 `) + `
 `);
   return target;
 }
 
 // src/usage.ts
-import fs8 from "node:fs";
-import path10 from "node:path";
-var FILE4 = path10.join(ROOT2, "usage.json");
+import fs9 from "node:fs";
+import path11 from "node:path";
+var FILE4 = path11.join(ROOT2, "usage.json");
 var empty = () => ({
   sentMessages: 0,
   sentChars: 0,
@@ -847,18 +895,18 @@ var empty = () => ({
 });
 function load2() {
   try {
-    return JSON.parse(fs8.readFileSync(FILE4, "utf8"));
+    return JSON.parse(fs9.readFileSync(FILE4, "utf8"));
   } catch {
     return {};
   }
 }
 function save2(u) {
   try {
-    fs8.mkdirSync(ROOT2, { recursive: true, mode: 448 });
-    fs8.writeFileSync(FILE4, JSON.stringify(u, null, 2), { mode: 384 });
+    fs9.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+    fs9.writeFileSync(FILE4, JSON.stringify(u, null, 2), { mode: 384 });
   } catch {}
 }
-function record(peer, direction, chars, delivered = false) {
+function record2(peer, direction, chars, delivered = false) {
   const u = load2();
   const p = u[peer] ??= empty();
   if (direction === "sent") {
@@ -896,14 +944,14 @@ function summarise2(u = load2()) {
 }
 
 // src/rooms.ts
-import fs9 from "node:fs";
-import path11 from "node:path";
+import fs10 from "node:fs";
+import path12 from "node:path";
 import crypto4 from "node:crypto";
-var FILE5 = path11.join(ROOT2, "rooms.json");
+var FILE5 = path12.join(ROOT2, "rooms.json");
 var isRoomRecord = (v) => !!v && typeof v === "object" && typeof v.id === "string" && typeof v.name === "string" && typeof v.members === "object";
 var load3 = () => {
   try {
-    const raw = JSON.parse(fs9.readFileSync(FILE5, "utf8"));
+    const raw = JSON.parse(fs10.readFileSync(FILE5, "utf8"));
     const out = {};
     for (const [k, v] of Object.entries(raw))
       if (isRoomRecord(v))
@@ -914,10 +962,10 @@ var load3 = () => {
   }
 };
 function save3(r) {
-  fs9.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+  fs10.mkdirSync(ROOT2, { recursive: true, mode: 448 });
   const tmp = `${FILE5}.tmp`;
-  fs9.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 384 });
-  fs9.renameSync(tmp, FILE5);
+  fs10.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 384 });
+  fs10.renameSync(tmp, FILE5);
 }
 var newRoomId = () => crypto4.randomBytes(8).toString("hex");
 var newRoomKey = () => crypto4.randomBytes(32).toString("base64");
@@ -942,14 +990,14 @@ function upsert2(room, state = load3()) {
 }
 
 // src/facts.ts
-import fs10 from "node:fs";
-import path12 from "node:path";
+import fs11 from "node:fs";
+import path13 from "node:path";
 import crypto5 from "node:crypto";
-var FILE6 = path12.join(ROOT2, "facts.json");
+var FILE6 = path13.join(ROOT2, "facts.json");
 var newFactId = () => "f_" + crypto5.randomBytes(4).toString("hex");
 function load4() {
   try {
-    const raw = JSON.parse(fs10.readFileSync(FILE6, "utf8"));
+    const raw = JSON.parse(fs11.readFileSync(FILE6, "utf8"));
     const out = {};
     for (const [room, facts] of Object.entries(raw))
       if (Array.isArray(facts))
@@ -960,10 +1008,10 @@ function load4() {
   }
 }
 function save4(s) {
-  fs10.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+  fs11.mkdirSync(ROOT2, { recursive: true, mode: 448 });
   const tmp = `${FILE6}.tmp`;
-  fs10.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
-  fs10.renameSync(tmp, FILE6);
+  fs11.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs11.renameSync(tmp, FILE6);
 }
 var liveFacts = (room, s = load4()) => (s[room] ?? []).filter((f) => !f.supersededBy);
 var lastAffirmed = (f) => Math.max(f.at, ...f.confirmed.map((c) => c.at), 0);
@@ -1016,7 +1064,7 @@ var age = (ms) => {
   return `${Math.floor(d / 30)}mo`;
 };
 function digest(rooms, cwd, s = load4(), maxBytes = 2000) {
-  const here = path12.basename(cwd).toLowerCase();
+  const here = path13.basename(cwd).toLowerCase();
   const picked = [];
   for (const room of rooms)
     for (const f of liveFacts(room, s))
@@ -1053,14 +1101,14 @@ function digest(rooms, cwd, s = load4(), maxBytes = 2000) {
 }
 
 // src/tasks.ts
-import fs11 from "node:fs";
-import path13 from "node:path";
+import fs12 from "node:fs";
+import path14 from "node:path";
 import crypto6 from "node:crypto";
-var FILE7 = path13.join(ROOT2, "tasks.json");
+var FILE7 = path14.join(ROOT2, "tasks.json");
 var newTaskId = () => "t_" + crypto6.randomBytes(4).toString("hex");
 function load5() {
   try {
-    const raw = JSON.parse(fs11.readFileSync(FILE7, "utf8"));
+    const raw = JSON.parse(fs12.readFileSync(FILE7, "utf8"));
     const out = {};
     for (const [room, list] of Object.entries(raw))
       if (Array.isArray(list))
@@ -1071,10 +1119,10 @@ function load5() {
   }
 }
 function save5(s) {
-  fs11.mkdirSync(ROOT2, { recursive: true, mode: 448 });
+  fs12.mkdirSync(ROOT2, { recursive: true, mode: 448 });
   const tmp = `${FILE7}.tmp`;
-  fs11.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
-  fs11.renameSync(tmp, FILE7);
+  fs12.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs12.renameSync(tmp, FILE7);
 }
 var openTasks = (room, s = load5()) => (s[room] ?? []).filter((t) => t.state !== "done");
 function apply2(room, op, s = load5()) {
@@ -1159,8 +1207,8 @@ function digest2(who, rooms, s = load5()) {
 }
 
 // src/repotrust/index.ts
-import fs16 from "node:fs";
-import path19 from "node:path";
+import fs17 from "node:fs";
+import path20 from "node:path";
 
 // src/crypto.ts
 import crypto7 from "node:crypto";
@@ -1211,46 +1259,46 @@ function machineName() {
 }
 
 // src/uistate.ts
-import fs12 from "node:fs";
-import path14 from "node:path";
+import fs13 from "node:fs";
+import path15 from "node:path";
 var FINAL2 = new Set(["answered", "handed", "muted"]);
-var file2 = () => path14.join(P2.root, "ui.json");
-var lockDir2 = () => path14.join(P2.root, "ui.lock");
-var markers2 = () => path14.join(P2.root, "ui-mod");
+var file3 = () => path15.join(P2.root, "ui.json");
+var lockDir2 = () => path15.join(P2.root, "ui.lock");
+var markers2 = () => path15.join(P2.root, "ui-mod");
 var safe2 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
 var WEEK2 = 7 * 24 * 60 * 60 * 1000;
-function read3() {
+function read4() {
   try {
-    const f = JSON.parse(fs12.readFileSync(file2(), "utf8"));
+    const f = JSON.parse(fs13.readFileSync(file3(), "utf8"));
     if (f && f.v === 1 && f.items && typeof f.items === "object")
       return f;
   } catch {}
   return { v: 1, items: {} };
 }
 function write3(f) {
-  fs12.mkdirSync(P2.root, { recursive: true, mode: 448 });
-  const tmp = `${file2()}.${process.pid}.tmp`;
-  fs12.writeFileSync(tmp, JSON.stringify(f, null, 2), { mode: 384 });
-  fs12.renameSync(tmp, file2());
+  fs13.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  const tmp = `${file3()}.${process.pid}.tmp`;
+  fs13.writeFileSync(tmp, JSON.stringify(f, null, 2), { mode: 384 });
+  fs13.renameSync(tmp, file3());
 }
 var sleepSync2 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 function withStore2(fn) {
-  fs12.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  fs13.mkdirSync(P2.root, { recursive: true, mode: 448 });
   let held = false;
   for (let i = 0;i < 200 && !held; i++) {
     try {
-      fs12.mkdirSync(lockDir2());
+      fs13.mkdirSync(lockDir2());
       held = true;
     } catch {
       try {
-        if (Date.now() - fs12.statSync(lockDir2()).mtimeMs > 1e4)
-          fs12.rmdirSync(lockDir2());
+        if (Date.now() - fs13.statSync(lockDir2()).mtimeMs > 1e4)
+          fs13.rmdirSync(lockDir2());
       } catch {}
       sleepSync2(10);
     }
   }
   try {
-    const f = read3();
+    const f = read4();
     const was = JSON.stringify(f);
     const now = Date.now();
     const out = fn(f.items, now);
@@ -1263,14 +1311,17 @@ function withStore2(fn) {
   } finally {
     if (held)
       try {
-        fs12.rmdirSync(lockDir2());
+        fs13.rmdirSync(lockDir2());
       } catch {}
   }
 }
 function upsert3(items, it, now) {
   const before = items[it.id];
-  if (!before)
+  if (!before) {
+    if (QUESTION_KINDS.has(it.kind))
+      record({ k: "asked", at: now, id: it.id, kind: it.kind, ...it.thread ? { thread: it.thread } : {} });
     return items[it.id] = { ...it, state: "pending", createdAt: now, updatedAt: now };
+  }
   if (FINAL2.has(before.state))
     return before;
   const moved = before.sessionId !== it.sessionId;
@@ -1311,6 +1362,8 @@ function act2(items, id, action, now, answer) {
       next.state = "answered";
       if (answer !== undefined)
         next.answer = answer;
+      if (QUESTION_KINDS.has(it.kind))
+        record({ k: "answered", at: now, id, kind: it.kind, openMs: now - (it.raisedAt ?? it.createdAt), ...it.thread ? { thread: it.thread } : {} });
       break;
     default:
       return { ok: false, error: `unknown action ${action}`, item: it };
@@ -1331,7 +1384,7 @@ function reopen2(items, id, now) {
 var MARKER_MS2 = 10 * 60 * 1000;
 function modActive2(sessionId, now = Date.now()) {
   try {
-    return now - fs12.statSync(path14.join(markers2(), safe2(sessionId))).mtimeMs < MARKER_MS2;
+    return now - fs13.statSync(path15.join(markers2(), safe2(sessionId))).mtimeMs < MARKER_MS2;
   } catch {
     return false;
   }
@@ -1485,15 +1538,15 @@ function answer(pins, q, trust) {
 }
 
 // src/repotrust/github.ts
-import fs14 from "node:fs";
+import fs15 from "node:fs";
 import os6 from "node:os";
-import path16 from "node:path";
+import path17 from "node:path";
 
 // src/repotrust/statement.ts
 import crypto8 from "node:crypto";
-import fs13 from "node:fs";
+import fs14 from "node:fs";
 import os5 from "node:os";
-import path15 from "node:path";
+import path16 from "node:path";
 import { execFile } from "node:child_process";
 var NAMESPACE = "crosstalk-identity";
 var KIND = "crosstalk-identity";
@@ -1626,11 +1679,11 @@ function signerOf(armored) {
 function sshKeygen() {
   const bin = process.env.CROSSTALK_SSH_KEYGEN ?? "ssh-keygen";
   if (bin.includes("/"))
-    return fs13.existsSync(bin) ? bin : null;
-  for (const dir of (process.env.PATH ?? "").split(path15.delimiter)) {
-    const p = path15.join(dir, bin);
+    return fs14.existsSync(bin) ? bin : null;
+  for (const dir of (process.env.PATH ?? "").split(path16.delimiter)) {
+    const p = path16.join(dir, bin);
     try {
-      fs13.accessSync(p, fs13.constants.X_OK);
+      fs14.accessSync(p, fs14.constants.X_OK);
       return p;
     } catch {}
   }
@@ -1651,7 +1704,7 @@ function run(file, args, o = {}) {
     child.stdin?.end(o.input ?? "");
   });
 }
-var tmpDir = () => fs13.mkdtempSync(path15.join(os5.tmpdir(), "crosstalk-sig-"));
+var tmpDir = () => fs14.mkdtempSync(path16.join(os5.tmpdir(), "crosstalk-sig-"));
 async function sign(s, key) {
   const bin = sshKeygen();
   if (!bin)
@@ -1685,10 +1738,10 @@ async function verify(o) {
     return { ok: false, reason: "ssh-keygen is not installed" };
   const dir = tmpDir();
   try {
-    const allowed = path15.join(dir, "allowed_signers");
-    const sigFile = path15.join(dir, "statement.sig");
-    fs13.writeFileSync(allowed, signers, { mode: 384 });
-    fs13.writeFileSync(sigFile, o.sig, { mode: 384 });
+    const allowed = path16.join(dir, "allowed_signers");
+    const sigFile = path16.join(dir, "statement.sig");
+    fs14.writeFileSync(allowed, signers, { mode: 384 });
+    fs14.writeFileSync(sigFile, o.sig, { mode: 384 });
     const r = await run(bin, ["-Y", "verify", "-f", allowed, "-I", o.login, "-n", NAMESPACE, "-s", sigFile], {
       input: o.text
     });
@@ -1698,7 +1751,7 @@ async function verify(o) {
       return { ok: false, reason: "signed by a key that is not on their account" };
     return { ok: true, statement: s, signer };
   } finally {
-    fs13.rmSync(dir, { recursive: true, force: true });
+    fs14.rmSync(dir, { recursive: true, force: true });
   }
 }
 var keyHint = (k) => {
@@ -1709,7 +1762,7 @@ var keyHint = (k) => {
 
 // src/repotrust/github.ts
 var githubBase = () => (process.env.CROSSTALK_GITHUB_URL ?? "https://github.com").replace(/\/+$/, "");
-var dir = () => path16.join(ROOT2, "repotrust", "keys");
+var dir = () => path17.join(ROOT2, "repotrust", "keys");
 var freshMs = () => Number(process.env.CROSSTALK_KEYS_MIN_MS ?? 10 * 60 * 1000);
 var BUCKET = { max: 30, perMs: 10 * 60 * 1000 };
 var recent = [];
@@ -1723,17 +1776,17 @@ function allowFetch(now) {
 }
 function cached(login) {
   try {
-    const k = JSON.parse(fs14.readFileSync(path16.join(dir(), `${login}.json`), "utf8"));
+    const k = JSON.parse(fs15.readFileSync(path17.join(dir(), `${login}.json`), "utf8"));
     return k && k.login === login && Array.isArray(k.keys) ? { ...k, keys: k.keys.map(normaliseKey).filter((x) => !!x) } : null;
   } catch {
     return null;
   }
 }
 function store(k) {
-  fs14.mkdirSync(dir(), { recursive: true, mode: 448 });
-  const f = path16.join(dir(), `${k.login}.json`);
-  fs14.writeFileSync(`${f}.tmp`, JSON.stringify(k, null, 2), { mode: 384 });
-  fs14.renameSync(`${f}.tmp`, f);
+  fs15.mkdirSync(dir(), { recursive: true, mode: 448 });
+  const f = path17.join(dir(), `${k.login}.json`);
+  fs15.writeFileSync(`${f}.tmp`, JSON.stringify(k, null, 2), { mode: 384 });
+  fs15.renameSync(`${f}.tmp`, f);
 }
 async function keysFor(login, o = {}) {
   if (!isLogin(login))
@@ -1830,26 +1883,26 @@ async function signingKey(accountKeys, scratch) {
         const k = normaliseKey(line);
         if (!k || !onAccount.has(k))
           continue;
-        fs14.mkdirSync(scratch, { recursive: true, mode: 448 });
-        const pub = path16.join(scratch, "agent-key.pub");
-        fs14.writeFileSync(pub, k + `
+        fs15.mkdirSync(scratch, { recursive: true, mode: 448 });
+        const pub = path17.join(scratch, "agent-key.pub");
+        fs15.writeFileSync(pub, k + `
 `, { mode: 384 });
         return { key: { path: pub, publicKey: k, agent: true } };
       }
   }
   const candidates = [
     process.env.CROSSTALK_SSH_KEY,
-    ...["id_ed25519", "id_ecdsa", "id_rsa", "id_ed25519_sk", "id_ecdsa_sk"].map((n) => path16.join(os6.homedir(), ".ssh", n))
+    ...["id_ed25519", "id_ecdsa", "id_rsa", "id_ed25519_sk", "id_ecdsa_sk"].map((n) => path17.join(os6.homedir(), ".ssh", n))
   ].filter((p) => !!p);
   let sawOne = false;
   for (const priv of candidates) {
     let k = null;
     try {
-      k = normaliseKey(fs14.readFileSync(`${priv}.pub`, "utf8"));
+      k = normaliseKey(fs15.readFileSync(`${priv}.pub`, "utf8"));
     } catch {
       continue;
     }
-    if (!k || !fs14.existsSync(priv))
+    if (!k || !fs15.existsSync(priv))
       continue;
     if (!onAccount.has(k))
       continue;
@@ -1865,7 +1918,7 @@ async function signingKey(accountKeys, scratch) {
 }
 
 // src/repotrust/gitref.ts
-import path17 from "node:path";
+import path18 from "node:path";
 var LOCAL_PREFIX = "refs/crosstalk/keys/";
 var FETCHED_PREFIX = "refs/crosstalk/remote/keys/";
 var REFSPEC = `+${LOCAL_PREFIX}*:${FETCHED_PREFIX}*`;
@@ -1891,7 +1944,7 @@ async function findRepo(cwd) {
     const url = u.stdout.trim();
     if (u.code !== 0 || !url)
       continue;
-    const slug = githubSlug(url) ?? (process.env.CROSSTALK_REPOTRUST_ANY_REMOTE === "1" ? `local/${path17.basename(url).replace(/\.git$/, "").toLowerCase()}` : null);
+    const slug = githubSlug(url) ?? (process.env.CROSSTALK_REPOTRUST_ANY_REMOTE === "1" ? `local/${path18.basename(url).replace(/\.git$/, "").toLowerCase()}` : null);
     if (slug)
       return { top: dir, remote, url, slug };
   }
@@ -1974,21 +2027,21 @@ async function publish(r, login, machine, text, sig) {
 }
 
 // src/repotrust/firstuse.ts
-import fs15 from "node:fs";
-import path18 from "node:path";
-var FILE8 = () => path18.join(ROOT2, "repotrust", "firstuse.json");
+import fs16 from "node:fs";
+import path19 from "node:path";
+var FILE8 = () => path19.join(ROOT2, "repotrust", "firstuse.json");
 function load6() {
   try {
-    const s = JSON.parse(fs15.readFileSync(FILE8(), "utf8"));
+    const s = JSON.parse(fs16.readFileSync(FILE8(), "utf8"));
     if (s?.v === 1 && s.repos)
       return s;
   } catch {}
   return { v: 1, repos: {} };
 }
-var off = () => process.env.CROSSTALK_NO_REPOTRUST === "1";
+var off2 = () => process.env.CROSSTALK_NO_REPOTRUST === "1";
 function publishedBefore(slug) {
   try {
-    const s = JSON.parse(fs15.readFileSync(path18.join(ROOT2, "repotrust", "state.json"), "utf8"));
+    const s = JSON.parse(fs16.readFileSync(path19.join(ROOT2, "repotrust", "state.json"), "utf8"));
     return !!s?.repos?.[slug]?.ownPublished;
   } catch {
     return false;
@@ -2002,26 +2055,26 @@ function consent(slug, s = load6()) {
     return e.state;
   return publishedBefore(slug) ? "yes" : undefined;
 }
-var allowed = (slug) => !off() && consent(slug) === "yes";
+var allowed = (slug) => !off2() && consent(slug) === "yes";
 
 // src/repotrust/index.ts
-var DIR = () => path19.join(ROOT2, "repotrust");
-var FILE9 = () => path19.join(DIR(), "state.json");
+var DIR = () => path20.join(ROOT2, "repotrust");
+var FILE9 = () => path20.join(DIR(), "state.json");
 var empty2 = () => ({ v: 1, pins: {}, repos: {}, questions: {}, events: [] });
 function load7() {
   try {
-    const s = JSON.parse(fs16.readFileSync(FILE9(), "utf8"));
+    const s = JSON.parse(fs17.readFileSync(FILE9(), "utf8"));
     if (s && s.v === 1)
       return { ...empty2(), ...s };
   } catch {}
   return empty2();
 }
 function save6(s) {
-  fs16.mkdirSync(DIR(), { recursive: true, mode: 448 });
+  fs17.mkdirSync(DIR(), { recursive: true, mode: 448 });
   s.events = s.events.slice(-50);
   const tmp = `${FILE9()}.${process.pid}.tmp`;
-  fs16.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
-  fs16.renameSync(tmp, FILE9());
+  fs17.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs17.renameSync(tmp, FILE9());
 }
 var event = (s, text) => s.events.push({ at: Date.now(), text });
 var thisMachine = (id) => cleanMachine(process.env.CROSSTALK_MACHINE ?? id.machine ?? machineName());
@@ -2148,7 +2201,7 @@ async function syncNow(cwd, o) {
     if (signed && !(await verify({ login, machine, text: signed.text, sig: signed.sig, keys: mine })).ok)
       signed = undefined;
     if (!signed) {
-      const k = await signingKey(mine, path19.join(DIR(), "tmp"));
+      const k = await signingKey(mine, path20.join(DIR(), "tmp"));
       if (!k.key)
         rs.own = `not published: ${k.why}; the four words still work`;
       else {
@@ -2374,8 +2427,8 @@ function noteSession(cwd, log = () => {}) {
 }
 
 // src/threads/service.ts
-import fs17 from "node:fs";
-import path21 from "node:path";
+import fs19 from "node:fs";
+import path23 from "node:path";
 import crypto11 from "node:crypto";
 
 // src/footprint.ts
@@ -2683,9 +2736,9 @@ function renderPublic(t) {
   return [...fm, ...body].join(`
 `);
 }
-function renderSealed(t, key, wraps) {
+function renderSealed(t, key, wraps, epoch = 0) {
   const seal = typeof key === "function" ? key : (s, v) => sealSection(key, t.id, s, v);
-  const lines = ["---", HEADER2, `id: ${t.id}`, "sealed: true", "keys:"];
+  const lines = ["---", HEADER2, `id: ${t.id}`, "sealed: true", ...epoch > 0 ? [`epoch: ${epoch}`] : [], "keys:"];
   for (const w of wraps)
     lines.push(`  - ${w.to} ${w.from} ${w.k}`);
   lines.push("---");
@@ -2749,6 +2802,7 @@ function parse2(text) {
       kind: "sealed",
       id,
       wraps,
+      epoch: Number(get("epoch")) || 0,
       open: (key) => {
         try {
           const o = { v: 1, id };
@@ -3023,7 +3077,7 @@ async function pushRemote(root, remote = remoteName(root), timeoutMs = 30000) {
 }
 
 // src/threads/infer.ts
-import path20 from "node:path";
+import path21 from "node:path";
 var DEFAULTS = new Set(["main", "master", "trunk", "develop", "development", "default", "dev"]);
 var isDefaultBranch = (branch, remoteDefault) => !branch || branch === remoteDefault || !remoteDefault && DEFAULTS.has(branch);
 var MIN_CLUSTER = 3;
@@ -3059,16 +3113,16 @@ function cluster(paths, claimed, min = MIN_CLUSTER) {
     return null;
   const byDir = new Map;
   for (const p of free) {
-    let d = path20.posix.dirname(p);
+    let d = path21.posix.dirname(p);
     while (d && d !== ".") {
       (byDir.get(d) ?? byDir.set(d, []).get(d)).push(p);
-      d = path20.posix.dirname(d);
+      d = path21.posix.dirname(d);
     }
   }
   const best = [...byDir.entries()].filter(([, fs]) => fs.length >= min).sort((a, b) => b[0].split("/").length - a[0].split("/").length || b[1].length - a[1].length)[0];
   return best ? { dir: best[0], files: best[1] } : null;
 }
-var nameFromDir = (dir) => nameFromBranch(path20.posix.basename(dir));
+var nameFromDir = (dir) => nameFromBranch(path21.posix.basename(dir));
 function place(fp, threads, min = MIN_CLUSTER) {
   if (!fp.repo)
     return { kind: "none", why: "not in a git repo with a remote" };
@@ -3121,8 +3175,65 @@ function converge(a, b) {
 }
 var survivor = (a, b) => a.createdAt !== b.createdAt ? a.createdAt < b.createdAt ? [a, b] : [b, a] : a.id < b.id ? [a, b] : [b, a];
 
+// src/threads/rekey.ts
+import fs18 from "node:fs";
+import path22 from "node:path";
+var isRemoved = (t, fp) => {
+  const p = t.people[fp];
+  return !!(p && p.gone && p.removed);
+};
+function removePerson(t, fp, by, now = Date.now()) {
+  let changed = remove(t, "people", fp, by, now);
+  const p = t.people[fp];
+  if (p && p.gone && !p.removed) {
+    p.removed = true;
+    changed = true;
+  }
+  for (const s of live(t, "sessions"))
+    if (s.person === fp)
+      changed = remove(t, "sessions", s.id, by, now) || changed;
+  return changed;
+}
+function revokedFingerprints(root = ROOT2) {
+  try {
+    const s = JSON.parse(fs18.readFileSync(path22.join(root, "repotrust", "state.json"), "utf8"));
+    const out = new Set;
+    for (const pin of Object.values(s?.pins ?? {}))
+      for (const fp of pin?.revoked ?? [])
+        if (typeof fp === "string")
+          out.add(fp);
+    return out;
+  } catch {
+    return new Set;
+  }
+}
+function shouldHold(people, revoked) {
+  return [...new Set(people)].filter((fp) => !revoked.has(fp)).sort();
+}
+function check(o) {
+  if (!o.holders)
+    return { rotate: false, holders: o.should };
+  const should = new Set(o.should);
+  const gone = o.holders.filter((h) => !should.has(h));
+  if (gone.length && should.has(o.me))
+    return { rotate: true, holders: o.should };
+  return { rotate: false, holders: [...new Set([...o.holders, ...o.should])].sort() };
+}
+function wins(mine, theirs) {
+  const a = mine.epoch ?? 0;
+  const b = theirs.epoch ?? 0;
+  if (!mine.key)
+    return true;
+  if (b !== a)
+    return b > a;
+  return theirs.key < mine.key;
+}
+var validKey = (k) => typeof k === "string" && Buffer.from(k, "base64").length === 32;
+
 // src/threads/service.ts
 var empty3 = () => ({
+  epochs: {},
+  holders: {},
   v: 1,
   threads: {},
   keys: {},
@@ -3168,7 +3279,7 @@ class ThreadService {
   now = () => this.d.now ? this.d.now() : Date.now();
   load() {
     try {
-      const raw = JSON.parse(fs17.readFileSync(this.d.file, "utf8"));
+      const raw = JSON.parse(fs19.readFileSync(this.d.file, "utf8"));
       if (raw?.v !== 1)
         return empty3();
       const st = { ...empty3(), ...raw };
@@ -3185,10 +3296,10 @@ class ThreadService {
     }
   }
   save() {
-    fs17.mkdirSync(path21.dirname(this.d.file), { recursive: true, mode: 448 });
+    fs19.mkdirSync(path23.dirname(this.d.file), { recursive: true, mode: 448 });
     const tmp = `${this.d.file}.${process.pid}.tmp`;
-    fs17.writeFileSync(tmp, JSON.stringify(this.st), { mode: 384 });
-    fs17.renameSync(tmp, this.d.file);
+    fs19.writeFileSync(tmp, JSON.stringify(this.st), { mode: 384 });
+    fs19.renameSync(tmp, this.d.file);
   }
   thread(id) {
     return this.st.threads[this.resolve(id)];
@@ -3387,7 +3498,7 @@ class ThreadService {
       return;
     if (s.root) {
       const cur = this.st.roots[s.repo];
-      if (!cur || !fs17.existsSync(cur))
+      if (!cur || !fs19.existsSync(cur))
         this.st.roots[s.repo] = s.root;
       (this.clones.get(s.repo) ?? this.clones.set(s.repo, new Set).get(s.repo)).add(s.root);
       if (!this.readLocal.has(s.root)) {
@@ -3433,6 +3544,7 @@ class ThreadService {
             want.push({ id, why: rec.why[id] ?? "" });
       }
     }
+    want = want.filter((w) => !(this.st.threads[this.resolve(w.id)] && isRemoved(this.st.threads[this.resolve(w.id)], this.me)));
     const wantIds = want.map((w) => this.resolve(w.id));
     for (const id of rec.threads)
       if (!wantIds.includes(id)) {
@@ -3497,7 +3609,7 @@ class ThreadService {
     } else if (pick === NEW_THREAD) {
       if (!s?.repo)
         return { ok: false, error: "this session is not in a git repo with a remote" };
-      const base = slug(nameFromDir(path21.posix.dirname(s.paths[0] ?? s.name)) || s.name);
+      const base = slug(nameFromDir(path23.posix.dirname(s.paths[0] ?? s.name)) || s.name);
       const taken = new Set(this.list().map((t) => t.name));
       let name = base;
       for (let i = 2;taken.has(name); i++)
@@ -3556,6 +3668,8 @@ class ThreadService {
         const why = matchesPeer(this.lite(t), fp);
         if (!why)
           continue;
+        if (isRemoved(t, peer.fingerprint))
+          continue;
         const isNew = !t.people[peer.fingerprint] || !!t.people[peer.fingerprint].gone;
         let changed = put(t, "people", peer.fingerprint, { label: peer.label }, this.me, now);
         if (isNew) {
@@ -3592,18 +3706,18 @@ class ThreadService {
       return this.d.log(`ignored a malformed thread from ${label}`);
     const known = this.st.threads[inc.id];
     const theirPeople = people(inc);
-    if (!theirPeople.includes(peer.fingerprint))
+    const leaving = !!known && isRemoved(inc, peer.fingerprint) && inc.people[peer.fingerprint].by === peer.fingerprint && people(known).includes(peer.fingerprint);
+    if (!theirPeople.includes(peer.fingerprint) && !leaving)
       return this.d.log(`ignored thread ${inc.id} from ${label}: they are not in it`);
     if (!known && !theirPeople.includes(this.me))
       return this.d.log(`ignored thread ${inc.id} from ${label}: it does not name us`);
     if (known && !people(known).includes(this.me) && !theirPeople.includes(this.me))
       return;
-    if (typeof sync?.key === "string" && Buffer.from(sync.key, "base64").length === 32) {
-      const mine = this.st.keys[inc.id];
-      if (!mine || sync.key < mine)
-        this.st.keys[inc.id] = sync.key;
-    }
+    if (known && isRemoved(known, peer.fingerprint))
+      return this.d.log(`ignored thread ${inc.id} from ${label}: they were taken out of it`);
     const merged = known ? merge(known, inc) : inc;
+    if (validKey(sync?.key))
+      this.adoptKey(inc.id, sync.key, Number(sync.epoch) || 0, merged);
     if (known && same(known, merged))
       return;
     this.st.threads[inc.id] = merged;
@@ -3629,7 +3743,7 @@ class ThreadService {
         kind: "thread",
         intent: "fyi",
         text: "",
-        threadSync: { thread: t, key: this.st.keys[t.id] }
+        threadSync: { thread: t, key: this.st.keys[t.id], ...this.st.epochs[t.id] ? { epoch: this.st.epochs[t.id] } : {} }
       });
     }
   }
@@ -3864,8 +3978,66 @@ class ThreadService {
   rootFor(repo) {
     return this.st.roots[repo];
   }
+  roots() {
+    return { ...this.st.roots };
+  }
+  revoked = () => this.d.revoked ? this.d.revoked() : revokedFingerprints();
+  keyEpoch = (id) => this.st.epochs[id] ?? 0;
+  removePerson(id, fp) {
+    const t = this.thread(id);
+    if (!t)
+      return { ok: false, error: "no such thread" };
+    if (!t.people[fp] || t.people[fp].gone && isRemoved(t, fp))
+      return { ok: false, error: "they are not in that thread" };
+    const before = this.keyEpoch(t.id);
+    removePerson(t, fp, this.me, this.now());
+    if (fp === this.me) {
+      for (const [sid, p] of Object.entries(this.st.placed))
+        if (p.threads.includes(t.id)) {
+          p.pinned = (p.pinned ?? p.threads).filter((x) => x !== t.id);
+          p.threads = p.threads.filter((x) => x !== t.id);
+          delete p.why[t.id];
+          const s = this.locals.get(sid);
+          if (s)
+            this.place(s);
+        }
+    }
+    this.touched.add(t.id);
+    if (fp === this.me)
+      this.broadcast(t, new Set);
+    this.flush();
+    return { ok: true, thread: t.meta.value.name, rekeyed: this.keyEpoch(t.id) > before };
+  }
+  checkKey(id) {
+    const t = this.st.threads[id];
+    if (!t || t.meta.value.public || !this.st.keys[id])
+      return;
+    const should = shouldHold(people(t), this.revoked());
+    const r = check({ me: this.me, holders: this.st.holders[id], should });
+    this.st.holders[id] = r.holders;
+    if (!r.rotate)
+      return;
+    this.st.keys[id] = newKey().toString("base64");
+    this.st.epochs[id] = this.keyEpoch(id) + 1;
+    delete this.st.committed[id];
+    this.touched.add(id);
+    this.d.log(`thread ${t.meta.value.name}: new key (epoch ${this.st.epochs[id]}) for ${should.length} ${should.length === 1 ? "person" : "people"}`);
+  }
+  adoptKey(id, key, epoch, t) {
+    if (!wins({ key: this.st.keys[id], epoch: this.st.epochs[id] }, { key, epoch }))
+      return;
+    if (this.st.keys[id] === key && this.keyEpoch(id) === epoch)
+      return;
+    this.st.keys[id] = key;
+    if (epoch)
+      this.st.epochs[id] = epoch;
+    this.st.holders[id] = shouldHold(people(t), this.revoked());
+    this.save();
+  }
   flush() {
     const skip = new Set;
+    for (const id of this.touched)
+      this.checkKey(id);
     if (this.touched.size) {
       const ids = [...this.touched];
       this.touched.clear();
@@ -3909,11 +4081,11 @@ class ThreadService {
   }
   async syncOnce(repo, commit) {
     const root = this.st.roots[repo];
-    if (!root || !fs17.existsSync(root))
+    if (!root || !fs19.existsSync(root))
       return;
     const remote = remoteName(root);
     for (const clone of new Set([root, ...this.clones.get(repo) ?? []])) {
-      if (this.refspecDone.has(clone) || !fs17.existsSync(clone))
+      if (this.refspecDone.has(clone) || !fs19.existsSync(clone))
         continue;
       const r = remoteName(clone);
       if (r && ensureRefspec2(clone, r))
@@ -3929,6 +4101,9 @@ class ThreadService {
     this.mergeRef(root, repo, SYNC_REF);
     this.mergeRef(root, repo, REF);
     this.reconcile();
+    for (const t of Object.values(this.st.threads))
+      if (t.meta.value.repo === repo)
+        this.checkKey(t.id);
     this.flush();
     const mine = Object.values(this.st.threads).filter((t) => t.meta.value.repo === repo);
     const due = commit || mine.some((t) => committedDigest(t) !== this.st.committed[t.id]);
@@ -3985,7 +4160,7 @@ class ThreadService {
           key = unwrapKey(this.d.identity, p.wraps, peers);
           t = key ? p.open(key) : null;
           if (t && key)
-            this.st.keys[p.id] = key.toString("base64");
+            this.adoptKey(p.id, key.toString("base64"), p.epoch, t);
         }
       }
       if (!t || t.meta.value.repo && t.meta.value.repo !== repo) {
@@ -4025,8 +4200,8 @@ class ThreadService {
       if (!k)
         continue;
       const key = Buffer.from(k, "base64");
-      const recipients = people(t).map((fp) => byFp.get(fp)).filter((p) => !!p);
-      out[name] = renderSealed(t, this.sealer(t.id, key), this.wraps(t.id, key, recipients));
+      const recipients = shouldHold(people(t), this.revoked()).map((fp) => byFp.get(fp)).filter((p) => !!p);
+      out[name] = renderSealed(t, this.sealer(t.id, key), this.wraps(t.id, key, recipients), this.st.epochs[t.id] ?? 0);
     }
     return out;
   }
@@ -4062,19 +4237,19 @@ class ThreadService {
       return;
     this.st.publicStatus[repo] = now;
     this.save();
-    const file = path21.join(root, "THREADS.md");
-    if (!pub.length && !fs17.existsSync(file))
+    const file = path23.join(root, "THREADS.md");
+    if (!pub.length && !fs19.existsSync(file))
       return;
     const text = summary(pub);
     try {
-      if (fs17.existsSync(file) && fs17.readFileSync(file, "utf8") === text)
+      if (fs19.existsSync(file) && fs19.readFileSync(file, "utf8") === text)
         return;
-      fs17.writeFileSync(file, text);
+      fs19.writeFileSync(file, text);
     } catch {
       return;
     }
     this.d.log(`wrote ${file}`);
-    const note = { id: `summary:${repo}:${Date.now()}`, text: `\u25e2 crosstalk: updated THREADS.md in ${path21.basename(root)} because a public thread's status changed. It is left unstaged; commit it if you want it in the repo.` };
+    const note = { id: `summary:${repo}:${Date.now()}`, text: `\u25e2 crosstalk: updated THREADS.md in ${path23.basename(root)} because a public thread's status changed. It is left unstaged; commit it if you want it in the repo.` };
     for (const [sid, s] of this.locals)
       if (s.repo === repo)
         (this.st.notes[sid] ??= []).push(note);
@@ -4138,15 +4313,15 @@ function view2(t) {
 }
 
 // src/shipping/daemon.ts
-import path31 from "node:path";
+import path33 from "node:path";
 
 // src/cleanup.ts
-import fs20 from "node:fs";
-import path24 from "node:path";
+import fs22 from "node:fs";
+import path26 from "node:path";
 
 // src/restore.ts
-import fs18 from "node:fs";
-import path22 from "node:path";
+import fs20 from "node:fs";
+import path24 from "node:path";
 import { spawn as spawn2, spawnSync as spawnSync4 } from "node:child_process";
 
 // src/terminal/repo.ts
@@ -4187,18 +4362,18 @@ function worktrees(cwd, g = git4) {
 var cache = new Map;
 
 // src/restore.ts
-var dir2 = () => path22.join(P2.root, "open");
+var dir2 = () => path24.join(P2.root, "open");
 function readAll() {
   let names;
   try {
-    names = fs18.readdirSync(dir2()).filter((f) => f.endsWith(".json"));
+    names = fs20.readdirSync(dir2()).filter((f) => f.endsWith(".json"));
   } catch {
     return [];
   }
   const out = [];
   for (const f of names) {
     try {
-      const r = JSON.parse(fs18.readFileSync(path22.join(dir2(), f), "utf8"));
+      const r = JSON.parse(fs20.readFileSync(path24.join(dir2(), f), "utf8"));
       if (r && typeof r.sessionId === "string")
         out.push(r);
     } catch {}
@@ -4239,36 +4414,36 @@ var shq = (s) => /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'
 var REOPEN_SETTINGS_MS = 2 * 60 * 1000;
 
 // src/spawn.ts
-import fs19 from "node:fs";
-import path23 from "node:path";
+import fs21 from "node:fs";
+import path25 from "node:path";
 import { spawnSync as spawnSync5 } from "node:child_process";
 var TMUX_SOCKET = "crosstalk";
-var dir3 = () => path23.join(P2.root, "spawned");
-var fileOf = (id) => path23.join(dir3(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+var dir3 = () => path25.join(P2.root, "spawned");
+var fileOf = (id) => path25.join(dir3(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
 function readSpawned() {
   let names;
   try {
-    names = fs19.readdirSync(dir3()).filter((f) => f.endsWith(".json"));
+    names = fs21.readdirSync(dir3()).filter((f) => f.endsWith(".json"));
   } catch {
     return [];
   }
   const out = [];
   for (const f of names)
     try {
-      const r = JSON.parse(fs19.readFileSync(path23.join(dir3(), f), "utf8"));
+      const r = JSON.parse(fs21.readFileSync(path25.join(dir3(), f), "utf8"));
       if (r?.id && r.worktree)
         out.push(r);
     } catch {}
   return out.sort((a, b) => a.createdAt - b.createdAt);
 }
 function writeSpawned(r) {
-  fs19.mkdirSync(dir3(), { recursive: true, mode: 448 });
+  fs21.mkdirSync(dir3(), { recursive: true, mode: 448 });
   const tmp = `${fileOf(r.id)}.${process.pid}.tmp`;
-  fs19.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 384 });
-  fs19.renameSync(tmp, fileOf(r.id));
+  fs21.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 384 });
+  fs21.renameSync(tmp, fileOf(r.id));
 }
 var STOP = new Set("a an the on to for and of in with at by from into onto this that it its be is are please can could would you start put get run spin up fire one two three four five six seven eight more another new agent agents session sessions claude someone somebody work working".split(" "));
-var tmuxConf = () => path23.join(P2.root, "tmux.conf");
+var tmuxConf = () => path25.join(P2.root, "tmux.conf");
 var TMUX_CONF = [
   `# crosstalk's own tmux server (tmux -L crosstalk), for agents it runs in the background.`,
   `set -g status-left '#[bold]\u25e2 crosstalk#[default] #S  '`,
@@ -4282,12 +4457,12 @@ var TMUX_CONF = [
 ].join(`
 `);
 function ensureConf() {
-  fs19.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  fs21.mkdirSync(P2.root, { recursive: true, mode: 448 });
   try {
-    if (fs19.readFileSync(tmuxConf(), "utf8") === TMUX_CONF)
+    if (fs21.readFileSync(tmuxConf(), "utf8") === TMUX_CONF)
       return;
   } catch {}
-  fs19.writeFileSync(tmuxConf(), TMUX_CONF, { mode: 384 });
+  fs21.writeFileSync(tmuxConf(), TMUX_CONF, { mode: 384 });
 }
 function cleanEnv(env) {
   const e = { ...env };
@@ -4334,7 +4509,7 @@ function liveProbe(g = git4) {
     return defaults.get(repo);
   };
   return {
-    exists: (p) => fs20.existsSync(p),
+    exists: (p) => fs22.existsSync(p),
     clean: (w, ignore) => {
       const r = g(w, ["status", "--porcelain", "--untracked-files=all"]);
       if (!r.ok)
@@ -4366,7 +4541,7 @@ function liveProbe(g = git4) {
     ended: (r) => {
       if (r.background && r.tmux && tmuxHas(r.tmux))
         return false;
-      const live = readAll().some((x) => !x.endedAt && path24.resolve(x.cwd).startsWith(path24.resolve(r.worktree)) && recAlive(x));
+      const live = readAll().some((x) => !x.endedAt && path26.resolve(x.cwd).startsWith(path26.resolve(r.worktree)) && recAlive(x));
       return !live;
     }
   };
@@ -4382,7 +4557,7 @@ function offerFor(c) {
   const question = `${n} agent worktree${n === 1 ? " is" : "s are"} done with: ${n === 1 ? "its" : "their"} work is merged and ${n === 1 ? "its session has" : "their sessions have"} ended. Remove ${n === 1 ? "it" : "them"}?`;
   return { count: n, names, question, text: `\u25e2 crosstalk: ${question} (${names.join(", ")}) Say "clean up the worktrees" to do it.` };
 }
-var stamp = () => path24.join(P2.root, "cleanup-stamp");
+var stamp = () => path26.join(P2.root, "cleanup-stamp");
 var CHECK_EVERY_MS = () => Number(process.env.CROSSTALK_CLEANUP_EVERY_MS ?? 10 * 60 * 1000);
 function offerOnce(o = {}) {
   const recs = readSpawned().filter((r) => !r.removedAt);
@@ -4390,11 +4565,11 @@ function offerOnce(o = {}) {
     return null;
   if (!o.force) {
     try {
-      if (Date.now() - fs20.statSync(stamp()).mtimeMs < CHECK_EVERY_MS())
+      if (Date.now() - fs22.statSync(stamp()).mtimeMs < CHECK_EVERY_MS())
         return null;
     } catch {}
-    fs20.mkdirSync(P2.root, { recursive: true, mode: 448 });
-    fs20.writeFileSync(stamp(), String(Date.now()), { mode: 384 });
+    fs22.mkdirSync(P2.root, { recursive: true, mode: 448 });
+    fs22.writeFileSync(stamp(), String(Date.now()), { mode: 384 });
   }
   const c = select(recs, o.probe ?? liveProbe());
   const offer = offerFor(c);
@@ -4420,8 +4595,8 @@ function surface(sessionId, offer, mod = modActive2(sessionId)) {
 }
 
 // src/shipping/engine.ts
-import fs25 from "node:fs";
-import path30 from "node:path";
+import fs27 from "node:fs";
+import path32 from "node:path";
 import crypto12 from "node:crypto";
 
 // src/shipping/risk.ts
@@ -4512,8 +4687,8 @@ function ratchet(current, want, o = {}) {
 }
 
 // src/shipping/config.ts
-import fs21 from "node:fs";
-import path25 from "node:path";
+import fs23 from "node:fs";
+import path27 from "node:path";
 var SHIP_FILE = ".crosstalk/ship";
 var DEFAULT_RAMP = ["internal", "10%", "50%", "on"];
 var PROVIDERS = ["file", "launchdarkly", "posthog", "growthbook", "statsig"];
@@ -4542,9 +4717,16 @@ function parseShip(text) {
     testTimeoutS: Math.max(5, Number(kv.test_timeout) || 900)
   };
 }
+function loadShip(root) {
+  try {
+    return parseShip(fs23.readFileSync(path27.join(root, SHIP_FILE), "utf8"));
+  } catch {
+    return parseShip("");
+  }
+}
 var NPM_PLACEHOLDER = /no test specified/;
-function discoverTest(root, exists = (p) => fs21.existsSync(p), read = (p) => fs21.readFileSync(p, "utf8")) {
-  const at = (f) => path25.join(root, f);
+function discoverTest(root, exists = (p) => fs23.existsSync(p), read = (p) => fs23.readFileSync(p, "utf8")) {
+  const at = (f) => path27.join(root, f);
   try {
     const pkg = JSON.parse(read(at("package.json")));
     const t = pkg?.scripts?.test;
@@ -4575,8 +4757,8 @@ function discoverTest(root, exists = (p) => fs21.existsSync(p), read = (p) => fs
 }
 
 // src/shipping/evidence.ts
-import fs22 from "node:fs";
-import path26 from "node:path";
+import fs24 from "node:fs";
+import path28 from "node:path";
 var DIFF_LINE = /^(diff --git |@@ -\d|\+\+\+ [ab/]|--- [ab/]|index [0-9a-f]{7,}\.\.[0-9a-f]{7,})/m;
 function looksLikeDiff(text) {
   if (DIFF_LINE.test(text))
@@ -4611,7 +4793,7 @@ var pairs = (v) => {
   return out.length ? out.slice(0, 10) : undefined;
 };
 function validate(input, o) {
-  const exists = o.exists ?? ((p) => fs22.existsSync(p));
+  const exists = o.exists ?? ((p) => fs24.existsSync(p));
   const summary = typeof input.summary === "string" ? input.summary.trim() : "";
   if (summary.length < 10)
     return { ok: false, error: "evidence needs a summary: what changed in behaviour, in a sentence or two of plain language" };
@@ -4627,7 +4809,7 @@ function validate(input, o) {
   for (const s of screenshots ?? []) {
     if (/^https?:\/\//.test(s))
       continue;
-    const p = path26.isAbsolute(s) || !o.base ? s : path26.join(o.base, s);
+    const p = path28.isAbsolute(s) || !o.base ? s : path28.join(o.base, s);
     if (!exists(p))
       return { ok: false, error: `no screenshot at ${s}` };
   }
@@ -4761,9 +4943,9 @@ function setFlag(text, name, stage) {
 var flagName = (feature) => feature.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "feature";
 
 // src/shipping/git.ts
-import fs23 from "node:fs";
+import fs25 from "node:fs";
 import os7 from "node:os";
-import path27 from "node:path";
+import path29 from "node:path";
 import { spawn as spawn3, spawnSync as spawnSync6 } from "node:child_process";
 var env = (extra = {}) => ({
   ...process.env,
@@ -4851,8 +5033,8 @@ var worktrees2 = (root) => worktrees(root);
 var checkoutOf = (root, branch) => worktrees2(root).find((w) => w.branch === branch && !w.bare);
 var mainOf = (cwd) => worktrees2(cwd)[0]?.path;
 function scratch(root, at, where) {
-  fs23.mkdirSync(path27.dirname(where), { recursive: true });
-  if (fs23.existsSync(where))
+  fs25.mkdirSync(path29.dirname(where), { recursive: true });
+  if (fs25.existsSync(where))
     dropScratch(root, where);
   const r = git5(root, ["worktree", "add", "--detach", "--quiet", where, at]);
   return r.ok ? { ok: true } : { ok: false, err: r.err.split(`
@@ -4861,23 +5043,23 @@ function scratch(root, at, where) {
 function dropScratch(root, where) {
   for (const l of ["node_modules", ".venv", "venv"])
     try {
-      if (fs23.lstatSync(path27.join(where, l)).isSymbolicLink())
-        fs23.unlinkSync(path27.join(where, l));
+      if (fs25.lstatSync(path29.join(where, l)).isSymbolicLink())
+        fs25.unlinkSync(path29.join(where, l));
     } catch {}
   git5(root, ["worktree", "remove", "--force", where]);
   try {
-    fs23.rmSync(where, { recursive: true, force: true });
+    fs25.rmSync(where, { recursive: true, force: true });
   } catch {}
   git5(root, ["worktree", "prune"]);
 }
 function linkDeps(main, where) {
   const out = [];
   for (const d of ["node_modules", ".venv", "venv"]) {
-    const from = path27.join(main, d);
-    const to = path27.join(where, d);
+    const from = path29.join(main, d);
+    const to = path29.join(where, d);
     try {
-      if (fs23.existsSync(from) && !fs23.existsSync(to)) {
-        fs23.symlinkSync(from, to, "dir");
+      if (fs25.existsSync(from) && !fs25.existsSync(to)) {
+        fs25.symlinkSync(from, to, "dir");
         out.push(d);
       }
     } catch {}
@@ -4898,7 +5080,7 @@ function commitFile(root, branch, file, content, message) {
   const parent = tip(root, `refs/heads/${branch}`);
   if (!parent)
     return { ok: false, err: `no branch ${branch}` };
-  const idx = path27.join(os7.tmpdir(), `crosstalk-index-${process.pid}-${Date.now()}`);
+  const idx = path29.join(os7.tmpdir(), `crosstalk-index-${process.pid}-${Date.now()}`);
   const e = { GIT_INDEX_FILE: idx };
   try {
     if (!git5(root, ["read-tree", parent], { env: e }).ok)
@@ -4915,7 +5097,7 @@ function commitFile(root, branch, file, content, message) {
     return c.ok ? { ok: true, sha: c.out, parent } : { ok: false, err: c.err };
   } finally {
     try {
-      fs23.unlinkSync(idx);
+      fs25.unlinkSync(idx);
     } catch {}
   }
 }
@@ -4937,13 +5119,13 @@ function push(root, remote, branch) {
 `).slice(-2).join(" ") };
 }
 function which(bin, envVars = process.env) {
-  for (const d of (envVars.PATH ?? "").split(path27.delimiter)) {
+  for (const d of (envVars.PATH ?? "").split(path29.delimiter)) {
     if (!d)
       continue;
-    const p = path27.join(d, bin);
+    const p = path29.join(d, bin);
     try {
-      fs23.accessSync(p, fs23.constants.X_OK);
-      if (fs23.statSync(p).isFile())
+      fs25.accessSync(p, fs25.constants.X_OK);
+      if (fs25.statSync(p).isFile())
         return p;
     } catch {}
   }
@@ -4951,8 +5133,8 @@ function which(bin, envVars = process.env) {
 }
 
 // src/shipping/reviewer.ts
-import fs24 from "node:fs";
-import path28 from "node:path";
+import fs26 from "node:fs";
+import path30 from "node:path";
 import { spawn as spawn4, spawnSync as spawnSync7 } from "node:child_process";
 function detect(env = process.env) {
   return {
@@ -5055,7 +5237,7 @@ function argvFor(who, promptFile, lastFile) {
   return `${q(who.bin)} -p ${p}${who.model ? ` --model ${q(who.model)}` : ""} --allowedTools ${q(tools)}`;
 }
 function script(l) {
-  const f = (n) => path28.join(l.dir, n);
+  const f = (n) => path30.join(l.dir, n);
   return [
     `#!/bin/sh`,
     `# A crosstalk reviewer: ${l.name}`,
@@ -5069,10 +5251,10 @@ function script(l) {
 `);
 }
 function launch(l) {
-  fs24.mkdirSync(l.dir, { recursive: true, mode: 448 });
-  fs24.writeFileSync(path28.join(l.dir, "prompt.txt"), l.prompt, { mode: 384 });
-  const file = path28.join(l.dir, "run.sh");
-  fs24.writeFileSync(file, script(l), { mode: 448 });
+  fs26.mkdirSync(l.dir, { recursive: true, mode: 448 });
+  fs26.writeFileSync(path30.join(l.dir, "prompt.txt"), l.prompt, { mode: 384 });
+  const file = path30.join(l.dir, "run.sh");
+  fs26.writeFileSync(file, script(l), { mode: 448 });
   const env = cleanEnv({ ...l.env ?? process.env });
   delete env.CLAUDE_CODE_SESSION_ID;
   delete env.CLAUDECODE;
@@ -5093,7 +5275,7 @@ function launch(l) {
 function cliCommand(root) {
   if (process.env.CROSSTALK_BIN)
     return process.env.CROSSTALK_BIN;
-  return q(path28.join(root, "bin", "crosstalk"));
+  return q(path30.join(root, "bin", "crosstalk"));
 }
 
 // src/shipping/incident.ts
@@ -5133,7 +5315,7 @@ function mapIncident(inc, threads, o) {
 var describeIncident = (inc) => `Incident from ${inc.source}: ${inc.title}${inc.details ? ` \u2014 ${inc.details}` : ""}${inc.flag ? ` (flag ${inc.flag})` : ""}${inc.sha ? ` (at ${inc.sha.slice(0, 12)})` : ""}${inc.files?.length ? ` (in ${normaliseFiles(inc.files).slice(0, 5).join(", ")})` : ""}`.slice(0, 1500);
 
 // src/shipping/merge.ts
-import path29 from "node:path";
+import path31 from "node:path";
 import { spawnSync as spawnSync8 } from "node:child_process";
 function planMerge(f) {
   if (!f.defaultBranch)
@@ -5221,7 +5403,7 @@ function executeMerge(root, branch, o) {
   const from = tip(root, `refs/heads/${d}`);
   let to = tip(root, `refs/heads/${branch}`);
   if (plan.how === "rebase") {
-    const where = path29.join(o.scratchDir, `merge-${Date.now()}`);
+    const where = path31.join(o.scratchDir, `merge-${Date.now()}`);
     const s = scratch(root, to, where);
     if (!s.ok)
       return { ok: false, how: "rebase", text: `could not make a scratch copy: ${s.err}` };
@@ -5535,17 +5717,17 @@ class ShipEngine {
   T = () => this.d.threads;
   load() {
     try {
-      const raw = JSON.parse(fs25.readFileSync(this.d.file, "utf8"));
+      const raw = JSON.parse(fs27.readFileSync(this.d.file, "utf8"));
       if (raw?.v === 1)
         return { v: 1, runs: raw.runs ?? {}, rounds: raw.rounds ?? {}, authors: raw.authors ?? {}, questions: raw.questions ?? {} };
     } catch {}
     return { v: 1, runs: {}, rounds: {}, authors: {}, questions: {} };
   }
   save() {
-    fs25.mkdirSync(path30.dirname(this.d.file), { recursive: true, mode: 448 });
+    fs27.mkdirSync(path32.dirname(this.d.file), { recursive: true, mode: 448 });
     const tmp = `${this.d.file}.${process.pid}.tmp`;
-    fs25.writeFileSync(tmp, JSON.stringify(this.st, null, 1), { mode: 384 });
-    fs25.renameSync(tmp, this.d.file);
+    fs27.writeFileSync(tmp, JSON.stringify(this.st, null, 1), { mode: 384 });
+    fs27.renameSync(tmp, this.d.file);
   }
   lock(key, fn) {
     const prev = this.locks.get(key) ?? Promise.resolve();
@@ -5582,14 +5764,14 @@ class ShipEngine {
   rootOf(t, sid) {
     const s = sid ? this.T().session(sid) : undefined;
     const r = s?.root ?? this.T().rootFor(t.meta.value.repo);
-    return r && fs25.existsSync(r) ? r : undefined;
+    return r && fs27.existsSync(r) ? r : undefined;
   }
   config(root) {
     const main = mainOf(root) ?? root;
     const d = defaultBranch3(main);
     const text = (d && show(main, d, SHIP_FILE)) ?? (() => {
       try {
-        return fs25.readFileSync(path30.join(main, SHIP_FILE), "utf8");
+        return fs27.readFileSync(path32.join(main, SHIP_FILE), "utf8");
       } catch {
         return "";
       }
@@ -5748,8 +5930,8 @@ class ShipEngine {
     for (const p of chosen.picks) {
       const runId = `r${crypto12.randomBytes(4).toString("hex")}`;
       const name = `review-${slug(f.name, 20)}-${p.kind}-${rd.round}`.slice(0, 48);
-      const dir = path30.join(this.d.home, "reviews", runId);
-      const worktree = path30.join(dir, "copy");
+      const dir = path32.join(this.d.home, "reviews", runId);
+      const worktree = path32.join(dir, "copy");
       const sc = scratch(root, tipSha, worktree);
       if (!sc.ok) {
         problems.push(`no copy for the ${p.kind} review: ${sc.err}`);
@@ -5814,12 +5996,12 @@ class ShipEngine {
     if (a.output) {
       let text = "";
       try {
-        text = fs25.readFileSync(a.output, "utf8");
+        text = fs27.readFileSync(a.output, "utf8");
       } catch {}
       if (!text.trim()) {
         let err = "";
         try {
-          err = fs25.readFileSync(path30.join(run.dir, "err.txt"), "utf8").trim().split(`
+          err = fs27.readFileSync(path32.join(run.dir, "err.txt"), "utf8").trim().split(`
 `).slice(-3).join(" ");
         } catch {}
         text = `VERDICT: changes
@@ -5928,7 +6110,7 @@ Fix it, commit, and call crosstalk_ready with feature "${f.name}" again.`);
     return this.askMerge(key);
   }
   async check(root, branch, cfg) {
-    const where = path30.join(this.d.home, "checks", `${slug(branch, 30)}-${Date.now().toString(36)}`);
+    const where = path32.join(this.d.home, "checks", `${slug(branch, 30)}-${Date.now().toString(36)}`);
     const tipSha = tip(root, `refs/heads/${branch}`);
     if (!tipSha)
       return { ok: false, out: `no branch ${branch}` };
@@ -6007,7 +6189,7 @@ ${describe(latestFor(f.ship?.evidence, "merge"))}`,
     const m = executeMerge(mainOf(root) ?? root, f.ship.branch, {
       push: cfg.push,
       gh: this.d.gh,
-      scratchDir: path30.join(this.d.home, "scratch"),
+      scratchDir: path32.join(this.d.home, "scratch"),
       title: f.name,
       body: `${t.meta.value.name}: ${f.name}
 
@@ -6329,7 +6511,7 @@ ${describe(ev)}`,
       this.d.log(`ship: incident ${inc.title} reopened ${t.meta.value.name} by ${m.by}`);
       return { ok: true, text: `reopened ${t.meta.value.name} (matched by ${m.by})${notes.length ? `; ${notes.join("; ")}` : ""}`, thread: t.meta.value.name, reopened: true, ...killed ? { killed } : {} };
     }
-    const repo = [...roots.entries()].find(([, r]) => o.cwd && path30.resolve(o.cwd).startsWith(path30.resolve(mainOf(r) ?? r)))?.[0] ?? [...roots.keys()][0] ?? "";
+    const repo = [...roots.entries()].find(([, r]) => o.cwd && path32.resolve(o.cwd).startsWith(path32.resolve(mainOf(r) ?? r)))?.[0] ?? [...roots.keys()][0] ?? "";
     const t = this.T().open({ name: `incident-${slug(inc.title, 30)}`, repo });
     this.fact(t, text);
     this.task(t, `Find the cause of "${inc.title}". When it is found, link it to the thread that shipped it with crosstalk_incident (link) so that thread hears about it`);
@@ -6433,8 +6615,8 @@ function createShipping(o) {
   };
   const engine = new ShipEngine({
     threads: portFor(o.threads),
-    file: path31.join(P2.root, "shipping.json"),
-    home: path31.join(P2.root, "shipping"),
+    file: path33.join(P2.root, "shipping.json"),
+    home: path33.join(P2.root, "shipping"),
     cli: cliCommand(o.root),
     wake: o.wake,
     ask,
@@ -6514,46 +6696,913 @@ function createShipping(o) {
   return { engine, op, uiAnswer, guardThreadEdit };
 }
 
+// src/extras.ts
+import fs33 from "node:fs";
+import path39 from "node:path";
+
+// src/disk/scan.ts
+import fs29 from "node:fs";
+import path35 from "node:path";
+import { execFile as execFile2 } from "node:child_process";
+
+// src/metrics/transcripts.ts
+import fs28 from "node:fs";
+import os8 from "node:os";
+import path34 from "node:path";
+var EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch"]);
+var claudeDir = () => process.env.CROSSTALK_CLAUDE_DIR ?? process.env.CLAUDE_CONFIG_DIR ?? path34.join(os8.homedir(), ".claude");
+function firstEdit(text) {
+  const seen = new Set;
+  let tokens = 0;
+  let fresh = 0;
+  let turns = 0;
+  for (const line of text.split(`
+`)) {
+    if (!line.includes('"assistant"'))
+      continue;
+    let o;
+    try {
+      o = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (o?.type !== "assistant" || !o.message)
+      continue;
+    const m = o.message;
+    const id = String(m.id ?? o.uuid ?? turns);
+    if (!seen.has(id)) {
+      seen.add(id);
+      turns++;
+      const u = m.usage ?? {};
+      const n = (k) => Number.isFinite(Number(u[k])) ? Number(u[k]) : 0;
+      fresh += n("input_tokens") + n("cache_creation_input_tokens") + n("output_tokens");
+      tokens += n("input_tokens") + n("cache_creation_input_tokens") + n("cache_read_input_tokens") + n("output_tokens");
+    }
+    const content = Array.isArray(m.content) ? m.content : [];
+    if (content.some((c) => c?.type === "tool_use" && EDIT_TOOLS.has(String(c.name))))
+      return { tokens, fresh, turns };
+  }
+  return null;
+}
+function transcriptFor(sid, hint, dir = claudeDir()) {
+  if (hint && fs28.existsSync(hint))
+    return hint;
+  try {
+    for (const p of fs28.readdirSync(path34.join(dir, "projects"))) {
+      const f = path34.join(dir, "projects", p, `${sid}.jsonl`);
+      if (fs28.existsSync(f))
+        return f;
+    }
+  } catch {}
+  return;
+}
+function firstEditOf(file) {
+  try {
+    const fd = fs28.openSync(file, "r");
+    try {
+      const buf = Buffer.alloc(Math.min(fs28.fstatSync(fd).size, 16 * 1024 * 1024));
+      fs28.readSync(fd, buf, 0, buf.length, 0);
+      return firstEdit(buf.toString("utf8"));
+    } finally {
+      fs28.closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+}
+
+// src/disk/scan.ts
+var DAY4 = 24 * 60 * 60000;
+var OLD_DAYS = () => Number(process.env.CROSSTALK_DISK_OLD_DAYS ?? 30);
+var isClaudeWorktree = (p) => /[\\/]\.claude[\\/]worktrees[\\/]/.test(path35.resolve(p) + path35.sep);
+function duKb(p) {
+  return new Promise((resolve) => execFile2("du", ["-sk", p], { timeout: 120000, maxBuffer: 1024 * 1024 }, (_e, out) => resolve(Number(String(out ?? "").split(/\s/)[0]) || 0)));
+}
+function transcriptCwd(file) {
+  try {
+    const fd = fs29.openSync(file, "r");
+    try {
+      const buf = Buffer.alloc(64 * 1024);
+      const n = fs29.readSync(fd, buf, 0, buf.length, 0);
+      const m = /"cwd"\s*:\s*("(?:[^"\\]|\\.)*")/.exec(buf.subarray(0, n).toString("utf8"));
+      return m ? JSON.parse(m[1]) : undefined;
+    } finally {
+      fs29.closeSync(fd);
+    }
+  } catch {
+    return;
+  }
+}
+function transcripts(dir) {
+  const out = [];
+  const root = path35.join(dir, "projects");
+  let projects = [];
+  try {
+    projects = fs29.readdirSync(root);
+  } catch {
+    return out;
+  }
+  for (const p of projects) {
+    const pd = path35.join(root, p);
+    let names = [];
+    try {
+      names = fs29.readdirSync(pd).filter((f) => f.endsWith(".jsonl"));
+    } catch {
+      continue;
+    }
+    for (const n of names) {
+      const file = path35.join(pd, n);
+      try {
+        const st = fs29.statSync(file);
+        const side = path35.join(pd, n.slice(0, -".jsonl".length));
+        out.push({ file, dir: fs29.existsSync(side) ? side : undefined, cwd: transcriptCwd(file), mtime: st.mtimeMs, kb: Math.ceil(st.size / 1024) });
+      } catch {}
+    }
+  }
+  return out;
+}
+var under = (p, dir) => {
+  const a = path35.resolve(p);
+  const b = path35.resolve(dir);
+  return a === b || a.startsWith(b + path35.sep);
+};
+function defaultBranch4(repo, g) {
+  const o = g(repo, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
+  if (o.ok && o.out)
+    return o.out.replace(/^origin\//, "");
+  for (const b of ["main", "master", "trunk"])
+    if (g(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]).ok)
+      return b;
+  return;
+}
+function clean(w, g) {
+  const r = g(w, ["status", "--porcelain", "--untracked-files=all"]);
+  return r.ok && !r.out.trim();
+}
+function mergedInto(repo, d, ref, g) {
+  if (!g(repo, ["merge-base", "--is-ancestor", ref, d]).ok) {
+    const remote = g(repo, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${d}`]);
+    if (!remote.ok || !g(repo, ["merge-base", "--is-ancestor", ref, `origin/${d}`]).ok) {
+      const cherry = g(repo, ["cherry", d, ref]);
+      return cherry.ok && !!cherry.out && cherry.out.split(`
+`).every((l) => l.startsWith("-"));
+    }
+  }
+  return true;
+}
+async function scan(e) {
+  const g = e.git;
+  const ts = transcripts(e.claudeDir);
+  const repos = new Set;
+  const cwds = new Set([...ts.map((t) => t.cwd).filter((c) => !!c), ...e.liveCwds, ...e.repos]);
+  const seenTop = new Set;
+  for (const c of cwds) {
+    if (!fs29.existsSync(c))
+      continue;
+    const top = g(c, ["rev-parse", "--show-toplevel"]);
+    if (!top.ok || !top.out || seenTop.has(top.out))
+      continue;
+    seenTop.add(top.out);
+    const main = worktrees(c, g)[0];
+    if (main && !main.bare)
+      repos.add(main.path);
+  }
+  const reclaim = [];
+  const kept = [];
+  let usedKb = 0;
+  const live = e.liveCwds.filter(Boolean);
+  for (const repo of repos) {
+    const d = defaultBranch4(repo, g);
+    for (const w of worktrees(repo, g).slice(1)) {
+      if (w.bare || !isClaudeWorktree(w.path) || !fs29.existsSync(w.path))
+        continue;
+      const kb = await e.sizeKb(w.path);
+      usedKb += kb;
+      const keep = (why) => kept.push({ path: w.path, why });
+      if (live.some((c) => under(c, w.path))) {
+        keep("a session is working in it");
+        continue;
+      }
+      if (!clean(w.path, g)) {
+        keep("it has changes");
+        continue;
+      }
+      if (!d) {
+        keep("no default branch to compare with");
+        continue;
+      }
+      const branchThere = !!w.branch && g(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${w.branch}`]).ok;
+      if (w.branch === d) {
+        keep("it is on the default branch");
+        continue;
+      }
+      const ref = branchThere ? `refs/heads/${w.branch}` : w.head ?? "HEAD";
+      if (!mergedInto(repo, d, ref, g)) {
+        keep("its work is not merged");
+        continue;
+      }
+      const group = w.branch && e.threadOf?.(repo, w.branch) || w.branch || path35.basename(w.path);
+      reclaim.push({
+        kind: "worktree",
+        path: w.path,
+        kb,
+        group,
+        repo,
+        ...w.branch ? { branch: w.branch } : {},
+        merged: branchThere,
+        why: branchThere ? `${w.branch} is merged into ${d}` : `its branch is gone and its work is in ${d}`
+      });
+    }
+  }
+  const old = e.now - OLD_DAYS() * DAY4;
+  for (const t of ts) {
+    const kb = t.kb + (t.dir ? await e.sizeKb(t.dir) : 0);
+    usedKb += kb;
+    if (t.mtime > old || !t.cwd || fs29.existsSync(t.cwd))
+      continue;
+    reclaim.push({
+      kind: "transcript",
+      path: t.file,
+      kb,
+      group: t.cwd,
+      why: `untouched for ${Math.floor((e.now - t.mtime) / DAY4)} days, and ${t.cwd} no longer exists`,
+      ...t.dir ? { extra: [t.dir] } : {}
+    });
+  }
+  return {
+    at: e.now,
+    usedKb,
+    reclaim,
+    reclaimKb: reclaim.reduce((s, i) => s + i.kb, 0),
+    groups: new Set(reclaim.map((i) => i.group)).size,
+    kept
+  };
+}
+function free(confirmed, fresh, g = git4) {
+  const still = new Map(fresh.reclaim.map((i) => [`${i.kind}:${path35.resolve(i.path)}`, i]));
+  const out = [];
+  for (const c of confirmed) {
+    const i = still.get(`${c.kind}:${path35.resolve(c.path)}`);
+    if (!i) {
+      out.push({ path: c.path, kb: 0, ok: false, why: "no longer finished, or already gone" });
+      continue;
+    }
+    if (i.kind === "worktree") {
+      const r = g(i.repo, ["worktree", "remove", i.path]);
+      if (!r.ok) {
+        out.push({ path: i.path, kb: 0, ok: false, why: r.out.split(`
+`).pop() });
+        continue;
+      }
+      g(i.repo, ["worktree", "prune"]);
+      if (i.branch && i.merged)
+        g(i.repo, ["branch", "-d", i.branch]);
+      out.push({ path: i.path, kb: i.kb, ok: true });
+    } else {
+      try {
+        fs29.rmSync(i.path, { force: true });
+        for (const x of i.extra ?? [])
+          fs29.rmSync(x, { recursive: true, force: true });
+        out.push({ path: i.path, kb: i.kb, ok: true });
+      } catch (err) {
+        out.push({ path: i.path, kb: 0, ok: false, why: err.message });
+      }
+    }
+  }
+  return out;
+}
+var human = (kb) => kb >= 1024 * 1024 ? `${(kb / 1024 / 1024).toFixed(1).replace(/\.0$/, "")} GB` : kb >= 1024 ? `${Math.round(kb / 1024)} MB` : `${kb} KB`;
+function liveCwds(o = {}) {
+  const out = new Set([...o.registry ?? [], ...o.records ?? []].map((r) => r.cwd).filter(Boolean));
+  if (process.platform === "linux")
+    try {
+      for (const pid of fs29.readdirSync("/proc")) {
+        if (!/^\d+$/.test(pid))
+          continue;
+        try {
+          out.add(fs29.readlinkSync(`/proc/${pid}/cwd`));
+        } catch {}
+      }
+    } catch {}
+  return [...out];
+}
+var defaultClaudeDir = claudeDir;
+
+// src/disk/budget.ts
+import fs30 from "node:fs";
+import path36 from "node:path";
+var FREE = "Free it";
+var SHOW = "Show me";
+var NOT_NOW = "Not now";
+var ALWAYS = "Free it by itself";
+var thresholdKb = () => Number(process.env.CROSSTALK_DISK_BUDGET_GB ?? 5) * 1024 * 1024;
+var WEEK3 = 7 * DAY4;
+var file4 = () => path36.join(process.env.CROSSTALK_HOME ?? ROOT2, "disk.json");
+function load8() {
+  try {
+    const s = JSON.parse(fs30.readFileSync(file4(), "utf8"));
+    if (s?.v === 1)
+      return { frees: 0, ...s };
+  } catch {}
+  return { v: 1, frees: 0 };
+}
+function save7(s) {
+  fs30.mkdirSync(path36.dirname(file4()), { recursive: true, mode: 448 });
+  const tmp = `${file4()}.${process.pid}.tmp`;
+  fs30.writeFileSync(tmp, JSON.stringify(s), { mode: 384 });
+  fs30.renameSync(tmp, file4());
+}
+var questionText2 = (r) => `Worktrees and old sessions are using ${human(r.usedKb)}; free ${human(r.reclaimKb)} from ${r.groups} finished thread${r.groups === 1 ? "" : "s"}?`;
+var ruleQuestion = () => `That is twice you said free it. Free finished threads' disk by itself from now on, whenever it passes ${human(thresholdKb())}?`;
+function listing(r) {
+  if (!r.reclaim.length)
+    return `\u25e2 crosstalk: nothing to free. Claude Code's worktrees and sessions use ${human(r.usedKb)}, all of it in use or not finished.`;
+  const lines = [`\u25e2 crosstalk: ${human(r.reclaimKb)} can be freed from ${r.groups} finished thread${r.groups === 1 ? "" : "s"} (of ${human(r.usedKb)} in Claude Code's worktrees and sessions):`];
+  const groups = new Map;
+  for (const i of r.reclaim)
+    (groups.get(i.group) ?? groups.set(i.group, []).get(i.group)).push(i);
+  for (const [g, items] of [...groups].sort((a, b) => b[1].reduce((s, i) => s + i.kb, 0) - a[1].reduce((s, i) => s + i.kb, 0))) {
+    lines.push(`  ${g}  (${human(items.reduce((s, i) => s + i.kb, 0))})`);
+    for (const i of items.slice(0, 6))
+      lines.push(`    ${i.kind === "worktree" ? "worktree  " : "transcript"} ${i.path}  ${human(i.kb)}: ${i.why}`);
+    if (items.length > 6)
+      lines.push(`    \u2026 and ${items.length - 6} more`);
+  }
+  if (r.kept.length)
+    lines.push(`Kept: ${r.kept.length} worktree${r.kept.length === 1 ? "" : "s"} (${[...new Set(r.kept.map((k) => k.why))].join("; ")}).`);
+  lines.push(`Nothing is removed until you say so: "free it".`);
+  return lines.join(`
+`);
+}
+
+class Budget {
+  d;
+  constructor(d) {
+    this.d = d;
+  }
+  now = () => this.d.now ? this.d.now() : Date.now();
+  async check() {
+    const s = load8();
+    const now = this.now();
+    if (s.questionId && s.askedAt && now - s.askedAt < DAY4)
+      return {};
+    const r = await this.d.scan();
+    if (r.reclaimKb < thresholdKb())
+      return {};
+    if (s.rule) {
+      const freed = this.d.free(r.reclaim, r);
+      const kb = freed.filter((f) => f.ok).reduce((a, f) => a + f.kb, 0);
+      this.d.digest(`disk:auto:${now}`, `\u25e2 crosstalk: freed ${human(kb)} from ${r.groups} finished thread${r.groups === 1 ? "" : "s"} by your standing rule (worktrees merged and done with, sessions whose folder is gone). Say "stop freeing disk by itself" to undo it.`);
+      this.d.log?.(`disk: freed ${human(kb)} by the standing rule`);
+      return { freed };
+    }
+    if (s.notNowAt && now - s.notNowAt < WEEK3 && r.reclaimKb < 2 * (s.notNowKb ?? 0))
+      return {};
+    const id = `disk:${now}`;
+    if (s.questionId)
+      this.d.settle(s.questionId);
+    this.d.ask({ id, question: questionText2(r), options: [FREE, SHOW, NOT_NOW] });
+    save7({ ...s, report: r, askedAt: now, questionId: id });
+    return { asked: true };
+  }
+  async answer(id, value) {
+    const s = load8();
+    const v = value.trim();
+    if (id.startsWith("disk-rule:")) {
+      s.ruleOffered = true;
+      s.rule = v === ALWAYS;
+      save7(s);
+      return { ok: true, text: s.rule ? `Done: from now on finished threads' disk is freed by itself once it passes ${human(thresholdKb())}, and the digest says what went.` : "Fine: you will be asked each time." };
+    }
+    if (v === SHOW) {
+      const r = s.report ?? await this.d.scan();
+      const next = `${id}:again`;
+      this.d.ask({ id: next, question: questionText2(r), options: [FREE, NOT_NOW] });
+      save7({ ...s, report: r, questionId: next, askedAt: this.now() });
+      return { ok: true, text: listing(r) };
+    }
+    if (v === FREE)
+      return this.freeNow(s);
+    save7({ ...s, questionId: undefined, notNowAt: this.now(), notNowKb: s.report?.reclaimKb ?? 0 });
+    return { ok: true, text: `Kept everything. Say "free the disk" any time.` };
+  }
+  async freeNow(s = load8()) {
+    const fresh = await this.d.scan();
+    const confirmed = s.report && this.now() - s.report.at < DAY4 ? s.report.reclaim : fresh.reclaim;
+    const freed = this.d.free(confirmed, fresh);
+    const ok = freed.filter((f) => f.ok);
+    const kb = ok.reduce((a, f) => a + f.kb, 0);
+    s.frees = (s.frees ?? 0) + 1;
+    s.questionId = undefined;
+    s.report = undefined;
+    const lines = [`\u25e2 crosstalk: freed ${human(kb)} (${ok.length} item${ok.length === 1 ? "" : "s"}).`];
+    for (const f of freed.filter((x) => !x.ok).slice(0, 5))
+      lines.push(`  kept ${f.path}: ${f.why}`);
+    if (s.frees >= 2 && !s.ruleOffered && !s.rule) {
+      s.ruleOffered = true;
+      this.d.ask({ id: `disk-rule:${this.now()}`, question: ruleQuestion(), options: [ALWAYS, NOT_NOW] });
+    }
+    save7(s);
+    this.d.log?.(`disk: freed ${human(kb)} on the person's yes`);
+    return { ok: true, text: lines.join(`
+`) };
+  }
+  setRule(on) {
+    const s = load8();
+    s.rule = on;
+    s.ruleOffered = true;
+    save7(s);
+    return on ? `\u25e2 crosstalk: finished threads' disk is freed by itself from now on, once it passes ${human(thresholdKb())}.` : "\u25e2 crosstalk: disk is only freed when you say so.";
+  }
+}
+
+// src/install/team.ts
+import fs31 from "node:fs";
+import path37 from "node:path";
+var MARKETPLACE = "epode";
+var PLUGIN = "crosstalk@epode";
+var SOURCE = { source: "github", repo: "epode-studio/crosstalk" };
+var SETTINGS = path37.join(".claude", "settings.json");
+var YES2 = "Turn it on";
+var NO = "Not now";
+var installId = (slug) => `install:${slug}`;
+var questionText3 = (slug) => `Turn crosstalk on for everyone who clones ${slug}?`;
+function mergeSettings(existing) {
+  const out = JSON.parse(JSON.stringify(existing ?? {}));
+  const kept = [];
+  let changed = false;
+  const m = out.extraKnownMarketplaces;
+  if (m !== undefined && (typeof m !== "object" || Array.isArray(m) || m === null))
+    kept.push("extraKnownMarketplaces is not an object, so it was left alone");
+  else {
+    out.extraKnownMarketplaces ??= {};
+    if (out.extraKnownMarketplaces[MARKETPLACE] === undefined) {
+      out.extraKnownMarketplaces[MARKETPLACE] = { source: { ...SOURCE } };
+      changed = true;
+    } else if (JSON.stringify(out.extraKnownMarketplaces[MARKETPLACE]?.source) !== JSON.stringify(SOURCE))
+      kept.push(`a marketplace named ${MARKETPLACE} is already set to something else`);
+  }
+  const e = out.enabledPlugins;
+  if (e !== undefined && (typeof e !== "object" || Array.isArray(e) || e === null))
+    kept.push("enabledPlugins is not an object, so it was left alone");
+  else {
+    out.enabledPlugins ??= {};
+    if (out.enabledPlugins[PLUGIN] === undefined) {
+      out.enabledPlugins[PLUGIN] = true;
+      changed = true;
+    } else if (out.enabledPlugins[PLUGIN] !== true)
+      kept.push(`${PLUGIN} is set to ${JSON.stringify(out.enabledPlugins[PLUGIN])} here, and that was left as it is`);
+  }
+  return { settings: out, changed, kept };
+}
+function enabled(root) {
+  try {
+    const s = JSON.parse(fs31.readFileSync(path37.join(root, SETTINGS), "utf8"));
+    return s?.enabledPlugins?.[PLUGIN] === true && !!s?.extraKnownMarketplaces?.[MARKETPLACE];
+  } catch {
+    return false;
+  }
+}
+function apply3(root, o = {}) {
+  const f = path37.join(root, SETTINGS);
+  let existing = {};
+  if (fs31.existsSync(f)) {
+    try {
+      existing = JSON.parse(fs31.readFileSync(f, "utf8"));
+    } catch {
+      return { ok: false, text: `${SETTINGS} in ${path37.basename(root)} is not valid JSON, so crosstalk did not touch it. Fix it and ask again.` };
+    }
+    if (!existing || typeof existing !== "object" || Array.isArray(existing))
+      return { ok: false, text: `${SETTINGS} is not a JSON object, so crosstalk did not touch it.` };
+  }
+  const m = mergeSettings(existing);
+  const note = m.kept.length ? ` Left alone: ${m.kept.join("; ")}.` : "";
+  if (!m.changed)
+    return { ok: true, text: `\u25e2 crosstalk: ${SETTINGS} already turns crosstalk on.${note}` };
+  const content = JSON.stringify(m.settings, null, 2) + `
+`;
+  const ship = fs31.existsSync(path37.join(root, SHIP_FILE)) ? loadShip(root) : undefined;
+  if (ship?.push) {
+    const r = (o.commit ?? commitToDefault)(root, SETTINGS, content, "Turn crosstalk on for everyone who clones this repo", { push: ship.push });
+    if (r.ok)
+      return { ok: true, committed: true, text: `\u25e2 crosstalk: turned crosstalk on for everyone who clones ${o.slug ?? path37.basename(root)}: ${SETTINGS} ${r.text} (as ${SHIP_FILE} says).${note}` };
+  }
+  fs31.mkdirSync(path37.dirname(f), { recursive: true });
+  fs31.writeFileSync(f, content);
+  return {
+    ok: true,
+    text: `\u25e2 crosstalk: wrote ${SETTINGS} in ${path37.basename(root)} so everyone who clones ${o.slug ?? "it"} gets crosstalk once they trust the folder. It is an unstaged change: commit it to turn it on for them (git add ${SETTINGS} && git commit).${note}`
+  };
+}
+var file5 = () => path37.join(process.env.CROSSTALK_HOME ?? ROOT2, "install.json");
+function load9() {
+  try {
+    const s = JSON.parse(fs31.readFileSync(file5(), "utf8"));
+    if (s?.v === 1 && s.repos)
+      return s;
+  } catch {}
+  return { v: 1, repos: {} };
+}
+function save8(s) {
+  fs31.mkdirSync(path37.dirname(file5()), { recursive: true, mode: 448 });
+  const tmp = `${file5()}.${process.pid}.tmp`;
+  fs31.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs31.renameSync(tmp, file5());
+}
+function shouldOffer(o, s = load9()) {
+  if (process.env.CROSSTALK_NO_TEAM_INSTALL === "1")
+    return false;
+  if (!o.inUse || !o.connected || s.repos[o.slug])
+    return false;
+  return !enabled(o.root);
+}
+function markAsked(slug, root, now = Date.now()) {
+  const s = load9();
+  s.repos[slug] = { state: "asked", at: now, root };
+  save8(s);
+}
+function answer2(slug, yes, o = {}) {
+  const s = load9();
+  const name = slug ?? Object.entries(s.repos).filter(([, e]) => e.state === "asked").sort((a, b) => b[1].at - a[1].at)[0]?.[0];
+  const root = o.root ?? (name ? s.repos[name]?.root : undefined);
+  if (!root)
+    return { ok: false, text: "no repo to turn crosstalk on in: run it from inside the repo" };
+  const key = name ?? path37.basename(root);
+  s.repos[key] = { state: yes ? "yes" : "no", at: o.now ?? Date.now(), root };
+  save8(s);
+  if (!yes)
+    return { ok: true, text: `Not now. crosstalk will not ask about ${key} again; say "turn crosstalk on for this repo" any time.` };
+  return apply3(root, { slug: key, commit: o.commit });
+}
+
+// src/metrics/stats.ts
+var QUESTION_CAP_MS = 15 * 60000;
+var CHARS_PER_MIN = 200;
+var WEEK4 = 7 * 24 * 60 * 60000;
+var median = (xs) => {
+  if (!xs.length)
+    return;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+function weekOf(at) {
+  const d = new Date(at);
+  const day = (d.getUTCDay() + 6) % 7;
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day)).toISOString().slice(0, 10);
+}
+var answeredMin = (e) => Math.min(Math.max(0, e.openMs), QUESTION_CAP_MS) / 60000;
+var typingMin = (e) => Math.max(0, e.chars) / CHARS_PER_MIN;
+function firstMerge(t) {
+  const at = live(t, "features").map((f) => f.ship?.merged?.at).filter((x) => typeof x === "number");
+  return at.length ? Math.min(...at) : undefined;
+}
+function compute(o) {
+  const now = o.now ?? Date.now();
+  const nWeeks = Math.max(1, Math.min(52, o.weeks ?? 4));
+  const answered = o.events.filter((e) => e.k === "answered");
+  const prompts = o.events.filter((e) => e.k === "prompt");
+  const threads = [];
+  for (const t of o.threads) {
+    if (t.meta.value.combinedInto)
+      continue;
+    const name = t.meta.value.name;
+    const startedAt = t.meta.value.createdAt;
+    const mergedAt = firstMerge(t);
+    const until = mergedAt ?? now;
+    const humanMin = answered.filter((e) => e.thread === name && e.at >= startedAt && e.at <= until).reduce((s, e) => s + answeredMin(e), 0) + prompts.filter((e) => e.threads?.includes(name) && e.at >= startedAt && e.at <= until).reduce((s, e) => s + typingMin(e), 0);
+    threads.push({ name, repo: t.meta.value.repo, startedAt, ...mergedAt ? { mergedAt, ideaToMergeMs: Math.max(0, mergedAt - startedAt) } : {}, humanMin: round1(humanMin) });
+  }
+  const weeks = [];
+  for (let i = nWeeks - 1;i >= 0; i--) {
+    const key = weekOf(now - i * WEEK4);
+    const inWeek = (at) => weekOf(at) === key;
+    weeks.push({
+      week: key,
+      asked: o.events.filter((e) => e.k === "asked" && inWeek(e.at)).length,
+      answered: answered.filter((e) => inWeek(e.at)).length,
+      auto: o.events.filter((e) => e.k === "auto" && inWeek(e.at)).length,
+      humanMin: round1(answered.filter((e) => inWeek(e.at)).reduce((s, e) => s + answeredMin(e), 0) + prompts.filter((e) => inWeek(e.at)).reduce((s, e) => s + typingMin(e), 0)),
+      merged: threads.filter((t) => t.mergedAt && inWeek(t.mergedAt)).length
+    });
+  }
+  const withBrief = [];
+  const without = [];
+  const seen = new Set;
+  for (const e of o.events) {
+    if (e.k !== "session" || seen.has(e.sid))
+      continue;
+    seen.add(e.sid);
+    const f = o.firstEdit?.(e.sid, e.transcript);
+    if (!f)
+      continue;
+    (e.brief ? withBrief : without).push([f.tokens, f.fresh]);
+  }
+  const tok = (xs) => ({ n: xs.length, median: median(xs.map((x) => x[0])), medianFresh: median(xs.map((x) => x[1])) });
+  const merged = threads.filter((t) => t.mergedAt);
+  return {
+    threads,
+    weeks,
+    tokens: { withBrief: tok(withBrief), without: tok(without) },
+    merged: merged.length,
+    medianIdeaToMergeMs: median(merged.map((t) => t.ideaToMergeMs)),
+    medianHumanMinPerMerged: median(merged.map((t) => t.humanMin))
+  };
+}
+var round1 = (x) => Math.round(x * 10) / 10;
+function duration(ms) {
+  if (ms === undefined)
+    return "n/a";
+  const h = ms / 3600000;
+  if (h >= 48)
+    return `${round1(h / 24)} days`;
+  if (h >= 1)
+    return `${round1(h)} h`;
+  return `${Math.round(ms / 60000)} min`;
+}
+var kTokens = (n) => n === undefined ? "n/a" : n >= 1000 ? `${Math.round(n / 1000)}k` : String(Math.round(n));
+function tokenLine(s) {
+  const a = s.tokens.withBrief;
+  const b = s.tokens.without;
+  if (!a.n && !b.n)
+    return "No session has made an edit yet, so there is nothing to compare.";
+  return `Tokens to the first edit: ${kTokens(a.median)} with a thread brief (median, n=${a.n}), ${kTokens(b.median)} without (n=${b.n}); new to the model, without cache reads: ${kTokens(a.medianFresh)} vs ${kTokens(b.medianFresh)}.`;
+}
+function render(s) {
+  const lines = ["\u25e2 crosstalk stats (local to this machine, never sent anywhere)", ""];
+  lines.push(`Merged threads: ${s.merged}. Median idea to merge: ${duration(s.medianIdeaToMergeMs)}. Median human minutes per merged thread: ${s.medianHumanMinPerMerged ?? "n/a"} (approximate: open pickers capped at 15 min each, plus typing at ${CHARS_PER_MIN} characters a minute).`);
+  lines.push(tokenLine(s), "");
+  lines.push("Week of      asked  by rules  answered  your min  merged");
+  for (const w of s.weeks)
+    lines.push(`${w.week}  ${String(w.asked).padStart(5)}  ${String(w.auto).padStart(8)}  ${String(w.answered).padStart(8)}  ${String(w.humanMin).padStart(8)}  ${String(w.merged).padStart(6)}`);
+  const recent = s.threads.filter((t) => t.mergedAt).sort((a, b) => b.mergedAt - a.mergedAt).slice(0, 8);
+  if (recent.length) {
+    lines.push("", "Recently merged:");
+    for (const t of recent)
+      lines.push(`  ${t.name.padEnd(24)} ${duration(t.ideaToMergeMs).padStart(9)} idea to merge, ${t.humanMin} human min`);
+  }
+  return lines.join(`
+`);
+}
+function weeklyLine(s) {
+  const w = s.weeks[s.weeks.length - 1];
+  const share = w.asked + w.auto ? ` (${w.auto} of ${w.asked + w.auto} answered by standing rules)` : "";
+  const merged = s.threads.filter((t) => t.mergedAt && weekOf(t.mergedAt) === w.week);
+  const tok = s.tokens.withBrief.n && s.tokens.without.n ? ` First edits took ${kTokens(s.tokens.withBrief.median)} tokens from a thread brief, ${kTokens(s.tokens.without.median)} without.` : "";
+  return `\u25e2 crosstalk, week of ${w.week}: ${merged.length} thread${merged.length === 1 ? "" : "s"} merged` + (merged.length ? ` (median ${duration(median(merged.map((t) => t.ideaToMergeMs)))} from first edit)` : "") + `, about ${Math.round(w.humanMin)} min of your time, ${w.asked + w.auto} question${w.asked + w.auto === 1 ? "" : "s"}${share}.${tok} Local only; "crosstalk stats" for more.`;
+}
+
+// src/gather.ts
+import fs32 from "node:fs";
+import os9 from "node:os";
+import path38 from "node:path";
+var registryDir = () => path38.join(os9.homedir(), ".claude", "sessions");
+function readRegistry(dir = registryDir(), alive = (p) => pidAlive(p)) {
+  let files;
+  try {
+    files = fs32.readdirSync(dir).filter((f) => /^\d+\.json$/.test(f));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const f of files) {
+    try {
+      const e = JSON.parse(fs32.readFileSync(path38.join(dir, f), "utf8"));
+      const pid = Number(e.pid ?? f.slice(0, -5));
+      if (!pid || typeof e.sessionId !== "string" || !e.sessionId)
+        continue;
+      if (!alive(pid))
+        continue;
+      out.push({
+        pid,
+        sessionId: e.sessionId,
+        cwd: e.cwd ?? "",
+        status: e.status ?? "unknown",
+        name: e.name,
+        startedAt: typeof e.startedAt === "number" ? e.startedAt : undefined,
+        kind: e.kind
+      });
+    } catch {}
+  }
+  return out;
+}
+var RECHECK_MS = 10 * 60 * 1000;
+
+// src/extras.ts
+var HOUR = 60 * 60000;
+function createExtras(d) {
+  const ask = (o) => {
+    const sid = o.sessionId ?? d.fallbackSession();
+    if (sid && d.modLive(sid)) {
+      try {
+        withStore2((items, now) => upsert3(items, { id: o.id, kind: o.kind, sessionId: sid, question: o.question, options: o.options, ...o.thread ? { thread: o.thread } : {}, ts: now }, now));
+        return;
+      } catch (e) {
+        d.log(`${o.kind}: picker not stored: ${e.message}`);
+      }
+    }
+    d.digest(o.id, `\u25e2 crosstalk: ${o.question} ${o.say}`);
+  };
+  const scanNow = () => scan({
+    claudeDir: defaultClaudeDir(),
+    now: Date.now(),
+    git: git4,
+    liveCwds: liveCwds({ registry: readRegistry(), records: readAll().filter((r) => !r.endedAt && recAlive(r)) }),
+    repos: Object.values(d.threads.roots()),
+    sizeKb: duKb,
+    threadOf: (_root, branch) => d.threads.all().find((t) => !!t.branches[branch] && !t.branches[branch].gone)?.meta.value.name
+  });
+  const budget = new Budget({
+    scan: () => scanNow(),
+    free: (confirmed, fresh) => {
+      const out = free(confirmed, fresh);
+      const gone = new Set(out.filter((f) => f.ok).map((f) => path39.resolve(f.path)));
+      for (const r of readSpawned())
+        if (!r.removedAt && gone.has(path39.resolve(r.worktree)))
+          writeSpawned({ ...r, removedAt: Date.now() });
+      return out;
+    },
+    ask: (o) => ask({ ...o, kind: "disk", say: `Say "free it", "show me" or "not now"; the agent answers with crosstalk_disk.` }),
+    settle: (id) => withStore2((items, now) => settle2(items, id, "answered", now)),
+    digest: d.digest,
+    log: d.log
+  });
+  async function offerInstalls() {
+    for (const [repo, root] of Object.entries(d.threads.roots())) {
+      if (!fs33.existsSync(root))
+        continue;
+      const ids = d.threads.all().filter((t) => t.meta.value.repo === repo).map((t) => t.id);
+      if (!ids.length)
+        continue;
+      const r = await findRepo(root).catch(() => null);
+      if (!r)
+        continue;
+      if (!shouldOffer({ slug: r.slug, root: r.top, inUse: true, connected: consent(r.slug) === "yes" }))
+        continue;
+      markAsked(r.slug, r.top);
+      ask({
+        id: installId(r.slug),
+        kind: "install",
+        question: questionText3(r.slug),
+        options: [YES2, NO],
+        sessionId: d.threads.sessionsIn(ids)[0],
+        thread: r.slug,
+        say: `Say "turn crosstalk on for everyone" or "not now"; the agent answers with crosstalk_team_install.`
+      });
+      d.log(`team install: asked about ${r.slug}`);
+    }
+  }
+  const statsNow = (weeks) => compute({
+    events: read(),
+    threads: d.threads.all(),
+    weeks,
+    firstEdit: (sid, hint) => {
+      const f = transcriptFor(sid, hint);
+      return f ? firstEditOf(f) : null;
+    }
+  });
+  const weeklyFile = () => path39.join(process.env.CROSSTALK_HOME ?? ROOT2, "metrics-digest.json");
+  function weekly() {
+    const week = weekOf(Date.now());
+    let last;
+    try {
+      last = JSON.parse(fs33.readFileSync(weeklyFile(), "utf8")).week;
+    } catch {}
+    if (last === week)
+      return;
+    const events = read();
+    if (events.length)
+      d.digest(`stats:${week}`, weeklyLine(statsNow(2)));
+    fs33.writeFileSync(weeklyFile(), JSON.stringify({ week }), { mode: 384 });
+  }
+  async function tick() {
+    for (const [name, fn] of [
+      ["disk", () => budget.check()],
+      ["team install", () => offerInstalls()],
+      ["stats", () => weekly()]
+    ])
+      try {
+        await fn();
+      } catch (e) {
+        d.log(`${name}: ${e.message}`);
+      }
+  }
+  if (process.env.CROSSTALK_NO_EXTRAS_TICK !== "1") {
+    const first = setTimeout(() => void tick(), Number(process.env.CROSSTALK_EXTRAS_FIRST_MS ?? 2 * 60000));
+    first.unref?.();
+    const every = setInterval(() => void tick(), Number(process.env.CROSSTALK_EXTRAS_EVERY_MS ?? HOUR));
+    every.unref?.();
+  }
+  async function handle(req, sessionId) {
+    switch (req.op) {
+      case "disk": {
+        if (typeof req.rule === "boolean")
+          return { ok: true, text: budget.setRule(req.rule) };
+        if (req.confirm === true)
+          return budget.freeNow();
+        if (req.confirm === false)
+          return budget.answer("disk:tool", "Not now");
+        const r = await scanNow();
+        save7({ ...load8(), report: r });
+        return { ok: true, text: listing(r), usedKb: r.usedKb, reclaimKb: r.reclaimKb, groups: r.groups };
+      }
+      case "stats": {
+        const s = statsNow(Number(req.weeks) || undefined);
+        return { ok: true, text: render(s), stats: req.json ? s : undefined };
+      }
+      case "team_install": {
+        if (typeof req.confirm !== "boolean")
+          return { ok: false, error: "pass confirm: true to turn crosstalk on for the repo, false for not now" };
+        const cwd = String(req.cwd ?? "");
+        const r = cwd ? await findRepo(cwd).catch(() => null) : null;
+        const slug = req.repo ? String(req.repo).toLowerCase() : r?.slug;
+        const out = answer2(slug, req.confirm, { root: r?.top });
+        if (slug)
+          withStore2((items, now) => settle2(items, installId(slug), "answered", now));
+        return { ok: out.ok, text: out.text, ...out.ok ? {} : { error: out.text } };
+      }
+      case "thread_person": {
+        const t = d.threads.find(sessionId, req.thread ? String(req.thread) : undefined);
+        if (!t)
+          return { ok: false, error: req.thread ? `no thread called "${req.thread}"` : "this session is in no thread" };
+        const who = String(req.person ?? "").trim();
+        let fp;
+        if (!who || who === "me")
+          fp = d.threads.me;
+        else {
+          const want = who.toLowerCase();
+          fp = live(t, "people").find((p) => p.id === who || p.label.toLowerCase() === want)?.id ?? Object.values(loadPeers2()).find((p) => p.label.toLowerCase() === want)?.fingerprint;
+        }
+        if (!fp)
+          return { ok: false, error: `nobody called "${who}" is in ${t.meta.value.name}. People: ${live(t, "people").map((p) => p.label).join(", ")}` };
+        const label = fp === d.threads.me ? "you" : live(t, "people").find((p) => p.id === fp)?.label ?? who;
+        const r = d.threads.removePerson(t.id, fp);
+        if (!r.ok)
+          return r;
+        return {
+          ok: true,
+          text: fp === d.threads.me ? `\u25e2 crosstalk: you left ${r.thread}. Its people get a new key, so nothing written there from now on opens for you; what you could read before stays readable to you.` : `\u25e2 crosstalk: took ${label} out of ${r.thread}${r.rekeyed ? " and gave everyone left a new key" : ""}. Nothing written from now on opens for ${label}; old commits on the ref stay readable to whoever already had them.`
+        };
+      }
+      default:
+        return;
+    }
+  }
+  async function uiAct(it, value) {
+    if (it.kind !== "disk" && it.kind !== "install")
+      return;
+    const claim = withStore2((items, now) => act2(items, it.id, "answer", now, value));
+    if (!claim.ok)
+      return claim;
+    if (it.kind === "disk")
+      return { ...await budget.answer(it.id, value), item: claim.item };
+    const slug = it.id.slice("install:".length);
+    const out = answer2(slug, value === YES2);
+    return { ok: out.ok, text: out.text, ...out.ok ? {} : { error: out.text }, item: claim.item };
+  }
+  return { handle, uiAct, tick, budget, stats: statsNow };
+}
+
 // src/paths.ts
-import path32 from "node:path";
+import path40 from "node:path";
 import { fileURLToPath } from "node:url";
-var dirOf = (metaUrl) => path32.dirname(fileURLToPath(metaUrl));
-var rootFrom2 = (metaUrl) => path32.join(dirOf(metaUrl), "..");
+var dirOf = (metaUrl) => path40.dirname(fileURLToPath(metaUrl));
+var rootFrom2 = (metaUrl) => path40.join(dirOf(metaUrl), "..");
 
 // src/coordinator.ts
 import crypto18 from "node:crypto";
-import path37 from "node:path";
+import path46 from "node:path";
 
 // src/threads/service.ts
 var SESSION_REFRESH_MS2 = 10 * 60000;
 var PEER_SESSION_MS2 = 24 * 60 * 60000;
-var DAY4 = 24 * 60 * 60000;
+var DAY5 = 24 * 60 * 60000;
 var NEW_THREAD2 = "New thread";
 var NO_THREAD2 = "No thread";
 
 // src/main.ts
-import fs26 from "node:fs";
-import path33 from "node:path";
-var file3 = () => path33.join(P2.root, "main.json");
+import fs34 from "node:fs";
+import path41 from "node:path";
+var file6 = () => path41.join(P2.root, "main.json");
 function readMain() {
   try {
-    const r = JSON.parse(fs26.readFileSync(file3(), "utf8"));
+    const r = JSON.parse(fs34.readFileSync(file6(), "utf8"));
     if (r && typeof r.sessionId === "string" && r.sessionId)
       return r;
   } catch {}
   return null;
 }
 function writeMain(rec) {
-  fs26.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  fs34.mkdirSync(P2.root, { recursive: true, mode: 448 });
   if (!rec) {
     try {
-      fs26.unlinkSync(file3());
+      fs34.unlinkSync(file6());
     } catch {}
     return;
   }
-  const tmp = `${file3()}.${process.pid}.tmp`;
-  fs26.writeFileSync(tmp, JSON.stringify(rec), { mode: 384 });
-  fs26.renameSync(tmp, file3());
+  const tmp = `${file6()}.${process.pid}.tmp`;
+  fs34.writeFileSync(tmp, JSON.stringify(rec), { mode: 384 });
+  fs34.renameSync(tmp, file6());
 }
 function setMain(on, s, now = Date.now()) {
   const before = readMain();
@@ -6651,8 +7700,8 @@ function injectInstruction(opts, m) {
 }
 
 // src/rules/doc.ts
-import fs27 from "node:fs";
-import path34 from "node:path";
+import fs35 from "node:fs";
+import path42 from "node:path";
 import crypto14 from "node:crypto";
 var RULES_FILE2 = "RULES.md";
 var docId = (repo) => crypto14.createHash("sha256").update(`crosstalk-rules:${repo}`).digest("hex").slice(0, 16);
@@ -6670,7 +7719,7 @@ class RuleDocs {
   now = () => this.d.now ? this.d.now() : Date.now();
   load() {
     try {
-      const raw = JSON.parse(fs27.readFileSync(this.d.file, "utf8"));
+      const raw = JSON.parse(fs35.readFileSync(this.d.file, "utf8"));
       if (raw?.v === 1) {
         const docs = {};
         for (const [repo, t] of Object.entries(raw.docs ?? {})) {
@@ -6678,16 +7727,16 @@ class RuleDocs {
           if (ok)
             docs[repo] = ok;
         }
-        return { v: 1, docs, keys: raw.keys ?? {} };
+        return { v: 1, docs, keys: raw.keys ?? {}, epochs: raw.epochs ?? {}, holders: raw.holders ?? {} };
       }
     } catch {}
     return { v: 1, docs: {}, keys: {} };
   }
   save() {
-    fs27.mkdirSync(path34.dirname(this.d.file), { recursive: true, mode: 448 });
+    fs35.mkdirSync(path42.dirname(this.d.file), { recursive: true, mode: 448 });
     const tmp = `${this.d.file}.${process.pid}.tmp`;
-    fs27.writeFileSync(tmp, JSON.stringify(this.st), { mode: 384 });
-    fs27.renameSync(tmp, this.d.file);
+    fs35.writeFileSync(tmp, JSON.stringify(this.st), { mode: 384 });
+    fs35.renameSync(tmp, this.d.file);
   }
   repos = () => Object.keys(this.st.docs);
   doc(repo) {
@@ -6743,13 +7792,17 @@ class RuleDocs {
       this.save();
     return changed;
   }
-  merge(repo, inc, key) {
+  merge(repo, inc, key, epoch = 0) {
     if (inc.id !== docId(repo))
       return { added: [], removed: [] };
-    if (key && Buffer.from(key, "base64").length === 32) {
-      const mine = this.st.keys[repo];
-      if (!mine || key < mine)
-        this.st.keys[repo] = key;
+    if (validKey(key) && wins({ key: this.st.keys[repo], epoch: this.epoch(repo) }, { key, epoch })) {
+      const changed = this.st.keys[repo] !== key;
+      this.st.keys[repo] = key;
+      if (epoch)
+        (this.st.epochs ??= {})[repo] = epoch;
+      if (changed)
+        delete (this.st.holders ??= {})[repo];
+      this.save();
     }
     const known = this.st.docs[repo];
     const before = new Map((known ? live(known, "rules") : []).map((r) => [r.id, r]));
@@ -6767,7 +7820,25 @@ class RuleDocs {
   }
   frame(repo) {
     const t = this.st.docs[repo];
-    return t ? { repo, doc: t, key: this.st.keys[repo] } : undefined;
+    return t ? { repo, doc: t, key: this.st.keys[repo], ...this.epoch(repo) ? { epoch: this.epoch(repo) } : {} } : undefined;
+  }
+  epoch = (repo) => this.st.epochs?.[repo] ?? 0;
+  ensureKey(repo, should) {
+    if (!this.st.docs[repo] || this.st.docs[repo].meta.value.public || !this.st.keys[repo])
+      return false;
+    const holders = this.st.holders ??= {};
+    const r = check({ me: this.me, holders: holders[repo], should: [...new Set([...should, this.me])].sort() });
+    const same = canonical2(holders[repo]) === canonical2(r.holders);
+    holders[repo] = r.holders;
+    if (!r.rotate) {
+      if (!same)
+        this.save();
+      return false;
+    }
+    this.st.keys[repo] = newKey().toString("base64");
+    (this.st.epochs ??= {})[repo] = this.epoch(repo) + 1;
+    this.save();
+    return true;
   }
   render(repo, recipients) {
     const t = this.st.docs[repo];
@@ -6779,7 +7850,7 @@ class RuleDocs {
     if (!k)
       return;
     const key = Buffer.from(k, "base64");
-    return renderSealed(t, key, wrapKey(this.d.identity, key, recipients));
+    return renderSealed(t, key, wrapKey(this.d.identity, key, recipients), this.epoch(repo));
   }
   read(repo, text) {
     const p = parse2(text);
@@ -6799,13 +7870,13 @@ class RuleDocs {
     }
     if (!t)
       return { added: [], removed: [] };
-    return this.merge(repo, t, key);
+    return this.merge(repo, t, key, p.kind === "sealed" ? p.epoch : 0);
   }
 }
 
 // src/rules/history.ts
-import fs28 from "node:fs";
-import path35 from "node:path";
+import fs36 from "node:fs";
+import path43 from "node:path";
 import crypto15 from "node:crypto";
 
 // src/rules/key.ts
@@ -6857,24 +7928,24 @@ function describe2(q) {
 
 // src/rules/history.ts
 var emptyHistory = () => ({ v: 1, answers: {}, offers: {}, offered: [], seen: [], digest: {} });
-var file4 = () => path35.join(P2.root, "rules.json");
+var file7 = () => path43.join(P2.root, "rules.json");
 function loadHistory() {
   try {
-    const h = JSON.parse(fs28.readFileSync(file4(), "utf8"));
+    const h = JSON.parse(fs36.readFileSync(file7(), "utf8"));
     if (h?.v === 1)
       return { ...emptyHistory(), ...h };
   } catch {}
   return emptyHistory();
 }
 function saveHistory(h) {
-  fs28.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  fs36.mkdirSync(P2.root, { recursive: true, mode: 448 });
   for (const k of Object.keys(h.answers))
     h.answers[k] = h.answers[k].slice(-5);
   h.offered = h.offered.slice(-500);
   h.seen = h.seen.slice(-1000);
-  const tmp = `${file4()}.${process.pid}.tmp`;
-  fs28.writeFileSync(tmp, JSON.stringify(h), { mode: 384 });
-  fs28.renameSync(tmp, file4());
+  const tmp = `${file7()}.${process.pid}.tmp`;
+  fs36.writeFileSync(tmp, JSON.stringify(h), { mode: 384 });
+  fs36.renameSync(tmp, file7());
 }
 function recordAnswer(h, q, answer, o) {
   const now = o.now ?? Date.now();
@@ -6905,8 +7976,8 @@ function recordAnswer(h, q, answer, o) {
   return offer;
 }
 var offerQuestion = (o) => `You answered ${describe2(o.q)} with "${o.answer.slice(0, 60)}" twice. Always do this, for everyone in ${o.repo.split("/").slice(-2).join("/") || "this repo"}?`;
-var ALWAYS = "Always do this";
-var NOT_NOW = "Not now";
+var ALWAYS2 = "Always do this";
+var NOT_NOW2 = "Not now";
 function lastOpen(h, sessionId) {
   const open = Object.values(h.offers).filter((o) => o.state === "open");
   return open.filter((o) => !sessionId || o.sessionId === sessionId).sort((a, b) => b.at - a.at)[0] ?? open.sort((a, b) => b.at - a.at)[0];
@@ -6918,8 +7989,8 @@ function addDigest(h, to, n) {
 }
 
 // src/warn/service.ts
-import fs29 from "node:fs";
-import path36 from "node:path";
+import fs37 from "node:fs";
+import path44 from "node:path";
 import crypto17 from "node:crypto";
 
 // src/warn/outline.ts
@@ -7062,17 +8133,17 @@ class WarnService {
   now = () => this.d.now ? this.d.now() : Date.now();
   load() {
     try {
-      const s = JSON.parse(fs29.readFileSync(this.d.file, "utf8"));
+      const s = JSON.parse(fs37.readFileSync(this.d.file, "utf8"));
       if (s?.v === 1)
         return { v: 1, pending: s.pending ?? {}, conflicts: s.conflicts ?? {} };
     } catch {}
     return { v: 1, pending: {}, conflicts: {} };
   }
   save() {
-    fs29.mkdirSync(path36.dirname(this.d.file), { recursive: true, mode: 448 });
+    fs37.mkdirSync(path44.dirname(this.d.file), { recursive: true, mode: 448 });
     const tmp = `${this.d.file}.${process.pid}.tmp`;
-    fs29.writeFileSync(tmp, JSON.stringify(this.st), { mode: 384 });
-    fs29.renameSync(tmp, this.d.file);
+    fs37.writeFileSync(tmp, JSON.stringify(this.st), { mode: 384 });
+    fs37.renameSync(tmp, this.d.file);
   }
   conflict = (id) => this.st.conflicts[id];
   conflicts = () => Object.values(this.st.conflicts);
@@ -7186,6 +8257,13 @@ class WarnService {
       threads: target.thread.startsWith("session:") ? [] : [target.thread],
       warn: o.warn
     };
+  }
+  relay(o) {
+    const slice = makeSlice(o.diff.label, o.diff.content);
+    for (const sid of o.local)
+      this.d.deliver(sid, { id: crypto17.randomUUID(), kind: "heads-up", from: this.d.label, fromSession: o.fromSession, text: o.text, slices: [slice], threads: [o.thread] });
+    for (const label of o.labels)
+      this.d.send(label, this.envelope(label, "heads-up", o.text, { thread: o.thread }, { warn: o.warn, slices: [slice], fromSession: o.fromSession }));
   }
   acceptHeadsUp(label, env) {
     const w = env.warn;
@@ -7385,8 +8463,270 @@ function makeSlice(label, content) {
   };
 }
 
+// src/threads/crossrepo.ts
+import fs38 from "node:fs";
+import path45 from "node:path";
+import { spawnSync as spawnSync9 } from "node:child_process";
+var FORGES = /^(github\.com|gitlab\.com|bitbucket\.org|codeberg\.org)\//;
+function remoteOf(dir) {
+  try {
+    const r = spawnSync9("git", ["-C", dir, "remote", "get-url", "origin"], { encoding: "utf8", timeout: 3000 });
+    if (r.status === 0 && r.stdout.trim())
+      return normaliseRemote2(r.stdout.trim());
+    const any = spawnSync9("git", ["-C", dir, "remote"], { encoding: "utf8", timeout: 3000 });
+    const first = (any.stdout ?? "").split(`
+`).find(Boolean);
+    if (!first)
+      return;
+    const u = spawnSync9("git", ["-C", dir, "remote", "get-url", first], { encoding: "utf8", timeout: 3000 });
+    return u.status === 0 && u.stdout.trim() ? normaliseRemote2(u.stdout.trim()) : undefined;
+  } catch {
+    return;
+  }
+}
+function repoFromSpec(spec) {
+  let s = spec.trim().replace(/#.*$/, "");
+  if (!s)
+    return;
+  const short = /^(github|gitlab|bitbucket):(.+)$/.exec(s);
+  if (short)
+    return `${short[1] === "bitbucket" ? "bitbucket.org" : `${short[1]}.com`}/${short[2]}`.replace(/\.git$/, "").toLowerCase();
+  s = s.replace(/^git\+/, "").replace(/(\.git)?@[^/@:]+$/, "");
+  if (/^(https?|ssh|git):\/\//i.test(s) || /^[^@/\s]+@[^:]+:/.test(s)) {
+    const n = normaliseRemote2(s);
+    const m = /^([^/]+\/[^/]+\/[^/]+)/.exec(n);
+    return m ? m[1] : n;
+  }
+  if (/^[A-Za-z0-9][\w.-]*\/[\w.-]+$/.test(s) && !s.startsWith("."))
+    return `github.com/${s}`.toLowerCase();
+  if (FORGES.test(s.toLowerCase()))
+    return s.toLowerCase().split("/").slice(0, 3).join("/");
+  return;
+}
+var readText = (f) => {
+  try {
+    return fs38.readFileSync(f, "utf8");
+  } catch {
+    return;
+  }
+};
+function dependencies(root, o = {}) {
+  const rem = o.remoteOf ?? remoteOf;
+  const out = new Map;
+  const self = rem(root);
+  const add = (repo, via) => {
+    if (!repo || repo === self || out.has(repo))
+      return;
+    out.set(repo, { repo, via });
+  };
+  const addPath = (p, via) => {
+    const abs = path45.resolve(root, p);
+    if (!fs38.existsSync(abs))
+      return;
+    add(rem(abs), via);
+  };
+  const pkgText = readText(path45.join(root, "package.json"));
+  if (pkgText) {
+    try {
+      const pkg = JSON.parse(pkgText);
+      for (const field of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"])
+        for (const [name, spec] of Object.entries(pkg?.[field] ?? {})) {
+          if (typeof spec !== "string")
+            continue;
+          const m = /^(file|link|portal):(.+)$/.exec(spec);
+          if (m)
+            addPath(m[2], `package.json ${name}`);
+          else
+            add(repoFromSpec(spec), `package.json ${name}`);
+        }
+      const ws = Array.isArray(pkg?.workspaces) ? pkg.workspaces : Array.isArray(pkg?.workspaces?.packages) ? pkg.workspaces.packages : [];
+      for (const w of ws)
+        if (typeof w === "string" && w.startsWith("..") && !w.includes("*"))
+          addPath(w, `package.json workspace ${w}`);
+    } catch {}
+  }
+  const gomod = readText(path45.join(root, "go.mod"));
+  if (gomod) {
+    for (const m of gomod.matchAll(/^\s*(?:require\s+)?([a-z0-9.-]+\.[a-z]+\/[^\s]+)\s+v[0-9][^\s]*/gim)) {
+      const mod = m[1].toLowerCase();
+      if (FORGES.test(mod))
+        add(mod.split("/").slice(0, 3).join("/"), `go.mod ${m[1]}`);
+    }
+    for (const m of gomod.matchAll(/=>\s*(\.{1,2}\/[^\s]+)/g))
+      addPath(m[1], `go.mod replace ${m[1]}`);
+  }
+  for (const toml of ["Cargo.toml", "pyproject.toml"]) {
+    const t = readText(path45.join(root, toml));
+    if (!t)
+      continue;
+    for (const m of t.matchAll(/\bgit\s*=\s*"([^"]+)"/g))
+      add(repoFromSpec(m[1]), `${toml} git ${m[1]}`);
+    for (const m of t.matchAll(/\bpath\s*=\s*"([^"]+)"/g))
+      addPath(m[1], `${toml} path ${m[1]}`);
+    for (const m of t.matchAll(/@\s*(git\+[^\s"',\]]+)/g))
+      add(repoFromSpec(m[1]), `${toml} ${m[1]}`);
+  }
+  const listed = readText(path45.join(root, ".crosstalk", "depends"));
+  if (listed)
+    for (const raw of listed.split(`
+`)) {
+      const line = raw.replace(/(^|\s)#.*$/, "").trim();
+      if (!line)
+        continue;
+      if (line.startsWith(".") || line.startsWith("/") || line.startsWith("~"))
+        addPath(line.replace(/^~/, process.env.HOME ?? "~"), `.crosstalk/depends`);
+      else
+        add(repoFromSpec(line) ?? normaliseRemote2(line), `.crosstalk/depends`);
+    }
+  return [...out.values()];
+}
+function globToRegex(g) {
+  let p = g.trim().replace(/^\.\//, "").replace(/^\//, "");
+  if (p.endsWith("/"))
+    p += "**";
+  let re = "";
+  for (let i = 0;i < p.length; i++) {
+    const c = p[i];
+    if (c === "*" && p[i + 1] === "*") {
+      re += ".*";
+      i++;
+      if (p[i + 1] === "/")
+        i++;
+    } else if (c === "*")
+      re += "[^/]*";
+    else if (c === "?")
+      re += "[^/]";
+    else
+      re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${re}$`);
+}
+function exportedPaths(v, out = []) {
+  if (typeof v === "string")
+    out.push(v);
+  else if (v && typeof v === "object")
+    for (const x of Object.values(v))
+      exportedPaths(x, out);
+  return out;
+}
+function surface2(root) {
+  const exact = new Set;
+  const globs = [];
+  const listed = readText(path45.join(root, ".crosstalk", "surface"));
+  if (listed)
+    for (const raw of listed.split(`
+`)) {
+      const line = raw.replace(/(^|\s)#.*$/, "").trim();
+      if (line)
+        globs.push(globToRegex(line));
+    }
+  const pkgText = readText(path45.join(root, "package.json"));
+  if (pkgText)
+    try {
+      const pkg = JSON.parse(pkgText);
+      const entries = [pkg.main, pkg.module, pkg.types, pkg.typings, typeof pkg.browser === "string" ? pkg.browser : undefined, ...exportedPaths(pkg.bin), ...exportedPaths(pkg.exports)].filter((x) => typeof x === "string");
+      for (const e of entries) {
+        const f = e.replace(/^\.\//, "");
+        if (f.includes("*"))
+          globs.push(globToRegex(f));
+        else
+          exact.add(f);
+        const built = /^(dist|lib|build|out)\/(.+?)(\.d)?\.(c|m)?(js|ts)$/.exec(f);
+        if (built)
+          globs.push(globToRegex(`src/${built[2]}.*`));
+      }
+      if (!entries.length)
+        exact.add("index.js");
+    } catch {}
+  const isGo = fs38.existsSync(path45.join(root, "go.mod"));
+  const isRust = fs38.existsSync(path45.join(root, "Cargo.toml"));
+  const isPy = fs38.existsSync(path45.join(root, "pyproject.toml")) || fs38.existsSync(path45.join(root, "setup.py"));
+  return (file) => {
+    const f = file.replace(/^\.\//, "");
+    if (exact.has(f) || globs.some((g) => g.test(f)))
+      return true;
+    if (isGo && f.endsWith(".go") && !f.endsWith("_test.go") && !/(^|\/)(internal|cmd|testdata|examples?)\//.test(f))
+      return true;
+    if (isRust && f === "src/lib.rs")
+      return true;
+    if (isPy && /(^|\/)__init__\.py$/.test(f) && !/(^|\/)tests?\//.test(f))
+      return true;
+    return false;
+  };
+}
+var short = (repo) => repo.split("/").slice(-2).join("/") || repo;
+
+class CrossRepo {
+  d;
+  gate;
+  depCache = new Map;
+  constructor(d) {
+    this.d = d;
+    this.gate = new Gate(d.rateMs ?? Number(process.env.CROSSTALK_CROSSREPO_RATE_MS ?? 10 * 60000), (_k, items) => this.send(items), d.clock);
+  }
+  deps(root) {
+    const c = this.depCache.get(root);
+    const now = Date.now();
+    if (c && now - c.at < (this.d.cacheMs ?? 10 * 60000))
+      return c.deps;
+    const deps = dependencies(root, { remoteOf: this.d.remoteOf });
+    this.depCache.set(root, { at: now, deps });
+    return deps;
+  }
+  dependents(repo) {
+    const out = [];
+    for (const [r, root] of Object.entries(this.d.threads.roots())) {
+      if (r === repo || !fs38.existsSync(root))
+        continue;
+      const dep = this.deps(root).find((x) => x.repo === repo);
+      if (dep)
+        out.push({ repo: r, via: dep.via });
+    }
+    return out;
+  }
+  edited(o) {
+    const mine = this.d.threads.idsFor(o.sessionId);
+    if (!mine.length || !o.root || !fs38.existsSync(o.root))
+      return [];
+    if (!surface2(o.root)(o.file))
+      return [];
+    const told = [];
+    for (const dep of this.dependents(o.repo))
+      for (const t of this.d.threads.all()) {
+        if (t.meta.value.repo !== dep.repo || !isLive(t) || mine.includes(t.id))
+          continue;
+        this.gate.offer(`${o.file}|${t.id}`, { from: { sessionId: o.sessionId, name: o.name, repo: o.repo, threads: mine }, dependent: { repo: dep.repo, via: dep.via, thread: t.id }, file: o.file, diff: o.diff });
+        told.push(t.meta.value.name);
+      }
+    return told;
+  }
+  send(items) {
+    const last = items[items.length - 1];
+    const t = this.d.threads.thread(last.dependent.thread);
+    if (!t)
+      return;
+    const fromNames = last.from.threads.map((id) => this.d.threads.thread(id)?.meta.value.name ?? id);
+    const local = this.d.threads.sessionsIn([t.id]).filter((sid) => sid !== last.from.sessionId);
+    const byFp = new Map(Object.values(this.d.peers()).map((p) => [p.fingerprint, p.label]));
+    const labels = people(t).filter((fp) => fp !== this.d.me).map((fp) => byFp.get(fp)).filter((l) => !!l);
+    if (!local.length && !labels.length)
+      return;
+    const text = `heads-up from ${short(last.from.repo)}: ${this.d.label}/${last.from.name}${fromNames.length ? ` in ${fromNames.join(", ")}` : ""} changed ${last.file}` + `${items.length > 1 ? ` ${items.length} times` : ""}, part of ${short(last.from.repo)}'s public surface, which ${short(t.meta.value.repo)} depends on (${last.dependent.via}). ` + `The diff is attached as a slice. Nobody needs to answer this: check whether ${t.meta.value.name} needs a change, and raise a question only if it needs a decision.`;
+    this.d.relay({
+      thread: t.id,
+      local,
+      labels,
+      text,
+      diff: { label: `diff of ${short(last.from.repo)}/${last.file}`, content: last.diff.slice(0, 64 * 1024) },
+      warn: { repo: t.meta.value.repo, file: `${short(last.from.repo)}:${last.file}`, symbols: [], pending: [], fromThreads: [], fromNames, target: t.id, library: last.from.repo },
+      fromSession: last.from.name
+    });
+    this.d.log(`cross-repo heads-up: ${last.from.repo} ${last.file} to ${t.meta.value.name} in ${t.meta.value.repo} (${local.length} here, ${labels.join(", ") || "nobody"} remote)`);
+  }
+}
+
 // src/coordinator.ts
-var short = (repo) => repo.split("/").slice(-2).join("/") || repo || "this repo";
+var short2 = (repo) => repo.split("/").slice(-2).join("/") || repo || "this repo";
 
 class Coordinator {
   d;
@@ -7397,7 +8737,7 @@ class Coordinator {
   answering = false;
   constructor(d) {
     this.d = d;
-    this.docs = new RuleDocs({ identity: d.identity, peers: d.peers, file: path37.join(d.root, "rules-docs.json") });
+    this.docs = new RuleDocs({ identity: d.identity, peers: d.peers, file: path46.join(d.root, "rules-docs.json") });
     this.me = this.docs.me;
     this.hist = loadHistory();
     this.warn = new WarnService({
@@ -7408,12 +8748,14 @@ class Coordinator {
       presence: d.presence,
       send: d.send,
       log: d.log,
-      file: path37.join(d.root, "warn.json"),
+      file: path46.join(d.root, "warn.json"),
       deliver: (sid, m) => this.deliver(sid, m),
       ask: (sids, c) => this.askConflict(sids, c),
       sessionsNamed: (name) => [...d.sessions().values()].filter((s) => s.name === name).map((s) => s.sessionId)
     });
+    this.cross = new CrossRepo({ me: this.me, label: d.identity.label, threads: d.threads, peers: d.peers, relay: (o) => this.warn.relay(o), log: d.log });
   }
+  cross;
   save = () => saveHistory(this.hist);
   start() {
     const m = this.mainId();
@@ -7461,6 +8803,9 @@ class Coordinator {
   digest(n, to) {
     addDigest(this.hist, to ?? this.mainId() ?? "*", n);
     this.save();
+  }
+  note(n, to) {
+    this.digest(n, to);
   }
   mainStatus(sid) {
     if (this.mainId() !== sid)
@@ -7540,7 +8885,14 @@ class Coordinator {
         if (typeof e.file !== "string")
           return { ok: false, error: "edited needs a file" };
         const strs = (v) => Array.isArray(v) ? v.filter((x) => typeof x === "string").slice(0, 100) : [];
-        return { ok: true, ...this.warn.edited({ sessionId: sid, name: self?.name ?? sid, repo, edit: { file: e.file, symbols: strs(e.symbols), pending: strs(e.pending), diff: String(e.diff ?? "").slice(0, 64 * 1024) } }) };
+        const out = this.warn.edited({ sessionId: sid, name: self?.name ?? sid, repo, edit: { file: e.file, symbols: strs(e.symbols), pending: strs(e.pending), diff: String(e.diff ?? "").slice(0, 64 * 1024) } });
+        let dependents = [];
+        try {
+          dependents = this.cross.edited({ sessionId: sid, name: self?.name ?? sid, repo, root: typeof e.root === "string" ? e.root : this.d.threads.rootFor(repo), file: e.file, diff: String(e.diff ?? "") });
+        } catch (err) {
+          this.d.log(`cross-repo: ${err.message}`);
+        }
+        return { ok: true, ...out, ...dependents.length ? { dependents } : {} };
       }
       case "conflict": {
         if (!req.id)
@@ -7606,7 +8958,7 @@ class Coordinator {
       return null;
     const to = o.sid && this.d.sessions().has(o.sid) ? o.sid : this.mainId();
     if (to && this.d.modLive(to))
-      withStore2((items, now) => upsert3(items, { id: offer.id, kind: "rule", sessionId: to, thread: short(repo), question: offerQuestion(offer), options: [ALWAYS, NOT_NOW], ts: now }, now));
+      withStore2((items, now) => upsert3(items, { id: offer.id, kind: "rule", sessionId: to, thread: short2(repo), question: offerQuestion(offer), options: [ALWAYS2, NOT_NOW2], ts: now }, now));
     else
       this.digest({ id: offer.id, text: `\u25e2 crosstalk: ${offerQuestion(offer)} Say "always do that" and the agent will make it a rule with crosstalk_rule.` }, to);
     this.d.log(`offered a standing rule for ${offer.key}`);
@@ -7645,6 +8997,7 @@ class Coordinator {
     return rule;
   }
   autoNote(id, what, answer, rule) {
+    record({ k: "auto", at: Date.now(), id, what: what.slice(0, 120) });
     this.digest({ id: `auto:${id}`, text: `\u25e2 crosstalk: answered ${what} with "${answer}", by the standing rule (${rule.text}).` });
   }
   onThreadsFlush(ids) {
@@ -7694,7 +9047,7 @@ class Coordinator {
     const target = inThread[0] ?? all.find((s) => s.name === rule.then);
     if (!target)
       return;
-    this.autoNote(`route:${sender}:${Date.now()}`, `where ${sender}'s message about ${short(repo ?? "")} goes`, target.name, rule);
+    this.autoNote(`route:${sender}:${Date.now()}`, `where ${sender}'s message about ${short2(repo ?? "")} goes`, target.name, rule);
     return target.sessionId;
   }
   autoAsk(label, env) {
@@ -7722,7 +9075,7 @@ class Coordinator {
       this.hist.seen.push(`gone:${r.rule.id}:${this.docs.writer(r.repo, r.rule.id)}`);
       this.save();
       this.publish(r.repo);
-      return { ok: true, text: `Dropped the standing rule for ${short(r.repo)}: ${r.rule.text}. Everyone in the repo's threads is told.` };
+      return { ok: true, text: `Dropped the standing rule for ${short2(r.repo)}: ${r.rule.text}. Everyone in the repo's threads is told.` };
     }
     if (req.public !== undefined) {
       const repo = String(req.repo ?? (sid ? this.d.repoOf(sid) : "") ?? "");
@@ -7730,7 +9083,7 @@ class Coordinator {
         return { ok: false, error: "which repo?" };
       this.docs.setPublic(repo, !!req.public);
       this.publish(repo);
-      return { ok: true, text: req.public ? `The standing rules for ${short(repo)} are now committed in plain text.` : `The standing rules for ${short(repo)} are sealed to the people in its threads.` };
+      return { ok: true, text: req.public ? `The standing rules for ${short2(repo)} are now committed in plain text.` : `The standing rules for ${short2(repo)} are sealed to the people in its threads.` };
     }
     const repos = req.repo ? [String(req.repo)] : this.docs.repos();
     return {
@@ -7757,7 +9110,7 @@ class Coordinator {
     return {
       ok: true,
       rule: { id: rule.id, text: rule.text },
-      text: `Standing rule for ${short(offer.repo)}: ${rule.text}. It answers that question for everyone in the repo's threads from now on; anyone can undo it ("drop the rule about \u2026").`
+      text: `Standing rule for ${short2(offer.repo)}: ${rule.text}. It answers that question for everyone in the repo's threads from now on; anyone can undo it ("drop the rule about \u2026").`
     };
   }
   declineOffer(ref, sid) {
@@ -7774,7 +9127,7 @@ class Coordinator {
       const claim = withStore2((items, now) => act2(items, it.id, "answer", now, value));
       if (!claim.ok)
         return claim;
-      const r = value === ALWAYS ? this.acceptOffer(it.id, sid) : this.declineOffer(it.id, sid);
+      const r = value === ALWAYS2 ? this.acceptOffer(it.id, sid) : this.declineOffer(it.id, sid);
       return { ...r, item: claim.item };
     }
     if (it.kind === "conflict") {
@@ -7809,7 +9162,7 @@ class Coordinator {
       return this.d.log(`ignored malformed rules from ${label}`);
     if (!this.d.threads.peopleIn(f.repo).includes(peer.fingerprint))
       return this.d.log(`ignored rules for ${f.repo} from ${label}: not in any of its threads here`);
-    const change = this.docs.merge(f.repo, doc, typeof f.key === "string" ? f.key : undefined);
+    const change = this.docs.merge(f.repo, doc, typeof f.key === "string" ? f.key : undefined, Number(f.epoch) || 0);
     this.announce(f.repo, change);
     if (change.added.length)
       this.onThreadsFlush(this.d.threads.list().filter((t) => t.repo === f.repo).map((t) => t.id));
@@ -7819,7 +9172,12 @@ class Coordinator {
   }
   renderRules(repo) {
     const byFp = new Map(Object.values(this.d.peers()).map((p) => [p.fingerprint, p]));
-    const recipients = this.d.threads.peopleIn(repo).map((fp) => byFp.get(fp)).filter((p) => !!p);
+    const should = shouldHold(this.d.threads.peopleIn(repo), revokedFingerprints());
+    if (this.docs.ensureKey(repo, should)) {
+      this.d.log(`rules for ${repo}: new key (epoch ${this.docs.epoch(repo)})`);
+      this.publish(repo);
+    }
+    const recipients = should.map((fp) => byFp.get(fp)).filter((p) => !!p);
     return this.docs.render(repo, recipients);
   }
   whoOf(fp) {
@@ -7834,7 +9192,7 @@ class Coordinator {
       if (this.hist.seen.includes(r.id))
         continue;
       this.hist.seen.push(r.id);
-      this.digest({ id: `rule:${r.id}:${r.l}`, text: `\u25e2 crosstalk: ${this.whoOf(r.by)} made a standing rule for ${short(repo)}: ${r.text}. Matching questions are answered by it from now on; anyone can undo it ("drop the rule about \u2026").` });
+      this.digest({ id: `rule:${r.id}:${r.l}`, text: `\u25e2 crosstalk: ${this.whoOf(r.by)} made a standing rule for ${short2(repo)}: ${r.text}. Matching questions are answered by it from now on; anyone can undo it ("drop the rule about \u2026").` });
     }
     for (const r of c.removed) {
       const by = this.docs.writer(repo, r.id);
@@ -7843,7 +9201,7 @@ class Coordinator {
         continue;
       this.hist.seen.push(mark);
       this.hist.seen = this.hist.seen.filter((x) => x !== r.id);
-      this.digest({ id: `rule-gone:${r.id}:${r.l}`, text: `\u25e2 crosstalk: ${this.whoOf(by)} dropped the standing rule for ${short(repo)}: ${r.text}.` });
+      this.digest({ id: `rule-gone:${r.id}:${r.l}`, text: `\u25e2 crosstalk: ${this.whoOf(by)} dropped the standing rule for ${short2(repo)}: ${r.text}.` });
     }
     this.save();
   }
@@ -7878,7 +9236,7 @@ var threads = new ThreadService({
   peers: () => loadPeers(),
   send: (label, env) => sendEnvelope(label, env),
   log,
-  file: path38.join(P.root, "threads.json"),
+  file: path47.join(P.root, "threads.json"),
   settleMs: Number(process.env.CROSSTALK_THREAD_SETTLE_MS ?? 3000),
   network: process.env.CROSSTALK_THREADS_NO_PUSH !== "1",
   fadeDays: Number(process.env.CROSSTALK_THREAD_FADE_DAYS ?? 14)
@@ -8508,7 +9866,7 @@ function onEnvelope(peerLabel, env, ctx) {
   seenIds.set(env.id, Date.now());
   hold(target.sessionId, h, env.slices);
   log(`inbound ${env.kind}/${env.intent} from ${peerLabel} \u2192 ${target.name} [${route.how}]: ${decision.action} (${decision.why})`);
-  record(peerLabel, "recv", env.text.length, decision.interrupts);
+  record2(peerLabel, "recv", env.text.length, decision.interrupts);
   if (!target.socket) {
     log(`held for ${target.name}, which pulls rather than being pushed to`);
     return;
@@ -8971,7 +10329,7 @@ async function handle(req, sock) {
       if (decision.action !== "quiet")
         h.surfaced = true;
       hold(target.sessionId, h);
-      record(source, "recv", h.text.length, decision.action !== "quiet");
+      record2(source, "recv", h.text.length, decision.action !== "quiet");
       if (decision.action !== "quiet" && target.socket)
         injectNotice({ socket: target.socket, replyTo: target.socket, fromName: `crosstalk \u25E2 ${source}` }, { count: 1, peer: source, peerSession: "-", intent, kind: "message", local: true }).catch(() => {});
       return { ok: true, source, action: decision.action };
@@ -9267,7 +10625,7 @@ async function handle(req, sock) {
         const queuedNow = relayQueue({ t: "room_send", roomId: room.id, id: env.id, body: seal(key, JSON.stringify(env)) }, `#${room.name}`);
         const recipients = Object.values(room.members).filter((m) => m.state === "joined" && m.fingerprint !== myFingerprint());
         for (const m of recipients)
-          record(m.label, "sent", env.text.length);
+          record2(m.label, "sent", env.text.length);
         return {
           ok: true,
           id: env.id,
@@ -9343,7 +10701,7 @@ async function handle(req, sock) {
       const r = sendEnvelope(label, env);
       if (!r.ok)
         return { ok: false, error: r.error };
-      record(label, "sent", env.text.length);
+      record2(label, "sent", env.text.length);
       if (req.op !== "ask")
         return { ok: true, id: env.id };
       const timeout = Math.min(Number(req.timeoutMs ?? 120000), 600000);
@@ -9517,6 +10875,9 @@ async function handle(req, sock) {
         const c = coord.uiAct(sid, before, value);
         if (c)
           return c;
+        const x = await extras.uiAct(before, value);
+        if (x)
+          return x;
       }
       if (before.kind === "team") {
         if (action !== "answer" || !value)
@@ -9782,6 +11143,9 @@ ${req.rationale}` : ""}`
       const r = await coord.handle(req, resolveSession(req));
       if (r !== undefined)
         return r;
+      const x = await extras.handle(req, resolveSession(req)?.sessionId ?? (req.sessionId ? String(req.sessionId) : undefined));
+      if (x !== undefined)
+        return x;
       return { ok: false, error: `unknown op "${req.op}"` };
     }
   }
@@ -9817,7 +11181,14 @@ coord = new Coordinator({
   route: (id, session) => handle({ op: "route", id, session, auto: true }),
   answerPeer: (label, correlation, text, replyTo) => handle({ op: "answer", to: label, correlation, text, replyTo, auto: true })
 });
-fs30.mkdirSync(path38.dirname(P.daemonSock), { recursive: true, mode: 448 });
+var extras = createExtras({
+  threads,
+  log,
+  fallbackSession: () => coord.mainId() ?? mostRecentSession()?.sessionId,
+  modLive: (sid) => modLive(sessions.get(sid)),
+  digest: (id, text) => coord.note({ id, text })
+});
+fs39.mkdirSync(path47.dirname(P.daemonSock), { recursive: true, mode: 448 });
 var control = net3.createServer((sock) => {
   let rest = "";
   sock.on("data", async (buf) => {
@@ -9843,7 +11214,7 @@ var control = net3.createServer((sock) => {
   sock.on("error", () => {});
 });
 var alreadyRunning = () => new Promise((resolve) => {
-  if (!fs30.existsSync(P.daemonSock))
+  if (!fs39.existsSync(P.daemonSock))
     return resolve(false);
   const probe = net3.createConnection(P.daemonSock);
   const done = (answer) => {
@@ -9857,17 +11228,17 @@ var alreadyRunning = () => new Promise((resolve) => {
 if (await alreadyRunning()) {
   let who = "";
   try {
-    who = ` as pid ${Number(fs30.readFileSync(P.daemonLock, "utf8"))}`;
+    who = ` as pid ${Number(fs39.readFileSync(P.daemonLock, "utf8"))}`;
   } catch {}
   console.error(`crosstalk: a daemon is already running${who}`);
   process.exit(0);
 }
 try {
-  fs30.unlinkSync(P.daemonSock);
+  fs39.unlinkSync(P.daemonSock);
 } catch {}
 control.listen(P.daemonSock, () => {
-  fs30.chmodSync(P.daemonSock, 384);
-  fs30.writeFileSync(P.daemonLock, String(process.pid), { mode: 384 });
+  fs39.chmodSync(P.daemonSock, 384);
+  fs39.writeFileSync(P.daemonLock, String(process.pid), { mode: 384 });
   log(`daemon up as "${identity.label}" on ${P.daemonSock}`);
   connect();
   threads.retain([...sessions.keys()]);
@@ -9888,14 +11259,14 @@ setInterval(() => {
 var bye = () => {
   let mine = false;
   try {
-    mine = Number(fs30.readFileSync(P.daemonLock, "utf8")) === process.pid;
+    mine = Number(fs39.readFileSync(P.daemonLock, "utf8")) === process.pid;
   } catch {}
   if (mine) {
     try {
-      fs30.unlinkSync(P.daemonSock);
+      fs39.unlinkSync(P.daemonSock);
     } catch {}
     try {
-      fs30.unlinkSync(P.daemonLock);
+      fs39.unlinkSync(P.daemonLock);
     } catch {}
   }
   process.exit(0);
