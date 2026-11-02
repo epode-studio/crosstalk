@@ -132,8 +132,16 @@ export function markDisposed(rec: Rec, now = Date.now()) {
  */
 export async function restart(o: { rec: Rec; cmd: string; sys?: G.Sys; now?: () => number }): Promise<{ ok: boolean; text: string; kind?: string }> {
   const sys = o.sys ?? G.liveSys()
-  const { rec } = o
+  let { rec } = o
   if (!sys.alive(rec.pid, rec.pidStart)) return { ok: false, text: "its process has already gone" }
+  if (!G.isClaudeArgs(sys.ps(rec.pid, "args"))) return { ok: false, text: "its process is not claude" }
+  // Terminal.app's tab number is from the last Stop and shifts as tabs close:
+  // looked up by tty now, as gather does, or nothing is ended or typed.
+  if (sys.platform === "darwin" && rec.terminal.program === "Apple_Terminal" && !rec.terminal.tmux?.pane) {
+    const at = rec.terminal.tty ? sys.appleLocate(rec.terminal.tty) : null
+    if (!at) return { ok: false, text: "its Terminal tab could not be found by its tty" }
+    rec = { ...rec, terminal: { ...rec.terminal, apple: { ...rec.terminal.apple, ...at } } }
+  }
   const parent = Number(sys.ps(rec.pid, "ppid"))
   const inShell = R.SHELL.test(path.basename(sys.ps(parent, "comm") ?? ""))
   const p = plan(rec, o.cmd, inShell, sys.platform)

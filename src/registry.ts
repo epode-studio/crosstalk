@@ -13,6 +13,11 @@ import path from "node:path"
 
 export const SESSIONS = path.join(os.homedir(), ".claude", "sessions")
 
+/** Claude Code's config directory: CLAUDE_CONFIG_DIR when set, else ~/.claude. */
+export const claudeConfigDir = () => process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude")
+/** Claude Code's session registry, read when called. */
+export const sessionsDir = () => path.join(claudeConfigDir(), "sessions")
+
 export type LocalSession = {
   pid: number
   sessionId: string

@@ -14,8 +14,10 @@
 //   answer    Allow / Allow for this session / Deny goes back to the waiting
 //             hook, which returns `hookSpecificOutput.decision` {behavior};
 //             "Allow for this session" also returns Claude Code's own
-//             permission_suggestions as updatedPermissions, so it is not
-//             asked again
+//             permission_suggestions as updatedPermissions, each one kept to
+//             destination "session", so it is not asked again this session
+//             and no settings file is written. Only the exact options count:
+//             any other answer denies
 //
 // Sessions the person runs themselves are never relayed: their dialog is in
 // front of them. Nothing answered in time leaves the dialog where it was, so
@@ -37,21 +39,48 @@ export const waitMs = (env: NodeJS.ProcessEnv = process.env) => {
   return n > 0 ? n : 55 * 60_000
 }
 
-const oneLine = (s: string) => s.replace(/\s+/g, " ").trim()
-const cut = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s)
+/** Longest preview shown whole; a longer one shows its head and tail and says it was cut. */
+export const PREVIEW_MAX = 2000
+const HEAD = 1400
+const TAIL = 400
 
-/** What the tool wants to do, short: the command, the file, the URL, else its input. */
-export function preview(tool: string, input: unknown): string {
-  const i = (input && typeof input === "object" ? input : {}) as Record<string, unknown>
-  const s = (k: string) => (typeof i[k] === "string" ? (i[k] as string) : "")
-  const pick = s("command") || s("file_path") || s("notebook_path") || s("url") || s("pattern") || s("path") || s("query") || s("prompt")
-  if (pick) return cut(oneLine(pick), 160)
-  try {
-    return cut(oneLine(JSON.stringify(input) ?? ""), 160)
-  } catch {
-    return ""
-  }
+/**
+ * Control characters shown, not obeyed: a newline is `\n`, so a second
+ * line is visible as one, and nothing can redraw or hide the rest of the
+ * question. Whitespace is never collapsed: what is shown is what runs.
+ */
+const visible = (s: string) =>
+  s.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, (c) =>
+    c === "\n" ? "\\n" : c === "\t" ? "\\t" : c === "\r" ? "\\r" : `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  )
+
+const fit = (s: string): { text: string; truncated: boolean } => {
+  const v = visible(s)
+  if (v.length <= PREVIEW_MAX) return { text: v, truncated: false }
+  return { text: `${v.slice(0, HEAD)} … [${v.length - HEAD - TAIL} characters not shown] … ${v.slice(-TAIL)} (truncated: ${v.length} characters in all)`, truncated: true }
 }
+
+/**
+ * What the tool wants to do: a command whole; anything else, the path it
+ * acts on followed by every other input (a Write's content, an Edit's
+ * strings), so nothing it will do is left out of the question.
+ */
+export function previewOf(tool: string, input: unknown): { text: string; truncated: boolean } {
+  const i = (input && typeof input === "object" ? input : {}) as Record<string, unknown>
+  if (typeof i.command === "string") return fit(i.command)
+  const target = ["file_path", "notebook_path", "url", "path"].find((k) => typeof i[k] === "string")
+  const rest = Object.fromEntries(Object.entries(i).filter(([k]) => k !== target))
+  let json = ""
+  try {
+    json = target ? (Object.keys(rest).length ? JSON.stringify(rest) : "") : (JSON.stringify(input) ?? "")
+  } catch {}
+  return fit([target ? (i[target] as string) : "", json].filter(Boolean).join(" "))
+}
+
+export const preview = (tool: string, input: unknown): string => previewOf(tool, input).text
+
+/** A preview cut short is only ever allowed once: "for this session" would cover what was not shown. */
+export const optionsFor = (tool: string, input: unknown): string[] => (previewOf(tool, input).truncated ? [ALLOW, DENY] : OPTIONS)
 
 export function question(agent: string, tool: string, input: unknown): string {
   const p = preview(tool, input)
@@ -60,17 +89,41 @@ export function question(agent: string, tool: string, input: unknown): string {
 
 export type Decision = { behavior: "allow"; updatedPermissions?: unknown[] } | { behavior: "deny"; message?: string }
 
-/** The person's pick, as Claude Code's PermissionRequest decision. */
+/**
+ * Claude Code's permission_suggestions, kept to this session: a suggestion
+ * may name localSettings, projectSettings or userSettings, which would write
+ * a rule that outlives the session the person said yes for. Each one is
+ * rewritten to destination "session"; anything that is not a plain object is
+ * dropped.
+ */
+export function sessionOnly(suggestions: unknown): unknown[] {
+  if (!Array.isArray(suggestions)) return []
+  return suggestions.filter((x) => x && typeof x === "object" && !Array.isArray(x)).map((x) => ({ ...(x as Record<string, unknown>), destination: "session" }))
+}
+
+/**
+ * The person's pick, as Claude Code's PermissionRequest decision. Only the
+ * exact options allow; anything else ("Deny for this session", "no, not
+ * always", "yes please don't") is a deny.
+ */
 export function decisionFor(answer: string, suggestions?: unknown): Decision {
-  const a = answer.trim().toLowerCase()
-  if (a === ALLOW_SESSION.toLowerCase() || /for (this|the) session|always/.test(a))
-    return { behavior: "allow", ...(Array.isArray(suggestions) && suggestions.length ? { updatedPermissions: suggestions } : {}) }
-  if (a === ALLOW.toLowerCase() || /^(allow|yes|y|ok|approve)\b/.test(a)) return { behavior: "allow" }
+  const a = answer.trim()
+  if (a === ALLOW_SESSION) {
+    const s = sessionOnly(suggestions)
+    return { behavior: "allow", ...(s.length ? { updatedPermissions: s } : {}) }
+  }
+  if (a === ALLOW) return { behavior: "allow" }
   return { behavior: "deny", message: "The user denied this through crosstalk." }
 }
 
 /** What the hook prints. */
-export const hookOutput = (d: Decision) => ({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: d } })
+export const hookOutput = (d: Decision) => ({
+  hookSpecificOutput: {
+    hookEventName: "PermissionRequest",
+    // Whatever came back, nothing it allows outlives this session.
+    decision: d.behavior === "allow" && d.updatedPermissions ? { ...d, updatedPermissions: sessionOnly(d.updatedPermissions) } : d,
+  },
+})
 
 /** Whether this hook runs in a session crosstalk started in the background. */
 export const backgroundAgent = (env: NodeJS.ProcessEnv) => (env.CROSSTALK_BG_AGENT ?? "").trim()

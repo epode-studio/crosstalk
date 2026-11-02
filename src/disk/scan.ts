@@ -156,6 +156,25 @@ function mergedInto(repo: string, d: string, ref: string, g: Git): boolean {
   return true
 }
 
+/** Where removable and network volumes are mounted: a folder missing under one may just be unplugged. */
+const MOUNT_PARENT = /^(\/|\/Volumes|\/media|\/media\/[^/]+|\/mnt|\/run\/media\/[^/]+|\/net|\/Network|[A-Za-z]:\\?)$/
+
+/**
+ * Whether a missing folder may only be on a volume that is not mounted now
+ * (/Volumes/<disk> unplugged, /mnt/<share> down): its nearest existing parent
+ * is a mount point's parent, or the root. Such a transcript is not "its
+ * folder is gone", and is never reclaimed.
+ */
+export function mayBeUnmounted(cwd: string, exists: (p: string) => boolean = fs.existsSync): boolean {
+  let p = path.resolve(cwd)
+  for (;;) {
+    const up = path.dirname(p)
+    if (up === p) return true
+    p = up
+    if (exists(p)) return MOUNT_PARENT.test(p)
+  }
+}
+
 export async function scan(e: Env): Promise<Report> {
   const g = e.git
   const ts = transcripts(e.claudeDir)
@@ -222,7 +241,7 @@ export async function scan(e: Env): Promise<Report> {
   for (const t of ts) {
     const kb = t.kb + (t.dir ? await e.sizeKb(t.dir) : 0)
     usedKb += kb
-    if (t.mtime > old || !t.cwd || fs.existsSync(t.cwd)) continue
+    if (t.mtime > old || !t.cwd || fs.existsSync(t.cwd) || mayBeUnmounted(t.cwd)) continue
     reclaim.push({
       kind: "transcript",
       path: t.file,

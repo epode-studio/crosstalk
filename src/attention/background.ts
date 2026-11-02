@@ -32,13 +32,23 @@ export function claudeBackground(bin = "claude", env: NodeJS.ProcessEnv = proces
   return { bg: cached.bg, attach: cached.attach }
 }
 
-/** `claude --bg -n <name> <task>`, in the worktree, marked as crosstalk's background agent. */
-export const bgStep = (o: { claude: string; name: string; task: string; cwd: string }): Step & { cwd: string; env: Record<string, string> } => ({
-  cmd: o.claude,
-  args: ["--bg", "-n", o.name, o.task],
-  cwd: o.cwd,
-  env: { [BG_ENV]: o.name },
-})
+/** A first argument claude would read as an option, not as the prompt. */
+export const isFlagLike = (s: string) => /^\s*-/.test(s)
+
+/**
+ * `claude --bg -n <name> <task>`, in the worktree, marked as crosstalk's
+ * background agent. A task or name starting with "-" is refused: it would be
+ * taken for a flag (--dangerously-skip-permissions).
+ */
+export const bgStep = (o: { claude: string; name: string; task: string; cwd: string }): Step & { cwd: string; env: Record<string, string> } => {
+  if (isFlagLike(o.task) || isFlagLike(o.name)) throw new Error(`a background agent's task and name cannot start with "-"`)
+  return {
+    cmd: o.claude,
+    args: ["--bg", "-n", o.name, o.task],
+    cwd: o.cwd,
+    env: { [BG_ENV]: o.name },
+  }
+}
 
 export const attachArgv = (claude: string, name: string) => [claude, "attach", name]
 

@@ -38,8 +38,11 @@ figures) after each turn, or from the transcript's last assistant usage at
 Stop. An automatic `PreCompact` asks the same. A `/compact` the person typed
 is left alone.
 
-Answering "Start fresh" twice offers the standing rule ("Always do this?");
-with the rule, a PreCompact is blocked and the session restarts at once.
+Answering "Start fresh" twice offers the standing rule ("Always start
+fresh"); with the rule, a PreCompact is blocked and the session restarts at
+once. The rule is the person's own, kept in this machine's attention state
+like the disk rule: a rule in the repository's shared RULES.md never ends
+anyone's sessions. The `attn_dispose_rule {on: false}` op turns it off.
 
 Starting fresh: the session's restore record is marked ended, reason
 `disposed` (restore and gather never take it for a crash); the thread is

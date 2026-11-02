@@ -145,7 +145,17 @@ export class Budget {
   /** "Free it": what the person was shown, still finished on a fresh look. */
   async freeNow(s = load()): Promise<{ ok: boolean; text: string }> {
     const fresh = await this.d.scan()
-    const confirmed = s.report && this.now() - s.report.at < S.DAY ? s.report.reclaim : fresh.reclaim
+    // Only what the person was shown, and lately: with no report, or one over
+    // a day old, the fresh scan is shown and asked about instead, and nothing
+    // the person never saw is freed.
+    if (!s.report || this.now() - s.report.at >= S.DAY) {
+      const id = `disk:${this.now()}:again`
+      if (s.questionId) this.d.settle(s.questionId)
+      if (fresh.reclaim.length) this.d.ask({ id, question: questionText(fresh), options: [FREE, NOT_NOW] })
+      save({ ...s, report: fresh, askedAt: this.now(), questionId: fresh.reclaim.length ? id : undefined })
+      return { ok: true, text: `◢ crosstalk: freed nothing: there was no list you had seen today. This is what is there now.\n${listing(fresh)}` }
+    }
+    const confirmed = s.report.reclaim
     const freed = this.d.free(confirmed, fresh)
     const ok = freed.filter((f) => f.ok)
     const kb = ok.reduce((a, f) => a + f.kb, 0)

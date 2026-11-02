@@ -4,7 +4,7 @@
 // src/daemon.ts
 import fs48 from "fs";
 import net3 from "net";
-import path57 from "path";
+import path58 from "path";
 import crypto19 from "crypto";
 
 // src/config.ts
@@ -4439,15 +4439,15 @@ function view2(t) {
 
 // src/shipping/daemon.ts
 import fs31 from "node:fs";
-import path38 from "node:path";
+import path39 from "node:path";
 
 // src/cleanup.ts
 import fs24 from "node:fs";
-import path29 from "node:path";
+import path30 from "node:path";
 
 // src/restore.ts
 import fs20 from "node:fs";
-import path25 from "node:path";
+import path26 from "node:path";
 import { spawn as spawn2, spawnSync as spawnSync4 } from "node:child_process";
 
 // src/terminal/repo.ts
@@ -4510,10 +4510,17 @@ function slug2(s, max = 32) {
   return s.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, max).replace(/-+$/g, "");
 }
 
+// src/registry.ts
+import os7 from "node:os";
+import path25 from "node:path";
+var SESSIONS2 = path25.join(os7.homedir(), ".claude", "sessions");
+var claudeConfigDir = () => process.env.CLAUDE_CONFIG_DIR ?? path25.join(os7.homedir(), ".claude");
+var sessionsDir = () => path25.join(claudeConfigDir(), "sessions");
+
 // src/restore.ts
-var dir2 = () => path25.join(P2.root, "open");
+var dir2 = () => path26.join(P2.root, "open");
 var safe3 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
-var fileOf = (id) => path25.join(dir2(), `${safe3(id)}.json`);
+var fileOf = (id) => path26.join(dir2(), `${safe3(id)}.json`);
 function readAll() {
   let names;
   try {
@@ -4524,7 +4531,7 @@ function readAll() {
   const out = [];
   for (const f of names) {
     try {
-      const r = JSON.parse(fs20.readFileSync(path25.join(dir2(), f), "utf8"));
+      const r = JSON.parse(fs20.readFileSync(path26.join(dir2(), f), "utf8"));
       if (r && typeof r.sessionId === "string")
         out.push(r);
     } catch {}
@@ -4574,6 +4581,20 @@ function pidAlive(pid, pidStart) {
   return now === null ? true : now === pidStart;
 }
 var recAlive = (r) => pidAlive(r.pid, r.pidStart);
+function pidState(pid, pidStart) {
+  if (!pid || pid < 1)
+    return "gone";
+  try {
+    process.kill(pid, 0);
+  } catch (e) {
+    if (e?.code !== "EPERM")
+      return "gone";
+  }
+  if (!pidStart)
+    return "unknown";
+  const now = ps(pid, "lstart");
+  return now === null ? "unknown" : now === pidStart ? "same" : "gone";
+}
 var SHELL = /^-?(sh|bash|zsh|dash|fish|ksh|tcsh|csh)$/;
 var appleLocateScript = (tty) => [
   `tell application "Terminal"`,
@@ -4651,7 +4672,7 @@ function kindOf(t) {
   return null;
 }
 var CROSSTALK_TMUX = "crosstalk";
-var isCrosstalkSocket = (s) => !!s && path25.basename(s) === CROSSTALK_TMUX;
+var isCrosstalkSocket = (s) => !!s && path26.basename(s) === CROSSTALK_TMUX;
 function anchorFor(repo, o) {
   if (o.asking && kindOf(o.asking.terminal) && o.keyOf(o.asking.cwd) === repo)
     return o.asking.terminal;
@@ -4707,7 +4728,7 @@ function appleIntoWindowScript(cmds, window, tabs) {
     `end tell`
   ];
   for (const c of cmds)
-    L.push(`if crosstalkFallback is "" and ${tabs ? "true" : "false"} then`, `	try`, `		delay 0.3`, `		tell application "System Events" to keystroke "t" using command down`, `		delay 0.6`, `		tell application "Terminal" to do script ${asq(c)} in selected tab of front window`, `	on error errMsg number errNum`, `		set crosstalkFallback to (errNum as text)`, `		tell application "Terminal" to do script ${asq(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq(c)}`, `end if`);
+    L.push(`if crosstalkFallback is "" and ${tabs ? "true" : "false"} then`, `	try`, ...appleNewTabLines(c), `	on error errMsg number errNum`, `		set crosstalkFallback to (errNum as text)`, `		tell application "Terminal" to do script ${asq(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq(c)}`, `end if`);
   L.push(`if crosstalkFallback is "gone" then set crosstalkFallback to ""`, `return "done " & crosstalkFallback`);
   return L.join(`
 `);
@@ -4723,6 +4744,23 @@ function itermIntoWindowScript(cmds, tty) {
   return L.join(`
 `);
 }
+function appleNewTabLines(c) {
+  return [
+    `		delay 0.3`,
+    `		tell application "Terminal"`,
+    `			if not frontmost then error "Terminal is not in front" number 1001`,
+    `			set crosstalkWin to id of front window`,
+    `			set crosstalkTabs to count of tabs of front window`,
+    `			set crosstalkTty to tty of selected tab of front window`,
+    `		end tell`,
+    `		tell application "System Events" to keystroke "t" using command down`,
+    `		delay 0.6`,
+    `		tell application "Terminal"`,
+    `			if (id of front window) is not crosstalkWin or (count of tabs of front window) is not (crosstalkTabs + 1) or (tty of selected tab of front window) is crosstalkTty then error "the new tab did not open where expected" number 1001`,
+    `			do script ${asq(c)} in selected tab of front window`,
+    `		end tell`
+  ];
+}
 function appleTerminalScript(cmds, tabs) {
   const L = [`set crosstalkFallback to ""`, `tell application "Terminal"`, `	activate`, `	do script ${asq(cmds[0])}`, `end tell`];
   for (const c of cmds.slice(1)) {
@@ -4730,7 +4768,7 @@ function appleTerminalScript(cmds, tabs) {
       L.push(`tell application "Terminal" to do script ${asq(c)}`);
       continue;
     }
-    L.push(`if crosstalkFallback is "" then`, `	try`, `		delay 0.3`, `		tell application "System Events" to keystroke "t" using command down`, `		delay 0.6`, `		tell application "Terminal" to do script ${asq(c)} in selected tab of front window`, `	on error errMsg number errNum`, `		set crosstalkFallback to (errNum as text)`, `		tell application "Terminal" to do script ${asq(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq(c)}`, `end if`);
+    L.push(`if crosstalkFallback is "" then`, `	try`, ...appleNewTabLines(c), `	on error errMsg number errNum`, `		set crosstalkFallback to (errNum as text)`, `		tell application "Terminal" to do script ${asq(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq(c)}`, `end if`);
   }
   L.push(`return "done " & crosstalkFallback`);
   return L.join(`
@@ -4747,10 +4785,10 @@ function ghosttyScript(cmds) {
 }
 var REOPEN_SETTINGS_MS = 2 * 60 * 1000;
 function which(bin) {
-  for (const d of (process.env.PATH ?? "").split(path25.delimiter)) {
+  for (const d of (process.env.PATH ?? "").split(path26.delimiter)) {
     if (!d)
       continue;
-    const p = path25.join(d, bin);
+    const p = path26.join(d, bin);
     try {
       fs20.accessSync(p, fs20.constants.X_OK);
       return p;
@@ -4789,7 +4827,7 @@ function withWindowId(t, env = process.env) {
 
 // src/spawn.ts
 import fs23 from "node:fs";
-import path28 from "node:path";
+import path29 from "node:path";
 import { spawnSync as spawnSync9 } from "node:child_process";
 
 // src/terminal/layout.ts
@@ -4961,12 +4999,17 @@ function claudeBackground(bin = "claude", env = process.env) {
   cached2 = { bin, bg: /--bg\b|--background\b/.test(help), attach: /^\s+attach\b/m.test(help) };
   return { bg: cached2.bg, attach: cached2.attach };
 }
-var bgStep = (o) => ({
-  cmd: o.claude,
-  args: ["--bg", "-n", o.name, o.task],
-  cwd: o.cwd,
-  env: { [BG_ENV]: o.name }
-});
+var isFlagLike = (s) => /^\s*-/.test(s);
+var bgStep = (o) => {
+  if (isFlagLike(o.task) || isFlagLike(o.name))
+    throw new Error(`a background agent's task and name cannot start with "-"`);
+  return {
+    cmd: o.claude,
+    args: ["--bg", "-n", o.name, o.task],
+    cwd: o.cwd,
+    env: { [BG_ENV]: o.name }
+  };
+};
 var tmuxArgv = (argv, name) => ["env", `${BG_ENV}=${name}`, ...argv];
 
 // src/attention/focus.ts
@@ -5120,14 +5163,13 @@ function focused(o) {
 
 // src/attention/dispose.ts
 import fs22 from "node:fs";
-import path27 from "node:path";
+import path28 from "node:path";
 
 // src/gather.ts
 import fs21 from "node:fs";
-import os7 from "node:os";
-import path26 from "node:path";
+import path27 from "node:path";
 import { spawn as spawn3, spawnSync as spawnSync8 } from "node:child_process";
-var registryDir = () => path26.join(os7.homedir(), ".claude", "sessions");
+var registryDir = () => sessionsDir();
 function readRegistry(dir = registryDir(), alive = (p) => pidAlive(p)) {
   let files;
   try {
@@ -5138,7 +5180,7 @@ function readRegistry(dir = registryDir(), alive = (p) => pidAlive(p)) {
   const out = [];
   for (const f of files) {
     try {
-      const e = JSON.parse(fs21.readFileSync(path26.join(dir, f), "utf8"));
+      const e = JSON.parse(fs21.readFileSync(path27.join(dir, f), "utf8"));
       const pid = Number(e.pid ?? f.slice(0, -5));
       if (!pid || typeof e.sessionId !== "string" || !e.sessionId)
         continue;
@@ -5156,6 +5198,18 @@ function readRegistry(dir = registryDir(), alive = (p) => pidAlive(p)) {
     } catch {}
   }
   return out;
+}
+function isClaudeArgs(args) {
+  const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length)
+    return false;
+  const base = (x) => path27.basename(x);
+  if (base(parts[0]) === "claude")
+    return true;
+  if (!/^(node|bun|deno|sh|bash|zsh)$/.test(base(parts[0])))
+    return false;
+  const script = parts.slice(1).find((a) => !a.startsWith("-"));
+  return !!script && (base(script) === "claude" || /(^|\/)@anthropic-ai\/claude-code\/cli\.m?js$/.test(script));
 }
 function ps2(pid, field) {
   if (!pid || pid < 1)
@@ -5216,6 +5270,7 @@ function liveSys2() {
     now: Date.now,
     ps: ps2,
     alive: pidAlive,
+    state: pidState,
     env: procEnv,
     tmuxPanes,
     appleLocate: (tty) => {
@@ -5234,7 +5289,13 @@ function liveSys2() {
   };
 }
 var RECHECK_MS = 10 * 60 * 1000;
-var appleInPlaceScript = (cmd, window, tab) => `tell application "Terminal" to do script ${asq(cmd)} in tab ${tab} of window id ${window}`;
+var appleInPlaceScript = (cmd, window, tab, tty) => tty ? [
+  `tell application "Terminal"`,
+  `	if (tty of tab ${tab} of window id ${window}) is not ${asq(tty)} then error "that tab no longer shows ${tty.replace(/["\\]/g, "")}"`,
+  `	do script ${asq(cmd)} in tab ${tab} of window id ${window}`,
+  `end tell`
+].join(`
+`) : `tell application "Terminal" to do script ${asq(cmd)} in tab ${tab} of window id ${window}`;
 var itermInPlaceScript = (cmd, tty) => [
   `tell application "iTerm2"`,
   `	repeat with w in windows`,
@@ -5265,7 +5326,7 @@ function inPlaceSteps(t, cmd, platform = process.platform) {
     };
   }
   if (platform === "darwin" && t.program === "Apple_Terminal" && t.apple?.window && t.apple.tab)
-    return { kind: "apple", steps: [{ cmd: "osascript", args: ["-"], input: appleInPlaceScript(cmd, t.apple.window, t.apple.tab) }] };
+    return { kind: "apple", steps: [{ cmd: "osascript", args: ["-"], input: appleInPlaceScript(cmd, t.apple.window, t.apple.tab, t.tty) }] };
   if (platform === "darwin" && (t.program === "iTerm.app" || t.iterm) && t.tty)
     return { kind: "iterm", steps: [{ cmd: "osascript", args: ["-"], input: itermInPlaceScript(cmd, t.tty) }] };
   if (t.kitty?.window && t.kitty.listenOn)
@@ -5276,21 +5337,25 @@ function inPlaceSteps(t, cmd, platform = process.platform) {
 }
 async function endGracefully(pid, pidStart, sys, waits = [1e4, 5000, 5000]) {
   const sigs = ["SIGTERM", "SIGINT", "SIGINT"];
+  const state = () => sys.state ? sys.state(pid, pidStart) : sys.alive(pid, pidStart) ? "same" : "gone";
   for (let i = 0;i < sigs.length; i++) {
-    if (!sys.alive(pid, pidStart))
+    const st = state();
+    if (st === "gone")
       return true;
+    if (st === "unknown")
+      return false;
     try {
       sys.kill(pid, sigs[i]);
     } catch {
-      return !sys.alive(pid, pidStart);
+      return state() === "gone";
     }
     for (let waited = 0;waited < waits[i]; waited += 100) {
-      if (!sys.alive(pid, pidStart))
+      if (state() === "gone")
         return true;
       await sys.sleep(100);
     }
   }
-  return !sys.alive(pid, pidStart);
+  return state() === "gone";
 }
 
 // src/attention/dispose.ts
@@ -5331,9 +5396,9 @@ function primer(t, o = {}) {
 `);
 }
 function writePrimer(threadName, text, now = Date.now()) {
-  const dir = path27.join(P2.root, "primers");
+  const dir = path28.join(P2.root, "primers");
   fs22.mkdirSync(dir, { recursive: true, mode: 448 });
-  const f = path27.join(dir, `${slug(threadName)}-${now}.md`);
+  const f = path28.join(dir, `${slug(threadName)}-${now}.md`);
   fs22.writeFileSync(f, text + `
 `, { mode: 384 });
   return f;
@@ -5367,11 +5432,19 @@ function markDisposed(rec, now = Date.now()) {
 }
 async function restart(o) {
   const sys = o.sys ?? liveSys2();
-  const { rec } = o;
+  let { rec } = o;
   if (!sys.alive(rec.pid, rec.pidStart))
     return { ok: false, text: "its process has already gone" };
+  if (!isClaudeArgs(sys.ps(rec.pid, "args")))
+    return { ok: false, text: "its process is not claude" };
+  if (sys.platform === "darwin" && rec.terminal.program === "Apple_Terminal" && !rec.terminal.tmux?.pane) {
+    const at = rec.terminal.tty ? sys.appleLocate(rec.terminal.tty) : null;
+    if (!at)
+      return { ok: false, text: "its Terminal tab could not be found by its tty" };
+    rec = { ...rec, terminal: { ...rec.terminal, apple: { ...rec.terminal.apple, ...at } } };
+  }
   const parent = Number(sys.ps(rec.pid, "ppid"));
-  const inShell = SHELL.test(path27.basename(sys.ps(parent, "comm") ?? ""));
+  const inShell = SHELL.test(path28.basename(sys.ps(parent, "comm") ?? ""));
   const p = plan(rec, o.cmd, inShell, sys.platform);
   if (p.how === "none")
     return { ok: false, text: p.why };
@@ -5455,8 +5528,8 @@ var DEP_DIRS = ["node_modules", ".venv", "venv"];
 var MAX_AGENTS = 8;
 var BRANCH_PREFIX = "crosstalk/";
 var TMUX_SOCKET = "crosstalk";
-var dir3 = () => path28.join(P2.root, "spawned");
-var fileOf2 = (id) => path28.join(dir3(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+var dir3 = () => path29.join(P2.root, "spawned");
+var fileOf2 = (id) => path29.join(dir3(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
 function readSpawned() {
   let names;
   try {
@@ -5467,7 +5540,7 @@ function readSpawned() {
   const out = [];
   for (const f of names)
     try {
-      const r = JSON.parse(fs23.readFileSync(path28.join(dir3(), f), "utf8"));
+      const r = JSON.parse(fs23.readFileSync(path29.join(dir3(), f), "utf8"));
       if (r?.id && r.worktree)
         out.push(r);
     } catch {}
@@ -5506,8 +5579,8 @@ function worktreeHome(o) {
   for (const w of o.worktrees.slice(1)) {
     if (w.bare || !w.path)
       continue;
-    const d = path28.dirname(w.path);
-    if (d === path28.dirname(o.main) && !/worktree/i.test(path28.basename(w.path)))
+    const d = path29.dirname(w.path);
+    if (d === path29.dirname(o.main) && !/worktree/i.test(path29.basename(w.path)))
       continue;
     counts.set(d, (counts.get(d) ?? 0) + 1);
   }
@@ -5515,28 +5588,28 @@ function worktreeHome(o) {
   for (const [d, n] of counts)
     if (!best || n > counts.get(best))
       best = d;
-  return best ?? path28.join(o.home, "worktrees", repoName(o.main));
+  return best ?? path29.join(o.home, "worktrees", repoName(o.main));
 }
 function planSpawn(o) {
   const main = o.worktrees[0]?.path ?? o.top;
   const where = worktreeHome({ main, worktrees: o.worktrees, home: o.home });
-  const rel = path28.relative(o.top, o.cwd);
-  const sub = rel && !rel.startsWith("..") && !path28.isAbsolute(rel) ? rel : "";
+  const rel = path29.relative(o.top, o.cwd);
+  const sub = rel && !rel.startsWith("..") && !path29.isAbsolute(rel) ? rel : "";
   const count = Math.max(1, Math.min(MAX_AGENTS, Math.floor(o.count || 1)));
   const names = namesFor({
     count,
     name: o.name,
     task: o.task,
-    taken: (n) => o.exists(path28.join(where, n)) || o.branchExists(BRANCH_PREFIX + n)
+    taken: (n) => o.exists(path29.join(where, n)) || o.branchExists(BRANCH_PREFIX + n)
   });
   return names.map((name) => {
-    const worktree = path28.join(where, name);
-    const cwd = sub ? path28.join(worktree, sub) : worktree;
-    const links = DEP_DIRS.filter((d) => o.exists(path28.join(main, d))).map((d) => [path28.join(main, d), path28.join(worktree, d)]);
+    const worktree = path29.join(where, name);
+    const cwd = sub ? path29.join(worktree, sub) : worktree;
+    const links = DEP_DIRS.filter((d) => o.exists(path29.join(main, d))).map((d) => [path29.join(main, d), path29.join(worktree, d)]);
     return { name, branch: BRANCH_PREFIX + name, worktree, cwd, links, tab: { cwd, argv: [o.claude, o.prompt ?? o.task], name, ...o.thread ? { thread: o.thread } : {} } };
   });
 }
-var tmuxConf = () => path28.join(P2.root, "tmux.conf");
+var tmuxConf = () => path29.join(P2.root, "tmux.conf");
 var TMUX_CONF = [
   `# crosstalk's own tmux server (tmux -L crosstalk), for agents it runs in the background.`,
   `set -g status-left '#[bold]\u25e2 crosstalk#[default] #S  '`,
@@ -5574,10 +5647,10 @@ function run3(s, env) {
   return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
 }
 function which2(bin, env) {
-  for (const d of (env.PATH ?? "").split(path28.delimiter)) {
+  for (const d of (env.PATH ?? "").split(path29.delimiter)) {
     if (!d)
       continue;
-    const p = path28.join(d, bin);
+    const p = path29.join(d, bin);
     try {
       fs23.accessSync(p, fs23.constants.X_OK);
       return p;
@@ -5588,7 +5661,7 @@ function which2(bin, env) {
 function excludeLinks(commonDir, names) {
   if (!names.length)
     return;
-  const f = path28.join(commonDir, "info", "exclude");
+  const f = path29.join(commonDir, "info", "exclude");
   let text = "";
   try {
     text = fs23.readFileSync(f, "utf8");
@@ -5598,7 +5671,7 @@ function excludeLinks(commonDir, names) {
   const add = names.map((n) => `/${n}`).filter((l) => !have.has(l));
   if (!add.length)
     return;
-  fs23.mkdirSync(path28.dirname(f), { recursive: true });
+  fs23.mkdirSync(path29.dirname(f), { recursive: true });
   fs23.writeFileSync(f, `${text}${text && !text.endsWith(`
 `) ? `
 ` : ""}# crosstalk: dependency folders shared from the main checkout
@@ -5616,6 +5689,8 @@ function spawnAgents(o) {
   const task = (o.task ?? "").trim();
   if (!task)
     return { ok: false, text: "\u25e2 crosstalk: say what the new agent should do.", agents: [] };
+  if (isFlagLike(task))
+    return { ok: false, text: `\u25e2 crosstalk: a task cannot start with "-" (claude would read it as an option). Start it with a word.`, agents: [] };
   const top = g(o.cwd, ["rev-parse", "--show-toplevel"]);
   if (!top.ok || !top.out)
     return { ok: false, text: `\u25e2 crosstalk: ${o.cwd} is not in a git repository, and each new agent needs its own copy of the code.`, agents: [] };
@@ -5647,7 +5722,7 @@ function spawnAgents(o) {
   const made = [];
   const notes = [];
   for (const p of plans) {
-    fs23.mkdirSync(path28.dirname(p.worktree), { recursive: true });
+    fs23.mkdirSync(path29.dirname(p.worktree), { recursive: true });
     const add = g(main, ["worktree", "add", "--quiet", "-b", p.branch, p.worktree, base.out]);
     if (!add.ok) {
       notes.push(`could not make a copy for ${p.name}: ${add.out.split(`
@@ -5660,7 +5735,7 @@ function spawnAgents(o) {
         if (fs23.existsSync(to))
           continue;
         fs23.symlinkSync(from, to, "dir");
-        linked.push(path28.basename(to));
+        linked.push(path29.basename(to));
       } catch {}
     }
     if (common.ok)
@@ -5723,7 +5798,7 @@ function spawnAgents(o) {
     if (r.opened.kind === "manual" || !r.ok) {
       ok = r.opened.kind === "manual";
       fs23.mkdirSync(P2.root, { recursive: true, mode: 448 });
-      const file = path28.join(P2.root, "spawn-commands.sh");
+      const file = path29.join(P2.root, "spawn-commands.sh");
       fs23.writeFileSync(file, `#!/bin/sh
 # New agents crosstalk could not open a tab for. Each line is one tab.
 ${r.opened.typed.join(`
@@ -5813,7 +5888,7 @@ function liveProbe(g = git4) {
     ended: (r) => {
       if (r.background && r.tmux && tmuxHas(r.tmux))
         return false;
-      const live = readAll().some((x) => !x.endedAt && path29.resolve(x.cwd).startsWith(path29.resolve(r.worktree)) && recAlive(x));
+      const live = readAll().some((x) => !x.endedAt && path30.resolve(x.cwd).startsWith(path30.resolve(r.worktree)) && recAlive(x));
       return !live;
     }
   };
@@ -5829,7 +5904,7 @@ function offerFor(c) {
   const question = `${n} agent worktree${n === 1 ? " is" : "s are"} done with: ${n === 1 ? "its" : "their"} work is merged and ${n === 1 ? "its session has" : "their sessions have"} ended. Remove ${n === 1 ? "it" : "them"}?`;
   return { count: n, names, question, text: `\u25e2 crosstalk: ${question} (${names.join(", ")}) Say "clean up the worktrees" to do it.` };
 }
-var stamp = () => path29.join(P2.root, "cleanup-stamp");
+var stamp = () => path30.join(P2.root, "cleanup-stamp");
 var CHECK_EVERY_MS = () => Number(process.env.CROSSTALK_CLEANUP_EVERY_MS ?? 10 * 60 * 1000);
 function offerOnce(o = {}) {
   const recs = readSpawned().filter((r) => !r.removedAt);
@@ -5868,7 +5943,7 @@ function surface(sessionId, offer, mod = modActive2(sessionId)) {
 
 // src/shipping/engine.ts
 import fs30 from "node:fs";
-import path37 from "node:path";
+import path38 from "node:path";
 import crypto12 from "node:crypto";
 
 // src/shipping/risk.ts
@@ -5960,7 +6035,7 @@ function ratchet(current, want, o = {}) {
 
 // src/shipping/config.ts
 import fs25 from "node:fs";
-import path30 from "node:path";
+import path31 from "node:path";
 var SHIP_FILE = ".crosstalk/ship";
 var DEFAULT_RAMP = ["dark", "internal", "10%", "50%", "on"];
 var DEFAULT_EVERYDAY_RAMP = ["internal", "on"];
@@ -6024,14 +6099,14 @@ function parseShip(text) {
 }
 function loadShip(root) {
   try {
-    return parseShip(fs25.readFileSync(path30.join(root, SHIP_FILE), "utf8"));
+    return parseShip(fs25.readFileSync(path31.join(root, SHIP_FILE), "utf8"));
   } catch {
     return parseShip("");
   }
 }
 var NPM_PLACEHOLDER = /no test specified/;
 function discoverTest(root, exists = (p) => fs25.existsSync(p), read = (p) => fs25.readFileSync(p, "utf8")) {
-  const at = (f) => path30.join(root, f);
+  const at = (f) => path31.join(root, f);
   try {
     const pkg = JSON.parse(read(at("package.json")));
     const t = pkg?.scripts?.test;
@@ -6063,7 +6138,7 @@ function discoverTest(root, exists = (p) => fs25.existsSync(p), read = (p) => fs
 
 // src/shipping/evidence.ts
 import fs26 from "node:fs";
-import path31 from "node:path";
+import path32 from "node:path";
 var DIFF_LINE = /^(diff --git |@@ -\d|\+\+\+ [ab/]|--- [ab/]|index [0-9a-f]{7,}\.\.[0-9a-f]{7,})/m;
 function looksLikeDiff(text) {
   if (DIFF_LINE.test(text))
@@ -6114,7 +6189,7 @@ function validate(input, o) {
   for (const s of screenshots ?? []) {
     if (/^https?:\/\//.test(s))
       continue;
-    const p = path31.isAbsolute(s) || !o.base ? s : path31.join(o.base, s);
+    const p = path32.isAbsolute(s) || !o.base ? s : path32.join(o.base, s);
     if (!exists(p))
       return { ok: false, error: `no screenshot at ${s}` };
   }
@@ -6254,7 +6329,7 @@ var flagName = (feature) => feature.toLowerCase().replace(/[^a-z0-9]+/g, "-").re
 // src/shipping/git.ts
 import fs27 from "node:fs";
 import os8 from "node:os";
-import path32 from "node:path";
+import path33 from "node:path";
 import { spawn as spawn4, spawnSync as spawnSync10 } from "node:child_process";
 var env = (extra = {}) => ({
   ...process.env,
@@ -6342,7 +6417,7 @@ var worktrees2 = (root) => worktrees(root);
 var checkoutOf = (root, branch) => worktrees2(root).find((w) => w.branch === branch && !w.bare);
 var mainOf = (cwd) => worktrees2(cwd)[0]?.path;
 function scratch(root, at, where) {
-  fs27.mkdirSync(path32.dirname(where), { recursive: true });
+  fs27.mkdirSync(path33.dirname(where), { recursive: true });
   if (fs27.existsSync(where))
     dropScratch(root, where);
   const r = git5(root, ["worktree", "add", "--detach", "--quiet", where, at]);
@@ -6352,8 +6427,8 @@ function scratch(root, at, where) {
 function dropScratch(root, where) {
   for (const l of ["node_modules", ".venv", "venv"])
     try {
-      if (fs27.lstatSync(path32.join(where, l)).isSymbolicLink())
-        fs27.unlinkSync(path32.join(where, l));
+      if (fs27.lstatSync(path33.join(where, l)).isSymbolicLink())
+        fs27.unlinkSync(path33.join(where, l));
     } catch {}
   git5(root, ["worktree", "remove", "--force", where]);
   try {
@@ -6364,8 +6439,8 @@ function dropScratch(root, where) {
 function linkDeps(main, where) {
   const out = [];
   for (const d of ["node_modules", ".venv", "venv"]) {
-    const from = path32.join(main, d);
-    const to = path32.join(where, d);
+    const from = path33.join(main, d);
+    const to = path33.join(where, d);
     try {
       if (fs27.existsSync(from) && !fs27.existsSync(to)) {
         fs27.symlinkSync(from, to, "dir");
@@ -6389,7 +6464,7 @@ function commitFile(root, branch, file, content, message) {
   const parent = tip(root, `refs/heads/${branch}`);
   if (!parent)
     return { ok: false, err: `no branch ${branch}` };
-  const idx = path32.join(os8.tmpdir(), `crosstalk-index-${process.pid}-${Date.now()}`);
+  const idx = path33.join(os8.tmpdir(), `crosstalk-index-${process.pid}-${Date.now()}`);
   const e = { GIT_INDEX_FILE: idx };
   try {
     if (!git5(root, ["read-tree", parent], { env: e }).ok)
@@ -6428,10 +6503,10 @@ function push(root, remote, branch) {
 `).slice(-2).join(" ") };
 }
 function which3(bin, envVars = process.env) {
-  for (const d of (envVars.PATH ?? "").split(path32.delimiter)) {
+  for (const d of (envVars.PATH ?? "").split(path33.delimiter)) {
     if (!d)
       continue;
-    const p = path32.join(d, bin);
+    const p = path33.join(d, bin);
     try {
       fs27.accessSync(p, fs27.constants.X_OK);
       if (fs27.statSync(p).isFile())
@@ -6443,7 +6518,7 @@ function which3(bin, envVars = process.env) {
 
 // src/shipping/reviewer.ts
 import fs28 from "node:fs";
-import path33 from "node:path";
+import path34 from "node:path";
 import { spawn as spawn5, spawnSync as spawnSync11 } from "node:child_process";
 function detect(env = process.env) {
   return {
@@ -6546,7 +6621,7 @@ function argvFor(who, promptFile, lastFile) {
   return `${q(who.bin)} -p ${p}${who.model ? ` --model ${q(who.model)}` : ""} --allowedTools ${q(tools)}`;
 }
 function script(l) {
-  const f = (n) => path33.join(l.dir, n);
+  const f = (n) => path34.join(l.dir, n);
   return [
     `#!/bin/sh`,
     `# A crosstalk reviewer: ${l.name}`,
@@ -6561,8 +6636,8 @@ function script(l) {
 }
 function launch(l) {
   fs28.mkdirSync(l.dir, { recursive: true, mode: 448 });
-  fs28.writeFileSync(path33.join(l.dir, "prompt.txt"), l.prompt, { mode: 384 });
-  const file = path33.join(l.dir, "run.sh");
+  fs28.writeFileSync(path34.join(l.dir, "prompt.txt"), l.prompt, { mode: 384 });
+  const file = path34.join(l.dir, "run.sh");
   fs28.writeFileSync(file, script(l), { mode: 448 });
   const env = cleanEnv({ ...l.env ?? process.env });
   delete env.CLAUDE_CODE_SESSION_ID;
@@ -6584,7 +6659,7 @@ function launch(l) {
 function cliCommand(root) {
   if (process.env.CROSSTALK_BIN)
     return process.env.CROSSTALK_BIN;
-  return q(path33.join(root, "bin", "crosstalk"));
+  return q(path34.join(root, "bin", "crosstalk"));
 }
 
 // src/shipping/incident.ts
@@ -6624,7 +6699,7 @@ function mapIncident(inc, threads, o) {
 var describeIncident = (inc) => `Incident from ${inc.source}: ${inc.title}${inc.details ? ` \u2014 ${inc.details}` : ""}${inc.flag ? ` (flag ${inc.flag})` : ""}${inc.sha ? ` (at ${inc.sha.slice(0, 12)})` : ""}${inc.files?.length ? ` (in ${normaliseFiles(inc.files).slice(0, 5).join(", ")})` : ""}`.slice(0, 1500);
 
 // src/shipping/merge.ts
-import path34 from "node:path";
+import path35 from "node:path";
 import { spawnSync as spawnSync12 } from "node:child_process";
 function planMerge(f) {
   if (!f.defaultBranch)
@@ -6712,7 +6787,7 @@ function executeMerge(root, branch, o) {
   const from = tip(root, `refs/heads/${d}`);
   let to = tip(root, `refs/heads/${branch}`);
   if (plan.how === "rebase") {
-    const where = path34.join(o.scratchDir, `merge-${Date.now()}`);
+    const where = path35.join(o.scratchDir, `merge-${Date.now()}`);
     const s = scratch(root, to, where);
     if (!s.ok)
       return { ok: false, how: "rebase", text: `could not make a scratch copy: ${s.err}` };
@@ -7448,7 +7523,7 @@ function prBody(t, f) {
 }
 
 // src/shipping/preview.ts
-import path35 from "node:path";
+import path36 from "node:path";
 function previewUrl(out) {
   const explicit = [...out.matchAll(/^\s*PREVIEW_URL\s*=\s*(\S+)\s*$/gm)].pop()?.[1];
   if (explicit)
@@ -7473,7 +7548,7 @@ async function runPreview(i) {
   const sha = tip(i.root, `refs/heads/${i.branch}`);
   if (!sha)
     return { ok: false, out: "", error: `no branch ${i.branch}` };
-  const where = path35.join(i.scratchDir, `preview-${branchSlug(i.branch)}-${Date.now().toString(36)}`);
+  const where = path36.join(i.scratchDir, `preview-${branchSlug(i.branch)}-${Date.now().toString(36)}`);
   const s = scratch(i.root, sha, where);
   if (!s.ok)
     return { ok: false, out: "", error: `no copy to deploy from: ${s.err}` };
@@ -7577,7 +7652,7 @@ function describeMetrics(now, baseline) {
 
 // src/shipping/shadow.ts
 import fs29 from "node:fs";
-import path36 from "node:path";
+import path37 from "node:path";
 function parseCounts(details) {
   const t = (details ?? "").trim();
   if (t.startsWith("{"))
@@ -7604,7 +7679,7 @@ function readCounter(dir, flag) {
   if (!dir)
     return;
   try {
-    const o = JSON.parse(fs29.readFileSync(path36.join(dir, `${flag.replace(/[^A-Za-z0-9._-]/g, "_")}.json`), "utf8"));
+    const o = JSON.parse(fs29.readFileSync(path37.join(dir, `${flag.replace(/[^A-Za-z0-9._-]/g, "_")}.json`), "utf8"));
     const calls = Number(o.calls);
     const mismatches = Number(o.mismatches);
     if (!Number.isFinite(calls) || !Number.isFinite(mismatches))
@@ -7686,7 +7761,7 @@ class ShipEngine {
     return { v: 1, runs: {}, rounds: {}, authors: {}, questions: {}, watch: {}, shadow: {}, rejected: [] };
   }
   save() {
-    fs30.mkdirSync(path37.dirname(this.d.file), { recursive: true, mode: 448 });
+    fs30.mkdirSync(path38.dirname(this.d.file), { recursive: true, mode: 448 });
     const tmp = `${this.d.file}.${process.pid}.tmp`;
     fs30.writeFileSync(tmp, JSON.stringify(this.st, null, 1), { mode: 384 });
     fs30.renameSync(tmp, this.d.file);
@@ -7733,7 +7808,7 @@ class ShipEngine {
     const d = defaultBranch3(main);
     const text = (d && show(main, d, SHIP_FILE)) ?? (() => {
       try {
-        return fs30.readFileSync(path37.join(main, SHIP_FILE), "utf8");
+        return fs30.readFileSync(path38.join(main, SHIP_FILE), "utf8");
       } catch {
         return "";
       }
@@ -7892,8 +7967,8 @@ class ShipEngine {
     for (const p of chosen.picks) {
       const runId = `r${crypto12.randomBytes(4).toString("hex")}`;
       const name = `review-${slug(f.name, 20)}-${p.kind}-${rd.round}`.slice(0, 48);
-      const dir = path37.join(this.d.home, "reviews", runId);
-      const worktree = path37.join(dir, "copy");
+      const dir = path38.join(this.d.home, "reviews", runId);
+      const worktree = path38.join(dir, "copy");
       const sc = scratch(root, tipSha, worktree);
       if (!sc.ok) {
         problems.push(`no copy for the ${p.kind} review: ${sc.err}`);
@@ -7963,7 +8038,7 @@ class ShipEngine {
       if (!text.trim()) {
         let err = "";
         try {
-          err = fs30.readFileSync(path37.join(run.dir, "err.txt"), "utf8").trim().split(`
+          err = fs30.readFileSync(path38.join(run.dir, "err.txt"), "utf8").trim().split(`
 `).slice(-3).join(" ");
         } catch {}
         text = `VERDICT: changes
@@ -8077,7 +8152,7 @@ Fix it, commit, and call crosstalk_ready with feature "${f.name}" again.`);
     return this.askMerge(key);
   }
   async check(root, branch, cfg) {
-    const where = path37.join(this.d.home, "checks", `${slug(branch, 30)}-${Date.now().toString(36)}`);
+    const where = path38.join(this.d.home, "checks", `${slug(branch, 30)}-${Date.now().toString(36)}`);
     const tipSha = tip(root, `refs/heads/${branch}`);
     if (!tipSha)
       return { ok: false, out: `no branch ${branch}` };
@@ -8110,7 +8185,7 @@ Fix it, commit, and call crosstalk_ready with feature "${f.name}" again.`);
       branch,
       flag: f.flag,
       feature: f.name,
-      scratchDir: path37.join(this.d.home, "previews"),
+      scratchDir: path38.join(this.d.home, "previews"),
       deploy: cfg.preview,
       check: cfg.previewCheck,
       timeoutS: cfg.previewTimeoutS
@@ -8212,7 +8287,7 @@ ${describe(pv, 500)}` : "";
     const m = executeMerge(mainOf(root) ?? root, f.ship.branch, {
       push: cfg.push,
       gh: this.d.gh,
-      scratchDir: path37.join(this.d.home, "scratch"),
+      scratchDir: path38.join(this.d.home, "scratch"),
       title: f.name,
       body: prBody(t, f)
     });
@@ -8595,7 +8670,7 @@ ${describe(pv, 400)}` : ""}${ev.evals?.some((x) => x.startsWith("Metrics")) ? ""
     } catch (e) {
       this.d.log(`ship: metrics for ${flag}: ${e.message}`);
     }
-    const dir = cfg.shadow ? path37.resolve(main, cfg.shadow) : process.env.CROSSTALK_SHADOW_DIR;
+    const dir = cfg.shadow ? path38.resolve(main, cfg.shadow) : process.env.CROSSTALK_SHADOW_DIR;
     const counts = combine(this.st.shadow[flag], readCounter(dir, flag));
     if (counts || stage === "dark")
       Object.assign(m, asMetrics(counts ?? { calls: 0, mismatches: 0 }));
@@ -8790,7 +8865,7 @@ ${describeMetrics(m, w.baseline)}`,
       this.d.log(`ship: incident ${inc.title} reopened ${t.meta.value.name} by ${m.by}`);
       return { ok: true, text: `reopened ${t.meta.value.name} (matched by ${m.by})${notes.length ? `; ${notes.join("; ")}` : ""}`, thread: t.meta.value.name, reopened: true, ...killed ? { killed } : {} };
     }
-    const repo = [...roots.entries()].find(([, r]) => o.cwd && path37.resolve(o.cwd).startsWith(path37.resolve(mainOf(r) ?? r)))?.[0] ?? [...roots.keys()][0] ?? "";
+    const repo = [...roots.entries()].find(([, r]) => o.cwd && path38.resolve(o.cwd).startsWith(path38.resolve(mainOf(r) ?? r)))?.[0] ?? [...roots.keys()][0] ?? "";
     const t = this.T().open({ name: `incident-${slug(inc.title, 30)}`, repo });
     this.fact(t, text);
     this.task(t, `Find the cause of "${inc.title}". When it is found, link it to the thread that shipped it with crosstalk_incident (link) so that thread hears about it`);
@@ -8927,8 +9002,8 @@ function createShipping(o) {
   };
   const engine = new ShipEngine({
     threads: portFor(o.threads),
-    file: path38.join(P2.root, "shipping.json"),
-    home: path38.join(P2.root, "shipping"),
+    file: path39.join(P2.root, "shipping.json"),
+    home: path39.join(P2.root, "shipping"),
     cli: cliCommand(o.root),
     wake: o.wake,
     ask,
@@ -9064,19 +9139,19 @@ function createShipping(o) {
 
 // src/extras.ts
 import fs36 from "node:fs";
-import path43 from "node:path";
+import path44 from "node:path";
 
 // src/disk/scan.ts
 import fs33 from "node:fs";
-import path40 from "node:path";
+import path41 from "node:path";
 import { execFile as execFile2 } from "node:child_process";
 
 // src/metrics/transcripts.ts
 import fs32 from "node:fs";
 import os9 from "node:os";
-import path39 from "node:path";
+import path40 from "node:path";
 var EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch"]);
-var claudeDir = () => process.env.CROSSTALK_CLAUDE_DIR ?? process.env.CLAUDE_CONFIG_DIR ?? path39.join(os9.homedir(), ".claude");
+var claudeDir = () => process.env.CROSSTALK_CLAUDE_DIR ?? process.env.CLAUDE_CONFIG_DIR ?? path40.join(os9.homedir(), ".claude");
 function firstEdit(text) {
   const seen = new Set;
   let tokens = 0;
@@ -9114,8 +9189,8 @@ function transcriptFor(sid, hint, dir = claudeDir()) {
   if (hint && fs32.existsSync(hint))
     return hint;
   try {
-    for (const p of fs32.readdirSync(path39.join(dir, "projects"))) {
-      const f = path39.join(dir, "projects", p, `${sid}.jsonl`);
+    for (const p of fs32.readdirSync(path40.join(dir, "projects"))) {
+      const f = path40.join(dir, "projects", p, `${sid}.jsonl`);
       if (fs32.existsSync(f))
         return f;
     }
@@ -9140,7 +9215,7 @@ function firstEditOf(file) {
 // src/disk/scan.ts
 var DAY4 = 24 * 60 * 60000;
 var OLD_DAYS = () => Number(process.env.CROSSTALK_DISK_OLD_DAYS ?? 30);
-var isClaudeWorktree = (p) => /[\\/]\.claude[\\/]worktrees[\\/]/.test(path40.resolve(p) + path40.sep);
+var isClaudeWorktree = (p) => /[\\/]\.claude[\\/]worktrees[\\/]/.test(path41.resolve(p) + path41.sep);
 function duKb(p) {
   return new Promise((resolve) => execFile2("du", ["-sk", p], { timeout: 120000, maxBuffer: 1024 * 1024 }, (_e, out) => resolve(Number(String(out ?? "").split(/\s/)[0]) || 0)));
 }
@@ -9161,7 +9236,7 @@ function transcriptCwd(file) {
 }
 function transcripts(dir) {
   const out = [];
-  const root = path40.join(dir, "projects");
+  const root = path41.join(dir, "projects");
   let projects = [];
   try {
     projects = fs33.readdirSync(root);
@@ -9169,7 +9244,7 @@ function transcripts(dir) {
     return out;
   }
   for (const p of projects) {
-    const pd = path40.join(root, p);
+    const pd = path41.join(root, p);
     let names = [];
     try {
       names = fs33.readdirSync(pd).filter((f) => f.endsWith(".jsonl"));
@@ -9177,10 +9252,10 @@ function transcripts(dir) {
       continue;
     }
     for (const n of names) {
-      const file = path40.join(pd, n);
+      const file = path41.join(pd, n);
       try {
         const st = fs33.statSync(file);
-        const side = path40.join(pd, n.slice(0, -".jsonl".length));
+        const side = path41.join(pd, n.slice(0, -".jsonl".length));
         out.push({ file, dir: fs33.existsSync(side) ? side : undefined, cwd: transcriptCwd(file), mtime: st.mtimeMs, kb: Math.ceil(st.size / 1024) });
       } catch {}
     }
@@ -9188,9 +9263,9 @@ function transcripts(dir) {
   return out;
 }
 var under = (p, dir) => {
-  const a = path40.resolve(p);
-  const b = path40.resolve(dir);
-  return a === b || a.startsWith(b + path40.sep);
+  const a = path41.resolve(p);
+  const b = path41.resolve(dir);
+  return a === b || a.startsWith(b + path41.sep);
 };
 function defaultBranch4(repo, g) {
   const o = g(repo, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
@@ -9215,6 +9290,18 @@ function mergedInto(repo, d, ref, g) {
     }
   }
   return true;
+}
+var MOUNT_PARENT = /^(\/|\/Volumes|\/media|\/media\/[^/]+|\/mnt|\/run\/media\/[^/]+|\/net|\/Network|[A-Za-z]:\\?)$/;
+function mayBeUnmounted(cwd, exists = fs33.existsSync) {
+  let p = path41.resolve(cwd);
+  for (;; ) {
+    const up = path41.dirname(p);
+    if (up === p)
+      return true;
+    p = up;
+    if (exists(p))
+      return MOUNT_PARENT.test(p);
+  }
 }
 async function scan(e) {
   const g = e.git;
@@ -9267,7 +9354,7 @@ async function scan(e) {
         keep("its work is not merged");
         continue;
       }
-      const group = w.branch && e.threadOf?.(repo, w.branch) || w.branch || path40.basename(w.path);
+      const group = w.branch && e.threadOf?.(repo, w.branch) || w.branch || path41.basename(w.path);
       reclaim.push({
         kind: "worktree",
         path: w.path,
@@ -9284,7 +9371,7 @@ async function scan(e) {
   for (const t of ts) {
     const kb = t.kb + (t.dir ? await e.sizeKb(t.dir) : 0);
     usedKb += kb;
-    if (t.mtime > old || !t.cwd || fs33.existsSync(t.cwd))
+    if (t.mtime > old || !t.cwd || fs33.existsSync(t.cwd) || mayBeUnmounted(t.cwd))
       continue;
     reclaim.push({
       kind: "transcript",
@@ -9305,10 +9392,10 @@ async function scan(e) {
   };
 }
 function free(confirmed, fresh, g = git4) {
-  const still = new Map(fresh.reclaim.map((i) => [`${i.kind}:${path40.resolve(i.path)}`, i]));
+  const still = new Map(fresh.reclaim.map((i) => [`${i.kind}:${path41.resolve(i.path)}`, i]));
   const out = [];
   for (const c of confirmed) {
-    const i = still.get(`${c.kind}:${path40.resolve(c.path)}`);
+    const i = still.get(`${c.kind}:${path41.resolve(c.path)}`);
     if (!i) {
       out.push({ path: c.path, kb: 0, ok: false, why: "no longer finished, or already gone" });
       continue;
@@ -9356,14 +9443,14 @@ var defaultClaudeDir = claudeDir;
 
 // src/disk/budget.ts
 import fs34 from "node:fs";
-import path41 from "node:path";
+import path42 from "node:path";
 var FREE = "Free it";
 var SHOW = "Show me";
 var NOT_NOW2 = "Not now";
 var ALWAYS = "Free it by itself";
 var thresholdKb = () => Number(process.env.CROSSTALK_DISK_BUDGET_GB ?? 5) * 1024 * 1024;
 var WEEK3 = 7 * DAY4;
-var file4 = () => path41.join(process.env.CROSSTALK_HOME ?? ROOT2, "disk.json");
+var file4 = () => path42.join(process.env.CROSSTALK_HOME ?? ROOT2, "disk.json");
 function load8() {
   try {
     const s = JSON.parse(fs34.readFileSync(file4(), "utf8"));
@@ -9373,7 +9460,7 @@ function load8() {
   return { v: 1, frees: 0 };
 }
 function save7(s) {
-  fs34.mkdirSync(path41.dirname(file4()), { recursive: true, mode: 448 });
+  fs34.mkdirSync(path42.dirname(file4()), { recursive: true, mode: 448 });
   const tmp = `${file4()}.${process.pid}.tmp`;
   fs34.writeFileSync(tmp, JSON.stringify(s), { mode: 384 });
   fs34.renameSync(tmp, file4());
@@ -9454,7 +9541,17 @@ class Budget {
   }
   async freeNow(s = load8()) {
     const fresh = await this.d.scan();
-    const confirmed = s.report && this.now() - s.report.at < DAY4 ? s.report.reclaim : fresh.reclaim;
+    if (!s.report || this.now() - s.report.at >= DAY4) {
+      const id = `disk:${this.now()}:again`;
+      if (s.questionId)
+        this.d.settle(s.questionId);
+      if (fresh.reclaim.length)
+        this.d.ask({ id, question: questionText2(fresh), options: [FREE, NOT_NOW2] });
+      save7({ ...s, report: fresh, askedAt: this.now(), questionId: fresh.reclaim.length ? id : undefined });
+      return { ok: true, text: `\u25e2 crosstalk: freed nothing: there was no list you had seen today. This is what is there now.
+${listing(fresh)}` };
+    }
+    const confirmed = s.report.reclaim;
     const freed = this.d.free(confirmed, fresh);
     const ok = freed.filter((f) => f.ok);
     const kb = ok.reduce((a, f) => a + f.kb, 0);
@@ -9484,11 +9581,11 @@ class Budget {
 
 // src/install/team.ts
 import fs35 from "node:fs";
-import path42 from "node:path";
+import path43 from "node:path";
 var MARKETPLACE = "epode";
 var PLUGIN = "crosstalk@epode";
 var SOURCE = { source: "github", repo: "epode-studio/crosstalk" };
-var SETTINGS = path42.join(".claude", "settings.json");
+var SETTINGS = path43.join(".claude", "settings.json");
 var YES2 = "Turn it on";
 var NO = "Not now";
 var installId = (slug) => `install:${slug}`;
@@ -9523,20 +9620,20 @@ function mergeSettings(existing) {
 }
 function enabled(root) {
   try {
-    const s = JSON.parse(fs35.readFileSync(path42.join(root, SETTINGS), "utf8"));
+    const s = JSON.parse(fs35.readFileSync(path43.join(root, SETTINGS), "utf8"));
     return s?.enabledPlugins?.[PLUGIN] === true && !!s?.extraKnownMarketplaces?.[MARKETPLACE];
   } catch {
     return false;
   }
 }
 function apply3(root, o = {}) {
-  const f = path42.join(root, SETTINGS);
+  const f = path43.join(root, SETTINGS);
   let existing = {};
   if (fs35.existsSync(f)) {
     try {
       existing = JSON.parse(fs35.readFileSync(f, "utf8"));
     } catch {
-      return { ok: false, text: `${SETTINGS} in ${path42.basename(root)} is not valid JSON, so crosstalk did not touch it. Fix it and ask again.` };
+      return { ok: false, text: `${SETTINGS} in ${path43.basename(root)} is not valid JSON, so crosstalk did not touch it. Fix it and ask again.` };
     }
     if (!existing || typeof existing !== "object" || Array.isArray(existing))
       return { ok: false, text: `${SETTINGS} is not a JSON object, so crosstalk did not touch it.` };
@@ -9547,20 +9644,20 @@ function apply3(root, o = {}) {
     return { ok: true, text: `\u25e2 crosstalk: ${SETTINGS} already turns crosstalk on.${note}` };
   const content = JSON.stringify(m.settings, null, 2) + `
 `;
-  const ship = fs35.existsSync(path42.join(root, SHIP_FILE)) ? loadShip(root) : undefined;
+  const ship = fs35.existsSync(path43.join(root, SHIP_FILE)) ? loadShip(root) : undefined;
   if (ship?.push) {
     const r = (o.commit ?? commitToDefault)(root, SETTINGS, content, "Turn crosstalk on for everyone who clones this repo", { push: ship.push });
     if (r.ok)
-      return { ok: true, committed: true, text: `\u25e2 crosstalk: turned crosstalk on for everyone who clones ${o.slug ?? path42.basename(root)}: ${SETTINGS} ${r.text} (as ${SHIP_FILE} says).${note}` };
+      return { ok: true, committed: true, text: `\u25e2 crosstalk: turned crosstalk on for everyone who clones ${o.slug ?? path43.basename(root)}: ${SETTINGS} ${r.text} (as ${SHIP_FILE} says).${note}` };
   }
-  fs35.mkdirSync(path42.dirname(f), { recursive: true });
+  fs35.mkdirSync(path43.dirname(f), { recursive: true });
   fs35.writeFileSync(f, content);
   return {
     ok: true,
-    text: `\u25e2 crosstalk: wrote ${SETTINGS} in ${path42.basename(root)} so everyone who clones ${o.slug ?? "it"} gets crosstalk once they trust the folder. It is an unstaged change: commit it to turn it on for them (git add ${SETTINGS} && git commit).${note}`
+    text: `\u25e2 crosstalk: wrote ${SETTINGS} in ${path43.basename(root)} so everyone who clones ${o.slug ?? "it"} gets crosstalk once they trust the folder. It is an unstaged change: commit it to turn it on for them (git add ${SETTINGS} && git commit).${note}`
   };
 }
-var file5 = () => path42.join(process.env.CROSSTALK_HOME ?? ROOT2, "install.json");
+var file5 = () => path43.join(process.env.CROSSTALK_HOME ?? ROOT2, "install.json");
 function load9() {
   try {
     const s = JSON.parse(fs35.readFileSync(file5(), "utf8"));
@@ -9570,7 +9667,7 @@ function load9() {
   return { v: 1, repos: {} };
 }
 function save8(s) {
-  fs35.mkdirSync(path42.dirname(file5()), { recursive: true, mode: 448 });
+  fs35.mkdirSync(path43.dirname(file5()), { recursive: true, mode: 448 });
   const tmp = `${file5()}.${process.pid}.tmp`;
   fs35.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
   fs35.renameSync(tmp, file5());
@@ -9593,7 +9690,7 @@ function answer2(slug, yes, o = {}) {
   const root = o.root ?? (name ? s.repos[name]?.root : undefined);
   if (!root)
     return { ok: false, text: "no repo to turn crosstalk on in: run it from inside the repo" };
-  const key = name ?? path42.basename(root);
+  const key = name ?? path43.basename(root);
   s.repos[key] = { state: yes ? "yes" : "no", at: o.now ?? Date.now(), root };
   save8(s);
   if (!yes)
@@ -9746,9 +9843,9 @@ function createExtras(d) {
     scan: () => scanNow(),
     free: (confirmed, fresh) => {
       const out = free(confirmed, fresh);
-      const gone = new Set(out.filter((f) => f.ok).map((f) => path43.resolve(f.path)));
+      const gone = new Set(out.filter((f) => f.ok).map((f) => path44.resolve(f.path)));
       for (const r of readSpawned())
-        if (!r.removedAt && gone.has(path43.resolve(r.worktree)))
+        if (!r.removedAt && gone.has(path44.resolve(r.worktree)))
           writeSpawned({ ...r, removedAt: Date.now() });
       return out;
     },
@@ -9791,7 +9888,7 @@ function createExtras(d) {
       return f ? firstEditOf(f) : null;
     }
   });
-  const weeklyFile = () => path43.join(process.env.CROSSTALK_HOME ?? ROOT2, "metrics-digest.json");
+  const weeklyFile = () => path44.join(process.env.CROSSTALK_HOME ?? ROOT2, "metrics-digest.json");
   function weekly() {
     const week = weekOf(Date.now());
     let last;
@@ -9894,14 +9991,14 @@ function createExtras(d) {
 }
 
 // src/paths.ts
-import path44 from "node:path";
+import path45 from "node:path";
 import { fileURLToPath } from "node:url";
-var dirOf = (metaUrl) => path44.dirname(fileURLToPath(metaUrl));
-var rootFrom2 = (metaUrl) => path44.join(dirOf(metaUrl), "..");
+var dirOf = (metaUrl) => path45.dirname(fileURLToPath(metaUrl));
+var rootFrom2 = (metaUrl) => path45.join(dirOf(metaUrl), "..");
 
 // src/coordinator.ts
 import crypto18 from "node:crypto";
-import path50 from "node:path";
+import path51 from "node:path";
 
 // src/threads/service.ts
 var EXPECT_MS2 = 7 * 24 * 60 * 60000;
@@ -9913,8 +10010,8 @@ var NO_THREAD2 = "No thread";
 
 // src/main.ts
 import fs37 from "node:fs";
-import path45 from "node:path";
-var file6 = () => path45.join(P2.root, "main.json");
+import path46 from "node:path";
+var file6 = () => path46.join(P2.root, "main.json");
 function readMain() {
   try {
     const r = JSON.parse(fs37.readFileSync(file6(), "utf8"));
@@ -10032,7 +10129,7 @@ function injectInstruction(opts, m) {
 
 // src/rules/doc.ts
 import fs38 from "node:fs";
-import path46 from "node:path";
+import path47 from "node:path";
 import crypto14 from "node:crypto";
 var RULES_FILE2 = "RULES.md";
 var docId = (repo) => crypto14.createHash("sha256").update(`crosstalk-rules:${repo}`).digest("hex").slice(0, 16);
@@ -10064,7 +10161,7 @@ class RuleDocs {
     return { v: 1, docs: {}, keys: {} };
   }
   save() {
-    fs38.mkdirSync(path46.dirname(this.d.file), { recursive: true, mode: 448 });
+    fs38.mkdirSync(path47.dirname(this.d.file), { recursive: true, mode: 448 });
     const tmp = `${this.d.file}.${process.pid}.tmp`;
     fs38.writeFileSync(tmp, JSON.stringify(this.st), { mode: 384 });
     fs38.renameSync(tmp, this.d.file);
@@ -10207,7 +10304,7 @@ class RuleDocs {
 
 // src/rules/history.ts
 import fs39 from "node:fs";
-import path47 from "node:path";
+import path48 from "node:path";
 import crypto15 from "node:crypto";
 
 // src/rules/key.ts
@@ -10259,7 +10356,7 @@ function describe2(q) {
 
 // src/rules/history.ts
 var emptyHistory = () => ({ v: 1, answers: {}, offers: {}, offered: [], seen: [], digest: {} });
-var file7 = () => path47.join(P2.root, "rules.json");
+var file7 = () => path48.join(P2.root, "rules.json");
 function loadHistory() {
   try {
     const h = JSON.parse(fs39.readFileSync(file7(), "utf8"));
@@ -10321,7 +10418,7 @@ function addDigest(h, to, n) {
 
 // src/warn/service.ts
 import fs40 from "node:fs";
-import path48 from "node:path";
+import path49 from "node:path";
 import crypto17 from "node:crypto";
 
 // src/warn/outline.ts
@@ -10471,7 +10568,7 @@ class WarnService {
     return { v: 1, pending: {}, conflicts: {} };
   }
   save() {
-    fs40.mkdirSync(path48.dirname(this.d.file), { recursive: true, mode: 448 });
+    fs40.mkdirSync(path49.dirname(this.d.file), { recursive: true, mode: 448 });
     const tmp = `${this.d.file}.${process.pid}.tmp`;
     fs40.writeFileSync(tmp, JSON.stringify(this.st), { mode: 384 });
     fs40.renameSync(tmp, this.d.file);
@@ -10796,7 +10893,7 @@ function makeSlice(label, content) {
 
 // src/threads/crossrepo.ts
 import fs41 from "node:fs";
-import path49 from "node:path";
+import path50 from "node:path";
 import { spawnSync as spawnSync13 } from "node:child_process";
 var FORGES = /^(github\.com|gitlab\.com|bitbucket\.org|codeberg\.org)\//;
 function remoteOf(dir) {
@@ -10851,12 +10948,12 @@ function dependencies(root, o = {}) {
     out.set(repo, { repo, via });
   };
   const addPath = (p, via) => {
-    const abs = path49.resolve(root, p);
+    const abs = path50.resolve(root, p);
     if (!fs41.existsSync(abs))
       return;
     add(rem(abs), via);
   };
-  const pkgText = readText(path49.join(root, "package.json"));
+  const pkgText = readText(path50.join(root, "package.json"));
   if (pkgText) {
     try {
       const pkg = JSON.parse(pkgText);
@@ -10876,7 +10973,7 @@ function dependencies(root, o = {}) {
           addPath(w, `package.json workspace ${w}`);
     } catch {}
   }
-  const gomod = readText(path49.join(root, "go.mod"));
+  const gomod = readText(path50.join(root, "go.mod"));
   if (gomod) {
     for (const m of gomod.matchAll(/^\s*(?:require\s+)?([a-z0-9.-]+\.[a-z]+\/[^\s]+)\s+v[0-9][^\s]*/gim)) {
       const mod = m[1].toLowerCase();
@@ -10887,7 +10984,7 @@ function dependencies(root, o = {}) {
       addPath(m[1], `go.mod replace ${m[1]}`);
   }
   for (const toml of ["Cargo.toml", "pyproject.toml"]) {
-    const t = readText(path49.join(root, toml));
+    const t = readText(path50.join(root, toml));
     if (!t)
       continue;
     for (const m of t.matchAll(/\bgit\s*=\s*"([^"]+)"/g))
@@ -10897,7 +10994,7 @@ function dependencies(root, o = {}) {
     for (const m of t.matchAll(/@\s*(git\+[^\s"',\]]+)/g))
       add(repoFromSpec(m[1]), `${toml} ${m[1]}`);
   }
-  const listed = readText(path49.join(root, ".crosstalk", "depends"));
+  const listed = readText(path50.join(root, ".crosstalk", "depends"));
   if (listed)
     for (const raw of listed.split(`
 `)) {
@@ -10943,7 +11040,7 @@ function exportedPaths(v, out = []) {
 function surface2(root) {
   const exact = new Set;
   const globs = [];
-  const listed = readText(path49.join(root, ".crosstalk", "surface"));
+  const listed = readText(path50.join(root, ".crosstalk", "surface"));
   if (listed)
     for (const raw of listed.split(`
 `)) {
@@ -10951,7 +11048,7 @@ function surface2(root) {
       if (line)
         globs.push(globToRegex(line));
     }
-  const pkgText = readText(path49.join(root, "package.json"));
+  const pkgText = readText(path50.join(root, "package.json"));
   if (pkgText)
     try {
       const pkg = JSON.parse(pkgText);
@@ -10969,9 +11066,9 @@ function surface2(root) {
       if (!entries.length)
         exact.add("index.js");
     } catch {}
-  const isGo = fs41.existsSync(path49.join(root, "go.mod"));
-  const isRust = fs41.existsSync(path49.join(root, "Cargo.toml"));
-  const isPy = fs41.existsSync(path49.join(root, "pyproject.toml")) || fs41.existsSync(path49.join(root, "setup.py"));
+  const isGo = fs41.existsSync(path50.join(root, "go.mod"));
+  const isRust = fs41.existsSync(path50.join(root, "Cargo.toml"));
+  const isPy = fs41.existsSync(path50.join(root, "pyproject.toml")) || fs41.existsSync(path50.join(root, "setup.py"));
   return (file) => {
     const f = file.replace(/^\.\//, "");
     if (exact.has(f) || globs.some((g) => g.test(f)))
@@ -11068,7 +11165,7 @@ class Coordinator {
   answering = false;
   constructor(d) {
     this.d = d;
-    this.docs = new RuleDocs({ identity: d.identity, peers: d.peers, file: path50.join(d.root, "rules-docs.json") });
+    this.docs = new RuleDocs({ identity: d.identity, peers: d.peers, file: path51.join(d.root, "rules-docs.json") });
     this.me = this.docs.me;
     this.hist = loadHistory();
     this.warn = new WarnService({
@@ -11079,7 +11176,7 @@ class Coordinator {
       presence: d.presence,
       send: d.send,
       log: d.log,
-      file: path50.join(d.root, "warn.json"),
+      file: path51.join(d.root, "warn.json"),
       deliver: (sid, m) => this.deliver(sid, m),
       ask: (sids, c) => this.askConflict(sids, c),
       sessionsNamed: (name) => [...d.sessions().values()].filter((s) => s.name === name).map((s) => s.sessionId)
@@ -11554,8 +11651,8 @@ function isBot2(label, peers = loadPeers2()) {
 
 // src/ui-extra/mute.ts
 import fs42 from "node:fs";
-import path51 from "node:path";
-var file8 = () => path51.join(P2.root, "thread-mutes.json");
+import path52 from "node:path";
+var file8 = () => path52.join(P2.root, "thread-mutes.json");
 function loadMutes() {
   try {
     const m = JSON.parse(fs42.readFileSync(file8(), "utf8"));
@@ -11577,11 +11674,11 @@ function threadMuted(env, now = Date.now(), mutes = loadMutes()) {
 }
 
 // src/attention/daemon.ts
-import path55 from "node:path";
+import path56 from "node:path";
 
 // src/attention/service.ts
 import fs46 from "node:fs";
-import path54 from "node:path";
+import path55 from "node:path";
 import { spawnSync as spawnSync14 } from "node:child_process";
 
 // src/attention/recap.ts
@@ -11765,8 +11862,8 @@ function freshest(a, b) {
 
 // src/attention/activity.ts
 import fs44 from "node:fs";
-import path52 from "node:path";
-var dir4 = () => path52.join(P2.root, "typed");
+import path53 from "node:path";
+var dir4 = () => path53.join(P2.root, "typed");
 function typed2() {
   let names;
   try {
@@ -11777,7 +11874,7 @@ function typed2() {
   const out = [];
   for (const n of names) {
     try {
-      const f = path52.join(dir4(), n);
+      const f = path53.join(dir4(), n);
       out.push({ sessionId: fs44.readFileSync(f, "utf8") || n, at: fs44.statSync(f).mtimeMs });
     } catch {}
   }
@@ -11795,7 +11892,7 @@ var awayMinutes = (env = process.env) => {
 
 // src/attention/notify.ts
 import fs45 from "node:fs";
-import path53 from "node:path";
+import path54 from "node:path";
 var ST = "\x1B\\";
 var plain = (s, n) => s.replace(/[\x00-\x1f\x7f;]/g, " ").replace(/\s+/g, " ").trim().slice(0, n);
 function osc99(id, title, body) {
@@ -11820,7 +11917,7 @@ function desktopPlan(o) {
     return { kind: "run", how: "notify-send", jumps: false, step: { cmd: "notify-send", args: ["-a", "crosstalk", o.title, o.body] } };
   return null;
 }
-function ntfyConfig(env = process.env, file = path53.join(P2.root, "attention.json")) {
+function ntfyConfig(env = process.env, file = path54.join(P2.root, "attention.json")) {
   if (env.CROSSTALK_NTFY_URL)
     return { url: env.CROSSTALK_NTFY_URL, token: env.CROSSTALK_NTFY_TOKEN || undefined };
   try {
@@ -11862,29 +11959,47 @@ var waitMs = (env = process.env) => {
   const n = Number(env.CROSSTALK_PERMISSION_WAIT_MS);
   return n > 0 ? n : 55 * 60000;
 };
-var oneLine4 = (s) => s.replace(/\s+/g, " ").trim();
-var cut2 = (s, n) => s.length > n ? s.slice(0, n - 1) + "\u2026" : s;
-function preview(tool, input) {
+var PREVIEW_MAX = 2000;
+var HEAD = 1400;
+var TAIL = 400;
+var visible = (s) => s.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, (c) => c === `
+` ? "\\n" : c === "\t" ? "\\t" : c === "\r" ? "\\r" : `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+var fit = (s) => {
+  const v = visible(s);
+  if (v.length <= PREVIEW_MAX)
+    return { text: v, truncated: false };
+  return { text: `${v.slice(0, HEAD)} \u2026 [${v.length - HEAD - TAIL} characters not shown] \u2026 ${v.slice(-TAIL)} (truncated: ${v.length} characters in all)`, truncated: true };
+};
+function previewOf(tool, input) {
   const i = input && typeof input === "object" ? input : {};
-  const s = (k) => typeof i[k] === "string" ? i[k] : "";
-  const pick = s("command") || s("file_path") || s("notebook_path") || s("url") || s("pattern") || s("path") || s("query") || s("prompt");
-  if (pick)
-    return cut2(oneLine4(pick), 160);
+  if (typeof i.command === "string")
+    return fit(i.command);
+  const target = ["file_path", "notebook_path", "url", "path"].find((k) => typeof i[k] === "string");
+  const rest = Object.fromEntries(Object.entries(i).filter(([k]) => k !== target));
+  let json = "";
   try {
-    return cut2(oneLine4(JSON.stringify(input) ?? ""), 160);
-  } catch {
-    return "";
-  }
+    json = target ? Object.keys(rest).length ? JSON.stringify(rest) : "" : JSON.stringify(input) ?? "";
+  } catch {}
+  return fit([target ? i[target] : "", json].filter(Boolean).join(" "));
 }
+var preview = (tool, input) => previewOf(tool, input).text;
+var optionsFor = (tool, input) => previewOf(tool, input).truncated ? [ALLOW, DENY] : OPTIONS;
 function question2(agent, tool, input) {
   const p = preview(tool, input);
   return `${agent} (in the background) wants to use ${tool}${p ? `: ${p}` : ""}. Allow it?`;
 }
+function sessionOnly(suggestions) {
+  if (!Array.isArray(suggestions))
+    return [];
+  return suggestions.filter((x) => x && typeof x === "object" && !Array.isArray(x)).map((x) => ({ ...x, destination: "session" }));
+}
 function decisionFor(answer, suggestions) {
-  const a = answer.trim().toLowerCase();
-  if (a === ALLOW_SESSION.toLowerCase() || /for (this|the) session|always/.test(a))
-    return { behavior: "allow", ...Array.isArray(suggestions) && suggestions.length ? { updatedPermissions: suggestions } : {} };
-  if (a === ALLOW.toLowerCase() || /^(allow|yes|y|ok|approve)\b/.test(a))
+  const a = answer.trim();
+  if (a === ALLOW_SESSION) {
+    const s = sessionOnly(suggestions);
+    return { behavior: "allow", ...s.length ? { updatedPermissions: s } : {} };
+  }
+  if (a === ALLOW)
     return { behavior: "allow" };
   return { behavior: "deny", message: "The user denied this through crosstalk." };
 }
@@ -11908,10 +12023,12 @@ var empty4 = (now) => ({
 });
 var START_FRESH = "Start fresh";
 var COMPACT = "Compact as usual";
-var DISPOSE_RULE_TEXT = "start a fresh session from the thread instead of compacting";
+var ALWAYS_FRESH = "Always start fresh";
+var NOT_NOW4 = "Not now";
+var DISPOSE_RULE_QUESTION = "That is twice you started a session fresh. Start sessions fresh from their thread by themselves from now on, whenever their context is spent?";
 var itemId = (what, key) => `attn:${what}:${key}`;
 var parseId = (id) => {
-  const m = /^attn:(dispose|staff|perm):(.+)$/.exec(id);
+  const m = /^attn:(dispose|staff|perm|rule):(.+)$/.exec(id);
   return m ? { what: m[1], key: m[2] } : null;
 };
 
@@ -11937,7 +12054,7 @@ class AttentionService {
     return empty4(this.now());
   }
   save() {
-    fs46.mkdirSync(path54.dirname(this.d.file), { recursive: true, mode: 448 });
+    fs46.mkdirSync(path55.dirname(this.d.file), { recursive: true, mode: 448 });
     const tmp = `${this.d.file}.${process.pid}.tmp`;
     fs46.writeFileSync(tmp, JSON.stringify(this.st), { mode: 384 });
     fs46.renameSync(tmp, this.d.file);
@@ -12114,8 +12231,11 @@ class AttentionService {
       this.spent(sessionId, Math.round(percent), "context");
     return { ok: true };
   }
-  disposeQuestion(sessionId) {
-    return { kind: "question", text: DISPOSE_RULE_TEXT, repo: this.d.repoOf(sessionId) };
+  setDisposeRule(on) {
+    this.st.disposeRule = on ? START_FRESH : undefined;
+    this.st.disposeRuleOffered = true;
+    this.save();
+    return on ? "\u25e2 crosstalk: a session whose context is spent starts fresh from its thread by itself from now on." : "\u25e2 crosstalk: you will be asked before a session starts fresh.";
   }
   canRestart(sessionId) {
     const ids = this.d.threads.idsFor(sessionId);
@@ -12136,7 +12256,7 @@ class AttentionService {
     const can = this.canRestart(sessionId);
     if ("why" in can)
       return false;
-    const rule = this.d.rule(this.disposeQuestion(sessionId), this.d.repoOf(sessionId));
+    const rule = this.st.disposeRule;
     if (rule === START_FRESH) {
       this.d.log(`attention: a standing rule starts ${this.nameOf(sessionId)} fresh (${why})`);
       setTimeout(() => void this.dispose(sessionId, { rule: true }), why === "precompact" ? 300 : 0);
@@ -12293,7 +12413,7 @@ class AttentionService {
     if (!to)
       return Promise.resolve({ ok: true, decision: null });
     const threads = this.d.threads.namesFor(sessionId);
-    this.put({ id, sessionId: to, from: agent, thread: threads[0] ?? agent, question: question2(agent, o.tool, o.input), options: OPTIONS });
+    this.put({ id, sessionId: to, from: agent, thread: threads[0] ?? agent, question: question2(agent, o.tool, o.input), options: optionsFor(o.tool, o.input) });
     this.alert({ key: id, asker: sessionId, askerName: agent, thread: threads[0] ?? agent, blocking: true, count: 1 });
     this.d.log(`attention: ${agent} asks to use ${o.tool}; asked in ${this.nameOf(to)}`);
     return new Promise((resolve) => {
@@ -12327,7 +12447,7 @@ class AttentionService {
         id: o.key,
         title: `crosstalk \u00b7 ${o.thread}`,
         body: `${askerName} is waiting on you`,
-        click: [path54.join(this.d.root, "bin", "crosstalk"), "attn", "focus", "--session", o.asker ?? "", "--name", askerName],
+        click: [path55.join(this.d.root, "bin", "crosstalk"), "attn", "focus", "--session", o.asker ?? "", "--name", askerName],
         asker: asker?.terminal,
         platform: process.platform,
         has: (b) => (this.d.focusSys ?? liveSys(this.env)).has(b)
@@ -12363,9 +12483,17 @@ class AttentionService {
     if (action === "raised" || action === "later")
       return withStore2((items, now) => act2(items, id, action, now));
     const v = (value ?? "").trim();
-    const answer = action === "mute" ? p.what === "perm" ? DENY : p.what === "dispose" ? COMPACT : NOT_NOW : v;
+    const answer = action === "mute" ? p.what === "perm" ? DENY : p.what === "dispose" ? COMPACT : p.what === "rule" ? NOT_NOW4 : NOT_NOW : v;
     if (!answer)
       return { ok: false, error: "an attention question is answered with one of its options" };
+    const item = snapshot2()[id];
+    if (action !== "mute" && item?.options && !item.options.includes(answer))
+      return { ok: false, error: `answer with one of: ${item.options.join(" / ")}`, item };
+    if (p.what === "perm" && item && answer !== DENY) {
+      const asker = this.pending.get(id)?.sessionId;
+      if (sessionId !== item.sessionId || asker && sessionId === asker)
+        return { ok: false, error: "that permission request was asked in another session", item };
+    }
     const claim = withStore2((items, now) => act2(items, id, "answer", now, answer));
     if (!claim.ok)
       return claim;
@@ -12380,7 +12508,14 @@ class AttentionService {
       return { ok: true, item: claim.item, text: `\u25e2 crosstalk: ${decision.behavior === "allow" ? "allowed" : "denied"} ${claim.item.from ?? "the agent"}'s request.` };
     }
     if (p.what === "dispose") {
-      this.d.answered(this.disposeQuestion(p.key), answer === START_FRESH ? START_FRESH : COMPACT, { sid: sessionId, repo: this.d.repoOf(p.key) });
+      if (answer === START_FRESH) {
+        this.st.disposeFresh = (this.st.disposeFresh ?? 0) + 1;
+        if (this.st.disposeFresh >= 2 && !this.st.disposeRuleOffered && !this.st.disposeRule) {
+          this.st.disposeRuleOffered = true;
+          this.put({ id: itemId("rule", `dispose-${this.now()}`), sessionId, question: DISPOSE_RULE_QUESTION, options: [ALWAYS_FRESH, NOT_NOW4] });
+        }
+        this.save();
+      }
       if (answer !== START_FRESH)
         return { ok: true, item: claim.item, text: `\u25e2 crosstalk: ${this.nameOf(p.key)} compacts as usual.` };
       const r = await this.dispose(p.key);
@@ -12388,6 +12523,8 @@ class AttentionService {
         withStore2((items, now) => reopen2(items, id, now));
       return { ...r, item: claim.item };
     }
+    if (p.what === "rule")
+      return { ok: true, item: claim.item, text: this.setDisposeRule(answer === ALWAYS_FRESH) };
     if (answer !== ADD)
       return { ok: true, item: claim.item, text: "\u25e2 crosstalk: no second agent. You will be asked again only if it gets stuck again." };
     const threadId = p.key.split(":")[0];
@@ -12448,6 +12585,8 @@ class AttentionService {
         return this.act(sid, String(req.id ?? ""), String(req.action ?? "answer"), req.value === undefined ? undefined : String(req.value));
       case "attn_focus":
         return { ok: true, focus: this.focused(), target: this.target(), away: this.away() };
+      case "attn_dispose_rule":
+        return { ok: true, text: this.setDisposeRule(req.on === true) };
       case "attn_dispose":
         return this.dispose(String(req.session ?? sid));
       case "attn_tick":
@@ -12469,10 +12608,10 @@ function G_TYPABLE(t) {
   return false;
 }
 function which4(bin, env) {
-  for (const d of (env.PATH ?? "").split(path54.delimiter)) {
+  for (const d of (env.PATH ?? "").split(path55.delimiter)) {
     if (!d)
       continue;
-    const p = path54.join(d, bin);
+    const p = path55.join(d, bin);
     try {
       fs46.accessSync(p, fs46.constants.X_OK);
       return p;
@@ -12517,7 +12656,7 @@ function createAttention(o) {
   return new AttentionService({
     threads: o.threads,
     log: o.log,
-    file: path55.join(P2.root, "attention-state.json"),
+    file: path56.join(P2.root, "attention-state.json"),
     root: o.root,
     sessions: o.sessions,
     status: o.status,
@@ -12525,14 +12664,6 @@ function createAttention(o) {
     modLive: o.modLive,
     touched: (sid) => o.sessions().get(sid)?.footprint?.paths,
     repoOf: o.repoOf,
-    rule: (q, repo) => {
-      const c = o.coord();
-      if (!c || !repo)
-        return;
-      const r = c.docs.match(repo, ruleKey(q));
-      return r?.then && !neverAuto(q, r.then) ? r.then : undefined;
-    },
-    answered: (q, answer, x) => void o.coord()?.answered(q, answer, x),
     spawn: (x) => {
       const r = spawnAgents({ task: x.task, name: x.name, cwd: x.cwd, by: x.by, background: x.background, thread: x.thread });
       if (!r.ok && x.background && !r.agents.length && /background/i.test(r.text))
@@ -12545,8 +12676,8 @@ function createAttention(o) {
 
 // src/spawn.ts
 import fs47 from "node:fs";
-import path56 from "node:path";
-var dir5 = () => path56.join(P2.root, "spawned");
+import path57 from "node:path";
+var dir5 = () => path57.join(P2.root, "spawned");
 function readSpawned2() {
   let names;
   try {
@@ -12557,15 +12688,15 @@ function readSpawned2() {
   const out = [];
   for (const f of names)
     try {
-      const r = JSON.parse(fs47.readFileSync(path56.join(dir5(), f), "utf8"));
+      const r = JSON.parse(fs47.readFileSync(path57.join(dir5(), f), "utf8"));
       if (r?.id && r.worktree)
         out.push(r);
     } catch {}
   return out.sort((a, b) => a.createdAt - b.createdAt);
 }
 function spawnedAt(cwd, recs = readSpawned2()) {
-  const c = path56.resolve(cwd);
-  return recs.find((r) => !r.removedAt && (c === path56.resolve(r.worktree) || c.startsWith(path56.resolve(r.worktree) + path56.sep))) ?? null;
+  const c = path57.resolve(cwd);
+  return recs.find((r) => !r.removedAt && (c === path57.resolve(r.worktree) || c.startsWith(path57.resolve(r.worktree) + path57.sep))) ?? null;
 }
 var STOP3 = new Set("a an the on to for and of in with at by from into onto this that it its be is are please can could would you start put get run spin up fire one two three four five six seven eight more another new agent agents session sessions claude someone somebody work working".split(" "));
 var TMUX_CONF2 = [
@@ -12611,7 +12742,7 @@ var threads = new ThreadService({
   peers: () => loadPeers(),
   send: (label, env) => sendEnvelope(label, env),
   log,
-  file: path57.join(P.root, "threads.json"),
+  file: path58.join(P.root, "threads.json"),
   settleMs: Number(process.env.CROSSTALK_THREAD_SETTLE_MS ?? 3000),
   network: process.env.CROSSTALK_THREADS_NO_PUSH !== "1",
   fadeDays: Number(process.env.CROSSTALK_THREAD_FADE_DAYS ?? 14)
@@ -14603,7 +14734,7 @@ attention = createAttention({
   }
 });
 setInterval(() => attention?.tick(), Math.max(200, Number(process.env.CROSSTALK_ATTENTION_TICK_MS ?? 15000)));
-fs48.mkdirSync(path57.dirname(P.daemonSock), { recursive: true, mode: 448 });
+fs48.mkdirSync(path58.dirname(P.daemonSock), { recursive: true, mode: 448 });
 var control = net3.createServer((sock) => {
   let rest = "";
   sock.on("data", async (buf) => {

@@ -299,8 +299,8 @@ describe("staffing", () => {
 
 describe("background permission prompts", () => {
   test("the preview, the question and the decision", () => {
-    expect(Pm.preview("Bash", { command: "rm -rf build\n  && make" })).toBe("rm -rf build && make")
-    expect(Pm.preview("Write", { file_path: "/a/b.ts", content: "x" })).toBe("/a/b.ts")
+    expect(Pm.preview("Bash", { command: "rm -rf build\n  && make" })).toBe("rm -rf build\\n  && make")
+    expect(Pm.preview("Write", { file_path: "/a/b.ts", content: "x" })).toBe(`/a/b.ts {"content":"x"}`)
     expect(Pm.question("auth-2", "Bash", { command: "npm test" })).toBe("auth-2 (in the background) wants to use Bash: npm test. Allow it?")
     expect(Pm.decisionFor(Pm.ALLOW)).toEqual({ behavior: "allow" })
     const sugg = [{ type: "addRules", rules: [{ toolName: "Bash" }], behavior: "allow", destination: "session" }]
@@ -406,8 +406,6 @@ function world(o: { env?: NodeJS.ProcessEnv; rule?: string; recs?: Rec[]; focus?
     modLive: () => true,
     touched: () => ({}),
     repoOf: () => "github.com/acme/api",
-    rule: () => o.rule,
-    answered: (q, a) => void answered.push({ q, a }),
     spawn: (x) => (spawned.push(x), { ok: true, text: "started", agents: [{ name: x.name }] }),
     background: (sid) => (o.background?.includes(sid) ? sid : undefined),
     restart: async (x) => (restarted.push(x), { ok: true, text: "ok" }),
@@ -423,6 +421,7 @@ function world(o: { env?: NodeJS.ProcessEnv; rule?: string; recs?: Rec[]; focus?
     fetcher: (async (_u: string, init: any) => (pushed.push(init.body), new Response("ok"))) as unknown as typeof fetch,
     env: { CROSSTALK_STAFF_EVERY_MS: "0", CROSSTALK_NO_NOTIFY: "0", ...o.env },
   })
+  if (o.rule === S.START_FRESH) svc.setDisposeRule(true)
   tiebreak = svc.tiebreak.bind(svc)
   flushed = svc.onThreadsFlush.bind(svc)
   const add = (sid: string, paths: string[], extra: Partial<S.Reg> = {}) => {
@@ -473,8 +472,6 @@ describe("the service", () => {
     expect(r.ok).toBe(true)
     expect(asked.restarted[0].cmd).toContain(`"$(cat `)
     expect(fs.readFileSync(/cat (\S+)\)/.exec(asked.restarted[0].cmd)![1].replace(/'/g, ""), "utf8")).toContain(`thread "auth"`)
-    expect(asked.answered[0].a).toBe(S.START_FRESH)
-    expect(asked.answered[0].q.text).toBe(S.DISPOSE_RULE_TEXT)
     // The next session in that folder carries on the thread.
     asked.add("s1-fresh", [], { cwd: "/w/s1" })
     asked.sessions.get("s1-fresh")!.cwd = "/w/s1"
@@ -527,7 +524,7 @@ describe("the service", () => {
     expect(w.svc.takeNotes("main-ish")[0].text).toContain(`Say "show me bg"`)
     await w.svc.act("main-ish", it.id, "answer", Pm.ALLOW_SESSION)
     const r = await p
-    expect(r.decision).toEqual({ behavior: "allow", updatedPermissions: [{ type: "addRules" }] })
+    expect(r.decision).toEqual({ behavior: "allow", updatedPermissions: [{ type: "addRules", destination: "session" }] })
     expect(ui.snapshot()[it.id].state).toBe("answered")
     // Answered twice does nothing.
     expect((await w.svc.act("main-ish", it.id, "answer", Pm.DENY)).ok).toBe(false)

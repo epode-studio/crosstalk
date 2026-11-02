@@ -21,7 +21,6 @@
 // process is ever signalled, and never with SIGKILL.
 
 import fs from "node:fs"
-import os from "node:os"
 import path from "node:path"
 import { spawn, spawnSync } from "node:child_process"
 import { P } from "./config.ts"
@@ -29,6 +28,7 @@ import { rootFrom, shim } from "./paths.ts"
 import * as R from "./restore.ts"
 import type { Rec, Step, Term } from "./restore.ts"
 import { refuseBot } from "./ui-extra/bots.ts"
+import { sessionsDir } from "./registry.ts"
 
 // --- the registry --------------------------------------------------------------
 
@@ -44,7 +44,7 @@ export type RegEntry = {
 }
 
 /** Claude Code's own session registry. Tests point HOME elsewhere. */
-export const registryDir = () => path.join(os.homedir(), ".claude", "sessions")
+export const registryDir = () => sessionsDir()
 
 /** Every registry entry whose pid exists, socket or not. */
 export function readRegistry(dir = registryDir(), alive: (pid: number) => boolean = (p) => R.pidAlive(p)): RegEntry[] {
@@ -75,6 +75,45 @@ export function readRegistry(dir = registryDir(), alive: (pid: number) => boolea
   return out
 }
 
+/** `ps -o etime` ([[dd-]hh:]mm:ss) in milliseconds, or null. The same on every locale, unlike lstart. */
+export function etimeMs(etime: string | null | undefined): number | null {
+  const m = /^\s*(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)\s*$/.exec(etime ?? "")
+  if (!m) return null
+  const [d, h, mi, se] = [m[1], m[2], m[3], m[4]].map((x) => Number(x ?? 0))
+  return (((d * 24 + h) * 60 + mi) * 60 + se) * 1000
+}
+
+/** How far a process's start may be from the registry's startedAt and still be the same session. */
+export const START_SLACK_MS = 10_000
+
+/**
+ * Whether the process now at `pid` is the one that wrote this registry entry:
+ * it started within a few seconds of the entry's startedAt. A stale file
+ * whose pid was reused by another process fails, and so does an entry with
+ * no startedAt, since then nothing says which process it was.
+ */
+export function startMatches(e: Pick<RegEntry, "pid" | "startedAt">, sys: Pick<Sys, "ps" | "now">): boolean {
+  if (typeof e.startedAt !== "number") return false
+  const up = etimeMs(sys.ps(e.pid, "etime"))
+  if (up === null) return false
+  return Math.abs(sys.now() - up - e.startedAt) < START_SLACK_MS
+}
+
+/**
+ * Whether a process's command line is Claude Code: its program is `claude`,
+ * or an interpreter (node, bun …) running a script named `claude` or Claude
+ * Code's cli.js. Not just any command that mentions claude ("vim claude.md").
+ */
+export function isClaudeArgs(args: string | null | undefined): boolean {
+  const parts = (args ?? "").trim().split(/\s+/).filter(Boolean)
+  if (!parts.length) return false
+  const base = (x: string) => path.basename(x)
+  if (base(parts[0]) === "claude") return true
+  if (!/^(node|bun|deno|sh|bash|zsh)$/.test(base(parts[0]))) return false
+  const script = parts.slice(1).find((a) => !a.startsWith("-"))
+  return !!script && (base(script) === "claude" || /(^|\/)@anthropic-ai\/claude-code\/cli\.m?js$/.test(script))
+}
+
 /** Pids that still have a registry file, alive or not. */
 function registryPids(dir = registryDir()): Set<number> {
   try {
@@ -99,6 +138,8 @@ export type Sys = {
   now: () => number
   ps: (pid: number, field: string) => string | null
   alive: (pid: number, start?: string) => boolean
+  /** Before a signal: "same" only when known to be the recorded process (restore.pidState); default from alive. */
+  state?: (pid: number, start?: string) => "same" | "gone" | "unknown"
   /** Another process's environment, when the OS lets us read it. */
   env: (pid: number) => NodeJS.ProcessEnv | null
   tmuxPanes: () => Pane[]
@@ -176,6 +217,7 @@ export function liveSys(): Sys {
     now: Date.now,
     ps,
     alive: R.pidAlive,
+    state: R.pidState,
     env: procEnv,
     tmuxPanes,
     appleLocate: (tty) => {
@@ -257,6 +299,8 @@ export function snapshot(o: {
     if (before?.endedAt && before.pid === e.pid) continue // being restarted, or ended
     const pidStart = sys.ps(e.pid, "lstart") ?? undefined
     if (!sys.alive(e.pid, pidStart)) continue
+    // A registry file left behind, its pid since taken by something else: not a session.
+    if (!startMatches(e, sys) || !isClaudeArgs(sys.ps(e.pid, "args"))) continue
     const rawTty = sys.ps(e.pid, "tty")
     const tty = rawTty && !/^\?+$/.test(rawTty) ? (rawTty.startsWith("/dev/") ? rawTty : `/dev/${rawTty}`) : undefined
     const same = before && before.pid === e.pid && before.pidStart === pidStart && before.terminal.tty === tty
@@ -463,9 +507,20 @@ function addNote(session: string | undefined, text: string) {
 
 // --- restarting in place --------------------------------------------------------
 
-/** Terminal.app: type into the very tab the session was in, now back at its shell prompt. */
-export const appleInPlaceScript = (cmd: string, window: number, tab: number) =>
-  `tell application "Terminal" to do script ${R.asq(cmd)} in tab ${tab} of window id ${window}`
+/**
+ * Terminal.app: type into the very tab the session was in, now back at its
+ * shell prompt. With its tty, only if that tab still shows it: a tab number
+ * can shift as tabs close, and the next tab may be another live session.
+ */
+export const appleInPlaceScript = (cmd: string, window: number, tab: number, tty?: string) =>
+  tty
+    ? [
+        `tell application "Terminal"`,
+        `\tif (tty of tab ${tab} of window id ${window}) is not ${R.asq(tty)} then error "that tab no longer shows ${tty.replace(/["\\]/g, "")}"`,
+        `\tdo script ${R.asq(cmd)} in tab ${tab} of window id ${window}`,
+        `end tell`,
+      ].join("\n")
+    : `tell application "Terminal" to do script ${R.asq(cmd)} in tab ${tab} of window id ${window}`
 
 /** iTerm2: the session showing that tty, told to type the command. */
 export const itermInPlaceScript = (cmd: string, tty: string) =>
@@ -504,7 +559,7 @@ export function inPlaceSteps(t: Term, cmd: string, platform: NodeJS.Platform = p
     }
   }
   if (platform === "darwin" && t.program === "Apple_Terminal" && t.apple?.window && t.apple.tab)
-    return { kind: "apple", steps: [{ cmd: "osascript", args: ["-"], input: appleInPlaceScript(cmd, t.apple.window, t.apple.tab) }] }
+    return { kind: "apple", steps: [{ cmd: "osascript", args: ["-"], input: appleInPlaceScript(cmd, t.apple.window, t.apple.tab, t.tty) }] }
   if (platform === "darwin" && (t.program === "iTerm.app" || t.iterm) && t.tty)
     return { kind: "iterm", steps: [{ cmd: "osascript", args: ["-"], input: itermInPlaceScript(cmd, t.tty) }] }
   if (t.kitty?.window && t.kitty.listenOn)
@@ -521,19 +576,23 @@ export function inPlaceSteps(t: Term, cmd: string, platform: NodeJS.Platform = p
  */
 export async function endGracefully(pid: number, pidStart: string | undefined, sys: Sys, waits = [10_000, 5_000, 5_000]): Promise<boolean> {
   const sigs: NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGINT"]
+  // Strict: a ps that fails is "unknown", never "same", so no signal goes to a pid that may be someone else's.
+  const state = (): "same" | "gone" | "unknown" => (sys.state ? sys.state(pid, pidStart) : sys.alive(pid, pidStart) ? "same" : "gone")
   for (let i = 0; i < sigs.length; i++) {
-    if (!sys.alive(pid, pidStart)) return true
+    const st = state()
+    if (st === "gone") return true
+    if (st === "unknown") return false
     try {
       sys.kill(pid, sigs[i])
     } catch {
-      return !sys.alive(pid, pidStart)
+      return state() === "gone"
     }
     for (let waited = 0; waited < waits[i]; waited += 100) {
-      if (!sys.alive(pid, pidStart)) return true
+      if (state() === "gone") return true
       await sys.sleep(100)
     }
   }
-  return !sys.alive(pid, pidStart)
+  return state() === "gone"
 }
 
 const job = () => path.join(P.root, "gather-job.json")
@@ -582,17 +641,19 @@ export async function restartOne(
   if (!reg || reg.pid !== rec.pid || !sys.alive(rec.pid, rec.pidStart)) return "gone"
   if (reg.status !== "idle") return "wait"
   const args = sys.ps(rec.pid, "args") ?? ""
-  if (!/claude/i.test(args)) return { failed: "its process is not claude" }
+  if (!isClaudeArgs(args)) return { failed: "its process is not claude" }
   const parent = Number(sys.ps(rec.pid, "ppid"))
   const parentComm = path.basename(sys.ps(parent, "comm") ?? "")
   const inShell = R.SHELL.test(parentComm)
   const cmd = R.typed(rec)
 
-  // Look the tab up again: it may have moved since the last watch.
+  // Look the tab up again: it may have moved since the last watch. Not
+  // found, the old tab number may now be another session's: never typed
+  // into, the session reopens in a new tab instead.
   let term = rec.terminal
-  if (sys.platform === "darwin" && term.program === "Apple_Terminal" && term.tty) {
-    const at = sys.appleLocate(term.tty)
-    if (at) term = { ...term, apple: { ...term.apple, ...at } }
+  if (sys.platform === "darwin" && term.program === "Apple_Terminal") {
+    const at = term.tty ? sys.appleLocate(term.tty) : null
+    term = at ? { ...term, apple: { ...term.apple, ...at } } : { ...term, apple: { sessionId: term.apple?.sessionId } }
   }
   const how = inShell ? inPlaceSteps(term, cmd, sys.platform) : null
 
