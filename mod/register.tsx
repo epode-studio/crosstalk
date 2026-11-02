@@ -787,12 +787,15 @@ export const register: Register = on => {
                   {' '}
                   {clean(shotLine(s, now))}
                 </Text>
-                {[...(s.before ? [['before', s.before.file]] : []), ['after ', s.after.file]].map(([w, f]) => (
-                  <Text key={`sh${i}${w}`} wrap="truncate" dimColor>
-                    {'  '}
-                    {w} {fileLink(f) ? <Link href={fileLink(f)!}>{clean(f)}</Link> : clean(f)}
-                  </Text>
-                ))}
+                {[...(s.before ? [{ w: 'before', f: s.before.file }] : []), { w: 'after ', f: s.after.file }].map(({ w, f }) => {
+                  const href = fileLink(f)
+                  return (
+                    <Text key={`sh${i}${w}`} wrap="truncate" dimColor>
+                      {'  '}
+                      {w} {href ? <Link href={href}>{clean(f)}</Link> : clean(f)}
+                    </Text>
+                  )
+                })}
               </Box>
             ))}
           </Box>
