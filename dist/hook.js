@@ -1125,7 +1125,7 @@ function restore(o, only) {
       ok: true,
       text: [
         `\u25e2 crosstalk needs permission to open tabs in ${app}.`,
-        opened ? `  Opened System Settings. Turn on ${app} under Accessibility; crosstalk will finish restoring by itself.` : `  ${steps}`,
+        opened ? `  Opened System Settings. Turn on the switch next to ${app} itself (crosstalk runs inside ${app}, so it is not listed on its own); crosstalk will finish restoring by itself.` : `  ${steps}`,
         ...opened ? [] : [`  ${cmd}`, `  crosstalk will finish restoring by itself once it is on.`]
       ].join(`
 `),
