@@ -28,12 +28,48 @@ export function git(cwd: string, args: string[], o: { input?: string; env?: Reco
   }
 }
 
-/** Run a shell command with a timeout, asynchronously, so the daemon keeps answering. */
-export function sh(cmd: string, cwd: string, timeoutMs: number, extraEnv: Record<string, string> = {}): Promise<{ ok: boolean; out: string; code: number | null }> {
+/**
+ * The environment a repo's own commands (test, preview, metrics) and a
+ * reviewer get: an allowlist, never the daemon's whole environment. The
+ * daemon holds flag providers' admin tokens; a branch's test script must not
+ * see them. Anything named like a secret (*_TOKEN, *_API_KEY, *_SECRET, …)
+ * and every flag provider's variable is left out even when allowlisted;
+ * `also` names variables to pass as they are (a reviewer client's own login;
+ * never a provider's), and `prefixes` whole families (CROSSTALK_ for the
+ * reviewer's wrapper; secret-like names in them are still left out).
+ */
+const KEEP = new Set([
+  "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TERM", "TMPDIR", "TMP", "TEMP", "TZ", "CI",
+  "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "no_proxy", "all_proxy",
+  "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE",
+  "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL",
+])
+const KEEP_PREFIX = ["LC_", "XDG_"]
+export const SECRETISH = /(TOKEN|API_?KEY|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PRIVATE_?KEY|_KEY|_PAT|_AUTH)$/i
+export const PROVIDER_VAR = /^(UNLEASH|LAUNCHDARKLY|LD|POSTHOG|GROWTHBOOK|STATSIG)_/i
+
+export function safeEnv(extra: Record<string, string> = {}, o: { from?: NodeJS.ProcessEnv; also?: string[]; prefixes?: string[] } = {}): Record<string, string> {
+  const from = o.from ?? process.env
+  const also = new Set(o.also ?? [])
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(from)) {
+    if (v === undefined || PROVIDER_VAR.test(k)) continue
+    if (also.has(k)) {
+      out[k] = v
+      continue
+    }
+    const allowed = KEEP.has(k) || KEEP_PREFIX.some((p) => k.startsWith(p)) || (o.prefixes ?? []).some((p) => k.startsWith(p))
+    if (allowed && !SECRETISH.test(k)) out[k] = v
+  }
+  return { ...out, GIT_TERMINAL_PROMPT: "0", ...extra }
+}
+
+/** Run a shell command with a timeout, asynchronously, so the daemon keeps answering. Its environment is safeEnv's, never the daemon's. */
+export function sh(cmd: string, cwd: string, timeoutMs: number, extraEnv: Record<string, string> = {}, o: { also?: string[] } = {}): Promise<{ ok: boolean; out: string; code: number | null }> {
   return new Promise((resolve) => {
     let out = ""
     let done = false
-    const p = spawn("sh", ["-c", cmd], { cwd, env: env(extraEnv), stdio: ["ignore", "pipe", "pipe"], detached: true })
+    const p = spawn("sh", ["-c", cmd], { cwd, env: safeEnv(extraEnv, o), stdio: ["ignore", "pipe", "pipe"], detached: true })
     const keep = (d: Buffer) => {
       out += d.toString("utf8")
       if (out.length > 200_000) out = out.slice(-100_000)

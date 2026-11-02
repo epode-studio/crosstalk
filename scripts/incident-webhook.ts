@@ -12,8 +12,15 @@
 // the event's title, culprit, in-app stack frames, release (as the sha when
 // it looks like one) and a `flag` tag are passed on. Generic JSON may carry
 // title, details, flag, files and sha directly.
+//
+// It will not start without CROSSTALK_INCIDENT_TOKEN: an incident can turn a
+// flag off and puts text in front of agents, so every request must carry the
+// token (compared in constant time). A request a browser sent (it has an
+// Origin header) is refused whatever it carries, so a web page cannot post
+// one (text/plain needs no preflight).
 
 import { spawnSync } from "node:child_process"
+import crypto from "node:crypto"
 import path from "node:path"
 
 const port = Number(process.argv[2] ?? process.env.PORT ?? 8790)
@@ -51,19 +58,41 @@ export function fromPayload(body: any, source: string): Incident | null {
   }
 }
 
+/** The token, compared in constant time. */
+export function tokenOk(given: string | null | undefined, want: string): boolean {
+  if (!given || !want) return false
+  const a = crypto.createHash("sha256").update(given).digest()
+  const b = crypto.createHash("sha256").update(want).digest()
+  return crypto.timingSafeEqual(a, b) && given.length === want.length
+}
+
+/** One request: refused, or handed to `run` (crosstalk incident) as an incident. */
+export async function handle(req: Request, want: string, run: (inc: Incident) => { ok: boolean; out: string }): Promise<Response> {
+  const u = new URL(req.url)
+  if (req.method !== "POST") return new Response("POST an alert here\n", { status: 405 })
+  // Browsers send Origin on a cross-site POST; alerting services do not.
+  if (req.headers.get("origin") !== null) return new Response("no\n", { status: 403 })
+  if (!tokenOk(u.searchParams.get("token") ?? req.headers.get("x-crosstalk-token"), want)) return new Response("no\n", { status: 401 })
+  const inc = fromPayload(await req.json().catch(() => null), u.searchParams.get("source") ?? "webhook")
+  if (!inc) return new Response("no title\n", { status: 400 })
+  const r = run(inc)
+  return new Response(r.out.trim() + "\n", { status: r.ok ? 200 : 500 })
+}
+
 if (import.meta.main) {
+  if (!token) {
+    console.error("set CROSSTALK_INCIDENT_TOKEN to a secret first: the webhook does not run without one")
+    process.exit(64)
+  }
+  const want = token
   Bun.serve({
     hostname: "127.0.0.1",
     port,
-    async fetch(req) {
-      const u = new URL(req.url)
-      if (req.method !== "POST") return new Response("POST an alert here\n", { status: 405 })
-      if (token && u.searchParams.get("token") !== token && req.headers.get("x-crosstalk-token") !== token) return new Response("no\n", { status: 401 })
-      const inc = fromPayload(await req.json().catch(() => null), u.searchParams.get("source") ?? "webhook")
-      if (!inc) return new Response("no title\n", { status: 400 })
-      const r = spawnSync(cli[0], [...cli.slice(1), "incident", "--json", JSON.stringify(inc)], { encoding: "utf8", timeout: 60_000 })
-      return new Response((r.stdout || r.stderr || "").trim() + "\n", { status: r.status === 0 ? 200 : 500 })
-    },
+    fetch: (req) =>
+      handle(req, want, (inc) => {
+        const r = spawnSync(cli[0], [...cli.slice(1), "incident", "--json", JSON.stringify(inc)], { encoding: "utf8", timeout: 60_000 })
+        return { ok: r.status === 0, out: r.stdout || r.stderr || "" }
+      }),
   })
-  console.log(`crosstalk incident webhook on http://127.0.0.1:${port}/${token ? " (token required)" : ""}`)
+  console.log(`crosstalk incident webhook on http://127.0.0.1:${port}/ (token required)`)
 }

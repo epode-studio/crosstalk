@@ -919,9 +919,15 @@ export class ThreadService {
     if (o.recap !== undefined) changed = M.setRecap(t, this.me, String(o.recap).slice(0, 4000), now) || changed
     if (o.feature?.name) {
       const id = M.slug(o.feature.name, 60)
+      // Security (src/shipping): a risk is never lowered by an edit. Omitted, the
+      // feature keeps its own; risky stays risky, even across a remove and a
+      // re-add (a removed item keeps its data). Only a person's answer to
+      // shipping's question makes a risky feature everyday again.
+      const prev = t.features[id]
+      const risk: M.Risk = o.feature.risk === "risky" || prev?.risk === "risky" ? "risky" : "everyday"
       changed = o.feature.remove
         ? M.remove(t, "features", id, this.me, now) || changed
-        : M.put(t, "features", id, { ...this.featureRest(t, id), name: o.feature.name, risk: o.feature.risk === "risky" ? "risky" : "everyday", ...(o.feature.flag ? { flag: o.feature.flag } : {}) }, this.me, now) || changed
+        : M.put(t, "features", id, { ...this.featureRest(t, id), name: o.feature.name, risk, ...(o.feature.flag ? { flag: o.feature.flag } : {}) }, this.me, now) || changed
     }
     if (o.question?.text)
       changed = M.put(t, "questions", M.newItemId("q"), { text: o.question.text, blocking: !!o.question.blocking, who: this.label, at: now }, this.me, now) || changed

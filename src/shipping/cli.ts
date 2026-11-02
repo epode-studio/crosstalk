@@ -21,7 +21,7 @@ const flag = (argv: string[], f: string) => {
   const i = argv.indexOf(f)
   return i === -1 ? undefined : argv[i + 1]
 }
-const VALUE = new Set(["--thread", "--json", "--run", "--output", "--verdict", "--findings", "--source", "--title", "--details", "--flag", "--files", "--sha", "--link", "--cause"])
+const VALUE = new Set(["--thread", "--json", "--run", "--output", "--secret-file", "--verdict", "--findings", "--source", "--title", "--details", "--flag", "--files", "--sha", "--link", "--cause"])
 const positional = (argv: string[]) => {
   const out: string[] = []
   for (let i = 1; i < argv.length; i++) {
@@ -97,7 +97,14 @@ export async function reviewCmd(argv: string[]) {
     console.error(`usage: crosstalk review --run <id> (--output <file> | --verdict approve|changes --findings "...")`)
     process.exit(64)
   }
-  return send({ action: "review", run, output: flag(argv, "--output"), verdict: flag(argv, "--verdict"), findings: flag(argv, "--findings") })
+  // The wrapper's proof that it is the wrapper: the run's secret, from the run's own folder.
+  const sf = flag(argv, "--secret-file")
+  let secret: string | undefined
+  if (sf)
+    try {
+      secret = fs.readFileSync(sf, "utf8").trim()
+    } catch {}
+  return send({ action: "review", run, output: flag(argv, "--output"), verdict: flag(argv, "--verdict"), findings: flag(argv, "--findings"), ...(secret ? { secret } : {}) })
 }
 
 export async function incidentCmd(argv: string[]) {

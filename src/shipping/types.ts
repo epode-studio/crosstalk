@@ -65,6 +65,9 @@ export type FeatureShip = {
   metrics?: { at: number; stage: string; now: Record<string, number>; baseline?: Record<string, number> }
   /** Risky paths a person cleared when they made it everyday: only a new one makes it risky again. */
   cleared?: string[]
+  /** When a person made it everyday (their answer to the lowering question). Without it, a feature once risky stays risky to shipping whatever its `risk` says. */
+  clearedAt?: number
+  clearedBy?: string
   /** One line on what happened last, for the status tool. */
   last?: string
 }

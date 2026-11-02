@@ -101,7 +101,18 @@ function catchUp(root: string, d: string, remote: string): { ok: boolean; err?: 
   return { ok: false, err: `${d} here and on ${remote} have both moved; somebody has to bring them together first` }
 }
 
-export function executeMerge(root: string, branch: string, o: { push?: PushMode; gh?: boolean; scratchDir: string; title?: string; body?: string }): Merged {
+/**
+ * `sha`: the commit that was reviewed and checked. The merge is of that
+ * commit and nothing else: a branch that has moved since is refused, the
+ * rebase starts from it, and a PR merges only while its head is still it.
+ */
+export function executeMerge(root: string, branch: string, o: { push?: PushMode; gh?: boolean; scratchDir: string; title?: string; body?: string; sha?: string }): Merged {
+  const moved = () => {
+    const tip = G.tip(root, `refs/heads/${branch}`)
+    return o.sha && tip !== o.sha ? `${branch} moved after it was reviewed (reviewed ${o.sha.slice(0, 12)}, now ${tip ? tip.slice(0, 12) : "gone"}); nothing was merged` : undefined
+  }
+  const m0 = moved()
+  if (m0) return { ok: false, how: "refuse", text: m0 }
   let facts = factsFor(root, branch, o)
   let plan = planMerge(facts)
   if (plan.how === "refuse" || plan.how === "nothing") return { ok: plan.how === "nothing", how: plan.how, text: plan.why }
@@ -114,7 +125,8 @@ export function executeMerge(root: string, branch: string, o: { push?: PushMode;
     const created = gh(["pr", "create", "--head", branch, "--base", d, "--title", o.title ?? branch, "--body", o.body ?? "Opened by crosstalk."])
     const url = (created.stdout ?? "").trim().split("\n").pop() ?? ""
     if (created.status !== 0 && !/already exists/.test(created.stderr ?? "")) return { ok: false, how: "pr", text: `gh pr create failed: ${(created.stderr ?? "").trim().split("\n").pop()}` }
-    const auto = gh(["pr", "merge", branch, "--auto", "--rebase"])
+    // A push to the PR's branch after this stops it merging itself.
+    const auto = gh(["pr", "merge", branch, "--auto", "--rebase", ...(o.sha ? ["--match-head-commit", o.sha] : [])])
     const autoNote = auto.status === 0 ? "set to merge itself once checks pass" : `open, but auto-merge is off for this repository (${(auto.stderr ?? "").trim().split("\n").pop()})`
     return { ok: true, how: "pr", pr: url, text: `PR ${url || `for ${branch}`} ${autoNote}` }
   }
@@ -127,8 +139,10 @@ export function executeMerge(root: string, branch: string, o: { push?: PushMode;
     if (plan.how === "nothing") return { ok: true, how: "nothing", text: plan.why }
     if (plan.how !== "ff" && plan.how !== "rebase") return { ok: false, how: plan.how, text: plan.why }
   }
+  const m1 = moved()
+  if (m1) return { ok: false, how: "refuse", text: m1 }
   const from = G.tip(root, `refs/heads/${d}`)!
-  let to = G.tip(root, `refs/heads/${branch}`)!
+  let to = o.sha ?? G.tip(root, `refs/heads/${branch}`)!
   if (plan.how === "rebase") {
     const where = path.join(o.scratchDir, `merge-${Date.now()}`)
     const s = G.scratch(root, to, where)

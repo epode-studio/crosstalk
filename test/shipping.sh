@@ -93,6 +93,9 @@ prompt=\$2
 kind=review
 case "\$prompt" in *"security pass"*) kind=security ;; *"adversarial reviewer"*) kind=adversarial ;; esac
 echo "claude|\$kind|\$(pwd)|\$*" | cut -c1-300 >>"$TMP/calls"
+env >"$TMP/reviewer-env"
+# A reviewer that takes its time, while the test tries to answer in its place.
+while [ -f "$TMP/hang" ]; do sleep 0.2; done
 printf 'Read the change.\nVERDICT: approve\nFINDINGS:\nnone\n'
 EOF
 # codex exec --skip-git-repo-check --output-last-message FILE "<prompt>": changes once, then approves.
@@ -123,7 +126,7 @@ mkdir -p "$APP/.crosstalk" "$APP/src/auth"
 echo "# app" >"$APP/README.md"
 printf 'test: sh check.sh\npush: direct\nrounds: 3\nramp: internal 10%% on\n' >"$APP/.crosstalk/ship"
 printf 'high: src/auth/**\n' >"$APP/.crosstalk/risk"
-printf 'test ! -f BROKEN\n' >"$APP/check.sh"
+printf 'test ! -f BROKEN && env >%s/check-env\n' "$TMP" >"$APP/check.sh"
 echo "export const login = () => 1" >"$APP/src/auth/login.ts"
 g "$APP" add -A && g "$APP" commit -qm init && g "$APP" push -q -u origin main 2>/dev/null && g "$APP" remote set-head origin main
 
@@ -223,6 +226,8 @@ told() { rpc "{\"op\":\"read\",\"sessionId\":\"$1\",\"all\":true}"; }
 ship_items() { field "$(rpc "{\"op\":\"ui\",\"sessionId\":\"$1\"}")" "r.items.filter(i => i.kind === 'ship' && i.state === 'pending').map(i => i.id).join(' ')"; }
 questions() { field "$(rpc '{"op":"ship","action":"questions"}')" "r.questions.filter(q => q.kind === '$1').map(q => q.id).join(' ')"; }
 flags_on_remote() { git -C "$TMP/remote.git" show main:.crosstalk/flags 2>/dev/null; }
+# A person allows a repo's commands once: the first feature of each repo asks.
+allow_cmds() { local q; q=$(wait_for 15 questions commands); [ -n "$q" ] && ct ship answer "$q" "Run them" >/dev/null 2>&1; }
 
 # --- 1. everyday -----------------------------------------------------------------------------
 echo
@@ -232,7 +237,20 @@ check "$(field "$F1" 'r.risk')" "everyday" "declared everyday"
 R1=$(ship s-guide "$TMP/code/wt-guide" '"action":"ready","feature":"user guide"')
 has "$R1" "review (claude)" "ready starts one claude reviewer"
 has "$(tmux -L crosstalk ls 2>/dev/null || cat "$TMP/calls" 2>/dev/null)" "review" "it runs in crosstalk's background tmux"
+# The repo's own commands (check.sh) run only once a person has said yes, once for the repo.
+CQ=$(wait_for 15 questions commands)
+[ -n "$CQ" ] && pass "running the repo's commands is a question first" || fail "running the repo's commands is a question first"
+has "$(field "$(rpc '{"op":"ship","action":"questions"}')" "r.questions.find(q => q.kind === 'commands')?.text")" "test: sh check.sh" "naming the commands"
+check "$(state_of "user guide")" "approved" "signed off, and nothing run yet"
+[ -f "$TMP/check-env" ] && fail "check.sh did not run before the yes" || pass "check.sh did not run before the yes"
+CAG=$(CLAUDECODE=1 ct ship answer "$CQ" "Run them" 2>&1)
+has "$CAG" "for a person" "an agent cannot allow them"
+ct ship answer "$CQ" "Run them" >/dev/null 2>&1
 check "$(until_state "user guide" merged)" "merged" "approved, green, merged by itself"
+hasnt "$(cat "$TMP/check-env" 2>/dev/null)" "UNLEASH_ADMIN_TOKEN" "the repo's test command does not see the provider's admin token"
+hasnt "$(cat "$TMP/check-env" 2>/dev/null)" "GROWTHBOOK_API_KEY" "nor any other provider's key"
+hasnt "$(cat "$TMP/reviewer-env" 2>/dev/null)" "UNLEASH_ADMIN_TOKEN" "and neither does a reviewer"
+[ -s "$TMP/check-env" ] && [ -s "$TMP/reviewer-env" ] && pass "(both ran)" || fail "(both ran)"
 check "$(git -C "$TMP/remote.git" rev-parse main)" "$(g "$APP" rev-parse crosstalk/guide)" "fast-forwarded and pushed to the remote"
 has "$(cat "$TMP/calls")" "claude|review|$CROSSTALK_HOME/shipping/reviews/" "the reviewer ran in its own copy of the branch"
 T1=$(rpc '{"op":"thread_read","sessionId":"s-guide"}')
@@ -241,6 +259,23 @@ has "$(field "$T1" 'r.threads[0].facts.map(d => d.text).join(";")')" "Checks pas
 check "$(field "$T1" 'r.threads[0].status')" "done" "the thread is done once its feature is in"
 check "$(ls "$CROSSTALK_HOME/shipping/reviews/"*/copy 2>/dev/null | wc -l | tr -d ' ')" "0" "the reviewer's copy is gone"
 has "$(told s-guide)" "user guide merged into main" "the author is told"
+# A verdict comes only from the reviewer: the author can read the run id from
+# `git worktree list`, and still cannot approve its own work with it.
+g "$APP" worktree add -q -b crosstalk/sneak "$TMP/code/wt-sneak"
+echo "sneaky" >"$TMP/code/wt-sneak/sneak.txt"; g "$TMP/code/wt-sneak" add -A; g "$TMP/code/wt-sneak" commit -qm sneak
+reg s-sneak "$TMP/code/wt-sneak"; sleep 0.3
+touch "$TMP/hang"
+ship s-sneak "$TMP/code/wt-sneak" '"action":"feature","name":"sneak"' >/dev/null
+ship s-sneak "$TMP/code/wt-sneak" '"action":"ready","feature":"sneak"' >/dev/null
+run_of() { git -C "$TMP/code/wt-sneak" worktree list | grep -o 'reviews/r[0-9a-f]*' | head -1 | cut -d/ -f2; }
+RUN=$(wait_for 10 run_of)
+SA=$(ship s-sneak "$TMP/code/wt-sneak" "\"action\":\"review\",\"run\":\"$RUN\",\"verdict\":\"approve\",\"findings\":\"none\"")
+has "$(field "$SA" 'r.text')" "only the reviewer crosstalk started" "the author's own approval, by run id, is refused"
+SO=$(ct review --run "$RUN" --output "$CROSSTALK_HOME/shipping.json" 2>&1)
+has "$SO" "only the reviewer crosstalk started" "and so is a wrapper's call without the run's secret"
+check "$(state_of sneak)" "reviewing" "it is still with its reviewer"
+rm -f "$TMP/hang"
+check "$(until_state sneak merged)" "merged" "the reviewer's own wrapper hands its verdict in, with the run's secret"
 
 # --- 2. risky ---------------------------------------------------------------------------------
 echo
@@ -282,6 +317,9 @@ check "$(questions ramp)" "" "the next step waits for evidence at internal"
 ship s-login "$TMP/code/wt-login" '"action":"evidence","feature":"login v2","stage":"internal","summary":"Internal accounts logged in 30 times with no errors.","evals":["login error rate 0%"]' >/dev/null
 ITEM=$(wait_for 5 ship_items s-login)
 [ -n "$ITEM" ] && pass "evidence at internal brings the next step's picker" || fail "evidence at internal brings the next step's picker"
+UAG=$(CLAUDECODE=1 ct ui act --session s-login --id "$ITEM" --action answer --value "Turn it up to 10%" 2>&1)
+has "$UAG" "for a person" "an agent's shell cannot press the picker (ui act) for a person"
+hasnt "$(flags_on_remote)" "login-v2: 10%" "and the flag did not move"
 UA=$(ct ui act --session s-login --id "$ITEM" --action answer --value "Turn it up to 10%" 2>&1)
 has "$UA" "10%" "answered through the mod's picker path"
 has "$(flags_on_remote)" "login-v2: 10%" "now at 10%"
@@ -310,6 +348,16 @@ has "$(field "$LO" 'r.text')" "question for a person" "making it everyday is a q
 check "$(field "$(rpc '{"op":"ship","action":"status"}')" "r.threads.flatMap(t => t.features).find(f => f.name === 'login v2').risk")" "risky" "and it stays risky meanwhile"
 LT=$(rpc "{\"op\":\"thread\",\"sessionId\":\"s-login\",\"cwd\":\"$TMP/code/wt-login\",\"feature\":{\"name\":\"login v2\",\"risk\":\"everyday\"}}")
 has "$LT" "question for a person" "crosstalk_thread cannot lower it either"
+risk_now() { field "$(rpc '{"op":"ship","action":"status"}')" "r.threads.flatMap(t => t.features).find(f => f.name.toLowerCase() === 'login v2')?.risk"; }
+LC=$(rpc "{\"op\":\"thread\",\"sessionId\":\"s-login\",\"cwd\":\"$TMP/code/wt-login\",\"feature\":{\"name\":\"Login V2\",\"risk\":\"everyday\"}}")
+has "$LC" "question for a person" "nor by another spelling of its name"
+rpc "{\"op\":\"thread\",\"sessionId\":\"s-login\",\"cwd\":\"$TMP/code/wt-login\",\"feature\":{\"name\":\"login v2\",\"flag\":\"login-v2\"}}" >/dev/null
+check "$(risk_now)" "risky" "an edit that leaves risk out keeps it risky"
+rpc "{\"op\":\"thread\",\"sessionId\":\"s-login\",\"cwd\":\"$TMP/code/wt-login\",\"feature\":{\"name\":\"login v2\",\"remove\":true}}" >/dev/null
+rpc "{\"op\":\"thread\",\"sessionId\":\"s-login\",\"cwd\":\"$TMP/code/wt-login\",\"feature\":{\"name\":\"login v2\",\"flag\":\"login-v2\"}}" >/dev/null
+check "$(risk_now)" "risky" "removed and added again, it is still risky"
+ship s-login "$TMP/code/wt-login" '"action":"flag","flag":"login-v2","stage":"on"' >/dev/null
+hasnt "$(flags_on_remote)" "login-v2: on" "and its flag still goes up only on a person's yes"
 
 # --- 5. preview per thread ----------------------------------------------------------------------
 echo
@@ -325,6 +373,7 @@ feat() { field "$(rpc '{"op":"ship","action":"status"}')" "r.threads.flatMap(t =
 F5=$(ship s-pay "$TMP/code/wt-pay" '"action":"feature","name":"pay v2"')
 check "$(field "$F5" 'r.flag')" "pay-v2" "pay v2 is risky, behind pay-v2"
 ship s-pay "$TMP/code/wt-pay" '"action":"ready","feature":"pay v2"' >/dev/null
+allow_cmds
 check "$(until_state "pay v2" needs-evidence)" "needs-evidence" "signed off, green, and previewed"
 check "$(cat "$TMP/preview-env" 2>/dev/null)" "CROSSTALK_FLAGS=pay-v2=on" "the preview ran with its flag forced on"
 check "$(feat "pay v2" '.preview?.url')" "https://shop-crosstalk-pay.preview.test" "the URL it printed is captured"
@@ -400,6 +449,7 @@ mock() { curl -s "$MOCK/__state"; }
 ulp() { field "$(mock)" "(() => { const e = r.unleash.features['ul-pricing']?.environments.find(e => e.name === 'production'); return e ? e.enabled + ' ' + e.strategies.map(s => s.title + ':' + s.parameters.rollout + ':' + (s.constraints ?? []).map(c => c.contextName + ' ' + c.operator + ' ' + c.values).join()).join(',') : 'none' })()"; }
 ship s-ul "$TMP/code/wt-ul" '"action":"feature","name":"ul pricing","flag":"ul-pricing"' >/dev/null
 ship s-ul "$TMP/code/wt-ul" '"action":"ready","feature":"ul pricing"' >/dev/null
+allow_cmds
 check "$(until_state "ul pricing" merged)" "merged" "an Unleash repo's feature merges"
 ul_internal() { case "$(ulp)" in true*internal*) ulp ;; esac; }
 check "$(wait_for 10 ul_internal)" "true crosstalk: internal:100:email STR_ENDS_WITH @shop.test" "its toggle is created and internal is a flexibleRollout on the constraint"
@@ -411,6 +461,7 @@ ship s-ul "$TMP/code/wt-ul" '"action":"flag","flag":"ul-pricing","stage":"off"' 
 check "$(ulp)" "false crosstalk: everyone:100:" "off disables the environment: the instant kill"
 ship s-gb "$TMP/code/wt-gb" '"action":"feature","name":"gb search","flag":"gb-search"' >/dev/null
 ship s-gb "$TMP/code/wt-gb" '"action":"ready","feature":"gb search"' >/dev/null
+allow_cmds
 check "$(until_state "gb search" merged)" "merged" "a GrowthBook repo's feature merges"
 check "$(field "$(mock)" "r.features['gb-search'].environments.production.rules.map(x => x.description + ' ' + x.condition).join()")" 'crosstalk: internal {"email":{"$regex":"@shop\\.test$"}}' "its feature is created and internal is the email domain"
 ship s-gb "$TMP/code/wt-gb" '"action":"flag","flag":"gb-search","stage":"on"' >/dev/null
@@ -419,6 +470,7 @@ ship s-gb "$TMP/code/wt-gb" '"action":"flag","flag":"gb-search","stage":"off"' >
 check "$(field "$(mock)" "r.features['gb-search'].environments.production.enabled")" "false" "off disables it"
 ship s-ss "$TMP/code/wt-ss" '"action":"feature","name":"ss nav","flag":"ss-nav"' >/dev/null
 ship s-ss "$TMP/code/wt-ss" '"action":"ready","feature":"ss nav"' >/dev/null
+allow_cmds
 check "$(until_state "ss nav" merged)" "merged" "a Statsig repo's feature merges"
 check "$(field "$(mock)" "r.gates['ss-nav'].isEnabled + ' ' + r.gates['ss-nav'].rules.map(x => x.name + ':' + x.conditions[0].type + ':' + x.passPercentage).join()")" "true crosstalk: internal:passes_segment:100" "its gate is created and internal is the segment"
 ship s-ss "$TMP/code/wt-ss" '"action":"flag","flag":"ss-nav","stage":"on"' >/dev/null

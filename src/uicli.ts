@@ -22,6 +22,9 @@ import * as extra from "./ui-extra/uicli.ts"
 
 type Out = Record<string, unknown>
 
+/** Run from an agent's tool call (as src/shipping/cli.ts reads it). */
+const insideAgent = () => !!(process.env.CLAUDECODE || process.env.CODEX_SANDBOX || process.env.CROSSTALK_AS_AGENT)
+
 function arg(argv: string[], f: string): string | undefined {
   const i = argv.indexOf(f)
   return i === -1 ? undefined : argv[i + 1]
@@ -159,6 +162,11 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
         const n = gather.takeNote(session, id)
         return print(n ? { ok: true, text: n.text } : { ok: false, error: "already shown" })
       }
+      // A shipping picker's answer counts as a person's (the daemon answers it
+      // with person: true), so like `crosstalk ship answer` it is refused from
+      // inside an agent: an agent's shell cannot press the picker for them.
+      if (id.startsWith("ship:") && insideAgent())
+        return print({ ok: false, error: "this question is for a person: answer it in crosstalk's picker, or run `crosstalk ship answer` yourself in a terminal" })
       if (!daemonRunning()) return print({ ok: false, error: "the crosstalk daemon is not running" })
       try {
         return print(await request({ op: "ui_act", sessionId: session, id, action, value }, 30_000))

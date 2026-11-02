@@ -20,6 +20,8 @@ export CROSSTALK_THREAD_SETTLE_MS=300 CROSSTALK_THREAD_SYNC_MS=600000 CROSSTALK_
 export CROSSTALK_SHIP_VOTE_MS=300
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
+# The reviewers' wrappers call back with this source's crosstalk, not the prebuilt bundle.
+export CROSSTALK_BIN="bun $ROOT/src/cli.ts"
 PORT=${PEERS_PORT:-8891}
 TMP=$(mktemp -d)
 A="$TMP/a"; B="$TMP/b"; R="$TMP/repos"
@@ -131,6 +133,12 @@ echo
 echo "ana's feature asks"
 check "$(field "$(ship '"action":"feature","name":"login v2"')" 'r.risk')" "risky" "login v2 is risky"
 ship '"action":"ready","feature":"login v2"' >/dev/null
+# Running the repo's commands on ana's machine is ana's to allow, once; ben is not even shown it.
+ana_cmds() { field "$(rpc "$A" '{"op":"ship","action":"questions"}')" "r.questions.filter(q => q.kind === 'commands' && !q.elsewhere).map(q => q.id).join(' ')"; }
+CQ=$(wait_for 15 ana_cmds)
+[ -n "$CQ" ] && pass "ana is asked once to allow the repo's commands" || fail "ana is asked once to allow the repo's commands"
+check "$(field "$(rpc "$B" '{"op":"ship","action":"questions"}')" "r.questions.filter(q => q.kind === 'commands').length")" "0" "ben is not asked about ana's machine"
+ct "$A" ship answer "$CQ" "Run them" >/dev/null 2>&1
 check "$(until_state needs-evidence)" "needs-evidence" "reviewed, green, waiting for evidence"
 EV=$(ship '"action":"evidence","feature":"login v2","summary":"Login rejects empty passwords now.","tests":["login.test: 6 pass"]')
 QID=$(field "$EV" 'r.question')
