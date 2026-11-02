@@ -172,8 +172,10 @@ terminal app you already use and turns it into the workspace.
   brought back by crosstalk, one window per repository. *(Here. A tab per
   thread: coming.)*
 - **Status at a glance.** Each tab shows whether its agent is working,
-  finished, or waiting on you. *(Here: tab colour, progress or a tmux window
-  option, per terminal. A notification that takes you to the tab: coming.)*
+  finished, or waiting on you, by tab colour, progress or a tmux window option.
+  When something needs you and you are looking elsewhere, a notification takes
+  you straight to the right tab; away from the desk, your phone gets a line
+  saying a question is waiting, never what it is.
 - **New agents on request.** "Put two more on auth" opens two tabs, each with
   its own agent in its own private copy of the code, already knowing what the
   thread is about. *(Here, starting from the task you describe; knowing the
@@ -391,10 +393,10 @@ not need to know about them.
 ## Threads
 
 A thread is a piece of work and the conversation about it: what it is for,
-what was decided and why, what is waiting on whom. *(First version: found,
-synced and committed as below. Recaps written at the end of a turn, disposable
-sessions, production feeding threads, and digests and PR descriptions read from
-them are coming.)*
+what was decided and why, what is waiting on whom. A recap is written at the
+end of a turn when it helps place the work, a session that runs out of context
+is replaced by a fresh one that picks up from the thread, and digests, standups
+and pull request descriptions are read from it.
 
 - **Threads find themselves.** Nobody names one or joins one. A session on a
   work branch is in that branch's thread; on the default branch, the thread
@@ -466,7 +468,7 @@ only for people outside your repositories. [How it holds up](docs/security.md).
 
 ## Shipping without reading code
 
-*(First version. [How it works](docs/shipping.md).)* List the risky paths in
+[How it works](docs/shipping.md). List the risky paths in
 `.crosstalk/risk`, and when an agent says its work is ready:
 
 - **Everyday work** merges on green checks and a review by a separate agent.

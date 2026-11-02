@@ -1,6 +1,8 @@
 # The next generation
 
-Status: workshopped, not built. Decided in an interview on 2026-11-01.
+Status: decided in an interview on 2026-11-01, and built as a first version on
+2026-11-02. Where each part lives, and what has not yet been checked in real use,
+is in [Built](#built) at the end.
 
 ## In two sentences
 
@@ -649,3 +651,41 @@ Technical, each with a proposal:
 4. **Recaps stay local.** Matching runs on each person's machine against the
    shared thread file, so only the recap ever leaves it, sealed.
 5. **Bots.** Decided: something narrower than a member (see People).
+
+## Built
+
+Every part above has a first version on the branch, with its tests in
+`bun run test`. What remains is checking it in real use, listed after the table.
+
+| Part | Code | Docs |
+|---|---|---|
+| Routing by repo, branch and files | `src/footprint.ts`, `routeInbound` in `src/daemon.ts` | `docs/architecture.md` |
+| Restore after a restart | `src/restore.ts` | `docs/restore.md` |
+| Sessions already open | `src/gather.ts` | `docs/restore.md` |
+| The mod: cards, pickers, status line, pane | `mod/register.tsx`, `src/uistate.ts`, `src/uicli.ts`, `src/ui-extra/` | `spike/mod/README.md` |
+| Peer notices when channels are off | `src/channels.ts` | `docs/architecture.md` |
+| Trust through repository access, first use per repo | `src/repotrust/` | `docs/security.md` |
+| Threads, sealed, on their own ref; re-keying | `src/threads/` | `docs/architecture.md`, `docs/security.md` |
+| Terminal workspace: tab status, new agents, background agents, layout, cleanup | `src/terminal/`, `src/spawn.ts`, `src/cleanup.ts` | `docs/terminal.md` |
+| Main session, rules, agents warning each other | `src/main.ts`, `src/coordinator.ts`, `src/rules/`, `src/warn/` | `docs/tools.md` |
+| Recaps, fresh sessions, staffing, focus, notifications, phone, permission prompts | `src/attention/` | `docs/attention.md` |
+| No commands, bots, editor, digest, standup, PR text | `src/ui-extra/` | `docs/tools.md` |
+| Disk budget, team install, metrics, threads across repos | `src/disk/`, `src/install/`, `src/metrics/`, `src/threads/crossrepo.ts` | `INSTALL.md` |
+| Shipping: risk, reviewers, evidence, merging, flags (Unleash first), previews, dark launch, metrics ramps, incidents | `src/shipping/` | `docs/shipping.md` |
+
+### Not yet checked in real use
+
+- **On a Mac:** everything per terminal except restore (tested by hand in
+  Terminal.app): tab tints, tab placement, focus, notifications that jump to a
+  tab, iTerm2, kitty, WezTerm, Ghostty.
+- **Between two people on two machines:** threads, repo trust, rules, warnings
+  and shipping questions answered from another machine were tested with two
+  identities on one machine.
+- **With real accounts:** Unleash, LaunchDarkly, PostHog, GrowthBook and
+  Statsig (mocks only), `gh` pull requests, preview hosts, Sentry alerts.
+- **Real reviewer runs:** `claude -p` and `codex exec` as reviewers were
+  replaced by stubs; whether Codex's default sandbox lets a review finish is
+  open.
+- **Phone push:** Claude Code's own push needs Remote Control paired; ntfy was
+  tested against a local stand-in.
+
