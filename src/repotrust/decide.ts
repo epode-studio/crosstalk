@@ -13,7 +13,11 @@
 //   new machine, signed by a key that was
 //     added to GitHub since                 a question
 //   a fingerprint that was revoked, back    a question
-//   an older statement than the pinned one  ignored (a rollback is not an update)
+//   an older statement than the pinned one  ignored (a rollback is not an update),
+//                                           also once the pinned one is revoked:
+//                                           a revoked machine stays as a tombstone
+//                                           with its fingerprint and date
+//   the old key after a "changed" yes       revoked: it never comes back by itself
 //   a fingerprint you said no to            ignored
 //   a pinned key removed from GitHub        everything it signed is revoked
 //   a statement removed from the ref        revoked from this repository
@@ -32,6 +36,8 @@ export type Machine = {
   created: number
   /** The SSH key that signed it, "type base64". */
   signer: string
+  /** Revoked: kept so an older statement cannot bring an earlier key back. */
+  removed?: true
 }
 
 export type Pin = {
@@ -45,6 +51,10 @@ export type Pin = {
 }
 
 export type Pins = Record<string, Pin>
+
+/** A pinned machine still trusted (not a tombstone). */
+const livePin = (m: Machine | undefined) => (m && !m.removed ? m : undefined)
+const tombstone = (m: Machine): Machine => ({ ...m, removed: true })
 
 /** A statement that verified against the login's current GitHub keys. */
 export type Seen = { login: string; machine: string; statement: Statement; signer: string }
@@ -144,8 +154,8 @@ export function decide(input: Input): Output {
       const now = new Set(ki.keys)
       pin.keys = pin.keys.filter((k) => now.has(k))
       for (const [machine, m] of Object.entries(pin.machines))
-        if (!now.has(m.signer)) {
-          delete pin.machines[machine]
+        if (!m.removed && !now.has(m.signer)) {
+          pin.machines[machine] = tombstone(m)
           if (!pin.revoked.includes(m.fingerprint)) pin.revoked.push(m.fingerprint)
           revoked.push({ login, machine, fingerprint: m.fingerprint, why: "the SSH key that vouched for it was removed from their GitHub account" })
         }
@@ -158,7 +168,12 @@ export function decide(input: Input): Output {
     for (const s of seen) {
       const { machine, statement: st, signer } = s
       if (present.has(machine)) continue
-      const pinned = pin.machines[machine]
+      const tomb = pin.machines[machine]?.removed ? pin.machines[machine] : undefined
+      if (tomb && st.created < tomb.created) {
+        ignored.push({ login, machine, why: "older than a statement that was revoked" })
+        continue
+      }
+      const pinned = livePin(pin.machines[machine])
       if (pinned && pinned.fingerprint === st.fingerprint) {
         if (st.created >= pinned.created) pin.machines[machine] = asMachine(st, signer)
         members[memberKey(login, machine)] = asMember(login, machine, pin.machines[machine])
@@ -200,7 +215,7 @@ export function decide(input: Input): Output {
     }
 
     for (const machine of keepOld) {
-      const m = pin.machines[machine]
+      const m = livePin(pin.machines[machine])
       if (m) {
         members[memberKey(login, machine)] = asMember(login, machine, m)
         present.add(machine)
@@ -210,14 +225,14 @@ export function decide(input: Input): Output {
     // Trusted here before, and gone from the ref now.
     for (const m of prevMembers) {
       if (present.has(m.machine)) continue
-      const pinned = pin.machines[m.machine]
+      const pinned = livePin(pin.machines[m.machine])
       if (!input.fetchOk) {
         if (pinned && pinned.fingerprint === m.fingerprint) members[memberKey(login, m.machine)] = m
         continue
       }
       if (revoked.some((r) => r.login === login && r.machine === m.machine)) continue
       if (pinned && pinned.fingerprint === m.fingerprint && !elsewhere.has(`${login}/${m.machine}/${m.fingerprint}`)) {
-        delete pin.machines[m.machine]
+        pin.machines[m.machine] = tombstone(pinned)
         if (!pin.revoked.includes(m.fingerprint)) pin.revoked.push(m.fingerprint)
       }
       revoked.push({ login, machine: m.machine, fingerprint: m.fingerprint, why: "its statement was removed from the repository" })
@@ -237,6 +252,10 @@ export function answer(pins: Pins, q: Question, trust: boolean): Pins {
   pin.revoked ??= []
   pin.rejected ??= []
   if (trust) {
+    // The key it replaces is done: an old statement for it is a question, never a quiet return.
+    const was = pin.machines[q.machine]
+    if (q.kind === "changed" && was && was.fingerprint !== q.statement.fingerprint && !pin.revoked.includes(was.fingerprint)) pin.revoked.push(was.fingerprint)
+    if (q.was && q.was !== q.statement.fingerprint && !pin.revoked.includes(q.was)) pin.revoked.push(q.was)
     pin.machines[q.machine] = asMachine(q.statement, q.signer)
     if (!pin.keys.includes(q.signer)) pin.keys.push(q.signer)
     pin.revoked = pin.revoked.filter((f) => f !== q.statement.fingerprint)

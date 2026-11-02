@@ -96,13 +96,23 @@ const minMs = () => Number(process.env.CROSSTALK_REPOTRUST_MIN_MS ?? 10 * 60 * 1
 export function applyPeers(s: State, id: Identity, myLogin: string | null): { added: string[]; removed: string[] } {
   const me = fingerprintOf(id.ed.pub)
   const desired = new Map<string, { m: Member; repos: string[] }>()
+  // A fingerprint named by two different login/machine pairs, or with keys
+  // that differ, is not trusted from here at all: nobody's keys are changed by it.
+  const contested = new Set<string>()
   for (const r of Object.values(s.repos))
     for (const m of Object.values(r.members)) {
       if (m.fingerprint === me) continue
+      if (fingerprintOf(m.edPub) !== m.fingerprint) {
+        contested.add(m.fingerprint)
+        continue
+      }
       const d = desired.get(m.fingerprint)
-      if (d) d.repos.push(r.slug)
-      else desired.set(m.fingerprint, { m, repos: [r.slug] })
+      if (d) {
+        if (d.m.login !== m.login || d.m.machine !== m.machine || d.m.xPub !== m.xPub || d.m.edPub !== m.edPub) contested.add(m.fingerprint)
+        d.repos.push(r.slug)
+      } else desired.set(m.fingerprint, { m, repos: [r.slug] })
     }
+  for (const fp of contested) desired.delete(fp)
 
   const peers = loadPeers()
   const before = JSON.stringify(peers)
@@ -110,13 +120,17 @@ export function applyPeers(s: State, id: Identity, myLogin: string | null): { ad
   const removed: string[] = []
   for (const [label, p] of Object.entries(peers)) {
     if (p.via !== "repo") continue
+    // Contested: left exactly as it was until it is not.
+    if (contested.has(p.fingerprint)) continue
     const d = desired.get(p.fingerprint)
     if (!d) {
       delete peers[label]
       removed.push(label)
       continue
     }
-    peers[label] = { ...p, edPub: d.m.edPub, xPub: d.m.xPub, repos: d.repos.sort() }
+    // An existing peer's keys are never replaced from another person or machine.
+    if ((p.person && p.person !== d.m.login) || (p.machine && p.machine !== d.m.machine) || p.edPub !== d.m.edPub) continue
+    peers[label] = { ...p, xPub: d.m.xPub, repos: d.repos.sort() }
   }
   const byFp = new Set(Object.values(peers).map((p) => p.fingerprint))
   const taken = (name: string) => !!peers[name]
@@ -124,7 +138,7 @@ export function applyPeers(s: State, id: Identity, myLogin: string | null): { ad
   const since = (m: Member) => s.pins[m.login]?.machines[m.machine]?.created ?? Number.MAX_SAFE_INTEGER
   const order = [...desired].sort(([, a], [, b]) => since(a.m) - since(b.m) || a.m.machine.localeCompare(b.m.machine))
   for (const [fp, { m, repos }] of order) {
-    if (byFp.has(fp)) continue // already a peer: by repo, or verified with words
+    if (byFp.has(fp) || contested.has(fp)) continue // already a peer: by repo, or verified with words
     const own = !!myLogin && m.login === myLogin
     let label = own ? `${m.login}-${m.machine}` : m.login
     if (taken(label)) label = `${m.login}-${m.machine}`
@@ -234,7 +248,7 @@ async function syncNow(cwd: string, o: { force?: boolean; log?: (...a: unknown[]
       const k = await signingKey(mine, path.join(DIR(), "tmp"))
       if (!k.key) rs.own = `not published: ${k.why}; the four words still work`
       else {
-        const st = makeStatement({ login, machine, edPub: id.ed.pub, xPub: id.x.pub })
+        const st = makeStatement({ login, machine, identity: id })
         const r = await sign(st, k.key)
         if (!r.ok) rs.own = `not published: ${r.reason}; the four words still work`
         else signed = { login, machine, fingerprint: me, text: canonical(st), sig: r.sig }
@@ -277,6 +291,21 @@ async function syncNow(cwd: string, o: { force?: boolean; log?: (...a: unknown[]
       continue
     }
     seen.push({ login: f.login, machine: f.machine, statement: v.statement, signer: v.signer })
+  }
+
+  // One crosstalk key is one machine of one person. A fingerprint published
+  // under two logins or machines is someone claiming a key that is not
+  // theirs (bind makes that hard, this makes it fail closed): neither is taken.
+  const claims = new Map<string, Set<string>>()
+  for (const x of seen) (claims.get(x.statement.fingerprint) ?? claims.set(x.statement.fingerprint, new Set()).get(x.statement.fingerprint)!).add(`${x.login}/${x.machine}`)
+  for (const s0 of Object.values(load().repos))
+    for (const m of Object.values(s0.members)) claims.get(m.fingerprint)?.add(`${m.login}/${m.machine}`)
+  for (let i = seen.length - 1; i >= 0; i--) {
+    const x = seen[i]
+    if ((claims.get(x.statement.fingerprint)?.size ?? 0) > 1) {
+      invalid.push({ ref: `${x.login}/${x.machine}`, why: `its crosstalk key is also claimed by ${[...claims.get(x.statement.fingerprint)!].filter((c) => c !== `${x.login}/${x.machine}`).join(", ")}` })
+      seen.splice(i, 1)
+    }
   }
 
   // A second opinion from GitHub, when gh can give one.

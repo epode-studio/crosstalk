@@ -103,7 +103,8 @@ const isGoose = typeof hook.event === "string" && !hook.hook_event_name && !hook
 const isCursor = typeof hook.cursor_version === "string" || Array.isArray(hook.workspace_roots)
 
 /** Cursor drops any additional_context longer than this rather than trimming it. */
-const CURSOR_CONTEXT_LIMIT = 10_000
+// Overridable only so tests can reach the trimming path with ordinary content.
+const CURSOR_CONTEXT_LIMIT = Number(process.env.CROSSTALK_CURSOR_LIMIT) > 200 ? Number(process.env.CROSSTALK_CURSOR_LIMIT) : 10_000
 
 const sessionId: string | undefined =
   hook.session_id ??

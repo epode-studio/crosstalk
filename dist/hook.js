@@ -3197,7 +3197,7 @@ var isKimi = client === "kimi";
 var isHermes = /^(pre|post|on)_[a-z_]+$/.test(eventName);
 var isGoose = typeof hook.event === "string" && !hook.hook_event_name && !hook.hookEventName;
 var isCursor = typeof hook.cursor_version === "string" || Array.isArray(hook.workspace_roots);
-var CURSOR_CONTEXT_LIMIT = 1e4;
+var CURSOR_CONTEXT_LIMIT = Number(process.env.CROSSTALK_CURSOR_LIMIT) > 200 ? Number(process.env.CROSSTALK_CURSOR_LIMIT) : 1e4;
 var sessionId = hook.session_id ?? hook.sessionId ?? hook.thread_id ?? hook.conversation_id ?? hook.conversationId ?? process.env.CLAUDE_CODE_SESSION_ID ?? process.env.ANTIGRAVITY_CONVERSATION_ID;
 var isSessionStart = isAgy ? /^PreInvocation$/i.test(eventName) && Number(hook.invocationNum ?? 0) === 0 : isHermes ? /^pre_llm_call$/.test(eventName) && hook.extra?.is_first_turn === true : /^(SessionStart|sessionStart)$/.test(eventName);
 var AGENT_DIRS = new Set([".agents", ".agent", "_agents", "_agent"]);
