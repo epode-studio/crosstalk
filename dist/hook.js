@@ -3761,10 +3761,9 @@ function applyOnce(id, state, f, sys) {
       ok = sys.writeTty(a.path, a.data) && ok;
     else {
       if (!appleTintOn()) {
-        const orig = appleOriginal ? parseRgb16(appleOriginal) : null;
-        if (!orig)
+        if (!appleOriginal)
           continue;
-        const back = sys.run({ cmd: "osascript", args: ["-"], input: appleSetBgScript(a.tty, orig) }).ok;
+        const back = sys.run({ cmd: "osascript", args: ["-"], input: appleProfileBgScript(a.tty) }).ok;
         if (back)
           restored = true;
         ok = back && ok;
@@ -3786,6 +3785,26 @@ function applyOnce(id, state, f, sys) {
   return { ok, appleOriginal };
 }
 var appleTintOn = (env = process.env) => /^(1|true|yes|on)$/i.test(env.CROSSTALK_TAB_COLOUR ?? env.CROSSTALK_TAB_COLOR ?? "");
+var appleProfileBgScript = (tty) => appleTab(tty, [`set n to name of current settings of t`, `set background color of t to background color of settings set n`, `return "done"`]);
+var appleProfileBgAllScript = [
+  `if application "Terminal" is not running then return "0"`,
+  `set c to 0`,
+  `tell application "Terminal"`,
+  `	repeat with w in windows`,
+  `		repeat with t in tabs of w`,
+  `			try`,
+  `				set want to background color of settings set (name of current settings of t)`,
+  `				if (background color of t) is not want then`,
+  `					set background color of t to want`,
+  `					set c to c + 1`,
+  `				end if`,
+  `			end try`,
+  `		end repeat`,
+  `	end repeat`,
+  `end tell`,
+  `return c as text`
+].join(`
+`);
 async function applyLoop(id, sys = liveSys4(), sleep = (ms) => new Promise((r) => setTimeout(r, ms))) {
   const lock = `${fileOf5(id)}.applier`;
   const take = () => {

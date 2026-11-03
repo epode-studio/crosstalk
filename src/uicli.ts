@@ -101,6 +101,11 @@ async function watch(session: string, interval: number) {
     }
     if (Date.now() - lastRestoreCheck > 10_000) {
       lastRestoreCheck = Date.now()
+      // The mod is up for as long as its watch runs: keep saying so, or after
+      // ten minutes every yes would have to be typed instead of picked.
+      try {
+        ui.markModActive(session)
+      } catch {}
       try {
         settleRestore(session)
       } catch {}

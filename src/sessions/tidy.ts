@@ -92,8 +92,9 @@ export const statusOf = () => {
  * Typing `exit` to the shell is not enough: whether Terminal then closes the
  * tab is a profile setting ("When the shell exits"), and many keep it open.
  *
- * Only a tab that is a Claude session's: it shows Claude Code's banner in its
- * scrollback (a tty can be reused by a new tab later). It waits up to three
+ * Only a tab that ran Claude: "claude" in its scrollback, the command line or
+ * the banner (a tty can be reused by a new tab later; full-screen Claude Code
+ * leaves no banner behind, so the command line is what is left). It waits up to three
  * seconds for what the session started (caffeinate, MCP servers) to go, and
  * leaves a tab still running anything, so Terminal never asks about closing
  * running processes. Cmd-W is sent only once Terminal is in front with that
@@ -114,7 +115,8 @@ export function appleCloseIdleTabScript(tty: string): string {
     `\t\t\t\t\tdelay 0.2`,
     `\t\t\t\tend repeat`,
     `\t\t\t\tif busy of t then return "busy"`,
-    `\t\t\t\tif (history of t) does not contain "Claude Code" then return "not-claude"`,
+    // Case does not count in AppleScript: "claude --resume …" or Claude Code's banner.
+    `\t\t\t\tif (history of t) does not contain "claude" then return "not-claude"`,
     `\t\t\t\tset selected of t to true`,
     `\t\t\t\tset index of w to 1`,
     `\t\t\t\tset found to true`,
@@ -178,16 +180,35 @@ export function closeTabSteps(t: Term, platform: NodeJS.Platform = process.platf
 
 /** Close a tab left with only its shell. True when it was closed. */
 export function closeTab(t: Term, run: (s: Step) => { ok: boolean; out: string }, platform: NodeJS.Platform = process.platform): boolean {
-  let closed = false
-  for (const s of closeTabSteps(t, platform)) {
+  return closeTabWhy(t, run, platform) === "closed"
+}
+
+/** Why a tab stayed: "closed", or busy, not-claude, not-front, gone, no-shell, unsupported, or the error. */
+export const WHY_OPEN: Record<string, string> = {
+  busy: "something still runs in it",
+  "not-claude": "it never ran Claude, so it may be someone's own tab",
+  "not-front": "Terminal could not be brought to the front",
+  gone: "it was already closed",
+  "no-shell": "something other than a shell runs in it",
+  unsupported: "this terminal's tabs are left as they are",
+}
+
+export function closeTabWhy(t: Term, run: (s: Step) => { ok: boolean; out: string }, platform: NodeJS.Platform = process.platform): string {
+  const steps = closeTabSteps(t, platform)
+  if (!steps.length) return "unsupported"
+  for (const s of steps) {
     if (s.probe) {
       const p = run(s.probe)
-      if (!p.ok || !s.closesIf(p.out)) continue
+      if (!p.ok) return "gone"
+      if (!s.closesIf(p.out)) return "no-shell"
+      return run(s.close).ok ? "closed" : "gone"
     }
     const r = run(s.close)
-    if (r.ok && (s.probe || /closed/.test(r.out))) closed = true
+    if (!r.ok) return /1002|1719|assistive|not allowed/i.test(r.out) ? "accessibility" : r.out.split("\n").pop()?.slice(0, 120) || "error"
+    const out = r.out.trim()
+    return out === "" ? "gone" : out
   }
-  return closed
+  return "unsupported"
 }
 
 /**

@@ -10115,10 +10115,9 @@ function applyOnce(id, state, f, sys) {
       ok = sys.writeTty(a.path, a.data) && ok;
     else {
       if (!appleTintOn()) {
-        const orig = appleOriginal ? parseRgb16(appleOriginal) : null;
-        if (!orig)
+        if (!appleOriginal)
           continue;
-        const back = sys.run({ cmd: "osascript", args: ["-"], input: appleSetBgScript(a.tty, orig) }).ok;
+        const back = sys.run({ cmd: "osascript", args: ["-"], input: appleProfileBgScript(a.tty) }).ok;
         if (back)
           restored = true;
         ok = back && ok;
@@ -10140,35 +10139,50 @@ function applyOnce(id, state, f, sys) {
   return { ok, appleOriginal };
 }
 var appleTintOn = (env = process.env) => /^(1|true|yes|on)$/i.test(env.CROSSTALK_TAB_COLOUR ?? env.CROSSTALK_TAB_COLOR ?? "");
+var appleProfileBgScript = (tty) => appleTab(tty, [`set n to name of current settings of t`, `set background color of t to background color of settings set n`, `return "done"`]);
+var appleProfileBgAllScript = [
+  `if application "Terminal" is not running then return "0"`,
+  `set c to 0`,
+  `tell application "Terminal"`,
+  `	repeat with w in windows`,
+  `		repeat with t in tabs of w`,
+  `			try`,
+  `				set want to background color of settings set (name of current settings of t)`,
+  `				if (background color of t) is not want then`,
+  `					set background color of t to want`,
+  `					set c to c + 1`,
+  `				end if`,
+  `			end try`,
+  `		end repeat`,
+  `	end repeat`,
+  `end tell`,
+  `return c as text`
+].join(`
+`);
 function resetColours(sys = liveSys4()) {
-  const reset = [];
-  const failed = [];
+  let reset = 0;
+  let ok = true;
+  if (sys.platform === "darwin") {
+    const r = sys.run({ cmd: "osascript", args: ["-"], input: appleProfileBgAllScript });
+    ok = r.ok;
+    reset = r.ok ? Number(r.out.trim()) || 0 : 0;
+  }
   let names = [];
   try {
     names = fs26.readdirSync(dir5()).filter((n) => n.endsWith(".json"));
   } catch {}
   for (const n of names) {
-    let f = null;
+    const id = n.slice(0, -5);
     try {
-      f = JSON.parse(fs26.readFileSync(path33.join(dir5(), n), "utf8"));
+      withFile(id, (cur) => {
+        if (!cur?.appleOriginal)
+          return;
+        const { appleOriginal: _, ...rest } = cur;
+        writeTab(rest);
+      });
     } catch {}
-    const orig = f?.appleOriginal ? parseRgb16(f.appleOriginal) : null;
-    const t = f ? sys.term(f.sessionId) : null;
-    if (!f || !orig || !t?.tty || kindOf(t) !== "apple" || sys.platform !== "darwin")
-      continue;
-    if (!sys.run({ cmd: "osascript", args: ["-"], input: appleSetBgScript(t.tty, orig) }).ok) {
-      failed.push(f.sessionId);
-      continue;
-    }
-    reset.push(f.sessionId);
-    withFile(f.sessionId, (cur) => {
-      if (!cur)
-        return;
-      const { appleOriginal: _, ...rest } = cur;
-      writeTab(rest);
-    });
   }
-  return { reset, failed };
+  return { reset, ok };
 }
 async function applyLoop(id, sys = liveSys4(), sleep = (ms) => new Promise((r) => setTimeout(r, ms))) {
   const lock = `${fileOf5(id)}.applier`;
@@ -12201,7 +12215,7 @@ function appleCloseIdleTabScript(tty) {
     `					delay 0.2`,
     `				end repeat`,
     `				if busy of t then return "busy"`,
-    `				if (history of t) does not contain "Claude Code" then return "not-claude"`,
+    `				if (history of t) does not contain "claude" then return "not-claude"`,
     `				set selected of t to true`,
     `				set index of w to 1`,
     `				set found to true`,
@@ -12258,19 +12272,35 @@ function closeTabSteps(t, platform = process.platform) {
     return [{ close: { cmd: "osascript", args: ["-"], input: appleCloseIdleTabScript(t.tty) }, closesIf: () => true }];
   return [];
 }
-function closeTab(t, run, platform = process.platform) {
-  let closed = false;
-  for (const s of closeTabSteps(t, platform)) {
+var WHY_OPEN = {
+  busy: "something still runs in it",
+  "not-claude": "it never ran Claude, so it may be someone's own tab",
+  "not-front": "Terminal could not be brought to the front",
+  gone: "it was already closed",
+  "no-shell": "something other than a shell runs in it",
+  unsupported: "this terminal's tabs are left as they are"
+};
+function closeTabWhy(t, run, platform = process.platform) {
+  const steps = closeTabSteps(t, platform);
+  if (!steps.length)
+    return "unsupported";
+  for (const s of steps) {
     if (s.probe) {
       const p = run(s.probe);
-      if (!p.ok || !s.closesIf(p.out))
-        continue;
+      if (!p.ok)
+        return "gone";
+      if (!s.closesIf(p.out))
+        return "no-shell";
+      return run(s.close).ok ? "closed" : "gone";
     }
     const r = run(s.close);
-    if (r.ok && (s.probe || /closed/.test(r.out)))
-      closed = true;
+    if (!r.ok)
+      return /1002|1719|assistive|not allowed/i.test(r.out) ? "accessibility" : r.out.split(`
+`).pop()?.slice(0, 120) || "error";
+    const out = r.out.trim();
+    return out === "" ? "gone" : out;
   }
-  return closed;
+  return "unsupported";
 }
 function leftoverTabs(recs, liveTtys) {
   const seen = new Set;
@@ -12504,13 +12534,16 @@ async function close(l, o, d, from) {
     mark(l.id, { archived: now });
   } catch {}
   let tabGone = false;
+  let tabWhy = "";
   if (o.tab !== false)
     try {
-      tabGone = closeTab(l.terminal, d.run);
+      tabWhy = closeTabWhy(l.terminal, d.run);
+      tabGone = tabWhy === "closed";
     } catch {}
+  const tabLine = tabGone || !tabWhy || tabWhy === "gone" || tabWhy === "unsupported" ? "" : tabWhy === "accessibility" ? " Its tab stayed open: Terminal may not press keys for crosstalk (System Settings \u25b8 Privacy & Security \u25b8 Accessibility)." : ` Its tab stayed open: ${WHY_OPEN[tabWhy] ?? tabWhy}.`;
   const svcLine = o.services === "stop" ? stopped.length ? ` Stopped ${stopped.join(", ")}.` : "" : keepsLine(svc, false);
   const cut = busy.length ? ` What it was still running stopped with it (${what(busy).replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")}).` : "";
-  return { ok: true, text: `\u25e2 crosstalk: closed ${l.name}${tabGone ? " and its tab" : ""}.${svcLine}${cut} It is archived, not lost: say "resume ${l.name}" to bring it back.`, closed: l.id, tabGone };
+  return { ok: true, text: `\u25e2 crosstalk: closed ${l.name}${tabGone ? " and its tab" : ""}.${tabLine}${svcLine}${cut} It is archived, not lost: say "resume ${l.name}" to bring it back.`, closed: l.id, tabGone };
 }
 var list2 = (xs) => xs.length <= 6 ? xs.join(", ") : `${xs.slice(0, 5).join(", ")} and ${xs.length - 5} more`;
 async function tidy(a, by, d, from) {
@@ -12537,6 +12570,9 @@ async function tidy(a, by, d, from) {
       continue;
     }
     folded.push(`${t.live.name} into ${keep.live.name}`);
+    const why = /Its tab stayed open: ([^.]*(?:\([^)]*\))?)\./.exec(r.text);
+    if (why)
+      notes.push(`${t.live.name}'s tab stayed open: ${why[1]}.`);
     const text = foldNote(f, sum);
     withStore((items, now) => upsert(items, { id: `fold:${t.live.id}`, kind: "message", sessionId: keep.live.id, from: "crosstalk", thread: keep.live.threads[0], text, auto: true, ts: now }, now));
   }
@@ -12553,15 +12589,25 @@ async function tidy(a, by, d, from) {
       notes.push(r.text.replace(/^\u25e2 crosstalk: /, ""));
   }
   let tabs = 0;
+  const stayed = new Map;
   if (a.tabs) {
     const recs = readAll();
     const live = new Set((await liveSessions(d)).map((l) => l.terminal.tty).filter((t) => !!t));
     for (const r of leftoverTabs(recs, live))
       try {
-        if (closeTab(r.terminal, d.run))
+        const why = closeTabWhy(r.terminal, d.run);
+        if (why === "closed")
           tabs++;
+        else if (why !== "gone")
+          stayed.set(why, (stayed.get(why) ?? 0) + 1);
       } catch {}
   }
+  for (const [why, n] of stayed)
+    notes.push(why === "accessibility" ? `${n} tab${n === 1 ? "" : "s"} stayed open: Terminal may not press keys for crosstalk. Turn on Terminal in System Settings \u25b8 Privacy & Security \u25b8 Accessibility, then tidy up again.` : `${n} tab${n === 1 ? "" : "s"} stayed open: ${WHY_OPEN[why] ?? why}.`);
+  try {
+    if (process.platform === "darwin")
+      resetColours();
+  } catch {}
   let merged = false;
   if (a.merge && process.platform === "darwin") {
     const r = d.run({ cmd: "osascript", args: ["-"], input: appleMergeScript });
@@ -12855,6 +12901,9 @@ async function watch3(session, interval) {
     if (Date.now() - lastRestoreCheck > 1e4) {
       lastRestoreCheck = Date.now();
       try {
+        markModActive(session);
+      } catch {}
+      try {
         settleRestore(session);
       } catch {}
       try {
@@ -13006,7 +13055,7 @@ async function termCmd(argv, root) {
   if (sub === "tmux-snippet")
     return void console.log(TMUX_SNIPPET);
   if (sub === "reset-colours" || sub === "reset-colors")
-    return void console.log(JSON.stringify({ ok: true, ...resetColours() }));
+    return void console.log(JSON.stringify(resetColours()));
   const session = flag2(argv, "--session") ?? process.env.CLAUDE_CODE_SESSION_ID ?? "";
   if (!session)
     return void console.log(JSON.stringify({ ok: false, error: "--session is needed" }));

@@ -191,7 +191,7 @@ describe("the throttle", () => {
     expect(slept).toBeLessThanOrEqual(100)
     delete process.env.CROSSTALK_TAB_COLOUR
   })
-  test("Terminal.app's background is left alone by default, and a tint from before is put back", async () => {
+  test("Terminal.app's background is left alone by default; a tint from before goes back to the profile's, never to a remembered colour", async () => {
     expect(S.appleTintOn({})).toBe(false)
     expect(S.appleTintOn({ CROSSTALK_TAB_COLOUR: "1" })).toBe(true)
     const tab = path.join(process.env.CROSSTALK_HOME!, "tabs")
@@ -199,7 +199,7 @@ describe("the throttle", () => {
     const ran: string[] = []
     const sys: import("../src/terminal/status.ts").Sys = {
       platform: "darwin",
-      run: (s) => (ran.push(s.input ?? ""), { ok: true, out: "done" }),
+      run: (s) => (ran.push(s.input ?? ""), { ok: true, out: s.input?.includes("set c to 0") ? "3" : "done" }),
       writeTty: () => true,
       term: () => ({ program: "Apple_Terminal", tty: "/dev/ttys010" }),
     }
@@ -207,19 +207,20 @@ describe("the throttle", () => {
     fs.writeFileSync(path.join(tab, "plain.json"), JSON.stringify({ sessionId: "plain", want: "working", wantAt: Date.now() }))
     await S.applyLoop("plain", sys, async () => {})
     expect(ran).toEqual([])
-    // Tinted by an earlier version: its own colour back, and forgotten.
+    // Tinted by an earlier version: the profile's own background, and the remembered colour forgotten.
     fs.writeFileSync(path.join(tab, "old.json"), JSON.stringify({ sessionId: "old", want: "waiting", wantAt: Date.now(), appleOriginal: "1,2,3" }))
     await S.applyLoop("old", sys, async () => {})
     expect(ran).toHaveLength(1)
-    expect(ran[0]).toContain("{1, 2, 3}")
+    expect(ran[0]).toContain("set background color of t to background color of settings set n")
+    expect(ran[0]).not.toContain("{1, 2, 3}")
     expect(S.readTab("old")!.appleOriginal).toBeUndefined()
-    // And all at once, without waiting for a state change.
+    // And every tab at once: each back to its profile's, every remembered colour gone.
     ran.length = 0
     fs.writeFileSync(path.join(tab, "idle.json"), JSON.stringify({ sessionId: "idle", want: "done", wantAt: 0, applied: "done", appliedAt: 0, appleOriginal: "4,5,6" }))
-    expect(S.resetColours(sys).reset).toContain("idle")
-    expect(ran.join()).toContain("{4, 5, 6}")
+    expect(S.resetColours(sys)).toEqual({ reset: 3, ok: true })
+    expect(ran.join()).not.toContain("{4, 5, 6}")
+    expect(ran[0]).toContain(`if application "Terminal" is not running then return "0"`)
     expect(S.readTab("idle")!.appleOriginal).toBeUndefined()
-    expect(S.resetColours(sys).reset).toEqual([])
   })
 })
 

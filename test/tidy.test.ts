@@ -70,7 +70,7 @@ describe("tabs", () => {
     expect(s).toContain(`if (tty of t) is "/dev/ttys004" then`)
     const key = s.indexOf(`keystroke "w" using command down`)
     expect(s.indexOf(`if busy of t then return "busy"`)).toBeLessThan(key)
-    expect(s.indexOf(`does not contain "Claude Code" then return "not-claude"`)).toBeLessThan(key)
+    expect(s.indexOf(`does not contain "claude" then return "not-claude"`)).toBeLessThan(key) // full-screen Claude leaves no banner
     expect(s.indexOf(`if not frontmost then return "not-front"`)).toBeLessThan(key)
     expect(s.indexOf(`(tty of selected tab of front window) is not "/dev/ttys004" then return "not-front"`)).toBeLessThan(key)
     expect(s).not.toContain(`do script "exit"`) // a profile may keep the tab open after the shell exits
@@ -84,6 +84,13 @@ describe("tabs", () => {
     ran.length = 0
     expect(TD.closeTab(t, run("vim\n"), "linux")).toBe(false)
     expect(ran.some((r) => r.includes("kill-pane"))).toBe(false)
+  })
+  test("why a tab stayed open is said, not hidden", () => {
+    const t = { program: "Apple_Terminal", tty: "/dev/ttys9" }
+    expect(TD.closeTabWhy(t, () => ({ ok: true, out: "not-claude\n" }), "darwin")).toBe("not-claude")
+    expect(TD.closeTabWhy(t, () => ({ ok: true, out: "closed" }), "darwin")).toBe("closed")
+    expect(TD.closeTabWhy(t, () => ({ ok: false, out: "System Events got an error: osascript is not allowed assistive access. (-1719)" }), "darwin")).toBe("accessibility")
+    expect(TD.closeTabWhy({ kitty: { window: "1" } }, () => ({ ok: true, out: "" }), "darwin")).toBe("unsupported")
   })
   test("other terminals keep their tabs", () => {
     expect(TD.closeTabSteps({ kitty: { window: "3" } }, "darwin")).toEqual([])

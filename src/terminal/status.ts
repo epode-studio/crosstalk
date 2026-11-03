@@ -426,10 +426,11 @@ export function applyOnce(id: string, state: TabState, f: TabFile | null, sys: S
     } else if (a.kind === "tty") ok = sys.writeTty(a.path, a.data) && ok
     else {
       if (!appleTintOn()) {
-        // Off: only ever put back a colour crosstalk changed itself.
-        const orig = appleOriginal ? parseRgb16(appleOriginal) : null
-        if (!orig) continue
-        const back = sys.run({ cmd: "osascript", args: ["-"], input: appleSetBgScript(a.tty, orig) }).ok
+        // Off: a tab crosstalk once tinted goes back to its profile's own
+        // background. Never to a remembered colour: one read while the tab
+        // was already tinted, or for a tty a new tab has taken since, paints.
+        if (!appleOriginal) continue
+        const back = sys.run({ cmd: "osascript", args: ["-"], input: appleProfileBgScript(a.tty) }).ok
         if (back) restored = true
         ok = back && ok
         continue
@@ -451,36 +452,62 @@ export function applyOnce(id: string, state: TabState, f: TabFile | null, sys: S
 export const appleTintOn = (env: NodeJS.ProcessEnv = process.env) => /^(1|true|yes|on)$/i.test(env.CROSSTALK_TAB_COLOUR ?? env.CROSSTALK_TAB_COLOR ?? "")
 
 /**
- * Put back every Terminal.app background crosstalk changed and still knows
- * the original of, now, without waiting for each session's next state.
+ * Terminal.app: the tab on this tty back to its profile's own background (the
+ * saved profile of the same name). Never launches Terminal.
  */
-export function resetColours(sys: Sys = liveSys()): { reset: string[]; failed: string[] } {
-  const reset: string[] = []
-  const failed: string[] = []
+export const appleProfileBgScript = (tty: string) =>
+  appleTab(tty, [`set n to name of current settings of t`, `set background color of t to background color of settings set n`, `return "done"`])
+
+/**
+ * Terminal.app: every tab whose background is not its profile's goes back to
+ * it. Returns how many changed. Never launches Terminal.
+ */
+export const appleProfileBgAllScript = [
+  `if application "Terminal" is not running then return "0"`,
+  `set c to 0`,
+  `tell application "Terminal"`,
+  `\trepeat with w in windows`,
+  `\t\trepeat with t in tabs of w`,
+  `\t\t\ttry`,
+  `\t\t\t\tset want to background color of settings set (name of current settings of t)`,
+  `\t\t\t\tif (background color of t) is not want then`,
+  `\t\t\t\t\tset background color of t to want`,
+  `\t\t\t\t\tset c to c + 1`,
+  `\t\t\t\tend if`,
+  `\t\t\tend try`,
+  `\t\tend repeat`,
+  `\tend repeat`,
+  `end tell`,
+  `return c as text`,
+].join("\n")
+
+/**
+ * With tints off: every Terminal.app tab back to its profile's background, and
+ * every remembered colour forgotten, so nothing is ever painted from one.
+ */
+export function resetColours(sys: Sys = liveSys()): { reset: number; ok: boolean } {
+  let reset = 0
+  let ok = true
+  if (sys.platform === "darwin") {
+    const r = sys.run({ cmd: "osascript", args: ["-"], input: appleProfileBgAllScript })
+    ok = r.ok
+    reset = r.ok ? Number(r.out.trim()) || 0 : 0
+  }
   let names: string[] = []
   try {
     names = fs.readdirSync(dir()).filter((n) => n.endsWith(".json"))
   } catch {}
   for (const n of names) {
-    let f: TabFile | null = null
+    const id = n.slice(0, -5)
     try {
-      f = JSON.parse(fs.readFileSync(path.join(dir(), n), "utf8"))
+      withFile(id, (cur) => {
+        if (!cur?.appleOriginal) return
+        const { appleOriginal: _, ...rest } = cur
+        writeTab(rest)
+      })
     } catch {}
-    const orig = f?.appleOriginal ? parseRgb16(f.appleOriginal) : null
-    const t = f ? sys.term(f.sessionId) : null
-    if (!f || !orig || !t?.tty || R.kindOf(t) !== "apple" || sys.platform !== "darwin") continue
-    if (!sys.run({ cmd: "osascript", args: ["-"], input: appleSetBgScript(t.tty, orig) }).ok) {
-      failed.push(f.sessionId)
-      continue
-    }
-    reset.push(f.sessionId)
-    withFile(f.sessionId, (cur) => {
-      if (!cur) return
-      const { appleOriginal: _, ...rest } = cur
-      writeTab(rest)
-    })
   }
-  return { reset, failed }
+  return { reset, ok }
 }
 
 /**

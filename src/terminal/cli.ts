@@ -37,7 +37,7 @@ const STATES = new Set(["working", "waiting", "done", "off"])
 export async function termCmd(argv: string[], root: string) {
   const sub = argv[1]
   if (sub === "tmux-snippet") return void console.log(S.TMUX_SNIPPET)
-  if (sub === "reset-colours" || sub === "reset-colors") return void console.log(JSON.stringify({ ok: true, ...S.resetColours() }))
+  if (sub === "reset-colours" || sub === "reset-colors") return void console.log(JSON.stringify(S.resetColours()))
   const session = flag(argv, "--session") ?? process.env.CLAUDE_CODE_SESSION_ID ?? ""
   if (!session) return void console.log(JSON.stringify({ ok: false, error: "--session is needed" }))
   if (sub === "apply") return void console.log(await S.applyLoop(session))

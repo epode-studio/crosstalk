@@ -52,6 +52,7 @@ import { dirOf, shim } from "../paths.ts"
 import * as PP from "../services/postpone.ts"
 import type { Activity } from "../services/procs.ts"
 import * as TD from "./tidy.ts"
+import { resetColours as resetTabColours } from "../terminal/status.ts"
 
 export type Out = { ok: boolean; text: string; pending?: boolean; [k: string]: unknown }
 type Ask = (req: Record<string, unknown>, timeoutMs?: number) => Promise<any>
@@ -436,13 +437,21 @@ export async function close(l: Live, o: { by?: string; services?: "keep" | "stop
   } catch {}
   // The shell it leaves behind goes too, when nothing else runs in that tab.
   let tabGone = false
+  let tabWhy = ""
   if (o.tab !== false)
     try {
-      tabGone = TD.closeTab(l.terminal, d.run)
+      tabWhy = TD.closeTabWhy(l.terminal, d.run)
+      tabGone = tabWhy === "closed"
     } catch {}
+  const tabLine =
+    tabGone || !tabWhy || tabWhy === "gone" || tabWhy === "unsupported"
+      ? ""
+      : tabWhy === "accessibility"
+        ? " Its tab stayed open: Terminal may not press keys for crosstalk (System Settings ▸ Privacy & Security ▸ Accessibility)."
+        : ` Its tab stayed open: ${TD.WHY_OPEN[tabWhy] ?? tabWhy}.`
   const svcLine = o.services === "stop" ? (stopped.length ? ` Stopped ${stopped.join(", ")}.` : "") : keepsLine(svc, false)
   const cut = busy.length ? ` What it was still running stopped with it (${PP.what(busy).replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")}).` : ""
-  return { ok: true, text: `◢ crosstalk: closed ${l.name}${tabGone ? " and its tab" : ""}.${svcLine}${cut} It is archived, not lost: say "resume ${l.name}" to bring it back.`, closed: l.id, tabGone }
+  return { ok: true, text: `◢ crosstalk: closed ${l.name}${tabGone ? " and its tab" : ""}.${tabLine}${svcLine}${cut} It is archived, not lost: say "resume ${l.name}" to bring it back.`, closed: l.id, tabGone }
 }
 
 // --- tidy up -----------------------------------------------------------------------
@@ -513,6 +522,8 @@ async function tidy(a: Extract<Action, { kind: "tidy" }>, by: string, d: Deps, f
       continue
     }
     folded.push(`${t.live.name} into ${keep.live.name}`)
+    const why = /Its tab stayed open: ([^.]*(?:\([^)]*\))?)\./.exec(r.text)
+    if (why) notes.push(`${t.live.name}'s tab stayed open: ${why[1]}.`)
     const text = TD.foldNote(f, sum)
     // About the kept session's own work, so the mod hands it to its agent without asking.
     ui.withStore((items, now) => ui.upsert(items, { id: `fold:${t.live.id}`, kind: "message", sessionId: keep.live.id, from: "crosstalk", thread: keep.live.threads[0], text, auto: true, ts: now }, now))
@@ -526,14 +537,27 @@ async function tidy(a: Extract<Action, { kind: "tidy" }>, by: string, d: Deps, f
     else notes.push(r.text.replace(/^◢ crosstalk: /, ""))
   }
   let tabs = 0
+  const stayed = new Map<string, number>()
   if (a.tabs) {
     const recs = R.readAll()
     const live = new Set((await liveSessions(d)).map((l) => l.terminal.tty).filter((t): t is string => !!t))
     for (const r of TD.leftoverTabs(recs, live))
       try {
-        if (TD.closeTab(r.terminal, d.run)) tabs++
+        const why = TD.closeTabWhy(r.terminal, d.run)
+        if (why === "closed") tabs++
+        else if (why !== "gone") stayed.set(why, (stayed.get(why) ?? 0) + 1)
       } catch {}
   }
+  for (const [why, n] of stayed)
+    notes.push(
+      why === "accessibility"
+        ? `${n} tab${n === 1 ? "" : "s"} stayed open: Terminal may not press keys for crosstalk. Turn on Terminal in System Settings ▸ Privacy & Security ▸ Accessibility, then tidy up again.`
+        : `${n} tab${n === 1 ? "" : "s"} stayed open: ${TD.WHY_OPEN[why] ?? why}.`,
+    )
+  // Any background crosstalk once tinted goes back to its profile's.
+  try {
+    if (process.platform === "darwin") resetTabColours()
+  } catch {}
   let merged = false
   if (a.merge && process.platform === "darwin") {
     const r = d.run({ cmd: "osascript", args: ["-"], input: TD.appleMergeScript })

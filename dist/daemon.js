@@ -16728,9 +16728,9 @@ function setName(sessionId, name) {
 
 // src/sessions/control.ts
 import crypto27 from "node:crypto";
-import fs70 from "node:fs";
-import path81 from "node:path";
-import { spawnSync as spawnSync21 } from "node:child_process";
+import fs71 from "node:fs";
+import path82 from "node:path";
+import { spawnSync as spawnSync22 } from "node:child_process";
 
 // src/sessions/index.ts
 import fs69 from "node:fs";
@@ -17129,6 +17129,334 @@ var appleMergeScript = [
 ].join(`
 `);
 
+// src/terminal/status.ts
+import fs70 from "node:fs";
+import path81 from "node:path";
+import { spawn as spawn10, spawnSync as spawnSync21 } from "node:child_process";
+
+// src/attention/osc7501.ts
+var enabled2 = (env = process.env) => env.CROSSTALK_OSC7501 === "1";
+function reads7501(t) {
+  if (t.tmux)
+    return false;
+  const p = (t.program ?? "").toLowerCase();
+  return p === "ghostty" || p.startsWith("rex");
+}
+function sequence(state, id = "crosstalk") {
+  const s = state === "working" ? "state=working" : state === "waiting" ? "state=blocked:kind=question" : state === "broken" ? "state=blocked:kind=error" : state === "done" ? "state=done" : "state=idle";
+  return `\x1B]7501;${s}:app=crosstalk:id=${id.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32) || "crosstalk"}\x1B\\`;
+}
+
+// src/terminal/status.ts
+var COLOUR = {
+  working: [47, 111, 214],
+  waiting: [229, 140, 10],
+  done: [46, 160, 67],
+  broken: [214, 48, 49]
+};
+var hex = ([r, g, b]) => `#${[r, g, b].map((n) => n.toString(16).padStart(2, "0")).join("")}`;
+var b644 = (s) => Buffer.from(s, "utf8").toString("base64");
+function itermTabColour(state) {
+  if (state === "off")
+    return `\x1B]6;1;bg;*;default\x07`;
+  const [r, g, b] = COLOUR[state];
+  return `\x1B]6;1;bg;red;brightness;${r}\x07\x1B]6;1;bg;green;brightness;${g}\x07\x1B]6;1;bg;blue;brightness;${b}\x07`;
+}
+var userVar = (state) => `\x1B]1337;SetUserVar=crosstalk_state=${state === "off" ? "" : b644(state)}\x07`;
+var TMUX_OPTION = "@crosstalk_state";
+function tmuxActions(t, state) {
+  const S = t.socket ? ["-S", t.socket] : [];
+  const set = state === "off" ? ["set-option", "-w", "-u", "-t", t.pane, TMUX_OPTION] : ["set-option", "-w", "-t", t.pane, TMUX_OPTION, state];
+  return [
+    { kind: "run", step: { cmd: "tmux", args: [...S, ...set] } },
+    { kind: "run", step: { cmd: "tmux", args: [...S, "refresh-client", "-S"] }, optional: true }
+  ];
+}
+function kittyActions(k, state) {
+  if (!k.window || !k.listenOn)
+    return [];
+  const c = state === "off" ? "NONE" : hex(COLOUR[state]);
+  return [
+    { kind: "run", step: { cmd: "kitten", args: ["@", "--to", k.listenOn, "set-tab-color", "--match", `window_id:${k.window}`, `active_bg=${c}`, `inactive_bg=${c}`] } },
+    { kind: "run", step: { cmd: "kitten", args: ["@", "--to", k.listenOn, "set-user-vars", "--match", `id:${k.window}`, `crosstalk_state=${state === "off" ? "" : state}`] }, optional: true }
+  ];
+}
+function actionsFor(t, state, platform = process.platform) {
+  if (t.tmux?.pane)
+    return tmuxActions(t.tmux, state);
+  const out = [];
+  const k = kindOf(t);
+  if (k === "kitty" && t.kitty)
+    out.push(...kittyActions(t.kitty, state));
+  else if (k === "iterm" && t.tty)
+    out.push({ kind: "tty", path: t.tty, data: itermTabColour(state) + userVar(state) });
+  else if (k === "wezterm" && t.tty)
+    out.push({ kind: "tty", path: t.tty, data: userVar(state) });
+  else if (k === "apple" && t.tty && platform === "darwin")
+    out.push({ kind: "apple", tty: t.tty });
+  if (enabled2() && reads7501(t) && t.tty)
+    out.push({ kind: "tty", path: t.tty, data: sequence(state) });
+  return out;
+}
+var appleTab = (tty, body) => [
+  `if application "Terminal" is running then`,
+  `	tell application "Terminal"`,
+  `		repeat with w in windows`,
+  `			repeat with t in tabs of w`,
+  `				if (tty of t) is ${asq(tty)} then`,
+  ...body.map((l) => `					${l}`),
+  `				end if`,
+  `			end repeat`,
+  `		end repeat`,
+  `	end tell`,
+  `end if`,
+  `return ""`
+].join(`
+`);
+var appleReadBgScript = (tty) => appleTab(tty, [`set c to background color of t`, `return ((item 1 of c) as text) & "," & ((item 2 of c) as text) & "," & ((item 3 of c) as text)`]);
+var appleSetBgScript = (tty, c) => appleTab(tty, [`set background color of t to {${c.map((n) => Math.round(n)).join(", ")}}`, `return "done"`]);
+function parseRgb16(s) {
+  const m = /^(\d+),(\d+),(\d+)$/.exec(s.trim());
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+function appleTint(original, state, amount = 0.25) {
+  if (state === "off" || state === "done")
+    return original;
+  const target = COLOUR[state].map((n) => n * 257);
+  return original.map((o, i) => Math.round(o + (target[i] - o) * amount));
+}
+var dir7 = () => path81.join(P2.root, "tabs");
+var safe4 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
+var fileOf4 = (id) => path81.join(dir7(), `${safe4(id)}.json`);
+function readTab(id) {
+  try {
+    return JSON.parse(fs70.readFileSync(fileOf4(id), "utf8"));
+  } catch {
+    return null;
+  }
+}
+function writeTab(f) {
+  fs70.mkdirSync(dir7(), { recursive: true, mode: 448 });
+  const tmp = `${fileOf4(f.sessionId)}.${process.pid}.tmp`;
+  fs70.writeFileSync(tmp, JSON.stringify(f), { mode: 384 });
+  fs70.renameSync(tmp, fileOf4(f.sessionId));
+}
+var sleepSync7 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function withFile(id, fn) {
+  fs70.mkdirSync(dir7(), { recursive: true, mode: 448 });
+  const lock = `${fileOf4(id)}.lock`;
+  let held = false;
+  for (let i = 0;i < 50 && !held; i++) {
+    try {
+      fs70.mkdirSync(lock);
+      held = true;
+    } catch {
+      try {
+        if (Date.now() - fs70.statSync(lock).mtimeMs > 5000)
+          fs70.rmdirSync(lock);
+      } catch {}
+      sleepSync7(5);
+    }
+  }
+  try {
+    return fn(readTab(id));
+  } finally {
+    if (held)
+      try {
+        fs70.rmdirSync(lock);
+      } catch {}
+  }
+}
+var MIN_GAP_MS = () => Number(process.env.CROSSTALK_TAB_GAP_MS ?? 750);
+function decide3(f, now, gap = MIN_GAP_MS()) {
+  if (!f || f.applied === f.want)
+    return { act: "idle" };
+  if (f.appliedAt !== undefined && now - f.appliedAt < gap)
+    return { act: "wait", ms: gap - (now - f.appliedAt) };
+  return { act: "apply" };
+}
+function setBroken(o) {
+  const now = o.now ?? Date.now();
+  const changed = withFile(o.sessionId, (f) => {
+    if (!o.what && !f?.broken)
+      return false;
+    const base = f?.base ?? (f?.want && f.want !== "broken" ? f.want : "done");
+    if (o.what) {
+      if (f?.broken === o.what && f.want === "broken")
+        return false;
+      writeTab({ ...f ?? { sessionId: o.sessionId }, sessionId: o.sessionId, broken: o.what.slice(0, 200), base, want: "broken", wantAt: now });
+      return f?.want !== "broken";
+    }
+    const next = { ...f, base, want: base, wantAt: now };
+    delete next.broken;
+    writeTab(next);
+    return f.want !== base;
+  });
+  if (changed)
+    startApplier(o.sessionId, o.root);
+  return changed;
+}
+function startApplier(id, root) {
+  if (process.env.CROSSTALK_TERM_SYNC) {
+    applyLoop(id);
+    return;
+  }
+  try {
+    const child = spawn10(shim(root), ["term", "apply", "--session", id], { detached: true, stdio: "ignore" });
+    child.on("error", () => {});
+    child.unref();
+  } catch {}
+}
+var liveSys3 = () => ({
+  platform: process.platform,
+  run: (s) => {
+    const r = spawnSync21(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 5000 });
+    return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}`.trim() };
+  },
+  writeTty: (p, data) => {
+    let fd = -1;
+    try {
+      fd = fs70.openSync(p, fs70.constants.O_WRONLY | fs70.constants.O_NOCTTY | fs70.constants.O_NONBLOCK);
+      return fs70.writeSync(fd, data) === Buffer.byteLength(data);
+    } catch {
+      return false;
+    } finally {
+      if (fd >= 0)
+        fs70.closeSync(fd);
+    }
+  },
+  term: (id) => readOne(id)?.terminal ?? null
+});
+function applyOnce(id, state, f, sys) {
+  const t = sys.term(id);
+  if (!t)
+    return { ok: false };
+  let ok = true;
+  let restored = false;
+  let appleOriginal = f?.appleOriginal;
+  for (const a of actionsFor(t, state, sys.platform)) {
+    if (a.kind === "run") {
+      const r = sys.run(a.step);
+      if (!r.ok && !a.optional)
+        ok = false;
+    } else if (a.kind === "tty")
+      ok = sys.writeTty(a.path, a.data) && ok;
+    else {
+      if (!appleTintOn()) {
+        if (!appleOriginal)
+          continue;
+        const back = sys.run({ cmd: "osascript", args: ["-"], input: appleProfileBgScript(a.tty) }).ok;
+        if (back)
+          restored = true;
+        ok = back && ok;
+        continue;
+      }
+      if (!appleOriginal && (state === "working" || state === "waiting" || state === "broken")) {
+        const r = sys.run({ cmd: "osascript", args: ["-"], input: appleReadBgScript(a.tty) });
+        if (r.ok && parseRgb16(r.out))
+          appleOriginal = r.out.trim();
+      }
+      const orig = appleOriginal ? parseRgb16(appleOriginal) : null;
+      if (!orig)
+        continue;
+      ok = sys.run({ cmd: "osascript", args: ["-"], input: appleSetBgScript(a.tty, appleTint(orig, state)) }).ok && ok;
+    }
+  }
+  if (restored)
+    return { ok, restored };
+  return { ok, appleOriginal };
+}
+var appleTintOn = (env = process.env) => /^(1|true|yes|on)$/i.test(env.CROSSTALK_TAB_COLOUR ?? env.CROSSTALK_TAB_COLOR ?? "");
+var appleProfileBgScript = (tty) => appleTab(tty, [`set n to name of current settings of t`, `set background color of t to background color of settings set n`, `return "done"`]);
+var appleProfileBgAllScript = [
+  `if application "Terminal" is not running then return "0"`,
+  `set c to 0`,
+  `tell application "Terminal"`,
+  `	repeat with w in windows`,
+  `		repeat with t in tabs of w`,
+  `			try`,
+  `				set want to background color of settings set (name of current settings of t)`,
+  `				if (background color of t) is not want then`,
+  `					set background color of t to want`,
+  `					set c to c + 1`,
+  `				end if`,
+  `			end try`,
+  `		end repeat`,
+  `	end repeat`,
+  `end tell`,
+  `return c as text`
+].join(`
+`);
+async function applyLoop(id, sys = liveSys3(), sleep = (ms) => new Promise((r) => setTimeout(r, ms))) {
+  const lock = `${fileOf4(id)}.applier`;
+  const take = () => {
+    try {
+      fs70.mkdirSync(dir7(), { recursive: true, mode: 448 });
+      fs70.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
+      return true;
+    } catch {
+      try {
+        const other = Number(fs70.readFileSync(lock, "utf8"));
+        if (other && pidAlive(other) && other !== process.pid)
+          return false;
+        fs70.unlinkSync(lock);
+        fs70.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  };
+  let last = "idle";
+  for (let round = 0;round < 3; round++) {
+    if (!take())
+      return "already applying";
+    try {
+      for (let i = 0;i < 200; i++) {
+        const f = readTab(id);
+        const d = decide3(f, Date.now());
+        if (d.act === "idle")
+          break;
+        if (d.act === "wait") {
+          await sleep(d.ms);
+          continue;
+        }
+        const state = f.want;
+        const r = applyOnce(id, state, f, sys);
+        last = `${state}${r.ok ? "" : " (partly)"}`;
+        withFile(id, (cur) => {
+          if (!cur)
+            return;
+          if (state === "off" && cur.want === "off") {
+            try {
+              fs70.unlinkSync(fileOf4(id));
+            } catch {}
+            return;
+          }
+          const next = { ...cur, applied: state, appliedAt: Date.now(), ...r.appleOriginal ? { appleOriginal: r.appleOriginal } : {} };
+          if (r.restored)
+            delete next.appleOriginal;
+          writeTab(next);
+        });
+      }
+    } finally {
+      try {
+        if (Number(fs70.readFileSync(lock, "utf8")) === process.pid)
+          fs70.unlinkSync(lock);
+      } catch {}
+    }
+    if (decide3(readTab(id), Date.now(), 0).act === "idle")
+      break;
+  }
+  return last;
+}
+var TMUX_SNIPPET = [
+  `# crosstalk: show each agent's state in the window list`,
+  `set -ga window-status-format ' #{?#{==:#{@crosstalk_state},broken},#[fg=colour160]\u25cf broken#[default],#{?#{==:#{@crosstalk_state},waiting},#[fg=colour208]\u25cf waiting#[default],#{?#{==:#{@crosstalk_state},working},#[fg=colour33]\u25cf working#[default],#{?#{==:#{@crosstalk_state},done},#[fg=colour34]\u2713#[default],}}}}'`,
+  `set -ga window-status-current-format ' #{?#{==:#{@crosstalk_state},broken},#[fg=colour160]\u25cf broken#[default],#{?#{==:#{@crosstalk_state},waiting},#[fg=colour208]\u25cf waiting#[default],#{?#{==:#{@crosstalk_state},working},#[fg=colour33]\u25cf working#[default],#{?#{==:#{@crosstalk_state},done},#[fg=colour34]\u2713#[default],}}}}'`
+].join(`
+`);
+
 // src/sessions/control.ts
 function liveDeps(env = process.env) {
   return {
@@ -17137,7 +17465,7 @@ function liveDeps(env = process.env) {
     sys: liveSys2(),
     open: openForRepo,
     run: (s) => {
-      const r = spawnSync21(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 30000, env: cleanEnv(env) });
+      const r = spawnSync22(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 30000, env: cleanEnv(env) });
       return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
     },
     which: (bin) => which5(bin, env),
@@ -17146,18 +17474,18 @@ function liveDeps(env = process.env) {
   };
 }
 function which5(bin, env) {
-  for (const d of (env.PATH ?? "").split(path81.delimiter)) {
+  for (const d of (env.PATH ?? "").split(path82.delimiter)) {
     if (!d)
       continue;
-    const p = path81.join(d, bin);
+    const p = path82.join(d, bin);
     try {
-      fs70.accessSync(p, fs70.constants.X_OK);
+      fs71.accessSync(p, fs71.constants.X_OK);
       return p;
     } catch {}
   }
   return;
 }
-var label3 = (r) => nameOf2(r.sessionId) ?? (r.name && !/^session-\d+$/.test(r.name) ? r.name : path81.basename(r.cwd) || r.sessionId.slice(0, 8));
+var label3 = (r) => nameOf2(r.sessionId) ?? (r.name && !/^session-\d+$/.test(r.name) ? r.name : path82.basename(r.cwd) || r.sessionId.slice(0, 8));
 async function liveSessions(d, recs = readAll(), alive = recAlive) {
   let byId = new Map;
   try {
@@ -17194,7 +17522,7 @@ function questionFor(a, target, svc = [], busy = []) {
   if (a.kind === "tidy")
     return tidyQuestion(a);
   if (a.kind === "spawn")
-    return `Start ${a.count && a.count > 1 ? `${a.count} agents` : "an agent"} in ${path81.basename(a.cwd)}: "${a.task.length > 120 ? a.task.slice(0, 119) + "\u2026" : a.task}"?`;
+    return `Start ${a.count && a.count > 1 ? `${a.count} agents` : "an agent"} in ${path82.basename(a.cwd)}: "${a.task.length > 120 ? a.task.slice(0, 119) + "\u2026" : a.task}"?`;
   switch (a.kind) {
     case "close":
       return `Close ${n}?${keepsLine(svc, a.services === "stop")}${interruptsLine(busy)}`;
@@ -17221,11 +17549,11 @@ function describeRemote(r) {
   }
 }
 var sessId = () => `sess:${crypto27.randomBytes(6).toString("hex")}`;
-var pendingDir = () => path81.join(P2.root, "sessions", "pending");
-var pendingFile = (id) => path81.join(pendingDir(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+var pendingDir = () => path82.join(P2.root, "sessions", "pending");
+var pendingFile = (id) => path82.join(pendingDir(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
 function writePending(p) {
-  fs70.mkdirSync(pendingDir(), { recursive: true, mode: 448 });
-  fs70.writeFileSync(pendingFile(p.id), JSON.stringify(p), { mode: 384 });
+  fs71.mkdirSync(pendingDir(), { recursive: true, mode: 448 });
+  fs71.writeFileSync(pendingFile(p.id), JSON.stringify(p), { mode: 384 });
 }
 function raise(o, now = Date.now()) {
   const id = sessId();
@@ -17289,7 +17617,7 @@ Which one? Say its id.` };
   const argv = resumeArgv({ client: p.client, sessionId: p.id }, d.which(p.client));
   if (!argv)
     return { ok: false, text: `\u25e2 crosstalk: ${p.client} sessions cannot be resumed.` };
-  const name = p.title || path81.basename(p.cwd);
+  const name = p.title || path82.basename(p.cwd);
   if (o.background) {
     if (!d.which("tmux"))
       return { ok: false, text: "\u25e2 crosstalk: the background runs in tmux, which is not installed here." };
@@ -17317,8 +17645,8 @@ Which one? Say its id.` };
 
 // src/sessions/remote.ts
 import crypto28 from "node:crypto";
-import fs71 from "node:fs";
-import path82 from "node:path";
+import fs72 from "node:fs";
+import path83 from "node:path";
 var LIMITS = { perMinute: 20, actsPer10Min: 6 };
 var isOwn = (p) => !!p && p.own === true && !p.isMachine;
 
@@ -17491,7 +17819,7 @@ class SessionsRemote {
       if (!cwd || known.has(cwd))
         return;
       try {
-        if (!fs71.statSync(cwd).isDirectory())
+        if (!fs72.statSync(cwd).isDirectory())
           return;
       } catch {
         return;
@@ -17519,7 +17847,7 @@ class SessionsRemote {
         return { ok: true, cwd: [...repos.values()][0] };
       return { ok: false, error: `say which repository: ${[...repos.keys()].join(", ")}` };
     }
-    const hit = repos.get(want) ?? [...known].find(([cwd]) => slug2(path82.basename(cwd)) === want)?.[0];
+    const hit = repos.get(want) ?? [...known].find(([cwd]) => slug2(path83.basename(cwd)) === want)?.[0];
     return hit ? { ok: true, cwd: hit } : { ok: false, error: `no repository called ${repo} on ${this.d.machine()}: ${[...repos.keys()].join(", ")}` };
   }
 }
@@ -17605,38 +17933,38 @@ function createSessionOps(d) {
 }
 
 // src/services/service.ts
-import fs72 from "node:fs";
-import path83 from "node:path";
-import { spawn as spawn10, spawnSync as spawnSync22 } from "node:child_process";
+import fs73 from "node:fs";
+import path84 from "node:path";
+import { spawn as spawn11, spawnSync as spawnSync23 } from "node:child_process";
 var TMUX_SESSION2 = "crosstalk-services";
-var dir7 = () => path83.join(P2.root, "services");
-var fileOf4 = (id) => path83.join(dir7(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
-var statusFile2 = (id) => path83.join(dir7(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.exit`);
+var dir8 = () => path84.join(P2.root, "services");
+var fileOf5 = (id) => path84.join(dir8(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+var statusFile2 = (id) => path84.join(dir8(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.exit`);
 function readAll3() {
   let names;
   try {
-    names = fs72.readdirSync(dir7()).filter((f) => f.endsWith(".json"));
+    names = fs73.readdirSync(dir8()).filter((f) => f.endsWith(".json"));
   } catch {
     return [];
   }
   const out = [];
   for (const f of names)
     try {
-      const s = JSON.parse(fs72.readFileSync(path83.join(dir7(), f), "utf8"));
+      const s = JSON.parse(fs73.readFileSync(path84.join(dir8(), f), "utf8"));
       if (s?.id && s.root && s.name)
         out.push(s);
     } catch {}
   return out.sort((a, b) => a.startedAt - b.startedAt);
 }
 function write5(s) {
-  fs72.mkdirSync(dir7(), { recursive: true, mode: 448 });
-  const tmp = `${fileOf4(s.id)}.${process.pid}.tmp`;
-  fs72.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
-  fs72.renameSync(tmp, fileOf4(s.id));
+  fs73.mkdirSync(dir8(), { recursive: true, mode: 448 });
+  const tmp = `${fileOf5(s.id)}.${process.pid}.tmp`;
+  fs73.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
+  fs73.renameSync(tmp, fileOf5(s.id));
 }
 var tmux2 = (args) => {
   try {
-    const r = spawnSync22("tmux", ["-L", TMUX_SOCKET, ...args], { encoding: "utf8", timeout: 1e4, env: cleanEnv(process.env) });
+    const r = spawnSync23("tmux", ["-L", TMUX_SOCKET, ...args], { encoding: "utf8", timeout: 1e4, env: cleanEnv(process.env) });
     return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.status === 0 ? "" : r.stderr ?? ""}`.trim() };
   } catch (e) {
     return { ok: false, out: String(e) };
@@ -17658,12 +17986,12 @@ function tmuxWindows2(t = tmux2) {
 function aliveProc2(pid, start) {
   if (!pidAlive(pid, start))
     return false;
-  const r = spawnSync22("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+  const r = spawnSync23("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
   if (r.status !== 0)
     return r.error ? true : false;
   return !r.stdout.trim().startsWith("Z");
 }
-var sleepSync7 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+var sleepSync8 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 var liveLook2 = () => {
   let w;
   let t;
@@ -17694,7 +18022,7 @@ function state2(s, look, withPorts = true) {
   const h = headPid2(s, look);
   let exit;
   try {
-    exit = fs72.readFileSync(statusFile2(s.id), "utf8").trim();
+    exit = fs73.readFileSync(statusFile2(s.id), "utf8").trim();
   } catch {}
   const st = s.stoppedAt ? "stopped" : h ? "running" : "exited";
   const pids = withPorts && h ? new Set(pidsOf2(s, look)) : new Set;
@@ -17713,7 +18041,7 @@ function stopOne2(s, o = {}) {
   const wait = o.waitMs ?? STOP_MS2();
   const gone = () => !pidsOf2(s, fresh()).some((p) => aliveProc2(p));
   const until = (ms) => {
-    for (const end = Date.now() + ms;Date.now() < end; sleepSync7(100))
+    for (const end = Date.now() + ms;Date.now() < end; sleepSync8(100))
       if (gone())
         return true;
     return gone();
@@ -17761,9 +18089,9 @@ setServices({
 });
 
 // src/urls/liveness.ts
-import { spawnSync as spawnSync23 } from "node:child_process";
-import fs73 from "node:fs";
-import path84 from "node:path";
+import { spawnSync as spawnSync24 } from "node:child_process";
+import fs74 from "node:fs";
+import path85 from "node:path";
 var liveEvery = () => Number(process.env.CROSSTALK_URL_CHECK_MS ?? 30000);
 var IDLE_MS = 5 * 60000;
 var PREVIEW_MS = 5 * 60000;
@@ -17808,11 +18136,11 @@ function gh() {
   if (ghPath !== undefined)
     return ghPath;
   ghPath = null;
-  for (const d of (process.env.PATH ?? "").split(path84.delimiter))
+  for (const d of (process.env.PATH ?? "").split(path85.delimiter))
     try {
       if (d) {
-        fs73.accessSync(path84.join(d, "gh"), fs73.constants.X_OK);
-        ghPath = path84.join(d, "gh");
+        fs74.accessSync(path85.join(d, "gh"), fs74.constants.X_OK);
+        ghPath = path85.join(d, "gh");
         break;
       }
     } catch {}
@@ -17822,7 +18150,7 @@ var ghState = (url, cwd) => {
   const bin = gh();
   if (!bin)
     return;
-  const r = spawnSync23(bin, ["pr", "view", url, "--json", "state"], { encoding: "utf8", timeout: 20000, ...cwd && fs73.existsSync(cwd) ? { cwd } : {} });
+  const r = spawnSync24(bin, ["pr", "view", url, "--json", "state"], { encoding: "utf8", timeout: 20000, ...cwd && fs74.existsSync(cwd) ? { cwd } : {} });
   if (r.status !== 0)
     return;
   try {
@@ -17937,7 +18265,7 @@ async function createUrls(o) {
 import crypto31 from "node:crypto";
 
 // src/urls/tools.ts
-import { spawn as spawn11 } from "node:child_process";
+import { spawn as spawn12 } from "node:child_process";
 function gather(o) {
   const store = urls();
   try {
@@ -17971,7 +18299,7 @@ var openInBrowser = (url) => {
     return false;
   const cmd = process.env.CROSSTALK_OPEN_URL_CMD ?? (process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open");
   try {
-    const c = spawn11(cmd, [url], { detached: true, stdio: "ignore" });
+    const c = spawn12(cmd, [url], { detached: true, stdio: "ignore" });
     c.on("error", () => {});
     c.unref();
     return true;
@@ -18333,13 +18661,13 @@ function label4(o, now = Date.now()) {
 }
 
 // src/share/store.ts
-import fs74 from "node:fs";
-import path85 from "node:path";
+import fs75 from "node:fs";
+import path86 from "node:path";
 var KEEP_ENDED_MS = 7 * 24 * 60 * 60000;
-var file14 = () => path85.join(P2.root, "shares.json");
+var file14 = () => path86.join(P2.root, "shares.json");
 function read5(f = file14()) {
   try {
-    const raw = JSON.parse(fs74.readFileSync(f, "utf8"));
+    const raw = JSON.parse(fs75.readFileSync(f, "utf8"));
     return { v: 1, out: Array.isArray(raw?.out) ? raw.out : [], in: Array.isArray(raw?.in) ? raw.in : [] };
   } catch {
     return { v: 1, out: [], in: [] };
@@ -18348,10 +18676,10 @@ function read5(f = file14()) {
 function write6(s, f = file14(), now = Date.now()) {
   const keep = (x) => !x.ended || now - (x.endedAt ?? x.revokedAt ?? x.expiresAt) < KEEP_ENDED_MS;
   const out = { v: 1, out: s.out.filter(keep), in: s.in.filter(keep) };
-  fs74.mkdirSync(path85.dirname(f), { recursive: true, mode: 448 });
+  fs75.mkdirSync(path86.dirname(f), { recursive: true, mode: 448 });
   const tmp = `${f}.${process.pid}.tmp`;
-  fs74.writeFileSync(tmp, JSON.stringify(out, null, 1), { mode: 384 });
-  fs74.renameSync(tmp, f);
+  fs75.writeFileSync(tmp, JSON.stringify(out, null, 1), { mode: 384 });
+  fs75.renameSync(tmp, f);
 }
 var active = (x, now = Date.now()) => !x.ended && x.expiresAt > now;
 
@@ -18940,14 +19268,14 @@ class ShareViewer {
 }
 
 // src/share/public.ts
-import path87 from "node:path";
+import path88 from "node:path";
 
 // src/tunnel.ts
-import { spawn as spawn12, execFileSync as execFileSync4 } from "node:child_process";
-import fs75 from "node:fs";
-import path86 from "node:path";
-var BIN_DIR = path86.join(ROOT2, "bin");
-var LOCAL_BIN = path86.join(BIN_DIR, "cloudflared");
+import { spawn as spawn13, execFileSync as execFileSync4 } from "node:child_process";
+import fs76 from "node:fs";
+import path87 from "node:path";
+var BIN_DIR = path87.join(ROOT2, "bin");
+var LOCAL_BIN = path87.join(BIN_DIR, "cloudflared");
 function onPath() {
   for (const candidate of [LOCAL_BIN, "cloudflared"]) {
     try {
@@ -18959,9 +19287,9 @@ function onPath() {
 }
 var tunnelBinary = () => onPath();
 async function openTunnel(bin, port, logPath, timeoutMs = 60000, o = {}) {
-  fs75.writeFileSync(logPath, "");
-  const out = fs75.openSync(logPath, "a");
-  const child = spawn12(bin, ["tunnel", "--no-autoupdate", "--config", "/dev/null", "--url", `http://127.0.0.1:${port}`], {
+  fs76.writeFileSync(logPath, "");
+  const out = fs76.openSync(logPath, "a");
+  const child = spawn13(bin, ["tunnel", "--no-autoupdate", "--config", "/dev/null", "--url", `http://127.0.0.1:${port}`], {
     detached: true,
     stdio: ["ignore", out, out]
   });
@@ -18984,7 +19312,7 @@ async function openTunnel(bin, port, logPath, timeoutMs = 60000, o = {}) {
   let found = null;
   while (Date.now() < deadline) {
     try {
-      found = fs75.readFileSync(logPath, "utf8").match(/https:\/\/([a-z0-9-]+)\.trycloudflare\.com/i);
+      found = fs76.readFileSync(logPath, "utf8").match(/https:\/\/([a-z0-9-]+)\.trycloudflare\.com/i);
     } catch {}
     if (found)
       break;
@@ -18992,7 +19320,7 @@ async function openTunnel(bin, port, logPath, timeoutMs = 60000, o = {}) {
   }
   if (!found) {
     stop();
-    const asked = fs75.readFileSync(logPath, "utf8").includes("Requesting new quick Tunnel");
+    const asked = fs76.readFileSync(logPath, "utf8").includes("Requesting new quick Tunnel");
     throw new Error(asked ? `Cloudflare would not issue a tunnel. See ${logPath}
 
 ` + `It logged the request and never answered with a hostname, which is what
@@ -19026,7 +19354,7 @@ async function openPublic(port, id) {
   if (!bin)
     return { error: "a public link needs cloudflared installed (brew install cloudflared); crosstalk never downloads it. Sharing with people over crosstalk needs nothing." };
   try {
-    const t = await openTunnel(bin, port, path87.join(P2.root, `share-${id}.tunnel.log`), 60000, {
+    const t = await openTunnel(bin, port, path88.join(P2.root, `share-${id}.tunnel.log`), 60000, {
       probe: async (host) => {
         const r = await fetch(`https://${host}/`, { method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(1e4) });
         return r.status > 0 && r.status !== 502 && r.status !== 530;
@@ -19701,315 +20029,6 @@ function createStreamGate(d) {
 import fs77 from "node:fs";
 import path89 from "node:path";
 
-// src/terminal/status.ts
-import fs76 from "node:fs";
-import path88 from "node:path";
-import { spawn as spawn13, spawnSync as spawnSync24 } from "node:child_process";
-
-// src/attention/osc7501.ts
-var enabled2 = (env = process.env) => env.CROSSTALK_OSC7501 === "1";
-function reads7501(t) {
-  if (t.tmux)
-    return false;
-  const p = (t.program ?? "").toLowerCase();
-  return p === "ghostty" || p.startsWith("rex");
-}
-function sequence(state, id = "crosstalk") {
-  const s = state === "working" ? "state=working" : state === "waiting" ? "state=blocked:kind=question" : state === "broken" ? "state=blocked:kind=error" : state === "done" ? "state=done" : "state=idle";
-  return `\x1B]7501;${s}:app=crosstalk:id=${id.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32) || "crosstalk"}\x1B\\`;
-}
-
-// src/terminal/status.ts
-var COLOUR = {
-  working: [47, 111, 214],
-  waiting: [229, 140, 10],
-  done: [46, 160, 67],
-  broken: [214, 48, 49]
-};
-var hex = ([r, g, b]) => `#${[r, g, b].map((n) => n.toString(16).padStart(2, "0")).join("")}`;
-var b644 = (s) => Buffer.from(s, "utf8").toString("base64");
-function itermTabColour(state) {
-  if (state === "off")
-    return `\x1B]6;1;bg;*;default\x07`;
-  const [r, g, b] = COLOUR[state];
-  return `\x1B]6;1;bg;red;brightness;${r}\x07\x1B]6;1;bg;green;brightness;${g}\x07\x1B]6;1;bg;blue;brightness;${b}\x07`;
-}
-var userVar = (state) => `\x1B]1337;SetUserVar=crosstalk_state=${state === "off" ? "" : b644(state)}\x07`;
-var TMUX_OPTION = "@crosstalk_state";
-function tmuxActions(t, state) {
-  const S = t.socket ? ["-S", t.socket] : [];
-  const set = state === "off" ? ["set-option", "-w", "-u", "-t", t.pane, TMUX_OPTION] : ["set-option", "-w", "-t", t.pane, TMUX_OPTION, state];
-  return [
-    { kind: "run", step: { cmd: "tmux", args: [...S, ...set] } },
-    { kind: "run", step: { cmd: "tmux", args: [...S, "refresh-client", "-S"] }, optional: true }
-  ];
-}
-function kittyActions(k, state) {
-  if (!k.window || !k.listenOn)
-    return [];
-  const c = state === "off" ? "NONE" : hex(COLOUR[state]);
-  return [
-    { kind: "run", step: { cmd: "kitten", args: ["@", "--to", k.listenOn, "set-tab-color", "--match", `window_id:${k.window}`, `active_bg=${c}`, `inactive_bg=${c}`] } },
-    { kind: "run", step: { cmd: "kitten", args: ["@", "--to", k.listenOn, "set-user-vars", "--match", `id:${k.window}`, `crosstalk_state=${state === "off" ? "" : state}`] }, optional: true }
-  ];
-}
-function actionsFor(t, state, platform = process.platform) {
-  if (t.tmux?.pane)
-    return tmuxActions(t.tmux, state);
-  const out = [];
-  const k = kindOf(t);
-  if (k === "kitty" && t.kitty)
-    out.push(...kittyActions(t.kitty, state));
-  else if (k === "iterm" && t.tty)
-    out.push({ kind: "tty", path: t.tty, data: itermTabColour(state) + userVar(state) });
-  else if (k === "wezterm" && t.tty)
-    out.push({ kind: "tty", path: t.tty, data: userVar(state) });
-  else if (k === "apple" && t.tty && platform === "darwin")
-    out.push({ kind: "apple", tty: t.tty });
-  if (enabled2() && reads7501(t) && t.tty)
-    out.push({ kind: "tty", path: t.tty, data: sequence(state) });
-  return out;
-}
-var appleTab = (tty, body) => [
-  `if application "Terminal" is running then`,
-  `	tell application "Terminal"`,
-  `		repeat with w in windows`,
-  `			repeat with t in tabs of w`,
-  `				if (tty of t) is ${asq(tty)} then`,
-  ...body.map((l) => `					${l}`),
-  `				end if`,
-  `			end repeat`,
-  `		end repeat`,
-  `	end tell`,
-  `end if`,
-  `return ""`
-].join(`
-`);
-var appleReadBgScript = (tty) => appleTab(tty, [`set c to background color of t`, `return ((item 1 of c) as text) & "," & ((item 2 of c) as text) & "," & ((item 3 of c) as text)`]);
-var appleSetBgScript = (tty, c) => appleTab(tty, [`set background color of t to {${c.map((n) => Math.round(n)).join(", ")}}`, `return "done"`]);
-function parseRgb16(s) {
-  const m = /^(\d+),(\d+),(\d+)$/.exec(s.trim());
-  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
-}
-function appleTint(original, state, amount = 0.25) {
-  if (state === "off" || state === "done")
-    return original;
-  const target = COLOUR[state].map((n) => n * 257);
-  return original.map((o, i) => Math.round(o + (target[i] - o) * amount));
-}
-var dir8 = () => path88.join(P2.root, "tabs");
-var safe4 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
-var fileOf5 = (id) => path88.join(dir8(), `${safe4(id)}.json`);
-function readTab(id) {
-  try {
-    return JSON.parse(fs76.readFileSync(fileOf5(id), "utf8"));
-  } catch {
-    return null;
-  }
-}
-function writeTab(f) {
-  fs76.mkdirSync(dir8(), { recursive: true, mode: 448 });
-  const tmp = `${fileOf5(f.sessionId)}.${process.pid}.tmp`;
-  fs76.writeFileSync(tmp, JSON.stringify(f), { mode: 384 });
-  fs76.renameSync(tmp, fileOf5(f.sessionId));
-}
-var sleepSync8 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-function withFile(id, fn) {
-  fs76.mkdirSync(dir8(), { recursive: true, mode: 448 });
-  const lock = `${fileOf5(id)}.lock`;
-  let held = false;
-  for (let i = 0;i < 50 && !held; i++) {
-    try {
-      fs76.mkdirSync(lock);
-      held = true;
-    } catch {
-      try {
-        if (Date.now() - fs76.statSync(lock).mtimeMs > 5000)
-          fs76.rmdirSync(lock);
-      } catch {}
-      sleepSync8(5);
-    }
-  }
-  try {
-    return fn(readTab(id));
-  } finally {
-    if (held)
-      try {
-        fs76.rmdirSync(lock);
-      } catch {}
-  }
-}
-var MIN_GAP_MS = () => Number(process.env.CROSSTALK_TAB_GAP_MS ?? 750);
-function decide3(f, now, gap = MIN_GAP_MS()) {
-  if (!f || f.applied === f.want)
-    return { act: "idle" };
-  if (f.appliedAt !== undefined && now - f.appliedAt < gap)
-    return { act: "wait", ms: gap - (now - f.appliedAt) };
-  return { act: "apply" };
-}
-function setBroken(o) {
-  const now = o.now ?? Date.now();
-  const changed = withFile(o.sessionId, (f) => {
-    if (!o.what && !f?.broken)
-      return false;
-    const base = f?.base ?? (f?.want && f.want !== "broken" ? f.want : "done");
-    if (o.what) {
-      if (f?.broken === o.what && f.want === "broken")
-        return false;
-      writeTab({ ...f ?? { sessionId: o.sessionId }, sessionId: o.sessionId, broken: o.what.slice(0, 200), base, want: "broken", wantAt: now });
-      return f?.want !== "broken";
-    }
-    const next = { ...f, base, want: base, wantAt: now };
-    delete next.broken;
-    writeTab(next);
-    return f.want !== base;
-  });
-  if (changed)
-    startApplier(o.sessionId, o.root);
-  return changed;
-}
-function startApplier(id, root) {
-  if (process.env.CROSSTALK_TERM_SYNC) {
-    applyLoop(id);
-    return;
-  }
-  try {
-    const child = spawn13(shim(root), ["term", "apply", "--session", id], { detached: true, stdio: "ignore" });
-    child.on("error", () => {});
-    child.unref();
-  } catch {}
-}
-var liveSys3 = () => ({
-  platform: process.platform,
-  run: (s) => {
-    const r = spawnSync24(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 5000 });
-    return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}`.trim() };
-  },
-  writeTty: (p, data) => {
-    let fd = -1;
-    try {
-      fd = fs76.openSync(p, fs76.constants.O_WRONLY | fs76.constants.O_NOCTTY | fs76.constants.O_NONBLOCK);
-      return fs76.writeSync(fd, data) === Buffer.byteLength(data);
-    } catch {
-      return false;
-    } finally {
-      if (fd >= 0)
-        fs76.closeSync(fd);
-    }
-  },
-  term: (id) => readOne(id)?.terminal ?? null
-});
-function applyOnce(id, state, f, sys) {
-  const t = sys.term(id);
-  if (!t)
-    return { ok: false };
-  let ok = true;
-  let restored = false;
-  let appleOriginal = f?.appleOriginal;
-  for (const a of actionsFor(t, state, sys.platform)) {
-    if (a.kind === "run") {
-      const r = sys.run(a.step);
-      if (!r.ok && !a.optional)
-        ok = false;
-    } else if (a.kind === "tty")
-      ok = sys.writeTty(a.path, a.data) && ok;
-    else {
-      if (!appleTintOn()) {
-        const orig = appleOriginal ? parseRgb16(appleOriginal) : null;
-        if (!orig)
-          continue;
-        const back = sys.run({ cmd: "osascript", args: ["-"], input: appleSetBgScript(a.tty, orig) }).ok;
-        if (back)
-          restored = true;
-        ok = back && ok;
-        continue;
-      }
-      if (!appleOriginal && (state === "working" || state === "waiting" || state === "broken")) {
-        const r = sys.run({ cmd: "osascript", args: ["-"], input: appleReadBgScript(a.tty) });
-        if (r.ok && parseRgb16(r.out))
-          appleOriginal = r.out.trim();
-      }
-      const orig = appleOriginal ? parseRgb16(appleOriginal) : null;
-      if (!orig)
-        continue;
-      ok = sys.run({ cmd: "osascript", args: ["-"], input: appleSetBgScript(a.tty, appleTint(orig, state)) }).ok && ok;
-    }
-  }
-  if (restored)
-    return { ok, restored };
-  return { ok, appleOriginal };
-}
-var appleTintOn = (env = process.env) => /^(1|true|yes|on)$/i.test(env.CROSSTALK_TAB_COLOUR ?? env.CROSSTALK_TAB_COLOR ?? "");
-async function applyLoop(id, sys = liveSys3(), sleep = (ms) => new Promise((r) => setTimeout(r, ms))) {
-  const lock = `${fileOf5(id)}.applier`;
-  const take = () => {
-    try {
-      fs76.mkdirSync(dir8(), { recursive: true, mode: 448 });
-      fs76.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
-      return true;
-    } catch {
-      try {
-        const other = Number(fs76.readFileSync(lock, "utf8"));
-        if (other && pidAlive(other) && other !== process.pid)
-          return false;
-        fs76.unlinkSync(lock);
-        fs76.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
-        return true;
-      } catch {
-        return false;
-      }
-    }
-  };
-  let last = "idle";
-  for (let round = 0;round < 3; round++) {
-    if (!take())
-      return "already applying";
-    try {
-      for (let i = 0;i < 200; i++) {
-        const f = readTab(id);
-        const d = decide3(f, Date.now());
-        if (d.act === "idle")
-          break;
-        if (d.act === "wait") {
-          await sleep(d.ms);
-          continue;
-        }
-        const state = f.want;
-        const r = applyOnce(id, state, f, sys);
-        last = `${state}${r.ok ? "" : " (partly)"}`;
-        withFile(id, (cur) => {
-          if (!cur)
-            return;
-          if (state === "off" && cur.want === "off") {
-            try {
-              fs76.unlinkSync(fileOf5(id));
-            } catch {}
-            return;
-          }
-          const next = { ...cur, applied: state, appliedAt: Date.now(), ...r.appleOriginal ? { appleOriginal: r.appleOriginal } : {} };
-          if (r.restored)
-            delete next.appleOriginal;
-          writeTab(next);
-        });
-      }
-    } finally {
-      try {
-        if (Number(fs76.readFileSync(lock, "utf8")) === process.pid)
-          fs76.unlinkSync(lock);
-      } catch {}
-    }
-    if (decide3(readTab(id), Date.now(), 0).act === "idle")
-      break;
-  }
-  return last;
-}
-var TMUX_SNIPPET = [
-  `# crosstalk: show each agent's state in the window list`,
-  `set -ga window-status-format ' #{?#{==:#{@crosstalk_state},broken},#[fg=colour160]\u25cf broken#[default],#{?#{==:#{@crosstalk_state},waiting},#[fg=colour208]\u25cf waiting#[default],#{?#{==:#{@crosstalk_state},working},#[fg=colour33]\u25cf working#[default],#{?#{==:#{@crosstalk_state},done},#[fg=colour34]\u2713#[default],}}}}'`,
-  `set -ga window-status-current-format ' #{?#{==:#{@crosstalk_state},broken},#[fg=colour160]\u25cf broken#[default],#{?#{==:#{@crosstalk_state},waiting},#[fg=colour208]\u25cf waiting#[default],#{?#{==:#{@crosstalk_state},working},#[fg=colour33]\u25cf working#[default],#{?#{==:#{@crosstalk_state},done},#[fg=colour34]\u2713#[default],}}}}'`
-].join(`
-`);
-
 // src/urls/health/machine.ts
 var cfg = () => ({
   crashWindowMs: Number(process.env.CROSSTALK_HEALTH_CRASH_WINDOW_MS ?? 1e4),
@@ -20379,26 +20398,6 @@ function startHistory(o) {
 import fs79 from "node:fs";
 import path91 from "node:path";
 import { spawn as spawn14, spawnSync as spawnSync25 } from "node:child_process";
-var appleTab2 = (tty, body) => [
-  `if application "Terminal" is running then`,
-  `	tell application "Terminal"`,
-  `		repeat with w in windows`,
-  `			repeat with t in tabs of w`,
-  `				if (tty of t) is ${asq(tty)} then`,
-  ...body.map((l) => `					${l}`),
-  `				end if`,
-  `			end repeat`,
-  `		end repeat`,
-  `	end tell`,
-  `end if`,
-  `return ""`
-].join(`
-`);
-var appleSetBgScript2 = (tty, c) => appleTab2(tty, [`set background color of t to {${c.map((n) => Math.round(n)).join(", ")}}`, `return "done"`]);
-function parseRgb162(s) {
-  const m = /^(\d+),(\d+),(\d+)$/.exec(s.trim());
-  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
-}
 var dir9 = () => path91.join(P2.root, "tabs");
 var safe5 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
 var fileOf6 = (id) => path91.join(dir9(), `${safe5(id)}.json`);
@@ -20462,35 +20461,49 @@ var liveSys4 = () => ({
   term: (id) => readOne(id)?.terminal ?? null
 });
 var appleTintOn2 = (env = process.env) => /^(1|true|yes|on)$/i.test(env.CROSSTALK_TAB_COLOUR ?? env.CROSSTALK_TAB_COLOR ?? "");
-function resetColours(sys = liveSys4()) {
-  const reset = [];
-  const failed = [];
+var appleProfileBgAllScript2 = [
+  `if application "Terminal" is not running then return "0"`,
+  `set c to 0`,
+  `tell application "Terminal"`,
+  `	repeat with w in windows`,
+  `		repeat with t in tabs of w`,
+  `			try`,
+  `				set want to background color of settings set (name of current settings of t)`,
+  `				if (background color of t) is not want then`,
+  `					set background color of t to want`,
+  `					set c to c + 1`,
+  `				end if`,
+  `			end try`,
+  `		end repeat`,
+  `	end repeat`,
+  `end tell`,
+  `return c as text`
+].join(`
+`);
+function resetColours2(sys = liveSys4()) {
+  let reset = 0;
+  let ok = true;
+  if (sys.platform === "darwin") {
+    const r = sys.run({ cmd: "osascript", args: ["-"], input: appleProfileBgAllScript2 });
+    ok = r.ok;
+    reset = r.ok ? Number(r.out.trim()) || 0 : 0;
+  }
   let names = [];
   try {
     names = fs79.readdirSync(dir9()).filter((n) => n.endsWith(".json"));
   } catch {}
   for (const n of names) {
-    let f = null;
+    const id = n.slice(0, -5);
     try {
-      f = JSON.parse(fs79.readFileSync(path91.join(dir9(), n), "utf8"));
+      withFile2(id, (cur) => {
+        if (!cur?.appleOriginal)
+          return;
+        const { appleOriginal: _, ...rest } = cur;
+        writeTab2(rest);
+      });
     } catch {}
-    const orig = f?.appleOriginal ? parseRgb162(f.appleOriginal) : null;
-    const t = f ? sys.term(f.sessionId) : null;
-    if (!f || !orig || !t?.tty || kindOf(t) !== "apple" || sys.platform !== "darwin")
-      continue;
-    if (!sys.run({ cmd: "osascript", args: ["-"], input: appleSetBgScript2(t.tty, orig) }).ok) {
-      failed.push(f.sessionId);
-      continue;
-    }
-    reset.push(f.sessionId);
-    withFile2(f.sessionId, (cur) => {
-      if (!cur)
-        return;
-      const { appleOriginal: _, ...rest } = cur;
-      writeTab2(rest);
-    });
   }
-  return { reset, failed };
+  return { reset, ok };
 }
 var TMUX_SNIPPET2 = [
   `# crosstalk: show each agent's state in the window list`,
@@ -22699,9 +22712,9 @@ setInterval(() => attention?.tick(), Math.max(200, Number(process.env.CROSSTALK_
 if (process.platform === "darwin" && !appleTintOn2())
   setTimeout(() => {
     try {
-      const r = resetColours();
-      if (r.reset.length)
-        log(`terminal: put back ${r.reset.length} tab background(s)`);
+      const r = resetColours2();
+      if (r.reset)
+        log(`terminal: ${r.reset} tab background(s) back to their profile's`);
     } catch {}
   }, 2000).unref();
 fs80.mkdirSync(path92.dirname(P.daemonSock), { recursive: true, mode: 448 });
