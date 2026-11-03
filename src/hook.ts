@@ -436,7 +436,7 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
       const kept = thread ? ` Kept as tasks in ${thread}.` : ""
       if (ui.modActive(sessionId))
         ui.withStore((items, now) =>
-          ui.upsert(items, { id: `open:${sessionId}:${r.id}`, kind: "attention", sessionId, ...(thread ? { thread } : {}), question: openItems.question(r.items.length), text: r.items.map((x) => `· ${x}`).join("\n") + kept, names: r.items, options: [openItems.TACKLE, openItems.ALWAYS, openItems.NOT_NOW], ts: now }, now),
+          ui.upsert(items, { id: `open:${sessionId}:${r.id}`, kind: "attention", sessionId, ...(thread ? { thread } : {}), question: openItems.question(r.items.length), text: openItems.context(r.items, r.waiting) + kept, names: r.items, options: [openItems.TACKLE, openItems.ALWAYS, openItems.NOT_NOW], ts: now }, now),
         )
       else {
         const m = `◢ crosstalk: ${r.items.length} open item${r.items.length === 1 ? "" : "s"} in that reply.${kept} Say "tackle them" to go on.`

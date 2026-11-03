@@ -1,9 +1,12 @@
 // "Tackle all open": an agent's turn that ends with an Open list.
 //
 // When a turn's last reply has an "Open" section (Open, Open items, Still
-// open, Remaining, Next steps, To do), at Stop:
+// open, Remaining, Next steps, To do), at Stop. Items that only wait on
+// something ("B is not live until its checks pass", "when B is live, Marie…",
+// "CI still running") are told apart (isWaiting) and left alone: mentioned in
+// the question, never kept or tackled. A list that only waits asks nothing.
 //
-//   - each item becomes a task in the session's thread, once, so nothing on the
+//   - each item to do becomes a task in the session's thread, once, so nothing on the
 //     list is lost when the session ends or another agent picks the thread up;
 //   - the person is asked once, in crosstalk's picker: "Tackle the 4 open
 //     items?" Tackle them / Always / Not now. "Tackle them" starts the turn;
@@ -80,6 +83,33 @@ export function lastReply(file: string | undefined): string {
   return ""
 }
 
+/**
+ * Whether an open item is only waiting on something (checks running, a merge
+ * landing, someone else's move, a release) rather than work to do. Waiting
+ * items are mentioned, never kept as tasks or tackled.
+ */
+const WAITING = [
+  /\bwait(?:s|ing)?\b(?: (?:for|on|until))?/i,
+  /\b(?:is|are|isn't|aren't) not (?:live|merged|out|done|in|released|deployed)(?: yet)?\b/i,
+  /\bnot (?:live|merged|released|deployed) (?:yet|until)\b/i,
+  /^\s*(?:once|after|when)\b[^.:]*\b(?:is|are|lands?|landed|merges?|merged|ships?|shipped|passes|passed|goes|is live|finishes|finished|done|out|released|deployed)\b/i,
+  /\buntil\b[^.]*\b(?:pass(?:es)?|lands?|merges?|ships?|finish(?:es)?|is|are|comes?)\b/i,
+  /\b(?:pending|blocked (?:on|by)|depends on|in progress|in the (?:merge )?(?:queue|train))\b/i,
+  /\b(?:ci|checks?|tests?|build|review|deploy(?:ment)?|train|pipeline|release)\b[^.]*\b(?:still )?(?:running|in progress|pending|queued)\b/i,
+]
+
+export function isWaiting(item: string): boolean {
+  return WAITING.some((r) => r.test(item))
+}
+
+/** An Open list split into work to do and things only waited on. */
+export function split(items: string[]): { todo: string[]; waiting: string[] } {
+  const todo: string[] = []
+  const waiting: string[] = []
+  for (const x of items) (isWaiting(x) ? waiting : todo).push(x)
+  return { todo, waiting }
+}
+
 export const hashOf = (items: string[]) => crypto.createHash("sha256").update(items.join("\n")).digest("hex").slice(0, 12)
 
 // --- the preference and what was already taken in --------------------------------------
@@ -115,13 +145,17 @@ export const NOT_NOW = "Not now"
 
 export const question = (n: number) => `Tackle the ${n} open item${n === 1 ? "" : "s"} from that reply?`
 
+/** The picker's context: the work, then what is only waited on (not tackled, not kept as tasks). */
+export const context = (todo: string[], waiting: string[]) =>
+  [...todo.map((x) => `· ${x}`), ...(waiting.length ? [`Waiting on (left alone): ${waiting.join("; ")}`] : [])].join("\n")
+
 /** The turn that tackles them, in crosstalk's words (the person picked it, or said Always). */
 export function tacklePrompt(items: string[]): string {
   return [
     `Tackle the open items you listed:`,
     ...items.map((x, i) => `${i + 1}. ${x}`),
     ``,
-    `Do each one you can do yourself. For any that needs a decision or an action only the person can take, ask them (one question for all of those, at the end) instead of guessing. When you finish, list only what is still open.`,
+    `Do each one you can do yourself. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). For any that needs a decision or an action only the person can take, ask them (one question for all of those, at the end) instead of guessing. When you finish, list only what is still open.`,
   ].join("\n")
 }
 
@@ -129,8 +163,10 @@ export function tacklePrompt(items: string[]): string {
  * What to do at a Stop: the items, and whether they are new. Pure apart from
  * the preference file, which it updates: a list is taken in once.
  */
-export function atStop(o: { reply: string; sessionId: string; continuing: boolean; now?: number }): { items: string[]; id: string; fresh: boolean; auto: boolean } | null {
-  const items = parseOpen(o.reply)
+export function atStop(o: { reply: string; sessionId: string; continuing: boolean; now?: number }): { items: string[]; waiting: string[]; id: string; fresh: boolean; auto: boolean } | null {
+  const all = parseOpen(o.reply)
+  const { todo: items, waiting } = split(all)
+  // Only waiting: nothing to tackle and nothing to keep.
   if (!items.length) return null
   const id = hashOf(items)
   const p = readPrefs()
@@ -138,5 +174,5 @@ export function atStop(o: { reply: string; sessionId: string; continuing: boolea
   const fresh = !p.seen?.[key]
   if (fresh) writePrefs({ ...p, seen: { ...(p.seen ?? {}), [key]: o.now ?? Date.now() } })
   // Continuing by itself once per prompt the person typed: Claude Code says when a turn is already one.
-  return { items, id, fresh, auto: !!p.always && !o.continuing && fresh }
+  return { items, waiting, id, fresh, auto: !!p.always && !o.continuing && fresh }
 }

@@ -6128,6 +6128,25 @@ function lastReply(file) {
   } catch {}
   return "";
 }
+var WAITING = [
+  /\bwait(?:s|ing)?\b(?: (?:for|on|until))?/i,
+  /\b(?:is|are|isn't|aren't) not (?:live|merged|out|done|in|released|deployed)(?: yet)?\b/i,
+  /\bnot (?:live|merged|released|deployed) (?:yet|until)\b/i,
+  /^\s*(?:once|after|when)\b[^.:]*\b(?:is|are|lands?|landed|merges?|merged|ships?|shipped|passes|passed|goes|is live|finishes|finished|done|out|released|deployed)\b/i,
+  /\buntil\b[^.]*\b(?:pass(?:es)?|lands?|merges?|ships?|finish(?:es)?|is|are|comes?)\b/i,
+  /\b(?:pending|blocked (?:on|by)|depends on|in progress|in the (?:merge )?(?:queue|train))\b/i,
+  /\b(?:ci|checks?|tests?|build|review|deploy(?:ment)?|train|pipeline|release)\b[^.]*\b(?:still )?(?:running|in progress|pending|queued)\b/i
+];
+function isWaiting(item) {
+  return WAITING.some((r) => r.test(item));
+}
+function split(items) {
+  const todo = [];
+  const waiting = [];
+  for (const x of items)
+    (isWaiting(x) ? waiting : todo).push(x);
+  return { todo, waiting };
+}
 var hashOf = (items) => crypto4.createHash("sha256").update(items.join(`
 `)).digest("hex").slice(0, 12);
 var file9 = () => path44.join(P.root, "open-items.json");
@@ -6150,17 +6169,20 @@ var TACKLE = "Tackle them";
 var ALWAYS = "Always";
 var NOT_NOW2 = "Not now";
 var question2 = (n) => `Tackle the ${n} open item${n === 1 ? "" : "s"} from that reply?`;
+var context = (todo, waiting) => [...todo.map((x) => `\u00b7 ${x}`), ...waiting.length ? [`Waiting on (left alone): ${waiting.join("; ")}`] : []].join(`
+`);
 function tacklePrompt(items) {
   return [
     `Tackle the open items you listed:`,
     ...items.map((x, i) => `${i + 1}. ${x}`),
     ``,
-    `Do each one you can do yourself. For any that needs a decision or an action only the person can take, ask them (one question for all of those, at the end) instead of guessing. When you finish, list only what is still open.`
+    `Do each one you can do yourself. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). For any that needs a decision or an action only the person can take, ask them (one question for all of those, at the end) instead of guessing. When you finish, list only what is still open.`
   ].join(`
 `);
 }
 function atStop(o) {
-  const items = parseOpen(o.reply);
+  const all = parseOpen(o.reply);
+  const { todo: items, waiting } = split(all);
   if (!items.length)
     return null;
   const id = hashOf(items);
@@ -6169,7 +6191,7 @@ function atStop(o) {
   const fresh = !p.seen?.[key];
   if (fresh)
     writePrefs({ ...p, seen: { ...p.seen ?? {}, [key]: o.now ?? Date.now() } });
-  return { items, id, fresh, auto: !!p.always && !o.continuing && fresh };
+  return { items, waiting, id, fresh, auto: !!p.always && !o.continuing && fresh };
 }
 
 // src/hook.ts
@@ -6384,8 +6406,7 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
       }
       const kept = thread ? ` Kept as tasks in ${thread}.` : "";
       if (modActive(sessionId))
-        withStore((items, now) => upsert(items, { id: `open:${sessionId}:${r.id}`, kind: "attention", sessionId, ...thread ? { thread } : {}, question: question2(r.items.length), text: r.items.map((x) => `\xB7 ${x}`).join(`
-`) + kept, names: r.items, options: [TACKLE, ALWAYS, NOT_NOW2], ts: now }, now));
+        withStore((items, now) => upsert(items, { id: `open:${sessionId}:${r.id}`, kind: "attention", sessionId, ...thread ? { thread } : {}, question: question2(r.items.length), text: context(r.items, r.waiting) + kept, names: r.items, options: [TACKLE, ALWAYS, NOT_NOW2], ts: now }, now));
       else {
         const m = `\u25E2 crosstalk: ${r.items.length} open item${r.items.length === 1 ? "" : "s"} in that reply.${kept} Say "tackle them" to go on.`;
         systemMessage = systemMessage ? `${systemMessage}

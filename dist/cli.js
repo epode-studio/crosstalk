@@ -9831,7 +9831,7 @@ function tacklePrompt(items) {
     `Tackle the open items you listed:`,
     ...items.map((x, i) => `${i + 1}. ${x}`),
     ``,
-    `Do each one you can do yourself. For any that needs a decision or an action only the person can take, ask them (one question for all of those, at the end) instead of guessing. When you finish, list only what is still open.`
+    `Do each one you can do yourself. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). For any that needs a decision or an action only the person can take, ask them (one question for all of those, at the end) instead of guessing. When you finish, list only what is still open.`
   ].join(`
 `);
 }
