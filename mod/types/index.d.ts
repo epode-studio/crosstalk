@@ -37,9 +37,11 @@ export type PaneFeature = { name: string; risk: string; flag?: string; stage?: s
 export type Pane = {
   thread: string
   status: string
-  agents?: import('../../src/ui-extra/pure.ts').PaneAgent[]
-  prs?: import('../../src/ui-extra/pure.ts').PaneRunning[]
-  events?: import('../../src/ui-extra/pure.ts').PaneEvent[]
+  /** Every agent, for "show me all my agents" and the main session's pane (src/ui-extra/agents.ts). */
+  agents?: { name: string; thread?: string; state: 'working' | 'waiting' | 'idle'; forYou?: number; idleMin?: number; background?: boolean; here?: boolean; asks?: string }[]
+  /** With the agents: every pull request, and what just happened. */
+  prs?: Running[]
+  events?: { text: string; at: number }[]
   repo?: string
   recap?: string
   people: string[]
@@ -69,6 +71,12 @@ export type Running = {
   thread?: string
   ports?: number[]
   broken?: string
+  /** A pull request's checks (src/urls/ci.ts), and how long they usually have left. */
+  checks?: 'running' | 'passed' | 'failed' | 'none'
+  failed?: string[]
+  eta?: string
+  draft?: boolean
+  state?: string
   with?: string[]
   until?: number
   path?: string
