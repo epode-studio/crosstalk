@@ -10,8 +10,13 @@
 // (code.claude.com/docs/en/settings-reference, extraKnownMarketplaces and
 // enabledPlugins; "Require plugins per repository" in plugins/org):
 //
-//   "extraKnownMarketplaces": { "epode": { "source": { "source": "github", "repo": "epode-studio/crosstalk" } } }
+//   "extraKnownMarketplaces": { "epode": { "source": { "source": "github", "repo": "epode-studio/crosstalk" }, "autoUpdate": true } }
 //   "enabledPlugins": { "crosstalk@epode": true }
+//
+// `autoUpdate` keeps everyone on the latest release with nothing to run:
+// Claude Code updates a third-party marketplace and its plugins in the
+// background only when this is on (plugins/host-marketplace, "Turn on
+// auto-update"); a newer crosstalk then replaces an older daemon by itself.
 //
 // crosstalk's marketplace lists the plugin by a relative path, so it loads
 // from the marketplace copy once a teammate accepts the folder's workspace
@@ -51,7 +56,7 @@ export function mergeSettings(existing: Record<string, any>): Merge {
   else {
     out.extraKnownMarketplaces ??= {}
     if (out.extraKnownMarketplaces[MARKETPLACE] === undefined) {
-      out.extraKnownMarketplaces[MARKETPLACE] = { source: { ...SOURCE } }
+      out.extraKnownMarketplaces[MARKETPLACE] = { source: { ...SOURCE }, autoUpdate: true }
       changed = true
     } else if (JSON.stringify(out.extraKnownMarketplaces[MARKETPLACE]?.source) !== JSON.stringify(SOURCE))
       kept.push(`a marketplace named ${MARKETPLACE} is already set to something else`)

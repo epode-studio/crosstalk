@@ -13418,7 +13418,7 @@ function mergeSettings(existing) {
   else {
     out.extraKnownMarketplaces ??= {};
     if (out.extraKnownMarketplaces[MARKETPLACE] === undefined) {
-      out.extraKnownMarketplaces[MARKETPLACE] = { source: { ...SOURCE } };
+      out.extraKnownMarketplaces[MARKETPLACE] = { source: { ...SOURCE }, autoUpdate: true };
       changed = true;
     } else if (JSON.stringify(out.extraKnownMarketplaces[MARKETPLACE]?.source) !== JSON.stringify(SOURCE))
       kept.push(`a marketplace named ${MARKETPLACE} is already set to something else`);

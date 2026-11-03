@@ -306,7 +306,7 @@ describe("team install", () => {
     expect(m.settings).toEqual({
       permissions: { allow: ["Bash(bun test:*)"] },
       enabledPlugins: { "formatter@acme": true, "crosstalk@epode": true },
-      extraKnownMarketplaces: { acme: { source: { source: "github", repo: "acme/plugins" } }, epode: { source: { source: "github", repo: "epode-studio/crosstalk" } } },
+      extraKnownMarketplaces: { acme: { source: { source: "github", repo: "acme/plugins" } }, epode: { source: { source: "github", repo: "epode-studio/crosstalk" }, autoUpdate: true } },
       hooks: { Stop: [] },
     })
     expect(existing.enabledPlugins).toEqual({ "formatter@acme": true })

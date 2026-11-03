@@ -422,7 +422,13 @@ put it on your PATH once:
 
 ### Updating
 
-**Claude Code**
+**Nothing to run, once.** In any Claude session: `/plugin` → **Marketplaces** →
+**epode** → **Enable auto-update**. Claude Code then installs each release in
+the background, and the next session picks it up (crosstalk's background
+process replaces itself). Repos where crosstalk is turned on for the team
+have this set already.
+
+**By hand, Claude Code**
 
 ```
 claude plugin marketplace update epode
