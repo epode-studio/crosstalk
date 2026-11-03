@@ -62,6 +62,7 @@ import { spawnedAt } from "./spawn.ts"
 import { createSessionOps } from "./sessions/daemon.ts"
 // Registers crosstalk services with the session manager (setServices), for close here.
 import "./services/service.ts"
+import * as ciMod from "./urls/ci.ts"
 import { createUrls } from "./urls/daemon.ts"
 import { createShares } from "./share/daemon.ts"
 import { createStreamGate } from "./streamgate.ts"
@@ -2825,7 +2826,28 @@ control.listen(P.daemonSock, () => {
   void threads.syncAll()
   // URLs: the proxy behind <thread>.localhost, services' URLs, liveness (src/urls/).
   if (!process.env.CROSSTALK_NO_URLS)
-    void createUrls({ log, live: () => [...sessions.values()].map((s) => ({ sessionId: s.sessionId, cwd: s.cwd })) }).catch((e) => log(`urls: ${(e as Error).message}`))
+    void createUrls({
+      log,
+      live: () => [...sessions.values()].map((s) => ({ sessionId: s.sessionId, cwd: s.cwd })),
+      // A PR's checks passed or failed, or it merged or closed (src/urls/ci.ts): the
+      // sessions in its thread are told, and a failure is kept as a task to investigate.
+      onPr: (u, c) => {
+        try {
+          const t = u.thread ? threads.find(undefined, u.thread) : undefined
+          const to = [...new Set([...(u.sessionId ? [u.sessionId] : []), ...(t ? threads.sessionsIn([t.id]) : [])])].filter((sid) => sessions.has(sid))
+          const text = ciMod.changeText(u.label, u.url, c)
+          if (c.kind === "failed" && t) threads.task(undefined, { op: "add", text: ciMod.investigation(u.label, u.url, c.failed), thread: t.meta.value.name })
+          for (const sid of to)
+            ui.withStore((items, now) =>
+              ui.upsert(items, { id: `ci:${u.id}:${c.kind}:${u.lastCheck}`, kind: "message", sessionId: sid, from: "crosstalk", ...(t ? { thread: t.meta.value.name } : {}), text, auto: true, ts: now }, now),
+            )
+          ciMod.recordEvent(c.kind === "failed" ? `${u.label}: checks failed${c.failed?.length ? `: ${c.failed.join(", ")}` : ""}` : c.kind === "passed" ? `${u.label}: checks passed` : `${u.label} ${c.kind}`)
+          log(`ci: ${text}${to.length ? ` (told ${to.length} session${to.length === 1 ? "" : "s"})` : ""}`)
+        } catch (e) {
+          log(`ci: ${(e as Error).message}`)
+        }
+      },
+    }).catch((e) => log(`urls: ${(e as Error).message}`))
   // Servers that look after themselves, and baseline screenshots (src/urls/health/).
   if (!process.env.CROSSTALK_NO_URLS && !process.env.CROSSTALK_NO_HEALTH)
     createHealth({

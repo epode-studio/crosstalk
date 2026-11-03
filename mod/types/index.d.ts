@@ -38,6 +38,8 @@ export type Pane = {
   thread: string
   status: string
   agents?: import('../../src/ui-extra/pure.ts').PaneAgent[]
+  prs?: import('../../src/ui-extra/pure.ts').PaneRunning[]
+  events?: import('../../src/ui-extra/pure.ts').PaneEvent[]
   repo?: string
   recap?: string
   people: string[]

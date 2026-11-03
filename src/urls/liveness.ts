@@ -19,11 +19,13 @@ import fs from "node:fs"
 import path from "node:path"
 import type { Url, UrlStore } from "./store.ts"
 import { isLocalHost } from "./extract.ts"
+import * as CI from "./ci.ts"
 
 export const liveEvery = () => Number(process.env.CROSSTALK_URL_CHECK_MS ?? 30_000)
 export const IDLE_MS = 5 * 60_000
 export const PREVIEW_MS = 5 * 60_000
 export const PR_MS = 10 * 60_000
+export const PR_RUNNING_MS = () => Number(process.env.CROSSTALK_PR_RUNNING_MS ?? 60_000)
 export const RETRY_MS = () => Math.min(5000, liveEvery())
 
 export type Probe = { ok: boolean; status?: number }
@@ -62,7 +64,8 @@ export const checkable = (u: Url) => (u.kind === "local" && isLocal(u)) || (u.ki
 export function nextDue(u: Url, live: boolean): number {
   if (!u.lastCheck) return 0
   if (u.fails && u.alive) return u.lastCheck + RETRY_MS()
-  const every = u.kind === "pr" ? PR_MS : u.kind === "preview" ? PREVIEW_MS : live ? liveEvery() : IDLE_MS
+  // Checks running: looked at every minute, so a pass or a failure is heard about in time.
+  const every = u.kind === "pr" ? (u.checks === "running" ? PR_RUNNING_MS() : PR_MS) : u.kind === "preview" ? PREVIEW_MS : live ? liveEvery() : IDLE_MS
   return u.lastCheck + every
 }
 
@@ -82,6 +85,19 @@ function gh(): string | null {
 }
 
 export type PrState = (url: string, cwd?: string) => string | undefined
+export type PrViewOf = (url: string, cwd?: string) => CI.PrView | undefined
+
+const ghView: PrViewOf = (url, cwd) => {
+  const bin = gh()
+  if (!bin) return undefined
+  const r = spawnSync(bin, ["pr", "view", url, "--json", "state,isDraft,statusCheckRollup"], { encoding: "utf8", timeout: 20_000, ...(cwd && fs.existsSync(cwd) ? { cwd } : {}) })
+  if (r.status !== 0) return undefined
+  try {
+    return CI.summarize(JSON.parse(r.stdout))
+  } catch {
+    return undefined
+  }
+}
 const ghState: PrState = (url, cwd) => {
   const bin = gh()
   if (!bin) return undefined
@@ -98,7 +114,10 @@ const ghState: PrState = (url, cwd) => {
  * Check what is due, at most `max` at a time. `liveRoots` are the worktrees a
  * session is live in now. Returns what was checked.
  */
-export async function tick(store: UrlStore, o: { liveRoots: Set<string>; liveSessions?: Set<string>; now?: number; probe?: (url: string) => Promise<Probe>; prState?: PrState; max?: number } = { liveRoots: new Set() }): Promise<Url[]> {
+export async function tick(
+  store: UrlStore,
+  o: { liveRoots: Set<string>; liveSessions?: Set<string>; now?: number; probe?: (url: string) => Promise<Probe>; prState?: PrState; prView?: PrViewOf; onPr?: (u: Url, c: CI.Change) => void; max?: number } = { liveRoots: new Set() },
+): Promise<Url[]> {
   const now = o.now ?? Date.now()
   const p = o.probe ?? ((u: string) => probe(u))
   const due = store
@@ -111,13 +130,24 @@ export async function tick(store: UrlStore, o: { liveRoots: Set<string>; liveSes
   await Promise.all(
     due.map(async (u) => {
       if (u.kind === "pr") {
-        const s = (o.prState ?? ghState)(u.url, u.worktree)
-        if (!s) {
+        // A state alone (a caller's prState) keeps the checks as they were.
+        const st = o.prState && !o.prView ? o.prState(u.url, u.worktree) : undefined
+        const v: CI.PrView | undefined = o.prState && !o.prView ? (st ? { state: st, draft: !!u.draft, checks: u.checks ?? "none", failed: u.failed ?? [] } : undefined) : (o.prView ?? ghView)(u.url, u.worktree)
+        if (!v) {
           store.update(u.id, { lastCheck: now })
           return
         }
-        const r = s === "OPEN" ? store.markOk(u.id, { state: s }) : store.markDead(u.id, { state: s })
-        if (r) out.push(r)
+        const ch = u.state ? CI.change({ state: u.state, checks: u.checks }, v) : null
+        // A run that finished: how long it took, for the next ETA.
+        if (u.checks === "running" && v.checks !== "running" && u.checksSince) CI.recordDuration(CI.repoOf(u.url), now - u.checksSince)
+        const since = v.checks === "running" ? (u.checks === "running" && u.checksSince ? u.checksSince : (v.startedAt ?? now)) : undefined
+        const r = v.state === "OPEN" ? store.markOk(u.id, { state: v.state }) : store.markDead(u.id, { state: v.state })
+        const after = store.update(u.id, { checks: v.checks, draft: v.draft, failed: v.failed, checksSince: since }) ?? r
+        if (after) out.push(after)
+        if (ch && after)
+          try {
+            o.onPr?.(after, ch)
+          } catch {}
         return
       }
       const r = await p(u.url)

@@ -12,7 +12,8 @@ import type { PaneModel, PaneNote, PaneRunning } from "./pure.ts"
 import { defaultThread, findThread, readThreads, type ThreadState } from "./threadfile.ts"
 import type * as Svc from "../services/service.ts"
 import { currentMain } from "../main.ts"
-import { running } from "../threads/running.ts"
+import { allPrs, running } from "../threads/running.ts"
+import { recentEvents } from "../urls/ci.ts"
 import { paneHistory } from "../threads/history.ts"
 import { readPaneQr } from "../urls/history/phone.ts"
 import { agents as allAgents } from "./agents.ts"
@@ -80,7 +81,13 @@ export function agentsPane(sessionId?: string, list = allAgents(sessionId)): Pan
   const waiting = list.filter((a) => a.state === "waiting").length
   const working = list.filter((a) => a.state === "working").length
   const status = [`${list.length} open`, working ? `${working} working` : "", waiting ? `${waiting} waiting on you` : ""].filter(Boolean).join(" · ")
-  return { ok: true, pane: { thread: "your agents", status, people: [], sessions: 0, waiting: [], recent: [], features: [], agents: list } }
+  let prs: PaneRunning[] = []
+  let events: { text: string; at: number }[] = []
+  try {
+    prs = allPrs()
+    events = recentEvents()
+  } catch {}
+  return { ok: true, pane: { thread: "your agents", status, people: [], sessions: 0, waiting: [], recent: [], features: [], agents: list, ...(prs.length ? { prs } : {}), ...(events.length ? { events } : {}) } }
 }
 
 export function pane(o: { sessionId?: string; thread?: string; st?: ThreadState; items?: Record<string, ui.UiItem>; services?: Svc.Shown[] }): PaneOut {

@@ -133,6 +133,9 @@ export type PaneModel = {
   history?: PaneHistory[]
   /** Every agent on this machine ("show me all my agents", and the main session's pane). */
   agents?: PaneAgent[]
+  /** With the agents: every pull request, and what just happened (checks passed or failed, merges). */
+  prs?: PaneRunning[]
+  events?: PaneEvent[]
   /** A QR code crosstalk_look action "qr" made for the phone (src/urls/history/phone.ts): half-block rows, drawn white on black. */
   qr?: { label: string; caption: string; rows: string[]; at: number; why?: string }
 }
@@ -164,6 +167,13 @@ export type PaneRunning = {
   thread?: string
   ports?: number[]
   broken?: string
+  /** A pull request's checks (src/urls/ci.ts), and how long they usually have left. */
+  checks?: "running" | "passed" | "failed" | "none"
+  failed?: string[]
+  eta?: string
+  draft?: boolean
+  /** OPEN, MERGED, CLOSED. */
+  state?: string
   /** Who a share of yours is open to. */
   with?: string[]
   until?: number
@@ -201,6 +211,7 @@ export function runningLine(r: PaneRunning, now: number): string {
   if (r.kind === "server" && !r.url && !r.ports?.length) return `${mark} ${r.label} · starting`
   const who = r.kind === "share" ? (r.owner === "you" ? (r.with?.length ? ` · with ${r.with.join(", ")}` : "") : ` · from ${r.owner}`) : ""
   const left = r.kind === "share" && r.alive && r.until ? ` · ${until(r.until, now)} left` : ""
+  if (r.kind === "pr") return `${mark} ${r.label}${prState(r)}`
   const dead = r.alive ? "" : r.kind === "share" ? " · ended" : " · dead"
   return `${mark} ${r.label}${who}${left}${dead}`
 }
@@ -277,7 +288,14 @@ export function ago(ts: number | undefined, now: number): string {
 
 /** Plain lines of a pane, for a surface or a test that draws text alone: the same sections the mod draws. */
 export function paneLines(p: PaneModel, now: number): string[] {
-  if (p.agents) return [`◢ ${p.thread} · ${p.status}`, "", ...(p.agents.length ? p.agents.flatMap((a) => [` ${agentLine(a)}`, ...(agentAsks(a) ? [agentAsks(a)!] : [])]) : [" none open"])]
+  if (p.agents)
+    return [
+      `◢ ${p.thread} · ${p.status}`,
+      "",
+      ...(p.agents.length ? p.agents.flatMap((a) => [` ${agentLine(a)}`, ...(agentAsks(a) ? [agentAsks(a)!] : [])]) : [" none open"]),
+      ...(p.prs?.length ? ["", "Pull requests", ...p.prs.map((r) => ` ${runningLine(r, now)}`)] : []),
+      ...(p.events?.length ? ["", "Lately", ...p.events.map((e) => ` ${e.text} · ${ago(e.at, now)}`)] : []),
+    ]
   const out = [`◢ ${p.thread} · ${p.status}${p.sessions ? ` · ${p.sessions} working` : ""}`, p.people.length ? p.people.join("  ") : "nobody yet"]
   if (p.recap) out.push("", p.recap)
   out.push("", "Waiting", ...(p.waiting.length ? p.waiting.map((w) => ` ? ${w}`) : [" nothing"]))
@@ -311,3 +329,18 @@ export function agentLine(a: PaneAgent): string {
 
 /** The question an agent is waiting on, on the line under it: `    asks: Keep the Pi flat? (Pi flat / Keep any tilt)`. */
 export const agentAsks = (a: PaneAgent): string | null => (a.asks ? `   asks: ${a.asks}` : null)
+
+
+/** A pull request's state in words: ` · draft · checks running · about 6 min left`, ` · checks failed: e2e`, ` · merged`. */
+export function prState(r: Pick<PaneRunning, "state" | "draft" | "checks" | "failed" | "eta" | "alive">): string {
+  if (r.state === "MERGED") return " · merged"
+  if (r.state === "CLOSED") return " · closed"
+  const parts = [r.draft ? "draft" : ""]
+  if (r.checks === "running") parts.push("checks running", r.eta ?? "")
+  else if (r.checks === "failed") parts.push(`checks failed${r.failed?.length ? `: ${r.failed.join(", ")}` : ""}`)
+  else if (r.checks === "passed") parts.push("checks passed")
+  return parts.filter(Boolean).map((x) => ` · ${x}`).join("")
+}
+
+/** Something that just happened, for the main session's pane: `#2841 checks passed · 3m`. */
+export type PaneEvent = { text: string; at: number }

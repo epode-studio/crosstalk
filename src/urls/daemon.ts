@@ -16,7 +16,7 @@ import { rootOf } from "./index.ts"
 
 export type UrlsDaemon = { proxy: Proxy | null; stop: () => Promise<void>; tick: () => Promise<void> }
 
-export async function createUrls(o: { log: (...a: unknown[]) => void; live: () => { sessionId: string; cwd: string }[] }): Promise<UrlsDaemon> {
+export async function createUrls(o: { log: (...a: unknown[]) => void; live: () => { sessionId: string; cwd: string }[]; onPr?: (u: import("./store.ts").Url, c: import("./ci.ts").Change) => void }): Promise<UrlsDaemon> {
   const store = urls()
   let proxy: Proxy | null = null
   if (!process.env.CROSSTALK_NO_PROXY) {
@@ -61,7 +61,7 @@ export async function createUrls(o: { log: (...a: unknown[]) => void; live: () =
         try {
           if (s.cwd) liveRoots.add(rootOf(s.cwd))
         } catch {}
-      await L.tick(store, { liveRoots, liveSessions: new Set(live.map((s) => s.sessionId)) })
+      await L.tick(store, { liveRoots, liveSessions: new Set(live.map((s) => s.sessionId)), ...(o.onPr ? { onPr: o.onPr } : {}) })
       if (now - lastPrune > 60 * 60_000) {
         lastPrune = now
         store.prune()

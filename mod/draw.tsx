@@ -78,6 +78,30 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number) {
             <Text dimColor>none open</Text>
           )}
         </Box>
+        {p.prs?.length ? (
+          <Box flexDirection="column" marginTop={1}>
+            <Text bold>Pull requests</Text>
+            {p.prs.map((r, i) => (
+              <Text key={`p${i}`} wrap="truncate" dimColor={!r.alive}>
+                {' '}
+                {r.checks === 'failed' && r.alive ? <Text color={BROKEN}>{clean(runningLine(r, now))}</Text> : clean(runningLine(r, now))}
+                {r.url && linkable(r.url) ? ' ' : ''}
+                {r.url && linkable(r.url) ? <Link href={r.url}>{clean(r.url.replace(/^https?:\/\/github\.com\//, ''))}</Link> : null}
+              </Text>
+            ))}
+          </Box>
+        ) : null}
+        {p.events?.length ? (
+          <Box flexDirection="column" marginTop={1}>
+            <Text bold>Lately</Text>
+            {p.events.map((e, i) => (
+              <Text key={`e${i}`} wrap="truncate" dimColor>
+                {' '}
+                {clean(e.text)} · {ago(e.at, now)}
+              </Text>
+            ))}
+          </Box>
+        ) : null}
       </Box>
     )
   const section = (title: string, rows: string[], key: string) => (

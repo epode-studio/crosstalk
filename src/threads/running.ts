@@ -18,13 +18,14 @@
 
 import * as Urls from "../urls/index.ts"
 import type { Url } from "../urls/store.ts"
+import * as CI from "../urls/ci.ts"
 import { readState, type ProxyState } from "../urls/proxy.ts"
 import * as Svc from "../services/service.ts"
 import * as Health from "../urls/health/index.ts"
 import * as Shots from "../urls/shots/index.ts"
 import * as Share from "../share/store.ts"
 import * as R from "../restore.ts"
-import type { PaneRunning, PaneShot, RunningKind } from "../ui-extra/pure.ts"
+import { prState, type PaneRunning, type PaneShot, type RunningKind } from "../ui-extra/pure.ts"
 
 export type Running = PaneRunning
 export type { RunningKind }
@@ -97,6 +98,7 @@ export function project(thread: string | undefined, s: Sources): Running[] {
       ...(mineOut ? { with: mineOut.with.map((w) => w.label) } : {}),
       ...(share && Share.active(share, now) ? { until: share.expiresAt } : {}),
       ...(u.thread ? { thread: u.thread } : {}),
+      ...(u.kind === "pr" ? prFields(u, now) : {}),
     })
   }
   // A share of this machine's with no URL record (yet): from shares.json. Ended ones go to History.
@@ -170,7 +172,9 @@ export function runningText(items: Running[], o: { thread?: string } = {}): stri
           ? `broken: ${r.broken}`
           : r.kind === "share"
             ? `${r.alive ? "open" : "ended"}${r.owner === "you" ? (r.with?.length ? ` to ${r.with.join(", ")}` : "") : ` from ${r.owner}`}${r.until && r.alive ? `, until ${new Date(r.until).toISOString().slice(0, 16).replace("T", " ")} UTC` : ""}`
-            : r.kind === "link"
+            : r.kind === "pr"
+              ? prState(r).replace(/^ · /, "") || (r.alive ? "open" : "closed")
+              : r.kind === "link"
               ? "not checked"
               : r.alive
                 ? "answering"
@@ -183,4 +187,26 @@ export function runningText(items: Running[], o: { thread?: string } = {}): stri
     ...lines,
     "</crosstalk-running>",
   ].join("\n")
+}
+
+/** A PR's checks, its state, and the ETA of checks still running (src/urls/ci.ts). */
+export function prFields(u: Url, now: number) {
+  const eta = u.checks === "running" ? CI.etaText(CI.etaMs(CI.repoOf(u.url), u.checksSince, now)) : ""
+  return {
+    ...(u.state ? { state: u.state } : {}),
+    ...(u.checks ? { checks: u.checks } : {}),
+    ...(u.failed?.length ? { failed: u.failed } : {}),
+    ...(u.draft ? { draft: true } : {}),
+    ...(eta ? { eta } : {}),
+  }
+}
+
+/** Every pull request on this machine's threads: open ones, and those that ended in the last day. For the main session's pane. */
+export function allPrs(now = Date.now(), store = Urls.urls()): PaneRunning[] {
+  return store
+    .read()
+    .filter((u) => u.kind === "pr" && (u.alive || (u.lastCheck && now - u.lastCheck < 86_400_000)))
+    .sort((a, b) => Number(b.alive) - Number(a.alive) || (b.lastSeen ?? 0) - (a.lastSeen ?? 0))
+    .slice(0, 12)
+    .map((u) => ({ kind: "pr" as const, label: u.label, url: u.url, alive: u.alive, owner: "you", ...(u.thread ? { thread: u.thread } : {}), ...prFields(u, now) }))
 }

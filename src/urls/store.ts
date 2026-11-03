@@ -60,6 +60,13 @@ export type Url = {
   status?: number
   /** A PR's state from gh (OPEN, MERGED, CLOSED). */
   state?: string
+  /** A PR's checks (src/urls/ci.ts): running, passed, failed or none. */
+  checks?: "running" | "passed" | "failed" | "none"
+  /** Which checks failed. */
+  failed?: string[]
+  /** Since when its checks have been running, for the ETA. */
+  checksSince?: number
+  draft?: boolean
   /**
    * A public https link to this local server while one is open (src/share/,
    * `public: true` only): what a phone's QR code encodes. Never set for a share
