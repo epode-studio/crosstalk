@@ -134,6 +134,17 @@ const isCard = (it: Item) => it.kind === 'message' || it.kind === 'ask'
 const cut = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
 const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim()
 
+/**
+ * A question with what is needed to answer it where it is shown: in the main
+ * session, which thread it is about; and crosstalk's own context lines (never
+ * a peer's words: those are cards, drawn above).
+ */
+function withContext(it: Item, q: string): string {
+  const elsewhere = it.sessionId && it.sessionId !== session && it.thread ? `◢ ${it.thread}` : ''
+  const ctx = typeof it.text === 'string' ? it.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '').trim().slice(0, 700) : ''
+  return [elsewhere, ctx, q].filter(Boolean).join('\n')
+}
+
 function header(it: Item): string {
   if (it.kind === 'restore') return 'Restore'
   if (it.kind === 'route') return 'Route'
@@ -391,7 +402,7 @@ async function raise($: EngineInterface, it: Item) {
     else if (it.kind === 'thread')
       answer = await $.ui.ask(it.question ?? 'Which thread is this session part of?', { options: it.options ?? ['New thread', 'No thread'], header: header(it) })
     else if (it.kind === 'rule' || it.kind === 'connect' || it.kind === 'conflict' || it.kind === 'invite' || it.kind === 'doctor' || it.kind === 'disk' || it.kind === 'install' || it.kind === 'attention' || it.kind === 'steer' || it.kind === 'session' || it.kind === 'share' || it.kind === 'env')
-      answer = await $.ui.ask(it.question ?? 'crosstalk has a question', { options: (it.options ?? ['Not now']).slice(0, 4), header: header(it) })
+      answer = await $.ui.ask(withContext(it, it.question ?? 'crosstalk has a question'), { options: (it.options ?? ['Not now']).slice(0, 4), header: header(it) })
     else {
       const what = it.kind === 'ask' ? 'asks' : 'says'
       const asked = `◢ ${it.from}${it.thread ? ` · ${it.thread}` : ''} ${what}: "${cut(oneLine(it.text ?? ''), 160)}". What should happen to it?`

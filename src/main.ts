@@ -88,7 +88,14 @@ export function setMain(on: boolean, s: { sessionId: string; name: string; pid?:
 /** Kinds that are never about one session's own thread. */
 export const CROSS_CUTTING: ReadonlySet<UiKind> = new Set<UiKind>(["route", "team", "gather", "cleanup"])
 
-export const isCrossCutting = (it: Pick<UiItem, "kind">) => CROSS_CUTTING.has(it.kind)
+/**
+ * Cross-cutting: the kinds above, and the attention questions about a thread
+ * rather than one conversation: adding an agent to a stuck thread
+ * (`attn:staff:`) and a background agent's permission prompt (`attn:perm:`),
+ * which nobody is looking at where it arose.
+ */
+export const isCrossCutting = (it: Pick<UiItem, "kind"> & { id?: string }) =>
+  CROSS_CUTTING.has(it.kind) || (it.kind === "attention" && /^attn:(staff|perm):/.test(it.id ?? ""))
 
 /**
  * What one session's mod shows, from the open items of every session.

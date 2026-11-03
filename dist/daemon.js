@@ -7159,6 +7159,15 @@ function question(name, s, now) {
   const how = s.why === "question" ? `has had a blocking question unanswered for ${hours(now - s.since)}` : `has been stuck for ${hours(now - s.since)}`;
   return `${name} ${how}. Add a second agent?`;
 }
+function context(o) {
+  const one = (x) => x.replace(/\s+/g, " ").trim();
+  const cut = (x, n) => x.length > n ? x.slice(0, n - 1) + "\u2026" : x;
+  const doing = o.recap ? `What it is doing: ${cut(one(o.recap), 240)}` : "";
+  const why = o.s.why === "question" && o.s.question ? `Waiting ${hours(o.now - o.s.since)} on: "${cut(one(o.s.question), 200)}"` : `No edits or commits for ${hours(o.now - o.s.since)}.`;
+  const who = o.agents.length ? `On it: ${o.agents.slice(0, 4).join(", ")}${o.agents.length > 4 ? ` and ${o.agents.length - 4} more` : ""}.` : "";
+  return [doing, why, who].filter(Boolean).join(`
+`);
+}
 function brief(name, s, v) {
   const why = s.why === "question" ? "it has a blocking question nobody has answered (at the top of the record)" : "nothing has moved in it for a while";
   const lead = s.why === "question" && s.question ? [`Blocking question: ${neutral(s.question)}`, ``] : [];
@@ -13796,6 +13805,20 @@ function writeMain(rec) {
   fs55.writeFileSync(tmp, JSON.stringify(rec), { mode: 384 });
   fs55.renameSync(tmp, file8());
 }
+var pidAlive2 = (pid) => {
+  if (!pid || pid <= 1)
+    return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+};
+function currentMain(alive = (r) => pidAlive2(r.pid)) {
+  const m = readMain();
+  return m && alive(m) ? m : null;
+}
 function setMain(on, s, now = Date.now()) {
   const before = readMain();
   if (on) {
@@ -13810,7 +13833,7 @@ function setMain(on, s, now = Date.now()) {
   return { changed: true };
 }
 var CROSS_CUTTING = new Set(["route", "team", "gather", "cleanup"]);
-var isCrossCutting = (it) => CROSS_CUTTING.has(it.kind);
+var isCrossCutting = (it) => CROSS_CUTTING.has(it.kind) || it.kind === "attention" && /^attn:(staff|perm):/.test(it.id ?? "");
 function itemsFor(open, sessionId, mainId) {
   const own = open.filter((i) => i.sessionId === sessionId).sort((a, b) => a.createdAt - b.createdAt);
   if (!mainId)
@@ -15071,7 +15094,7 @@ class Coordinator {
     const m = readMain();
     if (!m)
       return;
-    if (!this.d.sessions().has(m.sessionId)) {
+    if (!this.d.sessions().has(m.sessionId) && !currentMain()) {
       writeMain(null);
       this.d.threads.setOutside(m.sessionId, false);
       this.d.log(`main session ${m.name} has ended; back to focus-aware`);
@@ -16024,7 +16047,7 @@ class AttentionService {
     const live = this.d.sessions();
     const ok = (s) => !!s && live.has(s) && !this.bgOf(s);
     const main = this.d.mainId();
-    if (ok(main))
+    if (main && !this.bgOf(main))
       return main;
     const f = this.focused();
     if (ok(f?.sessionId))
@@ -16336,11 +16359,16 @@ class AttentionService {
       const to = this.target(sids[0]);
       if (!to)
         continue;
+      let recap2 = "";
+      try {
+        recap2 = recap(t);
+      } catch {}
       this.put({
         id: itemId("staff", `${t.id}:${s.since}`),
         sessionId: to,
         thread: t.meta.value.name,
         question: question(t.meta.value.name, s, this.now()),
+        text: context({ recap: recap2, s, agents: sids.map((sid) => sessions.get(sid)?.name ?? sid.slice(0, 8)), now: this.now() }),
         options: [ADD, NOT_NOW]
       });
       this.d.log(`attention: ${t.meta.value.name} is stuck (${s.why}); asked whether to add an agent`);

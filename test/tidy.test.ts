@@ -116,3 +116,46 @@ describe("the one question", () => {
     expect(C.typedAsks({ text: "tidy up", at: NOW - 60 * MIN }, a, undefined, NOW)).toBe(false)
   })
 })
+
+describe("every agent at a glance", () => {
+  test("waiting on you first, then working, then idle; ended and dead ones left out", async () => {
+    const A = await import("../src/ui-extra/agents.ts")
+    const rec = (id: string, o: Record<string, unknown> = {}) => ({ sessionId: id, cwd: `/w/${id}`, pid: 10, seenAt: NOW - 30 * MIN, terminal: {}, ...o }) as any
+    const list = A.agentsFrom({
+      recs: [rec("idle1"), rec("busy", { thread: "auth" }), rec("asks"), rec("q"), rec("gone", { endedAt: 1 }), rec("dead", { pid: 99 })],
+      status: (id) => (id === "busy" ? "busy" : "idle"),
+      waiting: (id) => (id === "q" ? 2 : 0),
+      alive: (pid) => pid !== 99,
+      name: () => undefined,
+      asking: (id) => id === "asks",
+      self: "busy",
+      now: NOW,
+    })
+    expect(list.map((a) => A.agentLine(a))).toEqual(["? asks · waiting on you", "? q · 2 for you", "● busy (this one) · auth · working", "· idle1 · idle 30 min"])
+  })
+  test("\"show me all my agents\" is the pane's agents view, and the main session's pane", async () => {
+    const P = await import("../src/ui-extra/pane.ts")
+    expect(P.AGENTS.test("agents")).toBe(true)
+    expect(P.AGENTS.test("all my agents")).toBe(true)
+    expect(P.AGENTS.test("auth")).toBe(false)
+    const out = P.agentsPane("me", [{ name: "a", state: "waiting", forYou: 1 }, { name: "b", state: "working" }])
+    expect(out.ok && out.pane.status).toBe("2 open · 1 working · 1 waiting on you")
+  })
+})
+
+describe("the main session", () => {
+  test("adding an agent to a stuck thread, and a background agent's permission prompt, go to main", async () => {
+    const Mn = await import("../src/main.ts")
+    const it = (id: string, kind = "attention") => ({ id, kind, sessionId: "work", state: "pending", createdAt: 1, updatedAt: 1 }) as any
+    const open = [it("attn:staff:t1:5"), it("attn:perm:x"), it("attn:dispose:y"), it("m1", "message")]
+    expect(Mn.itemsFor(open, "main-s", "main-s").map((i) => i.id)).toEqual(["attn:staff:t1:5", "attn:perm:x"])
+    expect(Mn.itemsFor(open, "work", "main-s").map((i) => i.id)).toEqual(["attn:dispose:y", "m1"])
+  })
+  test("the staffing question says what the thread is doing, what it is stuck on, and who is on it", async () => {
+    const St = await import("../src/attention/staffing.ts")
+    const c = St.context({ recap: "LED matrix takes no view", s: { why: "question", since: NOW - 3 * 60 * MIN, question: "keep v1?" }, agents: ["palpable-5d"], now: NOW })
+    expect(c).toContain("What it is doing: LED matrix takes no view")
+    expect(c).toContain(`on: "keep v1?"`)
+    expect(c).toContain("On it: palpable-5d.")
+  })
+})

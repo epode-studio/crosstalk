@@ -35,6 +35,7 @@ import * as sessionNames from "./sessions/names.ts"
 import * as pastSessions from "./sessions/index.ts"
 import * as urlTrack from "./urls/index.ts"
 import * as shots from "./urls/shots/index.ts"
+import * as intro from "./intro.ts"
 
 const input = await new Promise<string>((resolve) => {
   let raw = ""
@@ -344,6 +345,11 @@ if (
   !/^(clear|compact)$/.test(String(hook.source ?? "")) &&
   !/^sdk/i.test(process.env.CLAUDE_CODE_ENTRYPOINT ?? "")
 ) {
+  // The first time on this machine: a few things to say, so nothing has to be looked up.
+  try {
+    const w = intro.welcomeOnce()
+    if (w) systemMessage = systemMessage ? `${systemMessage}\n${w}` : w
+  } catch {}
   try {
     const m = (await firstuse.surface(cwd, sessionId)).systemMessage
     if (m) systemMessage = systemMessage ? `${systemMessage}\n${m}` : m

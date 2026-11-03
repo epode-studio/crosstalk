@@ -1,10 +1,11 @@
-// crosstalk_doctor: what is wrong and how to fix it, and how crosstalk is doing.
+// crosstalk_doctor: what is wrong and how to fix it, how crosstalk is doing,
+// and what you can say to it.
 
 import { def, num, only, type Tool } from "./kit.ts"
 
-const ACTIONS = ["report", "stats"] as const
+const ACTIONS = ["report", "stats", "intro"] as const
 
-const description = `What is wrong with crosstalk and how to fix it. Actions: report (identity, daemon, relay, this session's inbox, sessions to restore, macOS permissions, each with its fix: show it, then help with whatever is marked ✗; for "is crosstalk OK?", "why aren't messages arriving?"); stats (local measurements, never sent anywhere: time to merge, human minutes, questions answered by rules, tokens to first edit; relay the text).`
+const description = `What is wrong with crosstalk and how to fix it. Actions: report (identity, daemon, relay, this session's inbox, sessions to restore, macOS permissions, each with its fix: show it, then help with whatever is marked ✗; for "is crosstalk OK?", "why aren't messages arriving?"); stats (local measurements, never sent anywhere: time to merge, human minutes, questions answered by rules, tokens to first edit; relay the text); intro ("what can crosstalk do?", "how do I use this?": things to say, to show as they are).`
 
 export const doctor: Tool = {
   actions: ACTIONS,
@@ -15,6 +16,8 @@ export const doctor: Tool = {
         return { name: "crosstalk_doctor", args: {} }
       case "stats":
         return { name: "crosstalk_stats", args: only(a, "weeks") }
+      case "intro":
+        return { name: "crosstalk_intro", args: {} }
     }
     return { error: `crosstalk_doctor has no action "${a.action}"` }
   },

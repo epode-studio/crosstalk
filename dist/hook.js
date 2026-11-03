@@ -2,8 +2,8 @@
 // @bun
 
 // src/hook.ts
-import path43 from "path";
-import fs35 from "fs";
+import path44 from "path";
+import fs36 from "fs";
 
 // src/client.ts
 import net from "node:net";
@@ -6048,6 +6048,31 @@ async function captureFor(o) {
 var clean2 = (s) => s.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/[<>]/g, (c) => c === "<" ? "\u2039" : "\u203a");
 var tried = new Map;
 
+// src/intro.ts
+import fs35 from "node:fs";
+import path43 from "node:path";
+function welcomeText() {
+  return [
+    `\u25e2 crosstalk is on. Nothing to learn: just say what you want. Try:`,
+    `  "show me all my agents"  \u00b7  "tidy up my sessions"  \u00b7  "put two more agents on this"`,
+    `  "tell marie what changed"  \u00b7  "restore them" after a restart`,
+    `  "what can crosstalk do?" for the rest.`
+  ].join(`
+`);
+}
+var marker = () => path43.join(P.root, "welcomed");
+function welcomeOnce() {
+  try {
+    if (fs35.existsSync(marker()))
+      return null;
+    fs35.mkdirSync(P.root, { recursive: true, mode: 448 });
+    fs35.writeFileSync(marker(), new Date().toISOString(), { mode: 384 });
+    return welcomeText();
+  } catch {
+    return null;
+  }
+}
+
 // src/hook.ts
 var input = await new Promise((resolve) => {
   let raw = "";
@@ -6084,8 +6109,8 @@ function agyCwd() {
   if (Array.isArray(ws) && typeof ws[0] === "string" && ws[0])
     return ws[0];
   const here = process.cwd();
-  if (AGENT_DIRS.has(path43.basename(here)))
-    return path43.dirname(here);
+  if (AGENT_DIRS.has(path44.basename(here)))
+    return path44.dirname(here);
   return here;
 }
 var cwd = hook.cwd ?? hook.working_dir ?? hook.workspace_roots?.[0] ?? (isAgy ? agyCwd() : process.cwd());
@@ -6193,6 +6218,12 @@ var chromeOut = (hookSpecific) => {
 };
 if (restoreClient === "claude" && sessionId && isSessionStart && !/^(clear|compact)$/.test(String(hook.source ?? "")) && !/^sdk/i.test(process.env.CLAUDE_CODE_ENTRYPOINT ?? "")) {
   try {
+    const w = welcomeOnce();
+    if (w)
+      systemMessage = systemMessage ? `${systemMessage}
+${w}` : w;
+  } catch {}
+  try {
     const m = (await surface3(cwd, sessionId)).systemMessage;
     if (m)
       systemMessage = systemMessage ? `${systemMessage}
@@ -6241,10 +6272,10 @@ async function registerSession() {
   if (socket) {
     try {
       const dir = sessionsDir();
-      for (const f of fs35.readdirSync(dir)) {
+      for (const f of fs36.readdirSync(dir)) {
         if (!f.endsWith(".json"))
           continue;
-        const e = JSON.parse(fs35.readFileSync(path43.join(dir, f), "utf8"));
+        const e = JSON.parse(fs36.readFileSync(path44.join(dir, f), "utf8"));
         if (e.sessionId === sessionId) {
           name = e.name ?? name;
           break;
@@ -6252,7 +6283,7 @@ async function registerSession() {
       }
     } catch {}
   } else {
-    name = hook.thread_name ?? (path43.basename(cwd) || name);
+    name = hook.thread_name ?? (path44.basename(cwd) || name);
   }
   const registered = await request({
     op: "register",

@@ -59,6 +59,22 @@ export function question(name: string, s: Stuck, now: number): string {
 }
 
 /**
+ * What the person needs to answer it from anywhere (the main session above
+ * all): what the thread is doing, what it is stuck on, who is on it.
+ */
+export function context(o: { recap?: string; s: Stuck; agents: string[]; now: number }): string {
+  const one = (x: string) => x.replace(/\s+/g, " ").trim()
+  const cut = (x: string, n: number) => (x.length > n ? x.slice(0, n - 1) + "…" : x)
+  const doing = o.recap ? `What it is doing: ${cut(one(o.recap), 240)}` : ""
+  const why =
+    o.s.why === "question" && o.s.question
+      ? `Waiting ${hours(o.now - o.s.since)} on: "${cut(one(o.s.question), 200)}"`
+      : `No edits or commits for ${hours(o.now - o.s.since)}.`
+  const who = o.agents.length ? `On it: ${o.agents.slice(0, 4).join(", ")}${o.agents.length > 4 ? ` and ${o.agents.length - 4} more` : ""}.` : ""
+  return [doing, why, who].filter(Boolean).join("\n")
+}
+
+/**
  * The new agent's first prompt. The blocking question is someone's words, so
  * it sits inside the quoted record with the rest; the task is crosstalk's and
  * comes after it.

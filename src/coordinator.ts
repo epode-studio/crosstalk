@@ -109,11 +109,16 @@ export class Coordinator {
 
   // --- main session ---------------------------------------------------------------
 
-  /** The main session, while it is a registered session. */
+  /**
+   * The main session, while its process lives. Not "while it is registered":
+   * after the daemon restarts (an update does that), sessions register again
+   * only on their next hook, and main must not be dropped meanwhile, or its
+   * questions land in whatever tab is in front.
+   */
   mainId(): string | undefined {
     const m = mainS.readMain()
     if (!m) return undefined
-    if (!this.d.sessions().has(m.sessionId)) {
+    if (!this.d.sessions().has(m.sessionId) && !mainS.currentMain()) {
       mainS.writeMain(null)
       this.d.threads.setOutside(m.sessionId, false)
       this.d.log(`main session ${m.name} has ended; back to focus-aware`)

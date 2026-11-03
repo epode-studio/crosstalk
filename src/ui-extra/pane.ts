@@ -15,6 +15,7 @@ import { currentMain } from "../main.ts"
 import { running } from "../threads/running.ts"
 import { paneHistory } from "../threads/history.ts"
 import { readPaneQr } from "../urls/history/phone.ts"
+import { agents as allAgents } from "./agents.ts"
 
 const oneLine = (s: string) => s.replace(/\s+/g, " ").trim()
 
@@ -71,7 +72,22 @@ export function paneModel(t: M.Thread, items: Record<string, ui.UiItem>, o: { re
 export type PaneOut = { ok: true; pane: PaneModel } | { ok: false; error: string; threads: string[] }
 
 /** The pane for a thread by name, or this session's own. */
+/** Thread names that mean "every agent", not a thread. */
+export const AGENTS = /^(agents?|all|everything|sessions|my agents|all my agents|overview)$/i
+
+/** Every agent on this machine, as a pane of its own. */
+export function agentsPane(sessionId?: string, list = allAgents(sessionId)): PaneOut {
+  const waiting = list.filter((a) => a.state === "waiting").length
+  const working = list.filter((a) => a.state === "working").length
+  const status = [`${list.length} open`, working ? `${working} working` : "", waiting ? `${waiting} waiting on you` : ""].filter(Boolean).join(" · ")
+  return { ok: true, pane: { thread: "your agents", status, people: [], sessions: 0, waiting: [], recent: [], features: [], agents: list } }
+}
+
 export function pane(o: { sessionId?: string; thread?: string; st?: ThreadState; items?: Record<string, ui.UiItem>; services?: Svc.Shown[] }): PaneOut {
+  if (o.thread && AGENTS.test(o.thread.trim())) return agentsPane(o.sessionId)
+  const isMain = !!o.sessionId && currentMain()?.sessionId === o.sessionId
+  // The main session's pane is the overview: every agent, first.
+  if (isMain && !o.thread) return agentsPane(o.sessionId)
   const st = o.st ?? readThreads()
   const t = o.thread ? findThread(st, o.thread, o.sessionId) : defaultThread(st, o.sessionId)
   // A QR code for the phone (crosstalk_look action "qr"), shown in the pane even with no thread to show.

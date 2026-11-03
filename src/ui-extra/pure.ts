@@ -131,9 +131,13 @@ export type PaneModel = {
   running?: PaneRunning[]
   /** What it once had: the latest ended links and notes (src/threads/history.ts). */
   history?: PaneHistory[]
+  /** Every agent on this machine ("show me all my agents", and the main session's pane). */
+  agents?: PaneAgent[]
   /** A QR code crosstalk_look action "qr" made for the phone (src/urls/history/phone.ts): half-block rows, drawn white on black. */
   qr?: { label: string; caption: string; rows: string[]; at: number; why?: string }
 }
+
+export type PaneAgent = { name: string; thread?: string; state: "working" | "waiting" | "idle"; forYou?: number; idleMin?: number; background?: boolean; here?: boolean }
 
 export type PaneShot = { label: string; path?: string; before?: { file: string; at: number }; after: { file: string; at: number } }
 
@@ -273,6 +277,7 @@ export function ago(ts: number | undefined, now: number): string {
 
 /** Plain lines of a pane, for a surface or a test that draws text alone: the same sections the mod draws. */
 export function paneLines(p: PaneModel, now: number): string[] {
+  if (p.agents) return [`◢ ${p.thread} · ${p.status}`, "", ...(p.agents.length ? p.agents.map((a) => ` ${agentLine(a)}`) : [" none open"])]
   const out = [`◢ ${p.thread} · ${p.status}${p.sessions ? ` · ${p.sessions} working` : ""}`, p.people.length ? p.people.join("  ") : "nobody yet"]
   if (p.recap) out.push("", p.recap)
   out.push("", "Waiting", ...(p.waiting.length ? p.waiting.map((w) => ` ? ${w}`) : [" nothing"]))
@@ -292,4 +297,14 @@ export function paneLines(p: PaneModel, now: number): string[] {
   if (p.recent.length) out.push("", "Recent", ...p.recent.map((r) => ` ${r.from} ${ago(r.ts, now)} ${r.text}`))
   if (p.history?.length) out.push("", "History", ...p.history.map((h) => ` ${historyLine(h, now)}`))
   return out
+}
+
+
+const agoMin = (min: number) => (min < 1 ? "just now" : min < 60 ? `${min} min` : min < 48 * 60 ? `${Math.round(min / 60)} h` : `${Math.round(min / 1440)} days`)
+
+/** One agent as the pane writes it: `? billing · billing-v2 · 2 for you`. */
+export function agentLine(a: PaneAgent): string {
+  const mark = a.state === "waiting" ? "?" : a.state === "working" ? "●" : "·"
+  const what = a.state === "waiting" ? (a.forYou ? `${a.forYou} for you` : "waiting on you") : a.state === "working" ? "working" : `idle ${agoMin(a.idleMin ?? 0)}`
+  return [`${mark} ${a.name}${a.here ? " (this one)" : ""}`, a.thread && a.thread !== a.name ? a.thread : "", what, a.background ? "in the background" : ""].filter(Boolean).join(" · ")
 }

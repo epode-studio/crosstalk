@@ -439,6 +439,15 @@ describe("finding 8: only someone in the thread, at ask or above, has a heads-up
     expect(held.every((x) => !x.h.auto)).toBe(true)
     expect(M.notes(svc.thread(tid)!, "decision").length).toBe(before)
   })
+
+  test("main survives a daemon restart: kept while its process lives, even before it registers again", async () => {
+    const mainS = await import("../src/main.ts")
+    mainS.writeMain({ sessionId: "main-1", name: "main", pid: process.pid, at: Date.now() })
+    expect(coord.mainId()).toBe("main-1") // not registered with this daemon yet, but alive
+    mainS.writeMain({ sessionId: "main-2", name: "main", pid: 999_999_9, at: Date.now() })
+    expect(coord.mainId()).toBe(undefined) // its process is gone: main has ended
+    expect(mainS.readMain()).toBe(null)
+  })
 })
 
 // --- A placement on a work branch ---------------------------------------------------------------------

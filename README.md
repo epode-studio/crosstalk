@@ -59,6 +59,7 @@ you broke off to explain anything.
 ## Contents
 
 - [In two sentences](#in-two-sentences)
+- [Things to say](#things-to-say)
 - [Three things you meet](#three-things-you-meet)
 - [Superpowers](#superpowers)
 - [Your terminal is the workspace](#your-terminal-is-the-workspace)
@@ -86,6 +87,56 @@ you broke off to explain anything.
 
 **You say what you want, and you answer questions.** Everything else is agents
 working in threads with the people you trust.
+
+<br>
+
+## Things to say
+
+No commands to learn. Open `claude` the way you always do and say what you
+want, in your own words, to any session. When crosstalk needs a choice from
+you, it asks.
+
+**Your sessions**
+- *"Show me all my agents."* A live list beside the chat: every session, what
+  it is on, and which ones are waiting on you. The main session shows it by
+  itself.
+- *"Tidy up my sessions."* Closes the ones you are not using and folds
+  duplicates into one. One question first; anything closed can come back.
+- *"Close billing."* · *"Resume the one where I fixed login."* · *"Call this
+  one payments."*
+- *"Restore them."* After a restart or a crash, every session back in its
+  tab, mid-conversation.
+- *"Make this the main session."* One place for the questions that are about
+  everything, so the others only ask about their own work.
+
+**More hands**
+- *"Put two more agents on auth."* Each gets its own copy of the code and
+  already knows what the work is about.
+- *"Run the dev server."* It keeps running after the session ends, at a name
+  like `auth.localhost` instead of a port number.
+- *"Show me the auth page before and after."*
+
+**Your team**
+- *"Tell marie the token format changed, with the diff."* It lands with her,
+  in the session working on the same thing, not wherever she happens to be.
+- *"What's marie working on?"* · *"Ask marie's api session what /devices
+  returns."*
+- *"Show marie the auth page."* Your running app, for her eyes only.
+- *"Mute jo for an hour."*
+
+**Your work**
+- *"What did we decide about v1?"* · *"What happened while I was away?"*
+- *"Ship it."* Another agent reviews it first, and anything risky goes out
+  behind a switch you turn on step by step.
+
+**When something is off**
+- *"Is crosstalk OK?"* It checks itself and tells you what to fix.
+
+Forgot all this? Ask any session *"what can crosstalk do?"*
+
+<br>
+
+---
 
 <br>
 

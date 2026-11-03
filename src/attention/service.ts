@@ -231,8 +231,9 @@ export class AttentionService {
   target(fallback?: string): string | undefined {
     const live = this.d.sessions()
     const ok = (s?: string) => !!s && live.has(s) && !this.bgOf(s)
+    // Main even before it registers again after a daemon restart: its mod reads the store either way.
     const main = this.d.mainId()
-    if (ok(main)) return main
+    if (main && !this.bgOf(main)) return main
     const f = this.focused()
     if (ok(f?.sessionId)) return f!.sessionId
     if (ok(fallback)) return fallback
@@ -565,11 +566,16 @@ export class AttentionService {
       this.save()
       const to = this.target(sids[0])
       if (!to) continue
+      let recap = ""
+      try {
+        recap = M.recap(t)
+      } catch {}
       this.put({
         id: itemId("staff", `${t.id}:${s.since}`),
         sessionId: to,
         thread: t.meta.value.name,
         question: St.question(t.meta.value.name, s, this.now()),
+        text: St.context({ recap, s, agents: sids.map((sid) => sessions.get(sid)?.name ?? sid.slice(0, 8)), now: this.now() }),
         options: [St.ADD, St.NOT_NOW],
       })
       this.d.log(`attention: ${t.meta.value.name} is stuck (${s.why}); asked whether to add an agent`)
@@ -642,7 +648,7 @@ export class AttentionService {
 
   // --- putting a question and getting it seen -----------------------------------------
 
-  private put(o: { id: string; sessionId: string; question: string; options: string[]; from?: string; thread?: string }) {
+  private put(o: { id: string; sessionId: string; question: string; options: string[]; from?: string; thread?: string; text?: string }) {
     ui.withStore((items, now) => ui.upsert(items, { ...o, kind: "attention", ts: now }, now))
   }
 

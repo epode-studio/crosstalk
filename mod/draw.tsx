@@ -9,7 +9,7 @@
 // on black, so it scans on any theme. No hook, state or I/O in here.
 
 import type { Item, Pane } from './types'
-import { ago, featureLine, fileLink, historyLine, linkable, noteLine, runningGroups, runningLine, runningWhere } from '../src/ui-extra/pure.ts'
+import { agentLine, ago, featureLine, fileLink, historyLine, linkable, noteLine, runningGroups, runningLine, runningWhere } from '../src/ui-extra/pure.ts'
 
 /** The elements these trees are made of: the surface's own Box, Text and Link. */
 export type Els = { Box: any; Text: any; Link: any }
@@ -52,6 +52,29 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number) {
     return (
       <Box flexDirection="column">
         <Text dimColor>{clean(problem || 'loading the thread…')}</Text>
+      </Box>
+    )
+  // Every agent ("show me all my agents", and the main session's pane): waiting on you first, then working, then idle.
+  if (p.agents)
+    return (
+      <Box flexDirection="column">
+        <Text wrap="truncate">
+          <Text color={THREAD} bold>
+            ◢ {clean(p.thread)}
+          </Text>
+          <Text dimColor> · {clean(p.status)}</Text>
+        </Text>
+        <Box flexDirection="column" marginTop={1}>
+          {p.agents.length ? (
+            p.agents.map((a, i) => (
+              <Text key={`a${i}`} wrap="truncate" bold={a.state === 'waiting'} dimColor={a.state === 'idle'}>
+                {a.state === 'waiting' ? <Text color={THREAD}>{clean(agentLine(a))}</Text> : clean(agentLine(a))}
+              </Text>
+            ))
+          ) : (
+            <Text dimColor>none open</Text>
+          )}
+        </Box>
       </Box>
     )
   const section = (title: string, rows: string[], key: string) => (

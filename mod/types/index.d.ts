@@ -37,6 +37,7 @@ export type PaneFeature = { name: string; risk: string; flag?: string; stage?: s
 export type Pane = {
   thread: string
   status: string
+  agents?: import('../../src/ui-extra/pure.ts').PaneAgent[]
   repo?: string
   recap?: string
   people: string[]

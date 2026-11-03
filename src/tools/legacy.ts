@@ -24,6 +24,7 @@ import * as shareTools from "../share/tools.ts"
 import * as shotTools from "../urls/shots/tools.ts"
 import * as historyTools from "../urls/history/tools.ts"
 import * as envTools from "../env/tools.ts"
+import { introText } from "../intro.ts"
 
 export type Ctx = { sessionId: string; cwd: string; root: string }
 export type Result = { content: { type: "text"; text: string }[]; isError?: boolean }
@@ -292,6 +293,9 @@ export async function callLegacy(name: string, a: any, o: Ctx): Promise<Result |
       })
       return r.ok ? ok(r) : err(r.error ?? "nothing changed")
     }
+
+    case "crosstalk_intro":
+      return { content: [{ type: "text", text: introText() }] }
 
     default:
       return (
