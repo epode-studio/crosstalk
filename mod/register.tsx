@@ -302,6 +302,10 @@ function reportContext($: EngineInterface) {
   void (async () => {
     try {
       const u = await $.session.usage()
+      // What this session has cost and the plan's windows, for the main session's pane.
+      const limits = (u.rateLimits ?? []).map(l => ({ kind: l.kind, percentUsed: l.percentUsed, ...(l.resetsAt ? { resetsAt: l.resetsAt } : {}) }))
+      if (u.cost || limits.length)
+        void $.process.run([bin, 'ui', 'usage', '--session', session, '--limits', JSON.stringify(limits), ...(u.cost ? ['--usd', String(u.cost.usd)] : [])], { timeoutMs: 10_000 }).catch(() => {})
       const pct = u.context.percent
       if (pct === undefined) return
       await $.process.run([bin, 'attn', 'context', '--session', session, '--percent', String(pct), '--tokens', String(u.context.tokens ?? 0), '--window', String(u.context.window)], { timeoutMs: 10_000 })

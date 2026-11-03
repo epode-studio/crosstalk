@@ -14,6 +14,7 @@ import type * as Svc from "../services/service.ts"
 import { currentMain } from "../main.ts"
 import { allPrs, running } from "../threads/running.ts"
 import { recentEvents } from "../urls/ci.ts"
+import { line as usageLine } from "./usage.ts"
 import { paneHistory } from "../threads/history.ts"
 import { readPaneQr } from "../urls/history/phone.ts"
 import { agents as allAgents } from "./agents.ts"
@@ -87,7 +88,11 @@ export function agentsPane(sessionId?: string, list = allAgents(sessionId)): Pan
     prs = allPrs()
     events = recentEvents()
   } catch {}
-  return { ok: true, pane: { thread: "your agents", status, people: [], sessions: 0, waiting: [], recent: [], features: [], agents: list, ...(prs.length ? { prs } : {}), ...(events.length ? { events } : {}) } }
+  let usage: { text: string; hot: boolean } | null = null
+  try {
+    usage = usageLine()
+  } catch {}
+  return { ok: true, pane: { thread: "your agents", status, people: [], sessions: 0, waiting: [], recent: [], features: [], agents: list, ...(usage ? { usage } : {}), ...(prs.length ? { prs } : {}), ...(events.length ? { events } : {}) } }
 }
 
 export function pane(o: { sessionId?: string; thread?: string; st?: ThreadState; items?: Record<string, ui.UiItem>; services?: Svc.Shown[] }): PaneOut {

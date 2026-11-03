@@ -136,11 +136,13 @@ export type PaneModel = {
   /** With the agents: every pull request, and what just happened (checks passed or failed, merges). */
   prs?: PaneRunning[]
   events?: PaneEvent[]
+  /** The plan's windows and today's spend, `5-hour 42% (resets 3:10 PM) · week 18% · $12.40 …`; hot at 80%. */
+  usage?: { text: string; hot: boolean }
   /** A QR code crosstalk_look action "qr" made for the phone (src/urls/history/phone.ts): half-block rows, drawn white on black. */
   qr?: { label: string; caption: string; rows: string[]; at: number; why?: string }
 }
 
-export type PaneAgent = { name: string; thread?: string; state: "working" | "waiting" | "idle"; forYou?: number; idleMin?: number; background?: boolean; here?: boolean; /** What its own agent is asking, waiting in that tab. */ asks?: string }
+export type PaneAgent = { name: string; thread?: string; state: "working" | "waiting" | "idle"; forYou?: number; idleMin?: number; background?: boolean; here?: boolean; /** What its own agent is asking, waiting in that tab. */ asks?: string; /** What it has cost so far, `$1.20`. */ cost?: string }
 
 export type PaneShot = { label: string; path?: string; before?: { file: string; at: number }; after: { file: string; at: number } }
 
@@ -291,6 +293,7 @@ export function paneLines(p: PaneModel, now: number): string[] {
   if (p.agents)
     return [
       `◢ ${p.thread} · ${p.status}`,
+      ...(p.usage ? [`${p.usage.hot ? "! " : ""}${p.usage.text}`] : []),
       "",
       ...(p.agents.length ? p.agents.flatMap((a) => [` ${agentLine(a)}`, ...(agentAsks(a) ? [agentAsks(a)!] : [])]) : [" none open"]),
       ...(p.prs?.length ? ["", "Pull requests", ...p.prs.map((r) => ` ${runningLine(r, now)}`)] : []),
@@ -324,7 +327,7 @@ const agoMin = (min: number) => (min < 1 ? "just now" : min < 60 ? `${min} min` 
 export function agentLine(a: PaneAgent): string {
   const mark = a.state === "waiting" ? "?" : a.state === "working" ? "●" : "·"
   const what = a.state === "waiting" ? (a.forYou ? `${a.forYou} for you` : "waiting on you") : a.state === "working" ? "working" : `idle ${agoMin(a.idleMin ?? 0)}`
-  return [`${mark} ${a.name}${a.here ? " (this one)" : ""}`, a.thread && a.thread !== a.name ? a.thread : "", what, a.background ? "in the background" : ""].filter(Boolean).join(" · ")
+  return [`${mark} ${a.name}${a.here ? " (this one)" : ""}`, a.thread && a.thread !== a.name ? a.thread : "", what, a.background ? "in the background" : "", a.cost ?? ""].filter(Boolean).join(" · ")
 }
 
 /** The question an agent is waiting on, on the line under it: `    asks: Keep the Pi flat? (Pi flat / Keep any tilt)`. */

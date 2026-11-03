@@ -13,6 +13,7 @@ import * as N from "../sessions/names.ts"
 import type { PaneAgent } from "./pure.ts"
 import { readTab } from "../terminal/status.ts"
 import * as T from "../sessions/transcripts.ts"
+import * as Usage from "./usage.ts"
 import fs from "node:fs"
 
 const alive = (pid: number) => {
@@ -35,6 +36,8 @@ export function agentsFrom(o: {
   asking?: (id: string) => boolean
   /** The question its agent is waiting on, if any (src/sessions/transcripts.ts openQuestion). */
   asks?: (id: string, cwd: string) => string | undefined
+  /** What it has cost so far, as a pane writes it. */
+  cost?: (id: string) => string | undefined
   self?: string
   now: number
 }): PaneAgent[] {
@@ -56,6 +59,7 @@ export function agentsFrom(o: {
       ...(r.terminal?.tmux?.socket && path.basename(r.terminal.tmux.socket) === "crosstalk" ? { background: true } : {}),
       ...(r.sessionId === o.self ? { here: true } : {}),
       ...(asks ? { asks } : {}),
+      ...(o.cost?.(r.sessionId) ? { cost: o.cost(r.sessionId) } : {}),
     })
   }
   const rank = { waiting: 0, working: 1, idle: 2 } as const
@@ -96,7 +100,9 @@ export function agents(self?: string, now = Date.now()): PaneAgent[] {
     askCache.set(file, { m, q: text })
     return text
   }
-  return agentsFrom({ recs: R.readAll(), status: (id) => reg.get(id), waiting: (id) => waiting.get(id) ?? 0, alive, name: (id) => N.nameOf(id) ?? undefined, asking, asks, self, now })
+  const spent = Usage.all()
+  const cost = (id: string) => Usage.usdText(spent.get(id.replace(/[^A-Za-z0-9._-]/g, "_"))?.usd) || undefined
+  return agentsFrom({ recs: R.readAll(), status: (id) => reg.get(id), waiting: (id) => waiting.get(id) ?? 0, alive, name: (id) => N.nameOf(id) ?? undefined, asking, asks, cost, self, now })
 }
 
 export { agentLine } from "./pure.ts"

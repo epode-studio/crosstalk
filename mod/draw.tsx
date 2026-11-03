@@ -64,6 +64,11 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number) {
           </Text>
           <Text dimColor> · {clean(p.status)}</Text>
         </Text>
+        {p.usage ? (
+          <Text wrap="truncate" dimColor={!p.usage.hot}>
+            {p.usage.hot ? <Text color={BROKEN}>{clean(p.usage.text)}</Text> : clean(p.usage.text)}
+          </Text>
+        ) : null}
         <Box flexDirection="column" marginTop={1}>
           {p.agents.length ? (
             p.agents.map((a, i) => (

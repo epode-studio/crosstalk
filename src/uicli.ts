@@ -14,6 +14,7 @@
 
 import { daemonRunning, ensureDaemon, request } from "./client.ts"
 import * as openItems from "./attention/openitems.ts"
+import * as usage from "./ui-extra/usage.ts"
 import * as firstuse from "./repotrust/firstuse.ts"
 import * as restore from "./restore.ts"
 import * as ui from "./uistate.ts"
@@ -180,6 +181,21 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
       return print({ ok: true })
     case "list":
       return print({ ok: true, ...(await waiting(session, false)) })
+    // What this session has cost and the plan's windows, from its mod at a turn's end (src/ui-extra/usage.ts).
+    case "usage": {
+      let limits: { kind: string; percentUsed: number; resetsAt?: string }[] = []
+      try {
+        const raw = JSON.parse(arg(argv, "--limits") ?? "[]")
+        if (Array.isArray(raw))
+          limits = raw
+            .filter((l) => l && typeof l.kind === "string" && typeof l.percentUsed === "number")
+            .slice(0, 6)
+            .map((l) => ({ kind: String(l.kind).slice(0, 40), percentUsed: Number(l.percentUsed), ...(typeof l.resetsAt === "string" ? { resetsAt: l.resetsAt.slice(0, 40) } : {}) }))
+      } catch {}
+      const usd = Number(arg(argv, "--usd"))
+      usage.write(session, { ...(Number.isFinite(usd) ? { usd } : {}), limits, at: Date.now() })
+      return print({ ok: true })
+    }
     case "watch":
       return watch(session, Math.max(250, Number(arg(argv, "--interval") ?? 1000)))
     case "bg-later": {
