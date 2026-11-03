@@ -30,7 +30,7 @@
     "test:phone": "bun test test/phone.test.ts && bash test/phone.sh",
     "test:sessions": "bun test test/sessions.test.ts test/tidy.test.ts && bash test/sessions.sh",
     "test:extras": "bun test test/extras.test.ts && bash test/extras.sh",
-    "test:attention": "bun test test/attention.test.ts && bash test/attention.sh",
+    "test:attention": "bun test test/attention.test.ts test/openitems.test.ts && bash test/attention.sh",
     "test:shipping": "bun test test/shipping.test.ts test/shipping-next.test.ts && bash test/shipping.sh && bash test/shipping-peers.sh",
     "test:uiextra": "bun test test/uiextra.test.ts test/snapshots/mod.test.ts && bash test/uiextra.sh && bash test/mod.sh",
     "test:repotrust": "bun test test/repotrust.test.ts && bash test/repotrust.sh",

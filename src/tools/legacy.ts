@@ -25,6 +25,7 @@ import * as shotTools from "../urls/shots/tools.ts"
 import * as historyTools from "../urls/history/tools.ts"
 import * as envTools from "../env/tools.ts"
 import { introText } from "../intro.ts"
+import * as openItemsPrefs from "../attention/openitems.ts"
 
 export type Ctx = { sessionId: string; cwd: string; root: string }
 export type Result = { content: { type: "text"; text: string }[]; isError?: boolean }
@@ -296,6 +297,12 @@ export async function callLegacy(name: string, a: any, o: Ctx): Promise<Result |
 
     case "crosstalk_intro":
       return { content: [{ type: "text", text: introText() }] }
+
+    case "crosstalk_open_items": {
+      if (typeof a.on !== "boolean") return err("pass on: true or false")
+      openItemsPrefs.setAlways(a.on)
+      return { content: [{ type: "text", text: a.on ? "crosstalk will go on with a reply's Open list by itself." : "crosstalk will ask before tackling a reply's Open list again." }] }
+    }
 
     default:
       return (

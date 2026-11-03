@@ -462,6 +462,8 @@ async function answered($: EngineInterface, it: Item, answer: string) {
   if (it.kind === 'rule' || it.kind === 'connect' || it.kind === 'conflict' || it.kind === 'invite' || it.kind === 'install' || it.kind === 'attention' || it.kind === 'steer' || it.kind === 'session' || it.kind === 'share' || it.kind === 'env') {
     const r = await step($, it, 'answer', answer)
     $.ui.toast(oneLine((r.text ?? r.error ?? 'crosstalk did not answer').replace(/^◢ crosstalk: /, '')))
+    // The person's pick that starts work (tackle the open items): the turn, in their session.
+    if (r.ok && typeof r.prompt === 'string' && r.prompt) await $.prompt.submit({ text: r.prompt })
     return
   }
   if (it.kind === 'doctor') {

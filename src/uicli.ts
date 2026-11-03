@@ -13,6 +13,7 @@
 // Everything printed is for the mod alone. None of it is model context.
 
 import { daemonRunning, ensureDaemon, request } from "./client.ts"
+import * as openItems from "./attention/openitems.ts"
 import * as firstuse from "./repotrust/firstuse.ts"
 import * as restore from "./restore.ts"
 import * as ui from "./uistate.ts"
@@ -206,6 +207,19 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
         const yes = action !== "mute" && (value ?? "").trim() === firstuse.CONNECT
         const out = await firstuse.connect({ slug: id.slice("connect:".length), yes, ensureDaemon: () => ensureDaemon(root), request })
         return print({ ok: out.ok, text: out.text, item: ui.snapshot()[id] })
+      }
+      // "Tackle all open" (src/attention/openitems.ts): the person's pick starts the turn, from the mod.
+      if (id.startsWith("open:")) {
+        if (action === "raised" || action === "later") return print(ui.withStore((items, now) => ui.act(items, id, action, now)))
+        if (action === "answer" && insideAgent()) return print({ ok: false, error: "this is for a person: answer it in crosstalk's picker" })
+        const v = (value ?? "").trim()
+        const claim = ui.withStore((items, now) => ui.act(items, id, "answer", now, v || openItems.NOT_NOW))
+        if (!claim.ok) return print({ ok: false, error: claim.error })
+        const list = claim.item?.names ?? []
+        if (v === openItems.ALWAYS) openItems.setAlways(true)
+        if ((v === openItems.TACKLE || v === openItems.ALWAYS) && list.length)
+          return print({ ok: true, item: claim.item, prompt: openItems.tacklePrompt(list), text: v === openItems.ALWAYS ? "tackling them, and from now on by itself" : "tackling them" })
+        return print({ ok: true, item: claim.item, text: "left them as tasks" })
       }
       // Copying a repo's gitignored local files into new worktrees (src/env/): no daemon needed.
       if (id.startsWith("env:")) return print(envTools.uiAct(session, id, action, value))

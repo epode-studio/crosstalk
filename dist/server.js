@@ -21409,8 +21409,8 @@ var ServerResultSchema2 = union([
 
 // src/server.ts
 import net2 from "net";
-import fs44 from "fs";
-import path52 from "path";
+import fs45 from "fs";
+import path53 from "path";
 
 // src/config.ts
 import fs from "node:fs";
@@ -25277,7 +25277,8 @@ var THINGS = [
     title: "Your work",
     lines: [
       `"what did we decide about v1?" \u00b7 "what happened while I was away?"`,
-      `"ship it" \u2014 reviewed by another agent, behind a flag when it's risky`
+      `"ship it" \u2014 reviewed by another agent, behind a flag when it's risky`,
+      `a reply that ends with an "Open" list: crosstalk keeps them as tasks and offers to tackle them (pick Always and it just carries on)`
     ]
   },
   {
@@ -25292,6 +25293,28 @@ function introText() {
   ].join(`
 `);
 }
+
+// src/attention/openitems.ts
+init_config();
+import fs43 from "node:fs";
+import path49 from "node:path";
+var file11 = () => path49.join(P2.root, "open-items.json");
+function readPrefs() {
+  try {
+    return JSON.parse(fs43.readFileSync(file11(), "utf8")) ?? {};
+  } catch {
+    return {};
+  }
+}
+function writePrefs(p) {
+  fs43.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  const week = Date.now() - 7 * 86400000;
+  const seen = Object.fromEntries(Object.entries(p.seen ?? {}).filter(([, at]) => at > week));
+  const tmp = `${file11()}.${process.pid}.tmp`;
+  fs43.writeFileSync(tmp, JSON.stringify({ ...p, seen }), { mode: 384 });
+  fs43.renameSync(tmp, file11());
+}
+var setAlways = (on) => writePrefs({ ...readPrefs(), always: on });
 
 // src/tools/legacy.ts
 var ok5 = (o) => ({ content: [{ type: "text", text: JSON.stringify(o, null, 2) }] });
@@ -25530,6 +25553,12 @@ async function callLegacy(name, a, o) {
     }
     case "crosstalk_intro":
       return { content: [{ type: "text", text: introText() }] };
+    case "crosstalk_open_items": {
+      if (typeof a.on !== "boolean")
+        return err5("pass on: true or false");
+      setAlways(a.on);
+      return { content: [{ type: "text", text: a.on ? "crosstalk will go on with a reply's Open list by itself." : "crosstalk will ask before tackling a reply's Open list again." }] };
+    }
     default:
       return await callTool3(name, a, { sessionId: SESSION_ID, cwd: CWD }) ?? await callTool4(name, a, { sessionId: SESSION_ID, cwd: CWD, root: o.root }) ?? await callTool5(name, a, { sessionId: SESSION_ID, cwd: CWD, root: o.root }) ?? await callTool6(name, a, { sessionId: SESSION_ID, cwd: CWD }) ?? await callTool2(name, a, { sessionId: SESSION_ID, cwd: CWD }) ?? await callTool7(name, a, { sessionId: SESSION_ID, cwd: CWD }) ?? await callTool8(name, a, { sessionId: SESSION_ID, cwd: CWD }) ?? await callTool(name, a, { sessionId: SESSION_ID, cwd: CWD }) ?? await callTool9(name, a, { sessionId: SESSION_ID, cwd: CWD }) ?? await callTool10(name, a, { sessionId: SESSION_ID, cwd: CWD }) ?? await callTool11(name, a, { sessionId: SESSION_ID, cwd: CWD }) ?? await callTool12(name, a, { sessionId: SESSION_ID, cwd: CWD }) ?? await callTool13(name, a, { sessionId: SESSION_ID, cwd: CWD }) ?? null;
   }
@@ -26017,11 +26046,11 @@ var answer2 = {
 };
 
 // src/tools/doctor.ts
-var ACTIONS9 = ["report", "stats", "intro"];
-var description8 = `What is wrong with crosstalk and how to fix it. Actions: report (identity, daemon, relay, this session's inbox, sessions to restore, macOS permissions, each with its fix: show it, then help with whatever is marked \u2717; for "is crosstalk OK?", "why aren't messages arriving?"); stats (local measurements, never sent anywhere: time to merge, human minutes, questions answered by rules, tokens to first edit; relay the text); intro ("what can crosstalk do?", "how do I use this?": things to say, to show as they are).`;
+var ACTIONS9 = ["report", "stats", "intro", "open_items"];
+var description8 = `What is wrong with crosstalk and how to fix it. Actions: report (identity, daemon, relay, this session's inbox, sessions to restore, macOS permissions, each with its fix: show it, then help with whatever is marked \u2717; for "is crosstalk OK?", "why aren't messages arriving?"); stats (local measurements, never sent anywhere: time to merge, human minutes, questions answered by rules, tokens to first edit; relay the text); intro ("what can crosstalk do?", "how do I use this?": things to say, to show as they are); open_items (on: false when the user says to stop tackling a reply's Open list by itself, true to start).`;
 var doctor = {
   actions: ACTIONS9,
-  def: def("crosstalk_doctor", description8, ACTIONS9, { weeks: num2("stats: how many weeks back, default 4") }),
+  def: def("crosstalk_doctor", description8, ACTIONS9, { weeks: num2("stats: how many weeks back, default 4"), on: bool("open_items: true or false") }),
   route: (a) => {
     switch (a.action) {
       case "report":
@@ -26030,6 +26059,8 @@ var doctor = {
         return { name: "crosstalk_stats", args: only(a, "weeks") };
       case "intro":
         return { name: "crosstalk_intro", args: {} };
+      case "open_items":
+        return { name: "crosstalk_open_items", args: only(a, "on") };
     }
     return { error: `crosstalk_doctor has no action "${a.action}"` };
   }
@@ -26056,28 +26087,28 @@ async function callTool14(tool, a, o) {
 }
 
 // src/paths.ts
-import path49 from "node:path";
+import path50 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
-var dirOf2 = (metaUrl) => path49.dirname(fileURLToPath2(metaUrl));
-var rootFrom2 = (metaUrl) => path49.join(dirOf2(metaUrl), "..");
+var dirOf2 = (metaUrl) => path50.dirname(fileURLToPath2(metaUrl));
+var rootFrom2 = (metaUrl) => path50.join(dirOf2(metaUrl), "..");
 
 // src/registry.ts
 import os8 from "node:os";
-import path50 from "node:path";
-var claudeConfigDir2 = (env = process.env) => env.CLAUDE_CONFIG_DIR || path50.join(os8.homedir(), ".claude");
-var sessionsDir2 = (env = process.env) => path50.join(claudeConfigDir2(env), "sessions");
+import path51 from "node:path";
+var claudeConfigDir2 = (env = process.env) => env.CLAUDE_CONFIG_DIR || path51.join(os8.homedir(), ".claude");
+var sessionsDir2 = (env = process.env) => path51.join(claudeConfigDir2(env), "sessions");
 var SESSIONS2 = sessionsDir2();
 
 // src/channels.ts
-import fs43 from "node:fs";
-import path51 from "node:path";
+import fs44 from "node:fs";
+import path52 from "node:path";
 import { execFileSync as execFileSync5 } from "node:child_process";
 var SHELLS2 = new Set(["sh", "bash", "dash", "zsh", "env", "fish"]);
 function argvOf(pid) {
   if (!pid || pid <= 1)
     return null;
   try {
-    const raw = fs43.readFileSync(`/proc/${pid}/cmdline`, "utf8");
+    const raw = fs44.readFileSync(`/proc/${pid}/cmdline`, "utf8");
     const a = raw.split("\x00");
     if (a[a.length - 1] === "")
       a.pop();
@@ -26092,7 +26123,7 @@ function argvOf(pid) {
 }
 function parentOf(pid) {
   try {
-    const stat = fs43.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const stat = fs44.readFileSync(`/proc/${pid}/stat`, "utf8");
     return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]) || 0;
   } catch {}
   try {
@@ -26111,7 +26142,7 @@ function hostArgv(registryPid) {
     const a = argvOf(pid);
     if (!a)
       return null;
-    if (!SHELLS2.has(path51.basename(a[0] ?? "")))
+    if (!SHELLS2.has(path52.basename(a[0] ?? "")))
       return a;
     pid = parentOf(pid);
   }
@@ -26143,7 +26174,7 @@ function entryNamesUs(entry, o) {
 function managedSettings() {
   const file = process.env.CROSSTALK_MANAGED_SETTINGS ?? (process.platform === "darwin" ? "/Library/Application Support/ClaudeCode/managed-settings.json" : process.platform === "win32" ? "C:\\Program Files\\ClaudeCode\\managed-settings.json" : "/etc/claude-code/managed-settings.json");
   try {
-    return JSON.parse(fs43.readFileSync(file, "utf8"));
+    return JSON.parse(fs44.readFileSync(file, "utf8"));
   } catch {
     return null;
   }
@@ -26245,10 +26276,10 @@ mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
 function selfRegistration() {
   try {
     const dir = sessionsDir2();
-    for (const f of fs44.readdirSync(dir)) {
+    for (const f of fs45.readdirSync(dir)) {
       if (!f.endsWith(".json"))
         continue;
-      const e = JSON.parse(fs44.readFileSync(path52.join(dir, f), "utf8"));
+      const e = JSON.parse(fs45.readFileSync(path53.join(dir, f), "utf8"));
       if (e.sessionId !== SESSION_ID)
         continue;
       return {

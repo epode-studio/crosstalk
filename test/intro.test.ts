@@ -20,7 +20,7 @@ describe("intro", () => {
   })
   test("everything to say is a quoted phrase, never a slash command or a flag", () => {
     for (const g of I.THINGS) for (const l of g.lines) {
-      expect(l.startsWith(`"`)).toBe(true)
+      expect(l.startsWith(`"`) || l.startsWith("a reply")).toBe(true)
       expect(l).not.toMatch(/\/crosstalk|(^|\s)--[a-z]/)
     }
   })

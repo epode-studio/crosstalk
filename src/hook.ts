@@ -36,6 +36,7 @@ import * as pastSessions from "./sessions/index.ts"
 import * as urlTrack from "./urls/index.ts"
 import * as shots from "./urls/shots/index.ts"
 import * as intro from "./intro.ts"
+import * as openItems from "./attention/openitems.ts"
 
 const input = await new Promise<string>((resolve) => {
   let raw = ""
@@ -403,6 +404,45 @@ if (restoreClient === "claude" && /^(SessionStart|UserPromptSubmit|Stop|PreCompa
       process.exit(0)
     }
     if (a.systemMessage) systemMessage = systemMessage ? `${systemMessage}\n${a.systemMessage}` : a.systemMessage
+  } catch {}
+}
+
+/**
+ * "Tackle all open" (src/attention/openitems.ts): a reply that ends with an
+ * Open list has its items kept as tasks in the thread, and is put to the person
+ * once: Tackle them / Always / Not now. Under Always the turn simply goes on.
+ */
+if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !process.env.CROSSTALK_NO_OPEN_ITEMS && !/^sdk/i.test(process.env.CLAUDE_CODE_ENTRYPOINT ?? "")) {
+  try {
+    const r = openItems.atStop({ reply: openItems.lastReply(typeof hook.transcript_path === "string" ? hook.transcript_path : undefined), sessionId, continuing: hook.stop_hook_active === true })
+    if (r?.fresh) {
+      let thread: string | undefined
+      if (await ensureDaemon(root))
+        for (const text of r.items)
+          try {
+            const t = await request({ op: "tasks", sessionId, cwd, write: "add", text }, 3000)
+            if (t?.ok && t.thread) thread = t.thread
+          } catch {}
+      if (r.auto) {
+        process.stdout.write(
+          JSON.stringify({
+            decision: "block",
+            reason: openItems.tacklePrompt(r.items),
+            systemMessage: `◢ crosstalk: going on with the ${r.items.length} open item${r.items.length === 1 ? "" : "s"}, as you chose. "Stop tackling open items by itself" turns that off.`,
+          }),
+        )
+        process.exit(0)
+      }
+      const kept = thread ? ` Kept as tasks in ${thread}.` : ""
+      if (ui.modActive(sessionId))
+        ui.withStore((items, now) =>
+          ui.upsert(items, { id: `open:${sessionId}:${r.id}`, kind: "attention", sessionId, ...(thread ? { thread } : {}), question: openItems.question(r.items.length), text: r.items.map((x) => `· ${x}`).join("\n") + kept, names: r.items, options: [openItems.TACKLE, openItems.ALWAYS, openItems.NOT_NOW], ts: now }, now),
+        )
+      else {
+        const m = `◢ crosstalk: ${r.items.length} open item${r.items.length === 1 ? "" : "s"} in that reply.${kept} Say "tackle them" to go on.`
+        systemMessage = systemMessage ? `${systemMessage}\n${m}` : m
+      }
+    }
   } catch {}
 }
 

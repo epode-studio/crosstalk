@@ -44,6 +44,7 @@ export const THINGS: Group[] = [
     lines: [
       `"what did we decide about v1?" · "what happened while I was away?"`,
       `"ship it" — reviewed by another agent, behind a flag when it's risky`,
+      `a reply that ends with an "Open" list: crosstalk keeps them as tasks and offers to tackle them (pick Always and it just carries on)`,
     ],
   },
   {

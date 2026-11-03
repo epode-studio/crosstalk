@@ -96,7 +96,16 @@ export type Deps = {
  * that branch, and a move to another branch none of the pinned threads has is
  * new work, placed afresh.
  */
-type Placed = { threads: string[]; why: Record<string, string>; pinned?: string[]; pinBranch?: string; name?: string; left?: string[] }
+type Placed = {
+  threads: string[]
+  why: Record<string, string>
+  pinned?: string[]
+  pinBranch?: string
+  name?: string
+  left?: string[]
+  /** Threads this session was already told it joined: said once, however often its work moves in and out of them. */
+  announced?: string[]
+}
 type Note = { id: string; text: string }
 
 type State = {
@@ -589,7 +598,11 @@ export class ThreadService {
       const t = this.st.threads[id]
       if (!t) continue
       if (!rec.threads.includes(id)) {
-        ;(this.st.banner[s.sessionId] ??= []).push({ name: t.meta.value.name, why: w.why || "matched" })
+        if (!(rec.announced ?? []).includes(id)) {
+          const banner = (this.st.banner[s.sessionId] ??= [])
+          if (!banner.some((b) => b.name === t.meta.value.name)) banner.push({ name: t.meta.value.name, why: w.why || "matched" })
+          rec.announced = [...(rec.announced ?? []), id].slice(-50)
+        }
         rec.why[id] = w.why
       }
       this.join(t, s, fp)

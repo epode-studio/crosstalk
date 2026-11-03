@@ -4189,7 +4189,12 @@ class ThreadService {
       if (!t)
         continue;
       if (!rec.threads.includes(id)) {
-        (this.st.banner[s.sessionId] ??= []).push({ name: t.meta.value.name, why: w.why || "matched" });
+        if (!(rec.announced ?? []).includes(id)) {
+          const banner = this.st.banner[s.sessionId] ??= [];
+          if (!banner.some((b) => b.name === t.meta.value.name))
+            banner.push({ name: t.meta.value.name, why: w.why || "matched" });
+          rec.announced = [...rec.announced ?? [], id].slice(-50);
+        }
         rec.why[id] = w.why;
       }
       this.join(t, s, fp);

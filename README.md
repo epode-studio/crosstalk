@@ -128,6 +128,10 @@ you, it asks.
 - *"What did we decide about v1?"* · *"What happened while I was away?"*
 - *"Ship it."* Another agent reviews it first, and anything risky goes out
   behind a switch you turn on step by step.
+- No more *"tackle all open"*. When a reply ends with an Open list, crosstalk
+  keeps each item as a task in the thread and asks once: tackle them? Pick
+  *Always* and the agent just carries on with them from then on. *"Stop
+  tackling open items by itself"* turns that off.
 
 **When something is off**
 - *"Is crosstalk OK?"* It checks itself and tells you what to fix.

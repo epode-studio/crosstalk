@@ -2,8 +2,8 @@
 // @bun
 
 // src/hook.ts
-import path44 from "path";
-import fs36 from "fs";
+import path45 from "path";
+import fs37 from "fs";
 
 // src/client.ts
 import net from "node:net";
@@ -6073,6 +6073,105 @@ function welcomeOnce() {
   }
 }
 
+// src/attention/openitems.ts
+import crypto4 from "node:crypto";
+import fs36 from "node:fs";
+import path44 from "node:path";
+var HEAD = /^\s*(?:#{1,4}\s*)?\**\s*(open|open items|still open|open questions|remaining|left to do|next steps|to do|todo)\s*\**\s*:?\s*\**\s*$/i;
+var BULLET = /^\s*(?:[-*\u2022]|\d+[.)])\s+(.+)$/;
+function parseOpen(text) {
+  const lines = text.split(`
+`);
+  let at = -1;
+  for (let i = lines.length - 1;i >= 0; i--)
+    if (HEAD.test(lines[i])) {
+      at = i;
+      break;
+    }
+  if (at < 0)
+    return [];
+  const out = [];
+  for (let i = at + 1;i < lines.length; i++) {
+    const l = lines[i];
+    const b = BULLET.exec(l);
+    if (b) {
+      out.push(clean3(b[1]));
+      continue;
+    }
+    if (!l.trim()) {
+      if (out.length)
+        break;
+      continue;
+    }
+    if (out.length && /^\s{2,}\S/.test(l)) {
+      out[out.length - 1] = clean3(`${out[out.length - 1]} ${l}`);
+      continue;
+    }
+    break;
+  }
+  return out.filter((x) => x.length >= 4).slice(0, 12);
+}
+var clean3 = (s) => s.replace(/\*\*([^*]+)\*\*/g, "$1").replace(/`([^`]+)`/g, "$1").replace(/\s+/g, " ").trim().slice(0, 300);
+function lastReply(file) {
+  if (!file)
+    return "";
+  try {
+    const es = lines(tail(file, 128 * 1024));
+    for (let i = es.length - 1;i >= 0; i--) {
+      const e = es[i];
+      if ((e?.message?.role ?? e?.type) !== "assistant")
+        continue;
+      const t = textOf(e.message?.content).trim();
+      if (t)
+        return t;
+    }
+  } catch {}
+  return "";
+}
+var hashOf = (items) => crypto4.createHash("sha256").update(items.join(`
+`)).digest("hex").slice(0, 12);
+var file9 = () => path44.join(P.root, "open-items.json");
+function readPrefs() {
+  try {
+    return JSON.parse(fs36.readFileSync(file9(), "utf8")) ?? {};
+  } catch {
+    return {};
+  }
+}
+function writePrefs(p) {
+  fs36.mkdirSync(P.root, { recursive: true, mode: 448 });
+  const week = Date.now() - 7 * 86400000;
+  const seen = Object.fromEntries(Object.entries(p.seen ?? {}).filter(([, at]) => at > week));
+  const tmp = `${file9()}.${process.pid}.tmp`;
+  fs36.writeFileSync(tmp, JSON.stringify({ ...p, seen }), { mode: 384 });
+  fs36.renameSync(tmp, file9());
+}
+var TACKLE = "Tackle them";
+var ALWAYS = "Always";
+var NOT_NOW2 = "Not now";
+var question2 = (n) => `Tackle the ${n} open item${n === 1 ? "" : "s"} from that reply?`;
+function tacklePrompt(items) {
+  return [
+    `Tackle the open items you listed:`,
+    ...items.map((x, i) => `${i + 1}. ${x}`),
+    ``,
+    `Do each one you can do yourself. For any that needs a decision or an action only the person can take, ask them (one question for all of those, at the end) instead of guessing. When you finish, list only what is still open.`
+  ].join(`
+`);
+}
+function atStop(o) {
+  const items = parseOpen(o.reply);
+  if (!items.length)
+    return null;
+  const id = hashOf(items);
+  const p = readPrefs();
+  const key = `${o.sessionId}:${id}`;
+  const fresh = !p.seen?.[key];
+  if (fresh)
+    writePrefs({ ...p, seen: { ...p.seen ?? {}, [key]: o.now ?? Date.now() } });
+  return { items, id, fresh, auto: !!p.always && !o.continuing && fresh };
+}
+
 // src/hook.ts
 var input = await new Promise((resolve) => {
   let raw = "";
@@ -6109,8 +6208,8 @@ function agyCwd() {
   if (Array.isArray(ws) && typeof ws[0] === "string" && ws[0])
     return ws[0];
   const here = process.cwd();
-  if (AGENT_DIRS.has(path44.basename(here)))
-    return path44.dirname(here);
+  if (AGENT_DIRS.has(path45.basename(here)))
+    return path45.dirname(here);
   return here;
 }
 var cwd = hook.cwd ?? hook.working_dir ?? hook.workspace_roots?.[0] ?? (isAgy ? agyCwd() : process.cwd());
@@ -6263,6 +6362,38 @@ if (restoreClient === "claude" && /^(SessionStart|UserPromptSubmit|Stop|PreCompa
 ${a.systemMessage}` : a.systemMessage;
   } catch {}
 }
+if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !process.env.CROSSTALK_NO_OPEN_ITEMS && !/^sdk/i.test(process.env.CLAUDE_CODE_ENTRYPOINT ?? "")) {
+  try {
+    const r = atStop({ reply: lastReply(typeof hook.transcript_path === "string" ? hook.transcript_path : undefined), sessionId, continuing: hook.stop_hook_active === true });
+    if (r?.fresh) {
+      let thread;
+      if (await ensureDaemon(root))
+        for (const text of r.items)
+          try {
+            const t = await request({ op: "tasks", sessionId, cwd, write: "add", text }, 3000);
+            if (t?.ok && t.thread)
+              thread = t.thread;
+          } catch {}
+      if (r.auto) {
+        process.stdout.write(JSON.stringify({
+          decision: "block",
+          reason: tacklePrompt(r.items),
+          systemMessage: `\u25E2 crosstalk: going on with the ${r.items.length} open item${r.items.length === 1 ? "" : "s"}, as you chose. "Stop tackling open items by itself" turns that off.`
+        }));
+        process.exit(0);
+      }
+      const kept = thread ? ` Kept as tasks in ${thread}.` : "";
+      if (modActive(sessionId))
+        withStore((items, now) => upsert(items, { id: `open:${sessionId}:${r.id}`, kind: "attention", sessionId, ...thread ? { thread } : {}, question: question2(r.items.length), text: r.items.map((x) => `\xB7 ${x}`).join(`
+`) + kept, names: r.items, options: [TACKLE, ALWAYS, NOT_NOW2], ts: now }, now));
+      else {
+        const m = `\u25E2 crosstalk: ${r.items.length} open item${r.items.length === 1 ? "" : "s"} in that reply.${kept} Say "tackle them" to go on.`;
+        systemMessage = systemMessage ? `${systemMessage}
+${m}` : m;
+      }
+    }
+  } catch {}
+}
 var socket = process.env.CLAUDE_CODE_MESSAGING_SOCKET;
 var REGISTER_TIMEOUT_MS = Number(process.env.CROSSTALK_REGISTER_TIMEOUT_MS ?? 4000);
 async function registerSession() {
@@ -6272,10 +6403,10 @@ async function registerSession() {
   if (socket) {
     try {
       const dir = sessionsDir();
-      for (const f of fs36.readdirSync(dir)) {
+      for (const f of fs37.readdirSync(dir)) {
         if (!f.endsWith(".json"))
           continue;
-        const e = JSON.parse(fs36.readFileSync(path44.join(dir, f), "utf8"));
+        const e = JSON.parse(fs37.readFileSync(path45.join(dir, f), "utf8"));
         if (e.sessionId === sessionId) {
           name = e.name ?? name;
           break;
@@ -6283,7 +6414,7 @@ async function registerSession() {
       }
     } catch {}
   } else {
-    name = hook.thread_name ?? (path44.basename(cwd) || name);
+    name = hook.thread_name ?? (path45.basename(cwd) || name);
   }
   const registered = await request({
     op: "register",
