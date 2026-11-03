@@ -12453,6 +12453,8 @@ function prState(r) {
     return " \u00b7 merged";
   if (r.state === "CLOSED")
     return " \u00b7 closed";
+  if (!r.alive)
+    return " \u00b7 dead";
   const parts = [r.draft ? "draft" : ""];
   if (r.checks === "running")
     parts.push("checks running", r.eta ?? "");

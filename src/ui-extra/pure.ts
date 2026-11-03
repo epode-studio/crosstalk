@@ -335,6 +335,7 @@ export const agentAsks = (a: PaneAgent): string | null => (a.asks ? `   asks: ${
 export function prState(r: Pick<PaneRunning, "state" | "draft" | "checks" | "failed" | "eta" | "alive">): string {
   if (r.state === "MERGED") return " · merged"
   if (r.state === "CLOSED") return " · closed"
+  if (!r.alive) return " · dead"
   const parts = [r.draft ? "draft" : ""]
   if (r.checks === "running") parts.push("checks running", r.eta ?? "")
   else if (r.checks === "failed") parts.push(`checks failed${r.failed?.length ? `: ${r.failed.join(", ")}` : ""}`)
