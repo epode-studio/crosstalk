@@ -250,6 +250,8 @@ export function similar(o: {
   const seen = new Map(o.recs.map((r) => [r.sessionId, r.seenAt]))
   const groups = new Map<string, typeof o.lives>()
   for (const l of o.lives) {
+    // Main does no thread's work (it left its threads): nothing is folded into it, and it is never folded.
+    if (l.id === o.main || (l.id === o.self && !l.threads.length)) continue
     const key = l.threads.length ? `thread:${l.threads[0]}` : `cwd:${l.cwd}`
     groups.set(key, [...(groups.get(key) ?? []), l])
   }

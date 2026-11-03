@@ -45,6 +45,17 @@ describe("similar sessions", () => {
     expect(folds.find((f) => f.id === "a1")!.why).toBe("same thread, auth")
     expect(folds.find((f) => f.id === "b1")!.why).toBe("same folder")
   })
+  test("nothing is folded into main, which does no thread's work, even in the same folder", () => {
+    const folds = TD.similar({
+      lives: [live("main", { cwd: "/w/app" }), live("x", { cwd: "/w/app" }), live("y", { cwd: "/w/app" })],
+      recs: [seen("main", 0), seen("x", 50), seen("y", 10)],
+      status: () => "idle",
+      waiting: () => 0,
+      self: "main",
+      main: "main",
+    })
+    expect(folds.map((f) => `${f.id}>${f.into}`)).toEqual(["x>y"])
+  })
   test("a busy session is never folded away, and is the one kept", () => {
     const folds = TD.similar({
       lives: [live("x1", { threads: ["t"] }), live("x2", { threads: ["t"] }), live("x3", { threads: ["t"] })],

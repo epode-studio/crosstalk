@@ -52,6 +52,7 @@ import { dirOf, shim } from "../paths.ts"
 import * as PP from "../services/postpone.ts"
 import type { Activity } from "../services/procs.ts"
 import * as TD from "./tidy.ts"
+import { currentMain } from "../main.ts"
 import { resetColours as resetTabColours } from "../terminal/status.ts"
 
 export type Out = { ok: boolean; text: string; pending?: boolean; [k: string]: unknown }
@@ -487,7 +488,7 @@ export async function tidyPlan(o: { by: string; sessions?: string[]; d: Deps }):
     else if (!t.ok) missing.push(ref)
   }
   const status = TD.statusOf()
-  const folds = o.sessions?.length ? [] : TD.similar({ lives, recs, status, waiting: TD.waitingFor, self: o.by })
+  const folds = o.sessions?.length ? [] : TD.similar({ lives, recs, status, waiting: TD.waitingFor, self: o.by, main: currentMain()?.sessionId })
   const folded = new Set(folds.map((f) => f.id))
   const offers = o.sessions?.length ? [] : TD.suggest({ lives, recs, status, waiting: TD.waitingFor, self: o.by, now: o.d.now() }).filter((x) => !folded.has(x.id) && !folds.some((f) => f.into === x.id))
   const tabs = TD.leftoverTabs(recs, new Set(lives.map((l) => l.terminal.tty).filter((t): t is string => !!t)))
