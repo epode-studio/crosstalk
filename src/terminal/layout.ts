@@ -38,6 +38,7 @@ import { spawnSync } from "node:child_process"
 import * as R from "../restore.ts"
 import type { Env, Kind, Rec, Step, Term } from "../restore.ts"
 import { repoKey, repoName, type Git, git as liveGit } from "./repo.ts"
+import { shortArgv } from "./brief.ts"
 
 /** A tab to open: run `argv` in `cwd`. `thread` is the crosstalk thread it belongs to. */
 export type Tab = { cwd: string; argv: string[]; name?: string; thread?: string }
@@ -216,7 +217,9 @@ export function openForRepo(
           indexOf: (t) => R.tmuxWindowIndex(t, o.envVars ?? process.env),
         }), o.envVars ?? process.env)
       : null
-  const opened = openTabs(tabs, { anchor, current: env.current, env, repo, tmuxSession: env.tmuxHasSession, after })
+  // A long first prompt goes in a file beside the agent, so the tab is not titled with its last words.
+  const short = tabs.map((t) => ({ ...t, argv: shortArgv(t.argv, t.cwd) }))
+  const opened = openTabs(short, { anchor, current: env.current, env, repo, tmuxSession: env.tmuxHasSession, after })
   let out = ""
   let ok = opened.kind !== "manual"
   for (const s of opened.steps) {

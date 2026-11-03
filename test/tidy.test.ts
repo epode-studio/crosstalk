@@ -159,3 +159,54 @@ describe("the main session", () => {
     expect(c).toContain("On it: palpable-5d.")
   })
 })
+
+describe("questions already waiting", () => {
+  test("an agent's own unanswered question is found in its transcript, an answered one is not", async () => {
+    const T = await import("../src/sessions/transcripts.ts")
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ct-ask-"))
+    const f = path.join(dir, "t.jsonl")
+    const ask = { type: "assistant", timestamp: new Date(NOW).toISOString(), message: { role: "assistant", content: [{ type: "tool_use", id: "tu1", name: "AskUserQuestion", input: { questions: [{ question: "Keep the Pi flat?", options: [{ label: "Pi flat" }, { label: "Keep any tilt" }] }] } }] } }
+    fs.writeFileSync(f, JSON.stringify(ask) + "\n")
+    expect(T.openQuestion(f)).toEqual({ question: "Keep the Pi flat?", options: ["Pi flat", "Keep any tilt"], at: NOW })
+    fs.appendFileSync(f, JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tu1", content: "Pi flat" }] } }) + "\n")
+    expect(T.openQuestion(f)).toBe(null)
+  })
+  test("the agents pane shows it under the agent, as waiting on you", async () => {
+    const A = await import("../src/ui-extra/agents.ts")
+    const pure = await import("../src/ui-extra/pure.ts")
+    const list = A.agentsFrom({
+      recs: [{ sessionId: "case", cwd: "/w/case", pid: 10, seenAt: NOW - 5 * MIN, terminal: {} } as any],
+      status: () => "busy",
+      waiting: () => 0,
+      alive: () => true,
+      name: () => "organic-case-81",
+      asks: () => "Keep the Pi flat? (Pi flat / Keep any tilt)",
+      now: NOW,
+    })
+    expect(pure.paneLines({ thread: "your agents", status: "1 open", people: [], sessions: 0, waiting: [], recent: [], features: [], agents: list }, NOW)).toEqual([
+      "◢ your agents · 1 open",
+      "",
+      " ? organic-case-81 · waiting on you",
+      "   asks: Keep the Pi flat? (Pi flat / Keep any tilt)",
+    ])
+  })
+})
+
+describe("a new agent's first prompt", () => {
+  test("a long one goes in a git-ignored file beside it, so the tab is not titled with it", async () => {
+    const B = await import("../src/terminal/brief.ts")
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ct-brief-"))
+    const ex = path.join(dir, "exclude")
+    const long = "You are a fresh session on the crosstalk thread. ".repeat(5)
+    const argv = B.shortArgv(["claude", long], dir, { excludeFile: () => ex })
+    expect(argv[0]).toBe("claude")
+    expect(argv[1]).toMatch(/^Start from \.crosstalk-brief-[0-9a-f]{6}\.md$/)
+    expect(fs.readFileSync(path.join(dir, argv[1].slice("Start from ".length)), "utf8")).toBe(long + "\n")
+    expect(fs.readFileSync(ex, "utf8")).toContain(".crosstalk-brief-*.md")
+    B.shortArgv(["claude", long], dir, { excludeFile: () => ex })
+    expect(fs.readFileSync(ex, "utf8").split(".crosstalk-brief-*.md").length).toBe(2) // added once
+    expect(B.shortArgv(["claude", "fix the login"], dir, { excludeFile: () => ex })).toEqual(["claude", "fix the login"])
+    expect(B.shortArgv(["claude", "--resume", "abc"], dir, { excludeFile: () => ex })).toEqual(["claude", "--resume", "abc"])
+    expect(B.shortArgv(["claude", long], dir, { excludeFile: () => null })).toEqual(["claude", long]) // not git: as before
+  })
+})

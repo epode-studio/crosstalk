@@ -6218,7 +6218,7 @@ var chromeOut = (hookSpecific) => {
 };
 if (restoreClient === "claude" && sessionId && isSessionStart && !/^(clear|compact)$/.test(String(hook.source ?? "")) && !/^sdk/i.test(process.env.CLAUDE_CODE_ENTRYPOINT ?? "")) {
   try {
-    const w = welcomeOnce();
+    const w = process.env.CLAUDE_CODE_ENTRYPOINT === "cli" ? welcomeOnce() : null;
     if (w)
       systemMessage = systemMessage ? `${systemMessage}
 ${w}` : w;

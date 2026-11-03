@@ -347,7 +347,8 @@ if (
 ) {
   // The first time on this machine: a few things to say, so nothing has to be looked up.
   try {
-    const w = intro.welcomeOnce()
+    // Only in an interactive Claude Code: never in scripts, `claude -p`, SDK runs or tests.
+    const w = process.env.CLAUDE_CODE_ENTRYPOINT === "cli" ? intro.welcomeOnce() : null
     if (w) systemMessage = systemMessage ? `${systemMessage}\n${w}` : w
   } catch {}
   try {

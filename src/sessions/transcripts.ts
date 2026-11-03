@@ -191,3 +191,28 @@ export function lastPrompt(file: string | null): { text: string; at: number } | 
   }
   return null
 }
+
+/**
+ * The question a session's agent has put to the person and is waiting on
+ * (Claude Code's AskUserQuestion with no answer yet), from its transcript's
+ * tail: the question and its options' labels. Null when none is open.
+ */
+export function openQuestion(file: string | null): { question: string; options: string[]; at: number } | null {
+  if (!file) return null
+  const es = recap.lines(recap.tail(file, 64 * 1024))
+  const answered = new Set<string>()
+  for (let i = es.length - 1; i >= 0; i--) {
+    const c = es[i]?.message?.content
+    if (!Array.isArray(c)) continue
+    for (const b of c) if (b?.type === "tool_result" && typeof b.tool_use_id === "string") answered.add(b.tool_use_id)
+    for (const b of c) {
+      if (b?.type !== "tool_use" || b.name !== "AskUserQuestion") continue
+      if (answered.has(b.id)) return null // the latest one is answered: nothing open
+      const q = Array.isArray(b.input?.questions) ? b.input.questions[0] : null
+      if (!q || typeof q.question !== "string") return null
+      const options = Array.isArray(q.options) ? q.options.map((o: any) => String(o?.label ?? "")).filter(Boolean).slice(0, 4) : []
+      return { question: q.question.replace(/\s+/g, " ").trim().slice(0, 300), options, at: ts(es[i]) ?? 0 }
+    }
+  }
+  return null
+}

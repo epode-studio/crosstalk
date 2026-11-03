@@ -9,7 +9,7 @@
 // on black, so it scans on any theme. No hook, state or I/O in here.
 
 import type { Item, Pane } from './types'
-import { agentLine, ago, featureLine, fileLink, historyLine, linkable, noteLine, runningGroups, runningLine, runningWhere } from '../src/ui-extra/pure.ts'
+import { agentAsks, agentLine, ago, featureLine, fileLink, historyLine, linkable, noteLine, runningGroups, runningLine, runningWhere } from '../src/ui-extra/pure.ts'
 
 /** The elements these trees are made of: the surface's own Box, Text and Link. */
 export type Els = { Box: any; Text: any; Link: any }
@@ -67,9 +67,12 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number) {
         <Box flexDirection="column" marginTop={1}>
           {p.agents.length ? (
             p.agents.map((a, i) => (
-              <Text key={`a${i}`} wrap="truncate" bold={a.state === 'waiting'} dimColor={a.state === 'idle'}>
-                {a.state === 'waiting' ? <Text color={THREAD}>{clean(agentLine(a))}</Text> : clean(agentLine(a))}
-              </Text>
+              <Box key={`a${i}`} flexDirection="column">
+                <Text wrap="truncate" bold={a.state === 'waiting'} dimColor={a.state === 'idle'}>
+                  {a.state === 'waiting' ? <Text color={THREAD}>{clean(agentLine(a))}</Text> : clean(agentLine(a))}
+                </Text>
+                {agentAsks(a) ? <Text wrap="wrap">{clean(agentAsks(a)!)}</Text> : null}
+              </Box>
             ))
           ) : (
             <Text dimColor>none open</Text>
