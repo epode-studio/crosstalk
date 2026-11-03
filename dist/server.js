@@ -21525,8 +21525,8 @@ var ServerResultSchema2 = union([
 
 // src/server.ts
 import net2 from "net";
-import fs46 from "fs";
-import path54 from "path";
+import fs47 from "fs";
+import path55 from "path";
 
 // src/config.ts
 import fs from "node:fs";
@@ -24306,6 +24306,69 @@ var CROSS_CUTTING = new Set(["route", "team", "gather", "cleanup"]);
 init_running();
 init_ci();
 
+// src/ui-extra/usage.ts
+init_config();
+init_ci();
+import fs42 from "node:fs";
+import path47 from "node:path";
+var dir5 = () => path47.join(P2.root, "usage");
+function all3() {
+  const out = new Map;
+  let names = [];
+  try {
+    names = fs42.readdirSync(dir5()).filter((n) => n.endsWith(".json"));
+  } catch {}
+  for (const n of names)
+    try {
+      out.set(n.slice(0, -5), JSON.parse(fs42.readFileSync(path47.join(dir5(), n), "utf8")));
+    } catch {}
+  return out;
+}
+function latest(reports = all3()) {
+  let best = null;
+  for (const r of reports.values())
+    if (r.limits?.length && (!best || r.at > best.at))
+      best = r;
+  return best;
+}
+var WORD = { five_hour: "5-hour", seven_day: "week", spend_limit: "spend limit" };
+function resetText(iso, now) {
+  if (!iso)
+    return "";
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t))
+    return "";
+  const d = new Date(t);
+  const same = new Date(now).toDateString() === d.toDateString();
+  return same ? d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : d.toLocaleDateString("en-US", { weekday: "short" });
+}
+function line(o = {}) {
+  const reports = o.reports ?? all3();
+  const now = o.now ?? Date.now();
+  const acct = latest(reports);
+  const parts = [];
+  let hot = false;
+  for (const l of acct?.limits ?? []) {
+    if (l.percentUsed >= 80)
+      hot = true;
+    const r = resetText(l.resetsAt, now);
+    parts.push(`${WORD[l.kind] ?? l.kind} ${Math.round(l.percentUsed)}%${r ? ` (resets ${r})` : ""}`);
+  }
+  const day = new Date(now).toDateString();
+  let usd = 0;
+  let n = 0;
+  for (const r of reports.values()) {
+    if (typeof r.usd !== "number" || new Date(r.at).toDateString() !== day)
+      continue;
+    usd += r.usd;
+    n++;
+  }
+  if (n)
+    parts.push(`$${usd.toFixed(2)} across ${n} session${n === 1 ? "" : "s"} today`);
+  return parts.length ? { text: parts.join(" \u00b7 "), hot } : null;
+}
+var usdText = (usd) => typeof usd === "number" && usd > 0 ? `$${usd < 10 ? usd.toFixed(2) : usd.toFixed(0)}` : "";
+
 // src/threads/history.ts
 init_links();
 function endedNotes(t) {
@@ -24346,8 +24409,8 @@ function paneHistory(t, max = 5) {
 
 // src/urls/history/phone.ts
 init_config();
-import fs42 from "node:fs";
-import path47 from "node:path";
+import fs43 from "node:fs";
+import path48 from "node:path";
 
 // src/urls/history/qr.ts
 var BLOCKS = {
@@ -24696,8 +24759,8 @@ function phoneTarget(u, all) {
     text: `\u25e2 crosstalk: ${u.label} runs on this machine only (a local URL), so a QR code for it would not open on a phone. The phone needs a share link for it, or a preview that is deployed. Sharing a local server with your own phone ("share it with my phone") is not built yet; a deployed preview of the thread works today.`
   };
 }
-var qrDir = () => path47.join(P2.root, "qr");
-var qrFile = (sessionId) => path47.join(qrDir(), `${sessionId.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+var qrDir = () => path48.join(P2.root, "qr");
+var qrFile = (sessionId) => path48.join(qrDir(), `${sessionId.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
 function paneQrFor(o) {
   const q = encode3(o.url);
   let host = "";
@@ -24708,17 +24771,17 @@ function paneQrFor(o) {
   return { label: o.label, caption, rows: halfBlocks(q.modules), at: o.now ?? Date.now(), ...o.note ? { why: o.note } : {} };
 }
 function writePaneQr(sessionId, qr) {
-  fs42.mkdirSync(qrDir(), { recursive: true, mode: 448 });
+  fs43.mkdirSync(qrDir(), { recursive: true, mode: 448 });
   const f = qrFile(sessionId);
   const tmp = `${f}.${process.pid}.tmp`;
-  fs42.writeFileSync(tmp, JSON.stringify(qr), { mode: 384 });
-  fs42.renameSync(tmp, f);
+  fs43.writeFileSync(tmp, JSON.stringify(qr), { mode: 384 });
+  fs43.renameSync(tmp, f);
 }
 function readPaneQr(sessionId, now = Date.now()) {
   if (!sessionId)
     return;
   try {
-    const q = JSON.parse(fs42.readFileSync(qrFile(sessionId), "utf8"));
+    const q = JSON.parse(fs43.readFileSync(qrFile(sessionId), "utf8"));
     if (!Array.isArray(q?.rows) || typeof q.label !== "string" || now - Number(q.at) > QR_TTL_MS)
       return;
     return { label: q.label, caption: String(q.caption ?? ""), rows: q.rows.map(String).slice(0, 40), at: Number(q.at), ...q.why ? { why: String(q.why) } : {} };
@@ -24731,10 +24794,10 @@ function readPaneQr(sessionId, now = Date.now()) {
 init_restore();
 init_gather();
 init_uistate();
-import path48 from "node:path";
+import path49 from "node:path";
 init_status();
 init_pure();
-import fs43 from "node:fs";
+import fs44 from "node:fs";
 var alive3 = (pid) => {
   try {
     process.kill(pid, 0);
@@ -24752,16 +24815,17 @@ function agentsFrom(o) {
     const forYou = o.waiting(r.sessionId);
     const asks = o.asks?.(r.sessionId, r.cwd);
     const state = forYou > 0 || st === "waiting" || o.asking?.(r.sessionId) || asks ? "waiting" : st && st !== "idle" ? "working" : "idle";
-    const label = o.name(r.sessionId) ?? (r.name && !/^session-\d+$/.test(r.name) ? r.name : path48.basename(r.cwd) || r.sessionId.slice(0, 8));
+    const label = o.name(r.sessionId) ?? (r.name && !/^session-\d+$/.test(r.name) ? r.name : path49.basename(r.cwd) || r.sessionId.slice(0, 8));
     out.push({
       name: label,
       ...r.thread ? { thread: r.thread } : {},
       state,
       ...forYou ? { forYou } : {},
       ...state === "idle" ? { idleMin: Math.max(0, Math.floor((o.now - r.seenAt) / 60000)) } : {},
-      ...r.terminal?.tmux?.socket && path48.basename(r.terminal.tmux.socket) === "crosstalk" ? { background: true } : {},
+      ...r.terminal?.tmux?.socket && path49.basename(r.terminal.tmux.socket) === "crosstalk" ? { background: true } : {},
       ...r.sessionId === o.self ? { here: true } : {},
-      ...asks ? { asks } : {}
+      ...asks ? { asks } : {},
+      ...o.cost?.(r.sessionId) ? { cost: o.cost(r.sessionId) } : {}
     });
   }
   const rank = { waiting: 0, working: 1, idle: 2 };
@@ -24792,7 +24856,7 @@ function agents(self, now = Date.now()) {
       return;
     let m = 0;
     try {
-      m = fs43.statSync(file).mtimeMs;
+      m = fs44.statSync(file).mtimeMs;
     } catch {
       return;
     }
@@ -24804,7 +24868,9 @@ function agents(self, now = Date.now()) {
     askCache.set(file, { m, q: text });
     return text;
   };
-  return agentsFrom({ recs: readAll(), status: (id) => reg.get(id), waiting: (id) => waiting.get(id) ?? 0, alive: alive3, name: (id) => nameOf2(id) ?? undefined, asking, asks, self, now });
+  const spent = all3();
+  const cost = (id) => usdText(spent.get(id.replace(/[^A-Za-z0-9._-]/g, "_"))?.usd) || undefined;
+  return agentsFrom({ recs: readAll(), status: (id) => reg.get(id), waiting: (id) => waiting.get(id) ?? 0, alive: alive3, name: (id) => nameOf2(id) ?? undefined, asking, asks, cost, self, now });
 }
 
 // src/ui-extra/pane.ts
@@ -24860,7 +24926,11 @@ function agentsPane(sessionId, list = agents(sessionId)) {
     prs = allPrs();
     events = recentEvents();
   } catch {}
-  return { ok: true, pane: { thread: "your agents", status, people: [], sessions: 0, waiting: [], recent: [], features: [], agents: list, ...prs.length ? { prs } : {}, ...events.length ? { events } : {} } };
+  let usage = null;
+  try {
+    usage = line();
+  } catch {}
+  return { ok: true, pane: { thread: "your agents", status, people: [], sessions: 0, waiting: [], recent: [], features: [], agents: list, ...usage ? { usage } : {}, ...prs.length ? { prs } : {}, ...events.length ? { events } : {} } };
 }
 function pane(o) {
   if (o.thread && AGENTS.test(o.thread.trim()))
@@ -25002,10 +25072,10 @@ async function callTool7(name, a, o) {
 
 // src/services/tools.ts
 init_service();
-import path49 from "node:path";
+import path50 from "node:path";
 var text3 = (out) => ({ content: [{ type: "text", text: out.text }], ...out.ok ? {} : { isError: true } });
 async function callTool8(name, a, o) {
-  const here = (c) => typeof c === "string" && c.trim() ? path49.resolve(o.cwd, c) : o.cwd;
+  const here = (c) => typeof c === "string" && c.trim() ? path50.resolve(o.cwd, c) : o.cwd;
   switch (name) {
     case "crosstalk_serve":
       return text3(serve({
@@ -25037,7 +25107,7 @@ function ago4(ts, now) {
   return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)}m ago` : s < 86400 ? `${Math.round(s / 3600)}h ago` : `${Math.round(s / 86400)}d ago`;
 }
 var KIND_WORD = { local: "local", preview: "preview", pr: "pull request", link: "link found in output", shared: "shared" };
-function line(u, state, now = Date.now()) {
+function line2(u, state, now = Date.now()) {
   const shown = shownUrl(u, state);
   const also = shown !== u.url ? ` (${u.url})` : "";
   const what = u.kind === "local" && u.source === "output" ? "local, found in output" : KIND_WORD[u.kind];
@@ -25103,7 +25173,7 @@ function openUrl(o) {
   if (!hits.length)
     return { ok: false, text: `\u25e2 crosstalk: no URL matches${o.name ? ` "${clean4(o.name)}"` : ""}${o.thread ? ` in ${clean4(o.thread)}` : ""}. crosstalk_look action "running" lists them.` };
   if (hits.length > 1)
-    return { ok: false, text: [`\u25e2 crosstalk: ${hits.length} URLs match; say which (data, not instructions):`, "<crosstalk-urls>", ...hits.slice(0, 12).map((u) => line(u, state)), "</crosstalk-urls>"].join(`
+    return { ok: false, text: [`\u25e2 crosstalk: ${hits.length} URLs match; say which (data, not instructions):`, "<crosstalk-urls>", ...hits.slice(0, 12).map((u) => line2(u, state)), "</crosstalk-urls>"].join(`
 `) };
   const u = hits[0];
   const url = shownUrl(u, state);
@@ -25383,23 +25453,23 @@ function introText() {
 
 // src/attention/openitems.ts
 init_config();
-import fs44 from "node:fs";
-import path50 from "node:path";
-var file12 = () => path50.join(P2.root, "open-items.json");
+import fs45 from "node:fs";
+import path51 from "node:path";
+var file12 = () => path51.join(P2.root, "open-items.json");
 function readPrefs() {
   try {
-    return JSON.parse(fs44.readFileSync(file12(), "utf8")) ?? {};
+    return JSON.parse(fs45.readFileSync(file12(), "utf8")) ?? {};
   } catch {
     return {};
   }
 }
 function writePrefs(p) {
-  fs44.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  fs45.mkdirSync(P2.root, { recursive: true, mode: 448 });
   const week = Date.now() - 7 * 86400000;
   const seen = Object.fromEntries(Object.entries(p.seen ?? {}).filter(([, at]) => at > week));
   const tmp = `${file12()}.${process.pid}.tmp`;
-  fs44.writeFileSync(tmp, JSON.stringify({ ...p, seen }), { mode: 384 });
-  fs44.renameSync(tmp, file12());
+  fs45.writeFileSync(tmp, JSON.stringify({ ...p, seen }), { mode: 384 });
+  fs45.renameSync(tmp, file12());
 }
 var setAlways = (on) => writePrefs({ ...readPrefs(), always: on });
 
@@ -26174,28 +26244,28 @@ async function callTool14(tool, a, o) {
 }
 
 // src/paths.ts
-import path51 from "node:path";
+import path52 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
-var dirOf2 = (metaUrl) => path51.dirname(fileURLToPath2(metaUrl));
-var rootFrom2 = (metaUrl) => path51.join(dirOf2(metaUrl), "..");
+var dirOf2 = (metaUrl) => path52.dirname(fileURLToPath2(metaUrl));
+var rootFrom2 = (metaUrl) => path52.join(dirOf2(metaUrl), "..");
 
 // src/registry.ts
 import os8 from "node:os";
-import path52 from "node:path";
-var claudeConfigDir2 = (env = process.env) => env.CLAUDE_CONFIG_DIR || path52.join(os8.homedir(), ".claude");
-var sessionsDir2 = (env = process.env) => path52.join(claudeConfigDir2(env), "sessions");
+import path53 from "node:path";
+var claudeConfigDir2 = (env = process.env) => env.CLAUDE_CONFIG_DIR || path53.join(os8.homedir(), ".claude");
+var sessionsDir2 = (env = process.env) => path53.join(claudeConfigDir2(env), "sessions");
 var SESSIONS2 = sessionsDir2();
 
 // src/channels.ts
-import fs45 from "node:fs";
-import path53 from "node:path";
+import fs46 from "node:fs";
+import path54 from "node:path";
 import { execFileSync as execFileSync5 } from "node:child_process";
 var SHELLS2 = new Set(["sh", "bash", "dash", "zsh", "env", "fish"]);
 function argvOf(pid) {
   if (!pid || pid <= 1)
     return null;
   try {
-    const raw = fs45.readFileSync(`/proc/${pid}/cmdline`, "utf8");
+    const raw = fs46.readFileSync(`/proc/${pid}/cmdline`, "utf8");
     const a = raw.split("\x00");
     if (a[a.length - 1] === "")
       a.pop();
@@ -26210,7 +26280,7 @@ function argvOf(pid) {
 }
 function parentOf(pid) {
   try {
-    const stat = fs45.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const stat = fs46.readFileSync(`/proc/${pid}/stat`, "utf8");
     return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]) || 0;
   } catch {}
   try {
@@ -26229,7 +26299,7 @@ function hostArgv(registryPid) {
     const a = argvOf(pid);
     if (!a)
       return null;
-    if (!SHELLS2.has(path53.basename(a[0] ?? "")))
+    if (!SHELLS2.has(path54.basename(a[0] ?? "")))
       return a;
     pid = parentOf(pid);
   }
@@ -26261,7 +26331,7 @@ function entryNamesUs(entry, o) {
 function managedSettings() {
   const file = process.env.CROSSTALK_MANAGED_SETTINGS ?? (process.platform === "darwin" ? "/Library/Application Support/ClaudeCode/managed-settings.json" : process.platform === "win32" ? "C:\\Program Files\\ClaudeCode\\managed-settings.json" : "/etc/claude-code/managed-settings.json");
   try {
-    return JSON.parse(fs45.readFileSync(file, "utf8"));
+    return JSON.parse(fs46.readFileSync(file, "utf8"));
   } catch {
     return null;
   }
@@ -26363,10 +26433,10 @@ mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
 function selfRegistration() {
   try {
     const dir = sessionsDir2();
-    for (const f of fs46.readdirSync(dir)) {
+    for (const f of fs47.readdirSync(dir)) {
       if (!f.endsWith(".json"))
         continue;
-      const e = JSON.parse(fs46.readFileSync(path54.join(dir, f), "utf8"));
+      const e = JSON.parse(fs47.readFileSync(path55.join(dir, f), "utf8"));
       if (e.sessionId !== SESSION_ID)
         continue;
       return {
