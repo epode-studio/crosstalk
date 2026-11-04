@@ -15,6 +15,7 @@
 import { daemonRunning, ensureDaemon, request } from "./client.ts"
 import * as openItems from "./attention/openitems.ts"
 import * as usage from "./ui-extra/usage.ts"
+import * as relay from "./attention/relay.ts"
 import * as firstuse from "./repotrust/firstuse.ts"
 import * as restore from "./restore.ts"
 import * as ui from "./uistate.ts"
@@ -181,6 +182,19 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
       return print({ ok: true })
     case "list":
       return print({ ok: true, ...(await waiting(session, false)) })
+    // An agent's own question, put to the main session (src/attention/relay.ts).
+    case "relay": {
+      let q: unknown = null
+      try {
+        q = JSON.parse(arg(argv, "--question") ?? "null")
+      } catch {}
+      if (!relay.relayable([q])) return print({ ok: true, relay: false })
+      const main = relay.target(session)
+      if (!main) return print({ ok: true, relay: false })
+      return print({ ok: true, relay: true, id: relay.relay(session, q as relay.Question, main) })
+    }
+    case "relay-wait":
+      return print({ ok: true, ...relay.poll(arg(argv, "--id") ?? "") })
     // What this session has cost and the plan's windows, from its mod at a turn's end (src/ui-extra/usage.ts).
     case "usage": {
       let limits: { kind: string; percentUsed: number; resetsAt?: string }[] = []
@@ -223,6 +237,14 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
         const yes = action !== "mute" && (value ?? "").trim() === firstuse.CONNECT
         const out = await firstuse.connect({ slug: id.slice("connect:".length), yes, ensureDaemon: () => ensureDaemon(root), request })
         return print({ ok: out.ok, text: out.text, item: ui.snapshot()[id] })
+      }
+      // An agent's question answered in main (src/attention/relay.ts): the pick is kept for the asking session's mod.
+      if (id.startsWith("relay:")) {
+        if (action === "raised" || action === "later") return print(ui.withStore((items, now) => ui.act(items, id, action, now)))
+        if (action === "answer" && insideAgent()) return print({ ok: false, error: "this is for a person: answer it in crosstalk's picker" })
+        const claim = ui.withStore((items, now) => ui.act(items, id, "answer", now, (value ?? "").trim()))
+        if (!claim.ok) return print({ ok: false, error: claim.error })
+        return print({ ok: true, item: claim.item, text: `sent to ${claim.item?.from ?? "the session that asked"}` })
       }
       // "Tackle all open" (src/attention/openitems.ts): the person's pick starts the turn, from the mod.
       if (id.startsWith("open:")) {

@@ -1,0 +1,58 @@
+// An agent's own question, answered from the main session.
+//
+//   bun test test/relay.test.ts
+
+import { describe, expect, test } from "bun:test"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
+
+process.env.CROSSTALK_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "ct-relay-"))
+const Rl = await import("../src/attention/relay.ts")
+const ui = await import("../src/uistate.ts")
+const Mn = await import("../src/main.ts")
+
+const Q = { question: "Keep the Pi flat?", header: "Pi pose", options: [{ label: "Pi flat", description: "Host on floor posts, like production" }, { label: "Keep any tilt" }], multiSelect: false }
+
+describe("which questions go to main", () => {
+  test("one single-select question with 2-4 choices; nothing else", () => {
+    expect(Rl.relayable([Q])).toBe(true)
+    expect(Rl.relayable([Q, Q])).toBe(false)
+    expect(Rl.relayable([{ ...Q, multiSelect: true }])).toBe(false)
+    expect(Rl.relayable([{ ...Q, kind: "text" }])).toBe(false)
+    expect(Rl.relayable([{ ...Q, options: [{ label: "only one" }] }])).toBe(false)
+  })
+  test("to main, unless there is none, this is main, or the person is looking at this tab", () => {
+    expect(Rl.target("work", { main: "main", focused: null })).toBe("main")
+    expect(Rl.target("work", { main: null, focused: null })).toBe(null)
+    expect(Rl.target("main", { main: "main", focused: null })).toBe(null)
+    expect(Rl.target("work", { main: "main", focused: { sessionId: "work", sure: true } })).toBe(null)
+    expect(Rl.target("work", { main: "main", focused: { sessionId: "work", sure: false } })).toBe("main") // a guess is not enough to keep it here
+    expect(Rl.target("work", { main: "main", focused: { sessionId: "other", sure: true } })).toBe("main")
+  })
+})
+
+describe("asking and answering", () => {
+  test("main gets the question with who asks and the options; the pick there is the answer", () => {
+    const id = Rl.relay("work-1", Q, "main-s")
+    const it = ui.snapshot()[id]
+    expect(it.sessionId).toBe("main-s")
+    expect(it.question).toContain("asks: Keep the Pi flat?")
+    expect(it.options).toEqual(["Pi flat", "Keep any tilt"])
+    expect(it.text).toBe("Pi flat: Host on floor posts, like production")
+    expect(Rl.poll(id, { mainAlive: () => true })).toEqual({})
+    ui.withStore((items, now) => ui.act(items, id, "answer", now, "Pi flat"))
+    expect(Rl.poll(id, { mainAlive: () => true })).toEqual({ answer: "Pi flat" })
+  })
+  test("main gone meanwhile: asked in its own tab after all", () => {
+    const id = Rl.relay("work-2", Q, "main-s")
+    expect(Rl.poll(id, { mainAlive: () => false })).toEqual({ fallback: true })
+    expect(Rl.poll("relay:nothing:here")).toEqual({ fallback: true })
+  })
+  test("main shows it: it is addressed to main", () => {
+    const id = Rl.relay("work-3", Q, "main-s")
+    const open = Object.values(ui.snapshot()).filter((i) => i.state === "pending")
+    expect(Mn.itemsFor(open, "main-s", "main-s").some((i) => i.id === id)).toBe(true)
+    expect(Mn.itemsFor(open, "work-3", "main-s").some((i) => i.id === id)).toBe(false)
+  })
+})

@@ -679,6 +679,29 @@ export const register: Register = on => {
     return { drop: at.kind === 'name' ? `crosstalk: answer sent to ${at.name}` : `crosstalk: ${at.kind}` }
   }).catch(($, e, next) => (next.called ? next(e) : { drop: 'crosstalk: reply failed' }))
 
+  // The agent's own question (AskUserQuestion), put to the main session when one is
+  // open and the person is not looking here (src/attention/relay.ts). The pick
+  // there is this call's answer, as if made here; otherwise it is asked here.
+  on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
+    const qs = (e as { questions?: unknown }).questions
+    if (!bin || !session || !interactive || !Array.isArray(qs) || qs.length !== 1) return next(e)
+    const r = await cli($, ['relay', '--question', JSON.stringify(qs[0])])
+    if (!r?.relay || typeof r.id !== 'string') return next(e)
+    const q = qs[0] as { question: string }
+    await receipt($, `relay-${r.id}`, `◢ asked in your main session: ${oneLine(q.question).slice(0, 160)}`)
+    const until = Date.now() + 12 * 3600_000
+    while (Date.now() < until) {
+      await new Promise(res => $.clock.after(1500, () => res(undefined)))
+      const w = await cli($, ['relay-wait', '--id', r.id])
+      if (typeof w?.answer === 'string') {
+        await receipt($, `relay-${r.id}`, `◢ answered in your main session: ${oneLine(w.answer).slice(0, 120)}`)
+        return { result: { questions: qs, answers: { [q.question]: w.answer } } } as any
+      }
+      if (w?.fallback) break
+    }
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
   // The agent's crosstalk_look action "pane": the server answers it (saying nothing of what
   // the pane shows), and the pane opens here. It is the person's words behind
   // the call, so the pane is placed even on a narrow terminal where it can be.
