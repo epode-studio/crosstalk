@@ -47,12 +47,8 @@ export const withBadge = (title: string | undefined, badge: string | undefined) 
  * colour a whole background, which crosstalk leaves alone. The same thread
  * always gets the same colour. CROSSTALK_NO_TITLE_DOT=1 leaves titles plain.
  */
-export const DOTS = ["🔴", "🟠", "🟡", "🟢", "🔵", "🟣", "🟤"] as const
-export function dotFor(thread: string): string {
-  let h = 2166136261
-  for (const c of thread.toLowerCase()) h = Math.imul(h ^ c.charCodeAt(0), 16777619)
-  return DOTS[(h >>> 0) % DOTS.length]
-}
+export { DOTS, dotFor } from "../ui-extra/pure.ts"
+import { DOTS, dotFor } from "../ui-extra/pure.ts"
 export const withDot = (title: string | undefined, thread: string | undefined, env: NodeJS.ProcessEnv = process.env) =>
   title && thread && !env.CROSSTALK_NO_TITLE_DOT && !DOTS.some((d) => title.startsWith(d)) ? `${dotFor(thread)} ${title}` : title
 

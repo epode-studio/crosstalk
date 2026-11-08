@@ -3526,6 +3526,17 @@ function sequence(state, id = "crosstalk") {
   return `\x1B]7501;${s}:app=crosstalk:id=${id.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32) || "crosstalk"}\x1B\\`;
 }
 
+// src/ui-extra/pure.ts
+var DOTS = ["\uD83D\uDFE0", "\uD83D\uDFE1", "\uD83D\uDFE2", "\uD83D\uDD35", "\uD83D\uDFE3", "\uD83D\uDFE4", "\u26aa"];
+function dotFor(thread) {
+  let h = 2166136261;
+  for (const c of thread.toLowerCase())
+    h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return DOTS[(h >>> 0) % DOTS.length] ?? "\u26aa";
+}
+var SIGN = { waiting: "\u2753", working: "\u23f3", done: "\u2705", broken: "\u2757", idle: "\uD83D\uDCA4" };
+var LEGEND = `${SIGN.waiting} needs you \u00b7 ${SIGN.working} working \u00b7 ${SIGN.done} done \u00b7 ${SIGN.broken} something broke \u00b7 ${SIGN.idle} idle \u00b7 a coloured dot per thread`;
+
 // src/terminal/status.ts
 var COLOUR = {
   working: [47, 111, 214],
@@ -3762,6 +3773,10 @@ function applyOnce(id, state, f, sys) {
   let ok = true;
   let restored = false;
   let appleOriginal = f?.appleOriginal;
+  if (kindOf2(t) === "apple" && t.tty && sys.platform === "darwin" && f?.title && !process.env.CROSSTALK_NO_TITLE_SIGN)
+    ok = sys.run({ cmd: "osascript", args: ["-"], input: appleTitleScript(t.tty, signed(f.title, state)) }).ok && ok;
+  if ((state === "waiting" || state === "broken") && f?.applied !== state && t.tty && !process.env.CROSSTALK_NO_BELL)
+    sys.writeTty(t.tty, "\x07");
   for (const a of actionsFor(t, state, sys.platform)) {
     if (a.kind === "run") {
       const r = sys.run(a.step);
@@ -3793,6 +3808,24 @@ function applyOnce(id, state, f, sys) {
   if (restored)
     return { ok, restored };
   return { ok, appleOriginal };
+}
+var appleTitleScript = (tty, title) => appleTab(tty, [
+  `set custom title of t to ${asq2(title.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 120))}`,
+  `set title displays custom title of t to true`,
+  `set title displays device name of t to false`,
+  `set title displays shell path of t to false`,
+  `set title displays window size of t to false`,
+  `set title displays file name of t to false`,
+  `return "done"`
+]);
+function signed(title, state) {
+  const sign = state === "off" ? "" : SIGN[state];
+  const plain = title.replace(new RegExp(`^((?:${DOTS.join("|")})?)(?:${Object.values(SIGN).join("|")})?\\s*`, "u"), "$1");
+  const dot = DOTS.find((d) => plain.startsWith(d));
+  const rest = dot ? plain.slice(dot.length).trimStart() : plain;
+  if (!sign)
+    return dot ? `${dot} ${rest}` : rest;
+  return dot ? `${dot}${sign} ${rest}` : `${sign} ${rest}`;
 }
 var appleTintOn = (env = process.env) => /^(1|true|yes|on)$/i.test(env.CROSSTALK_TAB_COLOUR ?? env.CROSSTALK_TAB_COLOR ?? "");
 var appleProfileBgScript = (tty) => appleTab(tty, [`set n to name of current settings of t`, `set background color of t to background color of settings set n`, `return "done"`]);
@@ -4424,17 +4457,9 @@ function syncServices(o = {}) {
       store2.markDead(u.id);
   return n;
 }
-
 // src/terminal/hook.ts
 var badgeText = (b) => b.replace(/[^a-z0-9.:\- \u2026]/gi, "").slice(0, 80);
 var withBadge = (title, badge) => title && badge ? `${title} \u00b7 ${badgeText(badge)}` : title;
-var DOTS = ["\uD83D\uDD34", "\uD83D\uDFE0", "\uD83D\uDFE1", "\uD83D\uDFE2", "\uD83D\uDD35", "\uD83D\uDFE3", "\uD83D\uDFE4"];
-function dotFor(thread) {
-  let h = 2166136261;
-  for (const c of thread.toLowerCase())
-    h = Math.imul(h ^ c.charCodeAt(0), 16777619);
-  return DOTS[(h >>> 0) % DOTS.length];
-}
 var withDot = (title, thread, env = process.env) => title && thread && !env.CROSSTALK_NO_TITLE_DOT && !DOTS.some((d) => title.startsWith(d)) ? `${dotFor(thread)} ${title}` : title;
 function named(cwd, ports) {
   if (!ports)
@@ -6074,6 +6099,7 @@ function welcomeText() {
     `\u25e2 crosstalk is on. Nothing to learn: just say what you want. Try:`,
     `  "show me all my agents"  \u00b7  "tidy up my sessions"  \u00b7  "put two more agents on this"`,
     `  "tell marie what changed"  \u00b7  "restore them" after a restart`,
+    `  Tabs and lines show: ${LEGEND}.`,
     `  "what can crosstalk do?" for the rest.`
   ].join(`
 `);
@@ -6152,7 +6178,7 @@ function withFile2(id, fn) {
       } catch {}
   }
 }
-var appleTitleScript = (tty, title) => appleTab2(tty, [
+var appleTitleScript2 = (tty, title) => appleTab2(tty, [
   `set custom title of t to ${asq2(title.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 120))}`,
   `set title displays custom title of t to true`,
   `set title displays device name of t to false`,
@@ -6161,6 +6187,15 @@ var appleTitleScript = (tty, title) => appleTab2(tty, [
   `set title displays file name of t to false`,
   `return "done"`
 ]);
+function signed2(title, state) {
+  const sign = state === "off" ? "" : SIGN[state];
+  const plain = title.replace(new RegExp(`^((?:${DOTS.join("|")})?)(?:${Object.values(SIGN).join("|")})?\\s*`, "u"), "$1");
+  const dot = DOTS.find((d) => plain.startsWith(d));
+  const rest = dot ? plain.slice(dot.length).trimStart() : plain;
+  if (!sign)
+    return dot ? `${dot} ${rest}` : rest;
+  return dot ? `${dot}${sign} ${rest}` : `${sign} ${rest}`;
+}
 function nameTab(sessionId, title, o = {}) {
   if ((o.platform ?? process.platform) !== "darwin" || process.env.CROSSTALK_NO_TERM)
     return false;
@@ -6171,7 +6206,7 @@ function nameTab(sessionId, title, o = {}) {
   if (f?.title === title)
     return false;
   withFile2(sessionId, (cur) => writeTab2({ ...cur ?? { sessionId, want: "off", wantAt: Date.now() }, title }));
-  const input = appleTitleScript(t.tty, title);
+  const input = appleTitleScript2(t.tty, signed2(title, f?.applied ?? "off"));
   try {
     (o.spawnIt ?? ((inp) => {
       const c = spawn9("osascript", ["-"], { detached: true, stdio: ["pipe", "ignore", "ignore"] });

@@ -1,5 +1,5 @@
 ┌─ pane · dark · 60 cols ────────────────────────────────────┐
-│◢ auth · active · 2 working                                 │
+│🟣 auth · active · 2 working                                 │
 │paul  marie                                                 │
 │Moving tokens to v2 format; v1 kept for one release.        │
 │                                                            │
@@ -54,7 +54,7 @@
 └────────────────────────────────────────────────────────────┘
 
 styles (dark theme):
-  1 [bold fg=suggestion:#b1b9f9]◢ auth[/][dim] · active · 2 working[/]
+  1 [bold fg=suggestion:#b1b9f9]🟣 auth[/][dim] · active · 2 working[/]
   2 paul  marie
   3 [dim]Moving tokens to v2 format; v1 kept for one release.[/]
   4 

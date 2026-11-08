@@ -44,6 +44,6 @@ describe("usage", () => {
     expect(U.usdText(1.234)).toBe("$1.23")
     expect(U.usdText(14.6)).toBe("$15")
     expect(U.usdText(0)).toBe("")
-    expect(pure.agentLine({ name: "auth", state: "working", cost: "$1.23" })).toBe("● auth · working · $1.23")
+    expect(pure.agentLine({ name: "auth", state: "working", cost: "$1.23" })).toBe("⏳ auth · working · $1.23")
   })
 })

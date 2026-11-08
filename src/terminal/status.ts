@@ -42,6 +42,7 @@ import { shim } from "../paths.ts"
 import * as R from "../restore.ts"
 import type { Step, Term } from "../restore.ts"
 import * as osc7501 from "../attention/osc7501.ts"
+import { DOTS, SIGN } from "../ui-extra/pure.ts"
 
 /**
  * `broken`: a service of the session's crashed or stopped answering
@@ -421,6 +422,13 @@ export function applyOnce(id: string, state: TabState, f: TabFile | null, sys: S
   let ok = true
   let restored = false
   let appleOriginal = f?.appleOriginal
+  // Terminal.app: the tab's title carries the state too (❓ ⏳ ✅ ❗), next to its thread's colour.
+  if (R.kindOf(t) === "apple" && t.tty && sys.platform === "darwin" && f?.title && !process.env.CROSSTALK_NO_TITLE_SIGN)
+    ok = sys.run({ cmd: "osascript", args: ["-"], input: appleTitleScript(t.tty, signed(f.title, state)) }).ok && ok
+  // The bell, when it needs the person: Terminal puts its bell on that tab
+  // (and can bounce the Dock), other terminals mark the tab or window. Only
+  // when it turns to needing them, never again while it stays so.
+  if ((state === "waiting" || state === "broken") && f?.applied !== state && t.tty && !process.env.CROSSTALK_NO_BELL) sys.writeTty(t.tty, "\x07")
   for (const a of actionsFor(t, state, sys.platform)) {
     if (a.kind === "run") {
       const r = sys.run(a.step)
@@ -467,6 +475,16 @@ export const appleTitleScript = (tty: string, title: string) =>
     `return "done"`,
   ])
 
+/** A title with the state's sign after its thread's dot: `🟣❓ auth · auth-1`. */
+export function signed(title: string, state: TabState): string {
+  const sign = state === "off" ? "" : SIGN[state]
+  const plain = title.replace(new RegExp(`^((?:${DOTS.join("|")})?)(?:${Object.values(SIGN).join("|")})?\\s*`, "u"), "$1")
+  const dot = DOTS.find((d) => plain.startsWith(d))
+  const rest = dot ? plain.slice(dot.length).trimStart() : plain
+  if (!sign) return dot ? `${dot} ${rest}` : rest
+  return dot ? `${dot}${sign} ${rest}` : `${sign} ${rest}`
+}
+
 /**
  * Name the session's Terminal.app tab, when the title changed since last
  * time: one detached osascript, so the hook never waits on Terminal.
@@ -478,7 +496,7 @@ export function nameTab(sessionId: string, title: string, o: { platform?: NodeJS
   const f = readTab(sessionId)
   if (f?.title === title) return false
   withFile(sessionId, (cur) => writeTab({ ...(cur ?? { sessionId, want: "off", wantAt: Date.now() }), title }))
-  const input = appleTitleScript(t.tty, title)
+  const input = appleTitleScript(t.tty, signed(title, f?.applied ?? "off"))
   try {
     ;(o.spawnIt ?? ((inp: string) => {
       const c = spawn("osascript", ["-"], { detached: true, stdio: ["pipe", "ignore", "ignore"] })

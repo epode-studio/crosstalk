@@ -142,7 +142,8 @@ describe("every agent at a glance", () => {
       self: "busy",
       now: NOW,
     })
-    expect(list.map((a) => A.agentLine(a))).toEqual(["? asks · waiting on you", "? q · 2 for you", "● busy (this one) · auth · working", "· idle1 · idle 30 min"])
+    const dot = (await import("../src/ui-extra/pure.ts")).dotFor("auth")
+    expect(list.map((a) => A.agentLine(a))).toEqual(["❓ asks · waiting on you", "❓ q · 2 for you", `${dot}⏳ busy (this one) · auth · working`, "✅ idle1 · idle 30 min"])
   })
   test("\"show me all my agents\" is the pane's agents view, and the main session's pane", async () => {
     const P = await import("../src/ui-extra/pane.ts")
@@ -197,7 +198,7 @@ describe("questions already waiting", () => {
     expect(pure.paneLines({ thread: "your agents", status: "1 open", people: [], sessions: 0, waiting: [], recent: [], features: [], agents: list }, NOW)).toEqual([
       "◢ your agents · 1 open",
       "",
-      " ? organic-case-81 · waiting on you",
+      " ❓ organic-case-81 · waiting on you",
       "   asks: Keep the Pi flat? (Pi flat / Keep any tilt)",
     ])
   })
@@ -256,7 +257,7 @@ describe("the inbox", () => {
       NOW,
     ).map((i) => i.id)
     expect(order).toEqual(["sess:1", "relay:s:1", "m1", "attn:staff:t:1", "open:s:1"]) // the ten-hour-old card has risen past staffing
-    expect(pure.inboxLine({ id: "relay:s:1", kind: "attention", createdAt: NOW - 12 * MIN, question: "organic-case-81 asks: Keep the Pi flat?", from: "organic-case-81" }, NOW)).toBe("organic-case-81 asks: Keep the Pi flat? · 12m")
+    expect(pure.inboxLine({ id: "relay:s:1", kind: "attention", createdAt: NOW - 12 * MIN, question: "organic-case-81 asks: Keep the Pi flat?", from: "organic-case-81" }, NOW)).toBe("❓ organic-case-81 asks: Keep the Pi flat? · 12m")
   })
 })
 
@@ -290,5 +291,30 @@ describe("the board", () => {
     expect(html).toContain(`<a href="https://github.com/acme/app/pull/12">auth · PR #12</a> · checks failed: e2e`)
     expect(html).toContain("<h2>Done</h2>")
     expect(html).not.toContain("<script")
+  })
+})
+
+describe("one set of signs", () => {
+  test("a tab's title carries its state after its thread's colour; red is never a thread's", async () => {
+    const S = await import("../src/terminal/status.ts")
+    const pure = await import("../src/ui-extra/pure.ts")
+    expect(pure.DOTS).not.toContain("🔴")
+    expect(S.signed("🟣 auth · auth-1", "waiting")).toBe("🟣❓ auth · auth-1")
+    expect(S.signed("🟣❓ auth · auth-1", "working")).toBe("🟣⏳ auth · auth-1")
+    expect(S.signed("🟣⏳ auth · auth-1", "broken")).toBe("🟣❗ auth · auth-1")
+    expect(S.signed("🟣✅ auth · auth-1", "off")).toBe("🟣 auth · auth-1")
+    expect(S.signed("bg", "done")).toBe("✅ bg")
+  })
+  test("the bell rings once when a session turns to needing you, and the tab title follows its state", async () => {
+    const S = await import("../src/terminal/status.ts")
+    const ran: string[] = []
+    const tty: string[] = []
+    const sys = { platform: "darwin" as const, run: (s: any) => (ran.push(s.input ?? ""), { ok: true, out: "done" }), writeTty: (_p: string, d: string) => (tty.push(d), true), term: () => ({ program: "Apple_Terminal", tty: "/dev/ttys7" }) }
+    S.applyOnce("x", "waiting", { sessionId: "x", want: "waiting", wantAt: 0, applied: "working", title: "🟣 auth · x" }, sys)
+    expect(tty).toContain("\x07")
+    expect(ran.some((r) => r.includes(`set custom title of t to "🟣❓ auth · x"`))).toBe(true)
+    tty.length = 0
+    S.applyOnce("x", "waiting", { sessionId: "x", want: "waiting", wantAt: 0, applied: "waiting", title: "🟣 auth · x" }, sys)
+    expect(tty).not.toContain("\x07") // still waiting: not again
   })
 })

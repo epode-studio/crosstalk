@@ -9,7 +9,7 @@
 // on black, so it scans on any theme. No hook, state or I/O in here.
 
 import type { Item, Pane } from './types'
-import { agentAsks, agentLine, ago, featureLine, fileLink, historyLine, linkable, noteLine, runningGroups, runningLine, runningWhere } from '../src/ui-extra/pure.ts'
+import { agentAsks, agentLine, ago, dotFor, featureLine, fileLink, historyLine, linkable, noteLine, runningGroups, runningLine, runningWhere } from '../src/ui-extra/pure.ts'
 
 /** The elements these trees are made of: the surface's own Box, Text and Link. */
 export type Els = { Box: any; Text: any; Link: any }
@@ -136,7 +136,7 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number) {
     <Box flexDirection="column">
       <Text wrap="truncate">
         <Text color={THREAD} bold>
-          ◢ {clean(p.thread)}
+          {p.thread ? dotFor(p.thread) : '◢'} {clean(p.thread)}
         </Text>
         <Text dimColor> · {clean(p.status)}{p.sessions ? ` · ${p.sessions} working` : ''}</Text>
       </Text>
@@ -263,7 +263,7 @@ function questionRow(E: Els, it: Item, later: string) {
 /** A message card: sender and thread in the frame, the text, a chip per attachment. */
 function card(E: Els, it: Item, W: number, now: number, later: string) {
   const { Box, Text } = E
-  const head = `◢ ${it.from} · ${it.thread ?? 'crosstalk'}`
+  const head = `${it.thread ? dotFor(it.thread) : '◢'} ${it.from} · ${it.thread ?? 'crosstalk'}`
   const a = age(it.ts, now)
   const fill = Math.max(1, W - 7 - head.length - a.length)
   const body = (key: string, child: unknown) => (

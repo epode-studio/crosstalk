@@ -1,10 +1,10 @@
 ┌─ card ─────────────────────────────────────────────────────┐
-│╭─ ◢ marie · auth ───────────────────────────────────── 2m─╮│
+│╭─ ◢ marie · auth ──────────────────────────────────── 2m─╮ │
 ││ Token format changed to v2. v1 accepted until 0.2        ││
 │╰──────────────────────────────────────────────────────────╯│
 └────────────────────────────────────────────────────────────┘
 
 styles (light theme):
-  1 [fg=inactive:#666666]╭─ [/][bold fg=claude:#d77757]◢ marie[/][fg=inactive:#666666] · [/][fg=suggestion:#5769f7]auth[/][fg=inactive:#666666] ───────────────────────────────────── [/][dim]2m[/][fg=inactive:#666666]─╮[/]
+  1 [fg=inactive:#666666]╭─ [/][bold fg=claude:#d77757]◢ marie[/][fg=inactive:#666666] · [/][fg=suggestion:#5769f7]auth[/][fg=inactive:#666666] ──────────────────────────────────── [/][dim]2m[/][fg=inactive:#666666]─╮[/]
   2 [fg=inactive:#666666]│ [/]Token format changed to v2. v1 accepted until 0.2       [fg=inactive:#666666] │[/]
   3 [fg=inactive:#666666]╰──────────────────────────────────────────────────────────╯[/]

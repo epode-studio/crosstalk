@@ -10728,6 +10728,131 @@ function sequence(state, id = "crosstalk") {
   return `\x1B]7501;${s}:app=crosstalk:id=${id.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32) || "crosstalk"}\x1B\\`;
 }
 
+// src/ui-extra/pure.ts
+function parseAt(prompt) {
+  const m = /^@([A-Za-z0-9_][\w.-]*)(?:\s+([\s\S]*))?$/.exec(prompt.trim());
+  if (!m)
+    return null;
+  const word = m[1].toLowerCase();
+  const rest = (m[2] ?? "").trim();
+  if (word === "main") {
+    if (!rest || /^(on|yes|y)$/i.test(rest))
+      return { kind: "main", on: true };
+    if (/^(off|no|n|stop)$/i.test(rest))
+      return { kind: "main", on: false };
+    return null;
+  }
+  if (word === "restore") {
+    const w = rest.toLowerCase();
+    if (!w || w === "yes" || w === "y")
+      return { kind: "restore", want: "yes" };
+    if (w === "no" || w === "n" || w === "not now")
+      return { kind: "restore", want: "no" };
+    if (w === "windows")
+      return { kind: "restore", want: "windows" };
+    return null;
+  }
+  if (!rest)
+    return null;
+  return { kind: "name", name: word, text: rest };
+}
+function matchOption(typed, options) {
+  const t = typed.trim().toLowerCase();
+  if (!t || !options.length)
+    return;
+  const exact = options.find((o) => o.toLowerCase() === t);
+  if (exact)
+    return exact;
+  if (t === "y" || t === "yes")
+    return options[0];
+  if (t === "n" || t === "no")
+    return options.find((o) => /^(no|not|don't|dont|hold|cancel)\b/i.test(o)) ?? options[options.length - 1];
+  const starts = options.filter((o) => o.toLowerCase().startsWith(t));
+  return starts.length === 1 ? starts[0] : undefined;
+}
+var runningWhere = (r) => r.url ?? (r.ports?.length ? `localhost:${r.ports[0]}` : "");
+function runningLine(r, now) {
+  const mark = r.alive ? "\u25cf" : "\u25cb";
+  if (r.kind === "screenshot")
+    return `${r.label}${r.path ? ` ${r.path}` : ""} \u00b7 ${r.before ? `before ${ago(r.before.at, now)}` : "no before yet"} \u00b7 after ${ago(r.after?.at, now)}`;
+  if (r.broken)
+    return `${mark} ${r.label} \u00b7 broken: ${r.broken}`;
+  if (r.kind === "server" && !r.url && !r.ports?.length)
+    return `${mark} ${r.label} \u00b7 starting`;
+  const who = r.kind === "share" ? r.owner === "you" ? r.with?.length ? ` \u00b7 with ${r.with.join(", ")}` : "" : ` \u00b7 from ${r.owner}` : "";
+  const left = r.kind === "share" && r.alive && r.until ? ` \u00b7 ${until(r.until, now)} left` : "";
+  if (r.kind === "pr") {
+    const sign = r.state === "MERGED" ? SIGN.done : r.checks === "failed" ? SIGN.broken : r.checks === "running" ? SIGN.working : r.checks === "passed" ? SIGN.done : mark;
+    return `${sign} ${r.label}${prState(r)}`;
+  }
+  const dead = r.alive ? "" : r.kind === "share" ? " \u00b7 ended" : " \u00b7 dead";
+  return `${mark} ${r.label}${who}${left}${dead}`;
+}
+function until(ts, now) {
+  const s = Math.max(0, Math.round((ts - now) / 1000));
+  if (s < 3600)
+    return `${Math.max(1, Math.round(s / 60))}m`;
+  if (s < 86400)
+    return `${Math.round(s / 3600)}h`;
+  return `${Math.round(s / 86400)}d`;
+}
+function runningSummary(items) {
+  const up = items.filter((r) => r.alive && r.kind !== "screenshot" && r.owner === "you");
+  const servers = up.filter((r) => r.kind === "server");
+  return servers.length === 1 ? runningWhere(servers[0]).replace(/^https?:\/\//, "") : up.length ? `${up.length} running` : "";
+}
+function ago(ts, now) {
+  if (!ts)
+    return "";
+  const s = Math.max(0, Math.round((now - ts) / 1000));
+  if (s < 60)
+    return "now";
+  if (s < 3600)
+    return `${Math.round(s / 60)}m`;
+  if (s < 86400)
+    return `${Math.round(s / 3600)}h`;
+  return `${Math.round(s / 86400)}d`;
+}
+function prState(r) {
+  if (r.state === "MERGED")
+    return " \u00b7 merged";
+  if (r.state === "CLOSED")
+    return " \u00b7 closed";
+  if (!r.alive)
+    return " \u00b7 dead";
+  const parts = [r.draft ? "draft" : ""];
+  if (r.checks === "running")
+    parts.push("checks running", r.eta ?? "");
+  else if (r.checks === "failed")
+    parts.push(`checks failed${r.failed?.length ? `: ${r.failed.join(", ")}` : ""}`);
+  else if (r.checks === "passed")
+    parts.push("checks passed");
+  return parts.filter(Boolean).map((x) => ` \u00b7 ${x}`).join("");
+}
+function inboxScore(it, now) {
+  const base = it.kind === "session" || it.kind === "restore" ? 120 : it.id.startsWith("relay:") || it.id.startsWith("attn:perm:") ? 100 : it.kind === "ask" ? 90 : it.kind === "ship" || it.kind === "conflict" ? 80 : it.id.startsWith("attn:staff:") ? 60 : it.kind === "route" || it.kind === "team" || it.kind === "steer" ? 55 : it.id.startsWith("open:") ? 40 : it.kind === "message" ? 35 : 30;
+  const waitedMin = Math.max(0, (now - it.createdAt) / 60000);
+  return base + Math.min(30, waitedMin / 2);
+}
+function inboxOrder(items, now) {
+  return [...items].sort((a, b) => inboxScore(b, now) - inboxScore(a, now) || a.createdAt - b.createdAt);
+}
+function inboxLine(it, now) {
+  const what = (it.question ?? it.text ?? it.id).replace(/\s+/g, " ").trim();
+  const who = it.from && !what.startsWith(it.from) ? `${it.from}: ` : "";
+  const cut = (s) => s.length > 120 ? s.slice(0, 119) + "\u2026" : s;
+  return `${it.thread ? dotFor(it.thread) : ""}${SIGN.waiting} ${cut(who + what)} \u00b7 ${ago(it.createdAt, now) || "now"}`;
+}
+var DOTS = ["\uD83D\uDFE0", "\uD83D\uDFE1", "\uD83D\uDFE2", "\uD83D\uDD35", "\uD83D\uDFE3", "\uD83D\uDFE4", "\u26aa"];
+function dotFor(thread) {
+  let h = 2166136261;
+  for (const c of thread.toLowerCase())
+    h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return DOTS[(h >>> 0) % DOTS.length] ?? "\u26aa";
+}
+var SIGN = { waiting: "\u2753", working: "\u23f3", done: "\u2705", broken: "\u2757", idle: "\uD83D\uDCA4" };
+var LEGEND = `${SIGN.waiting} needs you \u00b7 ${SIGN.working} working \u00b7 ${SIGN.done} done \u00b7 ${SIGN.broken} something broke \u00b7 ${SIGN.idle} idle \u00b7 a coloured dot per thread`;
+
 // src/terminal/status.ts
 var COLOUR = {
   working: [47, 111, 214],
@@ -10951,6 +11076,10 @@ function applyOnce(id, state, f, sys) {
   let ok = true;
   let restored = false;
   let appleOriginal = f?.appleOriginal;
+  if (kindOf(t) === "apple" && t.tty && sys.platform === "darwin" && f?.title && !process.env.CROSSTALK_NO_TITLE_SIGN)
+    ok = sys.run({ cmd: "osascript", args: ["-"], input: appleTitleScript(t.tty, signed(f.title, state)) }).ok && ok;
+  if ((state === "waiting" || state === "broken") && f?.applied !== state && t.tty && !process.env.CROSSTALK_NO_BELL)
+    sys.writeTty(t.tty, "\x07");
   for (const a of actionsFor(t, state, sys.platform)) {
     if (a.kind === "run") {
       const r = sys.run(a.step);
@@ -10982,6 +11111,24 @@ function applyOnce(id, state, f, sys) {
   if (restored)
     return { ok, restored };
   return { ok, appleOriginal };
+}
+var appleTitleScript = (tty, title) => appleTab(tty, [
+  `set custom title of t to ${asq(title.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 120))}`,
+  `set title displays custom title of t to true`,
+  `set title displays device name of t to false`,
+  `set title displays shell path of t to false`,
+  `set title displays window size of t to false`,
+  `set title displays file name of t to false`,
+  `return "done"`
+]);
+function signed(title, state) {
+  const sign = state === "off" ? "" : SIGN[state];
+  const plain = title.replace(new RegExp(`^((?:${DOTS.join("|")})?)(?:${Object.values(SIGN).join("|")})?\\s*`, "u"), "$1");
+  const dot = DOTS.find((d) => plain.startsWith(d));
+  const rest = dot ? plain.slice(dot.length).trimStart() : plain;
+  if (!sign)
+    return dot ? `${dot} ${rest}` : rest;
+  return dot ? `${dot}${sign} ${rest}` : `${sign} ${rest}`;
 }
 var appleTintOn = (env = process.env) => /^(1|true|yes|on)$/i.test(env.CROSSTALK_TAB_COLOUR ?? env.CROSSTALK_TAB_COLOR ?? "");
 var appleProfileBgScript = (tty) => appleTab(tty, [`set n to name of current settings of t`, `set background color of t to background color of settings set n`, `return "done"`]);
@@ -11870,122 +12017,6 @@ var active = (x, now = Date.now()) => !x.ended && x.expiresAt > now;
 
 // src/threads/running.ts
 init_restore();
-
-// src/ui-extra/pure.ts
-function parseAt(prompt) {
-  const m = /^@([A-Za-z0-9_][\w.-]*)(?:\s+([\s\S]*))?$/.exec(prompt.trim());
-  if (!m)
-    return null;
-  const word = m[1].toLowerCase();
-  const rest = (m[2] ?? "").trim();
-  if (word === "main") {
-    if (!rest || /^(on|yes|y)$/i.test(rest))
-      return { kind: "main", on: true };
-    if (/^(off|no|n|stop)$/i.test(rest))
-      return { kind: "main", on: false };
-    return null;
-  }
-  if (word === "restore") {
-    const w = rest.toLowerCase();
-    if (!w || w === "yes" || w === "y")
-      return { kind: "restore", want: "yes" };
-    if (w === "no" || w === "n" || w === "not now")
-      return { kind: "restore", want: "no" };
-    if (w === "windows")
-      return { kind: "restore", want: "windows" };
-    return null;
-  }
-  if (!rest)
-    return null;
-  return { kind: "name", name: word, text: rest };
-}
-function matchOption(typed, options) {
-  const t = typed.trim().toLowerCase();
-  if (!t || !options.length)
-    return;
-  const exact = options.find((o) => o.toLowerCase() === t);
-  if (exact)
-    return exact;
-  if (t === "y" || t === "yes")
-    return options[0];
-  if (t === "n" || t === "no")
-    return options.find((o) => /^(no|not|don't|dont|hold|cancel)\b/i.test(o)) ?? options[options.length - 1];
-  const starts = options.filter((o) => o.toLowerCase().startsWith(t));
-  return starts.length === 1 ? starts[0] : undefined;
-}
-var runningWhere = (r) => r.url ?? (r.ports?.length ? `localhost:${r.ports[0]}` : "");
-function runningLine(r, now) {
-  const mark = r.alive ? "\u25cf" : "\u25cb";
-  if (r.kind === "screenshot")
-    return `${r.label}${r.path ? ` ${r.path}` : ""} \u00b7 ${r.before ? `before ${ago(r.before.at, now)}` : "no before yet"} \u00b7 after ${ago(r.after?.at, now)}`;
-  if (r.broken)
-    return `${mark} ${r.label} \u00b7 broken: ${r.broken}`;
-  if (r.kind === "server" && !r.url && !r.ports?.length)
-    return `${mark} ${r.label} \u00b7 starting`;
-  const who = r.kind === "share" ? r.owner === "you" ? r.with?.length ? ` \u00b7 with ${r.with.join(", ")}` : "" : ` \u00b7 from ${r.owner}` : "";
-  const left = r.kind === "share" && r.alive && r.until ? ` \u00b7 ${until(r.until, now)} left` : "";
-  if (r.kind === "pr")
-    return `${mark} ${r.label}${prState(r)}`;
-  const dead = r.alive ? "" : r.kind === "share" ? " \u00b7 ended" : " \u00b7 dead";
-  return `${mark} ${r.label}${who}${left}${dead}`;
-}
-function until(ts, now) {
-  const s = Math.max(0, Math.round((ts - now) / 1000));
-  if (s < 3600)
-    return `${Math.max(1, Math.round(s / 60))}m`;
-  if (s < 86400)
-    return `${Math.round(s / 3600)}h`;
-  return `${Math.round(s / 86400)}d`;
-}
-function runningSummary(items) {
-  const up = items.filter((r) => r.alive && r.kind !== "screenshot" && r.owner === "you");
-  const servers = up.filter((r) => r.kind === "server");
-  return servers.length === 1 ? runningWhere(servers[0]).replace(/^https?:\/\//, "") : up.length ? `${up.length} running` : "";
-}
-function ago(ts, now) {
-  if (!ts)
-    return "";
-  const s = Math.max(0, Math.round((now - ts) / 1000));
-  if (s < 60)
-    return "now";
-  if (s < 3600)
-    return `${Math.round(s / 60)}m`;
-  if (s < 86400)
-    return `${Math.round(s / 3600)}h`;
-  return `${Math.round(s / 86400)}d`;
-}
-function prState(r) {
-  if (r.state === "MERGED")
-    return " \u00b7 merged";
-  if (r.state === "CLOSED")
-    return " \u00b7 closed";
-  if (!r.alive)
-    return " \u00b7 dead";
-  const parts = [r.draft ? "draft" : ""];
-  if (r.checks === "running")
-    parts.push("checks running", r.eta ?? "");
-  else if (r.checks === "failed")
-    parts.push(`checks failed${r.failed?.length ? `: ${r.failed.join(", ")}` : ""}`);
-  else if (r.checks === "passed")
-    parts.push("checks passed");
-  return parts.filter(Boolean).map((x) => ` \u00b7 ${x}`).join("");
-}
-function inboxScore(it, now) {
-  const base = it.kind === "session" || it.kind === "restore" ? 120 : it.id.startsWith("relay:") || it.id.startsWith("attn:perm:") ? 100 : it.kind === "ask" ? 90 : it.kind === "ship" || it.kind === "conflict" ? 80 : it.id.startsWith("attn:staff:") ? 60 : it.kind === "route" || it.kind === "team" || it.kind === "steer" ? 55 : it.id.startsWith("open:") ? 40 : it.kind === "message" ? 35 : 30;
-  const waitedMin = Math.max(0, (now - it.createdAt) / 60000);
-  return base + Math.min(30, waitedMin / 2);
-}
-function inboxOrder(items, now) {
-  return [...items].sort((a, b) => inboxScore(b, now) - inboxScore(a, now) || a.createdAt - b.createdAt);
-}
-function inboxLine(it, now) {
-  const what = (it.question ?? it.text ?? it.id).replace(/\s+/g, " ").trim();
-  const who = it.from && !what.startsWith(it.from) ? `${it.from}: ` : "";
-  const cut = (s) => s.length > 120 ? s.slice(0, 119) + "\u2026" : s;
-  return `${cut(who + what)} \u00b7 ${ago(it.createdAt, now) || "now"}`;
-}
-
-// src/threads/running.ts
 var ORDER2 = { server: 0, preview: 1, pr: 2, share: 3, link: 4, screenshot: 5 };
 function project(thread, s) {
   const now = s.now ?? Date.now();

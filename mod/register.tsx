@@ -72,7 +72,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Item, Pane } from './types'
-import { HANDED_PROMPT, LATER, MORE, MORE_OPTIONS, MUTE, OPEN_THREAD, cardOptions, inboxOrder, parseAt, statusLine, takesAt } from '../src/ui-extra/pure.ts'
+import { HANDED_PROMPT, LATER, MORE, MORE_OPTIONS, MUTE, OPEN_THREAD, cardOptions, dotFor, inboxOrder, parseAt, statusLine, takesAt } from '../src/ui-extra/pure.ts'
 import { bandTree, paneTree } from './draw.tsx'
 
 const items = atom({ plugin: 'crosstalk', key: 'items' } as const, [])
@@ -141,7 +141,7 @@ const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim()
  */
 function withContext(it: Item, q: string): string {
   const more = inboxLeft > 0 ? `${inboxLeft} more after this` : ''
-  const elsewhere = [it.thread && ((it.sessionId && it.sessionId !== session) || it.id.startsWith('relay:')) ? `◢ ${it.thread}` : '', more].filter(Boolean).join(' · ')
+  const elsewhere = [it.thread && ((it.sessionId && it.sessionId !== session) || it.id.startsWith('relay:')) ? `${dotFor(it.thread)} ${it.thread}` : '', more].filter(Boolean).join(' · ')
   const ctx = typeof it.text === 'string' ? it.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '').trim().slice(0, 700) : ''
   return [elsewhere, ctx, q].filter(Boolean).join('\n')
 }
@@ -252,7 +252,7 @@ async function openPane($: EngineInterface, thread: string | undefined): Promise
   const gen = ++paneGen
   await update($, paneError, () => '')
   void followPane($, gen, thread)
-  const r = await $.ui.open({ id: PANE_ID, title: thread ? `◢ ${thread}` : '◢ thread' }).catch(() => ({ isPlaced: false }))
+  const r = await $.ui.open({ id: PANE_ID, title: thread ? `${dotFor(thread)} ${thread}` : '◢ thread' }).catch(() => ({ isPlaced: false }))
   return r.isPlaced
 }
 
@@ -424,7 +424,7 @@ async function raise($: EngineInterface, it: Item) {
       answer = await $.ui.ask(withContext(it, it.question ?? 'crosstalk has a question'), { options: (it.options ?? ['Not now']).slice(0, 4), header: header(it) })
     else {
       const what = it.kind === 'ask' ? 'asks' : 'says'
-      const asked = `◢ ${it.from}${it.thread ? ` · ${it.thread}` : ''} ${what}: "${cut(oneLine(it.text ?? ''), 160)}". What should happen to it?`
+      const asked = `${it.thread ? dotFor(it.thread) : '◢'} ${it.from}${it.thread ? ` · ${it.thread}` : ''} ${what}: "${cut(oneLine(it.text ?? ''), 160)}". What should happen to it?`
       answer = await $.ui.ask(asked, { options: cardOptions(it.kind), header: header(it) })
       // Four options is all a picker takes: the rest are one step further.
       if (answer === MORE) answer = await $.ui.ask(`◢ ${it.from}${it.thread ? ` · ${it.thread}` : ''}: mute it, or keep it for later?`, { options: [...MORE_OPTIONS], header: header(it) })

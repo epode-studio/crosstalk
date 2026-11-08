@@ -215,7 +215,10 @@ export function runningLine(r: PaneRunning, now: number): string {
   if (r.kind === "server" && !r.url && !r.ports?.length) return `${mark} ${r.label} · starting`
   const who = r.kind === "share" ? (r.owner === "you" ? (r.with?.length ? ` · with ${r.with.join(", ")}` : "") : ` · from ${r.owner}`) : ""
   const left = r.kind === "share" && r.alive && r.until ? ` · ${until(r.until, now)} left` : ""
-  if (r.kind === "pr") return `${mark} ${r.label}${prState(r)}`
+  if (r.kind === "pr") {
+    const sign = r.state === "MERGED" ? SIGN.done : r.checks === "failed" ? SIGN.broken : r.checks === "running" ? SIGN.working : r.checks === "passed" ? SIGN.done : mark
+    return `${sign} ${r.label}${prState(r)}`
+  }
   const dead = r.alive ? "" : r.kind === "share" ? " · ended" : " · dead"
   return `${mark} ${r.label}${who}${left}${dead}`
 }
@@ -256,12 +259,14 @@ export function runningSummary(items: readonly PaneRunning[]): string {
  */
 export function statusLine(o: { threads: readonly string[]; cards?: readonly string[]; repo?: string; running?: readonly PaneRunning[]; where?: string; waiting: number; label?: string; main?: { sessions: number; threads: number; waiting: number } }): string | undefined {
   // What waits on the person, said only when something does: "0 waiting" read as noise.
-  const forYou = (n: number) => (n > 0 ? `${n} for you` : "")
-  if (o.main) return ["◢ main", `${o.main.threads} thread${o.main.threads === 1 ? "" : "s"}`, `${o.main.sessions} working`, forYou(Math.max(o.main.waiting, o.waiting))].filter(Boolean).join(" · ")
+  const forYou = (n: number) => (n > 0 ? `${SIGN.waiting} ${n} for you` : "")
+  if (o.main) return ["◢ main", `${o.main.threads} thread${o.main.threads === 1 ? "" : "s"}`, `${SIGN.working} ${o.main.sessions} working`, forYou(Math.max(o.main.waiting, o.waiting))].filter(Boolean).join(" · ")
   const named = o.threads.length ? o.threads.slice(0, 3).join(" · ") : o.cards?.length ? o.cards.slice(0, 3).join(", ") : o.repo ?? ""
   const where = o.where || runningSummary(o.running ?? [])
   if (!o.waiting && !o.label && !where) return undefined
-  return `◢ ${[named || "crosstalk", where, forYou(o.waiting)].filter(Boolean).join(" · ")}`
+  // The session's thread colour in front, as on its tab; crosstalk's ◢ when it has no thread.
+  const lead = o.threads[0] ? dotFor(o.threads[0]) : "◢"
+  return `${lead} ${[named || "crosstalk", where, forYou(o.waiting)].filter(Boolean).join(" · ")}`
 }
 
 /** `file:///…`, its path escaped, for an OSC 8 link to a screenshot. Only an absolute path of printable characters. */
@@ -328,7 +333,7 @@ const agoMin = (min: number) => (min < 1 ? "just now" : min < 60 ? `${min} min` 
 
 /** One agent as the pane writes it: `? billing · billing-v2 · 2 for you`. */
 export function agentLine(a: PaneAgent): string {
-  const mark = a.state === "waiting" ? "?" : a.state === "working" ? "●" : "·"
+  const mark = (a.thread ? dotFor(a.thread) : "") + (a.state === "waiting" ? SIGN.waiting : a.state === "working" ? SIGN.working : (a.idleMin ?? 0) >= 60 ? SIGN.idle : SIGN.done)
   const what = a.state === "waiting" ? (a.forYou ? `${a.forYou} for you` : "waiting on you") : a.state === "working" ? "working" : `idle ${agoMin(a.idleMin ?? 0)}`
   return [`${mark} ${a.name}${a.here ? " (this one)" : ""}`, a.thread && a.thread !== a.name ? a.thread : "", what, a.background ? "in the background" : "", a.cost ?? ""].filter(Boolean).join(" · ")
 }
@@ -397,5 +402,23 @@ export function inboxLine(it: InboxItem, now: number): string {
   const what = (it.question ?? it.text ?? it.id).replace(/\s+/g, " ").trim()
   const who = it.from && !what.startsWith(it.from) ? `${it.from}: ` : ""
   const cut = (s: string) => (s.length > 120 ? s.slice(0, 119) + "…" : s)
-  return `${cut(who + what)} · ${ago(it.createdAt, now) || "now"}`
+  return `${it.thread ? dotFor(it.thread) : ""}${SIGN.waiting} ${cut(who + what)} · ${ago(it.createdAt, now) || "now"}`
 }
+
+
+// --- one small set of signs, everywhere: tabs, the pane, the status line, questions ---------
+
+/** A thread's colour: the same thread, the same dot, in every tab and line. */
+export const DOTS = ["🟠", "🟡", "🟢", "🔵", "🟣", "🟤", "⚪"] as const
+export function dotFor(thread: string): string {
+  let h = 2166136261
+  for (const c of thread.toLowerCase()) h = Math.imul(h ^ c.charCodeAt(0), 16777619)
+  return DOTS[(h >>> 0) % DOTS.length] ?? "⚪"
+}
+
+/** What a session is doing: ❓ needs you, ⏳ working, ✅ done, 🔴 broken (checks failing, server crashed), 💤 idle a while. */
+export const SIGN = { waiting: "❓", working: "⏳", done: "✅", broken: "❗", idle: "💤" } as const
+export type Sign = keyof typeof SIGN
+
+/** The legend, said once in the welcome. */
+export const LEGEND = `${SIGN.waiting} needs you · ${SIGN.working} working · ${SIGN.done} done · ${SIGN.broken} something broke · ${SIGN.idle} idle · a coloured dot per thread`

@@ -11062,6 +11062,97 @@ var init_gather = __esm(() => {
   ENV_KEYS = ["TERM_PROGRAM", "TERM_SESSION_ID", "TMUX", "TMUX_PANE", "KITTY_WINDOW_ID", "KITTY_LISTEN_ON", "WEZTERM_PANE", "ITERM_SESSION_ID", "WT_SESSION"];
   RECHECK_MS = 10 * 60 * 1000;
 });
+// src/ui-extra/pure.ts
+function runningLine(r, now) {
+  const mark = r.alive ? "\u25cf" : "\u25cb";
+  if (r.kind === "screenshot")
+    return `${r.label}${r.path ? ` ${r.path}` : ""} \u00b7 ${r.before ? `before ${ago3(r.before.at, now)}` : "no before yet"} \u00b7 after ${ago3(r.after?.at, now)}`;
+  if (r.broken)
+    return `${mark} ${r.label} \u00b7 broken: ${r.broken}`;
+  if (r.kind === "server" && !r.url && !r.ports?.length)
+    return `${mark} ${r.label} \u00b7 starting`;
+  const who = r.kind === "share" ? r.owner === "you" ? r.with?.length ? ` \u00b7 with ${r.with.join(", ")}` : "" : ` \u00b7 from ${r.owner}` : "";
+  const left = r.kind === "share" && r.alive && r.until ? ` \u00b7 ${until(r.until, now)} left` : "";
+  if (r.kind === "pr") {
+    const sign = r.state === "MERGED" ? SIGN.done : r.checks === "failed" ? SIGN.broken : r.checks === "running" ? SIGN.working : r.checks === "passed" ? SIGN.done : mark;
+    return `${sign} ${r.label}${prState(r)}`;
+  }
+  const dead = r.alive ? "" : r.kind === "share" ? " \u00b7 ended" : " \u00b7 dead";
+  return `${mark} ${r.label}${who}${left}${dead}`;
+}
+function until(ts, now) {
+  const s = Math.max(0, Math.round((ts - now) / 1000));
+  if (s < 3600)
+    return `${Math.max(1, Math.round(s / 60))}m`;
+  if (s < 86400)
+    return `${Math.round(s / 3600)}h`;
+  return `${Math.round(s / 86400)}d`;
+}
+function featureLine(f) {
+  const parts = [f.name, f.risk];
+  if (f.flag)
+    parts.push(`flag ${f.flag}${f.stage ? ` at ${f.stage}` : ""}`);
+  else if (f.stage)
+    parts.push(`at ${f.stage}`);
+  if (f.state)
+    parts.push(f.state);
+  return parts.join(" \u00b7 ");
+}
+function ago3(ts, now) {
+  if (!ts)
+    return "";
+  const s = Math.max(0, Math.round((now - ts) / 1000));
+  if (s < 60)
+    return "now";
+  if (s < 3600)
+    return `${Math.round(s / 60)}m`;
+  if (s < 86400)
+    return `${Math.round(s / 3600)}h`;
+  return `${Math.round(s / 86400)}d`;
+}
+function prState(r) {
+  if (r.state === "MERGED")
+    return " \u00b7 merged";
+  if (r.state === "CLOSED")
+    return " \u00b7 closed";
+  if (!r.alive)
+    return " \u00b7 dead";
+  const parts = [r.draft ? "draft" : ""];
+  if (r.checks === "running")
+    parts.push("checks running", r.eta ?? "");
+  else if (r.checks === "failed")
+    parts.push(`checks failed${r.failed?.length ? `: ${r.failed.join(", ")}` : ""}`);
+  else if (r.checks === "passed")
+    parts.push("checks passed");
+  return parts.filter(Boolean).map((x) => ` \u00b7 ${x}`).join("");
+}
+function inboxScore(it, now) {
+  const base = it.kind === "session" || it.kind === "restore" ? 120 : it.id.startsWith("relay:") || it.id.startsWith("attn:perm:") ? 100 : it.kind === "ask" ? 90 : it.kind === "ship" || it.kind === "conflict" ? 80 : it.id.startsWith("attn:staff:") ? 60 : it.kind === "route" || it.kind === "team" || it.kind === "steer" ? 55 : it.id.startsWith("open:") ? 40 : it.kind === "message" ? 35 : 30;
+  const waitedMin = Math.max(0, (now - it.createdAt) / 60000);
+  return base + Math.min(30, waitedMin / 2);
+}
+function inboxOrder(items, now) {
+  return [...items].sort((a, b) => inboxScore(b, now) - inboxScore(a, now) || a.createdAt - b.createdAt);
+}
+function inboxLine(it, now) {
+  const what = (it.question ?? it.text ?? it.id).replace(/\s+/g, " ").trim();
+  const who = it.from && !what.startsWith(it.from) ? `${it.from}: ` : "";
+  const cut = (s) => s.length > 120 ? s.slice(0, 119) + "\u2026" : s;
+  return `${it.thread ? dotFor(it.thread) : ""}${SIGN.waiting} ${cut(who + what)} \u00b7 ${ago3(it.createdAt, now) || "now"}`;
+}
+function dotFor(thread) {
+  let h = 2166136261;
+  for (const c of thread.toLowerCase())
+    h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return DOTS[(h >>> 0) % DOTS.length] ?? "\u26aa";
+}
+var runningWhere = (r) => r.url ?? (r.ports?.length ? `localhost:${r.ports[0]}` : ""), DOTS, SIGN, LEGEND;
+var init_pure = __esm(() => {
+  DOTS = ["\uD83D\uDFE0", "\uD83D\uDFE1", "\uD83D\uDFE2", "\uD83D\uDD35", "\uD83D\uDFE3", "\uD83D\uDFE4", "\u26aa"];
+  SIGN = { waiting: "\u2753", working: "\u23f3", done: "\u2705", broken: "\u2757", idle: "\uD83D\uDCA4" };
+  LEGEND = `${SIGN.waiting} needs you \u00b7 ${SIGN.working} working \u00b7 ${SIGN.done} done \u00b7 ${SIGN.broken} something broke \u00b7 ${SIGN.idle} idle \u00b7 a coloured dot per thread`;
+});
+
 // src/terminal/status.ts
 import fs24 from "node:fs";
 import path26 from "node:path";
@@ -11153,6 +11244,7 @@ var init_status = __esm(() => {
   init_config();
   init_paths();
   init_restore();
+  init_pure();
   appleProfileBgAllScript = [
     `if application "Terminal" is not running then return "0"`,
     `set c to 0`,
@@ -12418,85 +12510,6 @@ var init_store3 = __esm(() => {
   init_config();
   KEEP_ENDED_MS = 7 * 24 * 60 * 60000;
 });
-
-// src/ui-extra/pure.ts
-function runningLine(r, now) {
-  const mark = r.alive ? "\u25cf" : "\u25cb";
-  if (r.kind === "screenshot")
-    return `${r.label}${r.path ? ` ${r.path}` : ""} \u00b7 ${r.before ? `before ${ago3(r.before.at, now)}` : "no before yet"} \u00b7 after ${ago3(r.after?.at, now)}`;
-  if (r.broken)
-    return `${mark} ${r.label} \u00b7 broken: ${r.broken}`;
-  if (r.kind === "server" && !r.url && !r.ports?.length)
-    return `${mark} ${r.label} \u00b7 starting`;
-  const who = r.kind === "share" ? r.owner === "you" ? r.with?.length ? ` \u00b7 with ${r.with.join(", ")}` : "" : ` \u00b7 from ${r.owner}` : "";
-  const left = r.kind === "share" && r.alive && r.until ? ` \u00b7 ${until2(r.until, now)} left` : "";
-  if (r.kind === "pr")
-    return `${mark} ${r.label}${prState(r)}`;
-  const dead = r.alive ? "" : r.kind === "share" ? " \u00b7 ended" : " \u00b7 dead";
-  return `${mark} ${r.label}${who}${left}${dead}`;
-}
-function until2(ts, now) {
-  const s = Math.max(0, Math.round((ts - now) / 1000));
-  if (s < 3600)
-    return `${Math.max(1, Math.round(s / 60))}m`;
-  if (s < 86400)
-    return `${Math.round(s / 3600)}h`;
-  return `${Math.round(s / 86400)}d`;
-}
-function featureLine(f) {
-  const parts = [f.name, f.risk];
-  if (f.flag)
-    parts.push(`flag ${f.flag}${f.stage ? ` at ${f.stage}` : ""}`);
-  else if (f.stage)
-    parts.push(`at ${f.stage}`);
-  if (f.state)
-    parts.push(f.state);
-  return parts.join(" \u00b7 ");
-}
-function ago3(ts, now) {
-  if (!ts)
-    return "";
-  const s = Math.max(0, Math.round((now - ts) / 1000));
-  if (s < 60)
-    return "now";
-  if (s < 3600)
-    return `${Math.round(s / 60)}m`;
-  if (s < 86400)
-    return `${Math.round(s / 3600)}h`;
-  return `${Math.round(s / 86400)}d`;
-}
-function prState(r) {
-  if (r.state === "MERGED")
-    return " \u00b7 merged";
-  if (r.state === "CLOSED")
-    return " \u00b7 closed";
-  if (!r.alive)
-    return " \u00b7 dead";
-  const parts = [r.draft ? "draft" : ""];
-  if (r.checks === "running")
-    parts.push("checks running", r.eta ?? "");
-  else if (r.checks === "failed")
-    parts.push(`checks failed${r.failed?.length ? `: ${r.failed.join(", ")}` : ""}`);
-  else if (r.checks === "passed")
-    parts.push("checks passed");
-  return parts.filter(Boolean).map((x) => ` \u00b7 ${x}`).join("");
-}
-function inboxScore(it, now) {
-  const base = it.kind === "session" || it.kind === "restore" ? 120 : it.id.startsWith("relay:") || it.id.startsWith("attn:perm:") ? 100 : it.kind === "ask" ? 90 : it.kind === "ship" || it.kind === "conflict" ? 80 : it.id.startsWith("attn:staff:") ? 60 : it.kind === "route" || it.kind === "team" || it.kind === "steer" ? 55 : it.id.startsWith("open:") ? 40 : it.kind === "message" ? 35 : 30;
-  const waitedMin = Math.max(0, (now - it.createdAt) / 60000);
-  return base + Math.min(30, waitedMin / 2);
-}
-function inboxOrder(items, now) {
-  return [...items].sort((a, b) => inboxScore(b, now) - inboxScore(a, now) || a.createdAt - b.createdAt);
-}
-function inboxLine(it, now) {
-  const what = (it.question ?? it.text ?? it.id).replace(/\s+/g, " ").trim();
-  const who = it.from && !what.startsWith(it.from) ? `${it.from}: ` : "";
-  const cut = (s) => s.length > 120 ? s.slice(0, 119) + "\u2026" : s;
-  return `${cut(who + what)} \u00b7 ${ago3(it.createdAt, now) || "now"}`;
-}
-var runningWhere = (r) => r.url ?? (r.ports?.length ? `localhost:${r.ports[0]}` : "");
-var init_pure = () => {};
 
 // src/threads/running.ts
 function project(thread, s) {
@@ -23850,7 +23863,7 @@ function parseFor(v, now = Date.now()) {
   const per = /^m/.test(unit) ? 60000 : /^h/.test(unit) ? HOUR : /^d/.test(unit) ? 24 * HOUR : 7 * 24 * HOUR;
   return Math.round(n * per);
 }
-function until(ms, now = Date.now()) {
+function until2(ms, now = Date.now()) {
   if (ms >= FOREVER_MS)
     return "until you unmute it";
   const d = new Date(now + ms);
@@ -24134,7 +24147,7 @@ async function muteTool(a, o) {
     if (!t)
       return { ok: false, text: `no thread called "${thread}"` };
     const r = muteThread(t, ms);
-    said.push(ms ? `Muted the ${r.name} thread ${until(ms)}: its messages wait quietly, nothing is dropped.` : `Unmuted the ${r.name} thread.`);
+    said.push(ms ? `Muted the ${r.name} thread ${until2(ms)}: its messages wait quietly, nothing is dropped.` : `Unmuted the ${r.name} thread.`);
   }
   if (who) {
     const everyone = /^(everyone|everybody|all)$/i.test(who);
@@ -24147,7 +24160,7 @@ async function muteTool(a, o) {
       return { ok: false, text: r.error ?? "not muted" };
     if (ms)
       muteCards((it) => everyone || (it.from ?? "").toLowerCase() === who.toLowerCase());
-    said.push(ms ? `Muted ${everyone ? "everyone" : who} ${until(ms)}: messages wait quietly, nothing is dropped.` : `Unmuted ${everyone ? "everyone" : who}.`);
+    said.push(ms ? `Muted ${everyone ? "everyone" : who} ${until2(ms)}: messages wait quietly, nothing is dropped.` : `Unmuted ${everyone ? "everyone" : who}.`);
   }
   return { ok: true, text: said.join(" ") };
 }
@@ -25110,13 +25123,8 @@ init_service();
 init_ports();
 init_urls();
 init_proxy();
-var DOTS = ["\uD83D\uDD34", "\uD83D\uDFE0", "\uD83D\uDFE1", "\uD83D\uDFE2", "\uD83D\uDD35", "\uD83D\uDFE3", "\uD83D\uDFE4"];
-function dotFor(thread) {
-  let h = 2166136261;
-  for (const c of thread.toLowerCase())
-    h = Math.imul(h ^ c.charCodeAt(0), 16777619);
-  return DOTS[(h >>> 0) % DOTS.length];
-}
+init_pure();
+init_pure();
 
 // src/ui-extra/board.ts
 var boardFile = () => path52.join(P2.root, "board.html");
@@ -25655,6 +25663,7 @@ async function callTool13(name, a, o) {
 
 // src/intro.ts
 init_config();
+init_pure();
 var THINGS = [
   {
     title: "Your sessions",

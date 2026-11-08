@@ -1,10 +1,10 @@
 ┌─ card-attachments · 120 cols ──────────────────────────────────────────────────────────────────────────────────────────┐
-│╭─ ◢ marie · auth ───────────────────────────────────────── 2m─╮                                                        │
+│╭─ ◢ marie · auth ──────────────────────────────────────── 2m─╮                                                         │
 ││ Token format changed to v2. v1 accepted until 0.2            │                                                        │
 ││ ▸ diff src/auth/token.ts +42 −18 3 KB                        │                                                        │
 ││ ▸ file docs/tokens.md 1.2 MB                                 │                                                        │
 │╰──────────────────────────────────────────────────────────────╯                                                        │
-│╭─ ◢ jo · billing ──────────────────────────────────────── 40m─╮                                                        │
+│╭─ ◢ jo · billing ─────────────────────────────────────── 40m─╮                                                         │
 ││ ? can billing read v2 tokens yet, or should we wait for the… │                                                        │
 ││ ▸ turns last 6 turns 900 B                                   │                                                        │
 ││ the picker comes after your next turn                        │                                                        │
@@ -12,12 +12,12 @@
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 
 styles (dark theme):
-  1 [fg=inactive:#999999]╭─ [/][bold fg=claude:#d77757]◢ marie[/][fg=inactive:#999999] · [/][fg=suggestion:#b1b9f9]auth[/][fg=inactive:#999999] ───────────────────────────────────────── [/][dim]2m[/][fg=inactive:#999999]─╮[/]
+  1 [fg=inactive:#999999]╭─ [/][bold fg=claude:#d77757]◢ marie[/][fg=inactive:#999999] · [/][fg=suggestion:#b1b9f9]auth[/][fg=inactive:#999999] ──────────────────────────────────────── [/][dim]2m[/][fg=inactive:#999999]─╮[/]
   2 [fg=inactive:#999999]│ [/]Token format changed to v2. v1 accepted until 0.2           [fg=inactive:#999999] │[/]
   3 [fg=inactive:#999999]│ [/][fg=suggestion:#b1b9f9]▸ diff[/] src/auth/token.ts +42 −18 [dim]3 KB[/]                       [fg=inactive:#999999] │[/]
   4 [fg=inactive:#999999]│ [/][fg=suggestion:#b1b9f9]▸ file[/] docs/tokens.md [dim]1.2 MB[/]                                [fg=inactive:#999999] │[/]
   5 [fg=inactive:#999999]╰──────────────────────────────────────────────────────────────╯[/]
-  6 [fg=inactive:#999999]╭─ [/][bold fg=claude:#d77757]◢ jo[/][fg=inactive:#999999] · [/][fg=suggestion:#b1b9f9]billing[/][fg=inactive:#999999] ──────────────────────────────────────── [/][dim]40m[/][fg=inactive:#999999]─╮[/]
+  6 [fg=inactive:#999999]╭─ [/][bold fg=claude:#d77757]◢ jo[/][fg=inactive:#999999] · [/][fg=suggestion:#b1b9f9]billing[/][fg=inactive:#999999] ─────────────────────────────────────── [/][dim]40m[/][fg=inactive:#999999]─╮[/]
   7 [fg=inactive:#999999]│ [/]? can billing read v2 tokens yet, or should we wait for the…[fg=inactive:#999999] │[/]
   8 [fg=inactive:#999999]│ [/][fg=suggestion:#b1b9f9]▸ turns[/] last 6 turns [dim]900 B[/]                                  [fg=inactive:#999999] │[/]
   9 [fg=inactive:#999999]│ [/][dim]the picker comes after your next turn[/]                       [fg=inactive:#999999] │[/]

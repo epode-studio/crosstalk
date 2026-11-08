@@ -14861,8 +14861,10 @@ function runningLine(r, now) {
     return `${mark} ${r.label} \u00b7 starting`;
   const who = r.kind === "share" ? r.owner === "you" ? r.with?.length ? ` \u00b7 with ${r.with.join(", ")}` : "" : ` \u00b7 from ${r.owner}` : "";
   const left = r.kind === "share" && r.alive && r.until ? ` \u00b7 ${until(r.until, now)} left` : "";
-  if (r.kind === "pr")
-    return `${mark} ${r.label}${prState(r)}`;
+  if (r.kind === "pr") {
+    const sign = r.state === "MERGED" ? SIGN.done : r.checks === "failed" ? SIGN.broken : r.checks === "running" ? SIGN.working : r.checks === "passed" ? SIGN.done : mark;
+    return `${sign} ${r.label}${prState(r)}`;
+  }
   const dead = r.alive ? "" : r.kind === "share" ? " \u00b7 ended" : " \u00b7 dead";
   return `${mark} ${r.label}${who}${left}${dead}`;
 }
@@ -14912,6 +14914,15 @@ function prState(r) {
     parts.push("checks passed");
   return parts.filter(Boolean).map((x) => ` \u00b7 ${x}`).join("");
 }
+var DOTS = ["\uD83D\uDFE0", "\uD83D\uDFE1", "\uD83D\uDFE2", "\uD83D\uDD35", "\uD83D\uDFE3", "\uD83D\uDFE4", "\u26aa"];
+function dotFor(thread) {
+  let h = 2166136261;
+  for (const c of thread.toLowerCase())
+    h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return DOTS[(h >>> 0) % DOTS.length] ?? "\u26aa";
+}
+var SIGN = { waiting: "\u2753", working: "\u23f3", done: "\u2705", broken: "\u2757", idle: "\uD83D\uDCA4" };
+var LEGEND = `${SIGN.waiting} needs you \u00b7 ${SIGN.working} working \u00b7 ${SIGN.done} done \u00b7 ${SIGN.broken} something broke \u00b7 ${SIGN.idle} idle \u00b7 a coloured dot per thread`;
 
 // src/ui-extra/mute.ts
 import fs60 from "node:fs";
@@ -17618,6 +17629,10 @@ function applyOnce(id, state, f, sys) {
   let ok = true;
   let restored = false;
   let appleOriginal = f?.appleOriginal;
+  if (kindOf(t) === "apple" && t.tty && sys.platform === "darwin" && f?.title && !process.env.CROSSTALK_NO_TITLE_SIGN)
+    ok = sys.run({ cmd: "osascript", args: ["-"], input: appleTitleScript(t.tty, signed(f.title, state)) }).ok && ok;
+  if ((state === "waiting" || state === "broken") && f?.applied !== state && t.tty && !process.env.CROSSTALK_NO_BELL)
+    sys.writeTty(t.tty, "\x07");
   for (const a of actionsFor(t, state, sys.platform)) {
     if (a.kind === "run") {
       const r = sys.run(a.step);
@@ -17649,6 +17664,24 @@ function applyOnce(id, state, f, sys) {
   if (restored)
     return { ok, restored };
   return { ok, appleOriginal };
+}
+var appleTitleScript = (tty, title) => appleTab(tty, [
+  `set custom title of t to ${asq(title.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 120))}`,
+  `set title displays custom title of t to true`,
+  `set title displays device name of t to false`,
+  `set title displays shell path of t to false`,
+  `set title displays window size of t to false`,
+  `set title displays file name of t to false`,
+  `return "done"`
+]);
+function signed(title, state) {
+  const sign = state === "off" ? "" : SIGN[state];
+  const plain = title.replace(new RegExp(`^((?:${DOTS.join("|")})?)(?:${Object.values(SIGN).join("|")})?\\s*`, "u"), "$1");
+  const dot = DOTS.find((d) => plain.startsWith(d));
+  const rest = dot ? plain.slice(dot.length).trimStart() : plain;
+  if (!sign)
+    return dot ? `${dot} ${rest}` : rest;
+  return dot ? `${dot}${sign} ${rest}` : `${sign} ${rest}`;
 }
 var appleTintOn = (env = process.env) => /^(1|true|yes|on)$/i.test(env.CROSSTALK_TAB_COLOUR ?? env.CROSSTALK_TAB_COLOR ?? "");
 var appleProfileBgScript = (tty) => appleTab(tty, [`set n to name of current settings of t`, `set background color of t to background color of settings set n`, `return "done"`]);
@@ -21108,16 +21141,6 @@ function paneModel(t, items, o = {}) {
     }))
   };
 }
-
-// src/terminal/hook.ts
-var DOTS = ["\uD83D\uDD34", "\uD83D\uDFE0", "\uD83D\uDFE1", "\uD83D\uDFE2", "\uD83D\uDD35", "\uD83D\uDFE3", "\uD83D\uDFE4"];
-function dotFor(thread) {
-  let h = 2166136261;
-  for (const c of thread.toLowerCase())
-    h = Math.imul(h ^ c.charCodeAt(0), 16777619);
-  return DOTS[(h >>> 0) % DOTS.length];
-}
-
 // src/ui-extra/board.ts
 var boardFile = () => path97.join(P2.root, "board.html");
 var esc3 = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);

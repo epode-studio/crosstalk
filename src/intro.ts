@@ -7,6 +7,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { P } from "./config.ts"
+import { LEGEND } from "./ui-extra/pure.ts"
 
 export type Group = { title: string; lines: string[] }
 
@@ -69,6 +70,7 @@ export function welcomeText(): string {
     `◢ crosstalk is on. Nothing to learn: just say what you want. Try:`,
     `  "show me all my agents"  ·  "tidy up my sessions"  ·  "put two more agents on this"`,
     `  "tell marie what changed"  ·  "restore them" after a restart`,
+    `  Tabs and lines show: ${LEGEND}.`,
     `  "what can crosstalk do?" for the rest.`,
   ].join("\n")
 }
