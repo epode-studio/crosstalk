@@ -75,3 +75,12 @@ describe("one daemon at a time", () => {
     expect(C.upgradeFailed("0.9.9", 1000 + 3_600_001)).toBe(false)
   })
 })
+
+describe("a session from before the update", () => {
+  test("is told once that it still runs the old version", () => {
+    fs.writeFileSync(P.daemonVersion, JSON.stringify({ pid: process.pid, version: "0.3.0" }))
+    expect(C.staleNotice("old1", "0.2.9")).toContain("still runs 0.2.9")
+    expect(C.staleNotice("old1", "0.2.9")).toBe(null)
+    expect(C.staleNotice("new1", "0.3.0")).toBe(null)
+  })
+})

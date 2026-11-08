@@ -16,7 +16,7 @@
 import path from "node:path"
 import os from "node:os"
 import fs from "node:fs"
-import { ensureDaemon, request } from "./client.ts"
+import { ensureDaemon, pluginVersion, request, staleNotice } from "./client.ts"
 import { loadIdentity } from "./config.ts"
 import { rootFrom } from "./paths.ts"
 import { sessionsDir } from "./registry.ts"
@@ -552,6 +552,11 @@ async function registerSession() {
   // session without the mod: shown to the person, never to the model.
   if (registered?.systemMessage && restoreClient === "claude")
     systemMessage = [systemMessage, String(registered.systemMessage)].filter(Boolean).join("\n")
+  // Updated while this session ran: said once, so a missing feature is not a mystery.
+  if (eventName === "UserPromptSubmit" && restoreClient === "claude") {
+    const m = staleNotice(sessionId, pluginVersion(root))
+    if (m) systemMessage = [systemMessage, m].filter(Boolean).join("\n")
+  }
 }
 
 /** Anything waiting, phrased as a notice with none of the sender's words in it. */

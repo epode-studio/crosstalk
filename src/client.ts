@@ -235,3 +235,31 @@ async function start(root: string): Promise<boolean> {
   }
   return false
 }
+
+/**
+ * A session started before crosstalk updated keeps running the old version
+ * until it restarts. Said once per session, quietly, when the daemon is newer.
+ */
+export function staleNotice(sessionId: string, mine: string): string | null {
+  if (!mine || !sessionId) return null
+  let theirs = ""
+  try {
+    theirs = String(JSON.parse(fs.readFileSync(P.daemonVersion, "utf8")).version ?? "")
+  } catch {
+    return null
+  }
+  if (!newer(theirs, mine)) return null
+  const f = path.join(P.root, "stale-noted.json")
+  let noted: Record<string, number> = {}
+  try {
+    noted = JSON.parse(fs.readFileSync(f, "utf8"))
+  } catch {}
+  if (noted[sessionId]) return null
+  const now = Date.now()
+  for (const [k, at] of Object.entries(noted)) if (now - at > 7 * 86_400_000) delete noted[k]
+  noted[sessionId] = now
+  try {
+    fs.writeFileSync(f, JSON.stringify(noted), { mode: 0o600 })
+  } catch {}
+  return `◢ crosstalk updated to ${theirs}. This session still runs ${mine}: it picks up the new one next time it starts. Nothing to do now.`
+}
