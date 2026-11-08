@@ -15,7 +15,7 @@ import path from "node:path"
 import { P } from "../config.ts"
 
 export type Checks = "running" | "passed" | "failed" | "none"
-export type PrView = { state: string; draft: boolean; checks: Checks; failed: string[]; startedAt?: number }
+export type PrView = { state: string; draft: boolean; checks: Checks; failed: string[]; startedAt?: number; /** Its author's GitHub login. */ author?: string }
 
 const FAIL = new Set(["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"])
 const OK = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"])
@@ -40,6 +40,7 @@ export function summarize(j: any): PrView {
   return {
     state: String(j?.state ?? ""),
     draft: !!j?.isDraft,
+    ...(typeof j?.author?.login === "string" ? { author: j.author.login } : {}),
     checks,
     failed: [...new Set(failed)].slice(0, 8),
     ...(starts.length ? { startedAt: Math.min(...starts) } : {}),

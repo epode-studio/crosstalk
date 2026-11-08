@@ -22,6 +22,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { P } from "./config.ts"
+import { currentMain } from "./main.ts"
 import * as R from "./restore.ts"
 import { git as liveGit, repoName, slug, worktrees, type Git, type Worktree } from "./terminal/repo.ts"
 import { openForRepo, type Tab } from "./terminal/layout.ts"
@@ -378,6 +379,8 @@ export function spawnAgents(o: {
   const common = g(o.cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
   // No tmux (native Windows, mostly): Claude Code's own background sessions, if this claude has them.
   const claudeBin = which("claude", env) ?? "claude"
+  // With a main session open, new agents work out of sight unless a tab was asked for: their questions come to main.
+  if (o.background === undefined && currentMain()) o = { ...o, background: true }
   const claudeBg = !!o.background && !which("tmux", env) && bgx.claudeBackground(claudeBin, env).bg
   if (o.background && !which("tmux", env) && !claudeBg)
     return { ok: false, text: "◢ crosstalk: background agents run in tmux, which is not installed here. Install tmux, or start the agent in a tab instead.", agents: [] }

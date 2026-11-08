@@ -87,10 +87,22 @@ function gh(): string | null {
 export type PrState = (url: string, cwd?: string) => string | undefined
 export type PrViewOf = (url: string, cwd?: string) => CI.PrView | undefined
 
+/** The person's GitHub login, asked once (gh api user). */
+let login: string | null | undefined
+export function ghLogin(): string | undefined {
+  if (login !== undefined) return login ?? undefined
+  login = null
+  const bin = gh()
+  if (!bin) return undefined
+  const r = spawnSync(bin, ["api", "user", "--jq", ".login"], { encoding: "utf8", timeout: 10_000 })
+  if (r.status === 0 && r.stdout.trim()) login = r.stdout.trim()
+  return login ?? undefined
+}
+
 const ghView: PrViewOf = (url, cwd) => {
   const bin = gh()
   if (!bin) return undefined
-  const r = spawnSync(bin, ["pr", "view", url, "--json", "state,isDraft,statusCheckRollup"], { encoding: "utf8", timeout: 20_000, ...(cwd && fs.existsSync(cwd) ? { cwd } : {}) })
+  const r = spawnSync(bin, ["pr", "view", url, "--json", "state,isDraft,statusCheckRollup,author"], { encoding: "utf8", timeout: 20_000, ...(cwd && fs.existsSync(cwd) ? { cwd } : {}) })
   if (r.status !== 0) return undefined
   try {
     return CI.summarize(JSON.parse(r.stdout))
@@ -116,7 +128,7 @@ const ghState: PrState = (url, cwd) => {
  */
 export async function tick(
   store: UrlStore,
-  o: { liveRoots: Set<string>; liveSessions?: Set<string>; now?: number; probe?: (url: string) => Promise<Probe>; prState?: PrState; prView?: PrViewOf; onPr?: (u: Url, c: CI.Change) => void; max?: number } = { liveRoots: new Set() },
+  o: { liveRoots: Set<string>; liveSessions?: Set<string>; now?: number; probe?: (url: string) => Promise<Probe>; prState?: PrState; prView?: PrViewOf; onPr?: (u: Url, c: CI.Change) => void; me?: () => string | undefined; max?: number } = { liveRoots: new Set() },
 ): Promise<Url[]> {
   const now = o.now ?? Date.now()
   const p = o.probe ?? ((u: string) => probe(u))
@@ -144,7 +156,10 @@ export async function tick(
         const r = v.state === "OPEN" ? store.markOk(u.id, { state: v.state }) : store.markDead(u.id, { state: v.state })
         const after = store.update(u.id, { checks: v.checks, draft: v.draft, failed: v.failed, checksSince: since }) ?? r
         if (after) out.push(after)
-        if (ch && after)
+        // Only the person's own PRs, or ones crosstalk's shipping opened: a teammate's or an upstream PR an
+        // agent merely looked at is never investigated on their credits.
+        const mine = u.source === "pr" || (!!v.author && !!(o.me ?? ghLogin)() && v.author.toLowerCase() === (o.me ?? ghLogin)()!.toLowerCase())
+        if (ch && after && mine)
           try {
             o.onPr?.(after, ch)
           } catch {}
