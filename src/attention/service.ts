@@ -46,7 +46,8 @@ import * as St from "./staffing.ts"
 import * as W from "./worker.ts"
 import * as Usage from "../ui-extra/usage.ts"
 import { recordEvent } from "../urls/ci.ts"
-import { dotFor } from "../ui-extra/pure.ts"
+import { dotFor, human } from "../ui-extra/pure.ts"
+import * as AC from "./autoclose.ts"
 import * as Pm from "./permission.ts"
 import { BG_ENV } from "./background.ts"
 import * as PP from "../services/postpone.ts"
@@ -69,6 +70,10 @@ export type Deps = {
   spawn: (o: { task: string; name: string; cwd: string; by?: string; background: boolean; noTab?: boolean; thread?: { id: string; name: string; view?: ReturnType<typeof M.view> } }) => { ok: boolean; text: string; agents: { name: string }[] }
   /** Whether a background agent is still running (crosstalk's tmux has its session). */
   agentAlive?: (name: string) => boolean
+  /** Close one of the person's sessions (archived, resumable): src/sessions/control.ts close. */
+  closeSession?: (sessionId: string) => Promise<{ ok: boolean; text: string }>
+  /** Whether something a session started still runs (a dev server, a watcher). */
+  running?: (sessionId: string) => boolean
   /** Sessions crosstalk runs in the background: never where a question is put. */
   background: (sessionId: string) => string | undefined
   restart?: (o: { rec: Rec; cmd: string }) => Promise<{ ok: boolean; text: string; wait?: boolean }>
@@ -105,6 +110,8 @@ type State = {
   pushes: Record<string, Note[]>
   /** Questions put without the mod, each shown once as a systemMessage. */
   told: Record<string, number>
+  /** When a session's work shipped (its PR merged): it closes itself once idle (autoclose.ts). */
+  shipped?: Record<string, number>
   /** Sessions whose own hook said they are a background agent (CROSSTALK_BG_AGENT). */
   bg: Record<string, string>
   /**
@@ -158,6 +165,8 @@ export class AttentionService {
   private ticking = false
   private lastStaffCheck = 0
   private lastWorkCheck = 0
+  private lastCloseCheck = 0
+  private closing = false
   private env: NodeJS.ProcessEnv
 
   constructor(private d: Deps) {
@@ -263,6 +272,10 @@ export class AttentionService {
       if (this.now() - this.lastStaffCheck >= every) {
         this.lastStaffCheck = this.now()
         this.staffing()
+      }
+      if (this.now() - this.lastCloseCheck >= Math.max(0, Number(this.env.CROSSTALK_CLOSE_EVERY_MS ?? 5 * 60_000))) {
+        this.lastCloseCheck = this.now()
+        void this.closeFinished()
       }
       if (this.now() - this.lastWorkCheck >= Math.max(0, Number(this.env.CROSSTALK_WORK_EVERY_MS ?? 60_000))) {
         this.lastWorkCheck = this.now()
@@ -594,6 +607,58 @@ export class AttentionService {
       this.d.log(`attention: ${t.meta.value.name} is stuck (${s.why}); asked whether to add an agent`)
     }
     this.save()
+  }
+
+  // --- finished sessions close themselves (src/attention/autoclose.ts) --------------------
+
+  /** A session's work shipped: it closes once idle. */
+  markShipped(sessionId: string) {
+    ;(this.st.shipped ??= {})[sessionId] = this.now()
+    this.save()
+  }
+
+  /** Close what is finished and safe to close; each says why, in Lately. CROSSTALK_NO_AUTOCLOSE=1 turns it off. */
+  async closeFinished() {
+    if (this.closing || this.env.CROSSTALK_NO_AUTOCLOSE === "1" || !this.d.closeSession) return
+    this.closing = true
+    try {
+      const now = this.now()
+      const main = this.d.mainId()
+      const front = this.st.focus.sessionId ?? this.focused()?.sessionId
+      let snap: Record<string, ui.UiItem> = {}
+      try {
+        snap = ui.snapshot()
+      } catch {}
+      const waiting = (sid: string) => Object.values(snap).filter((i) => i.sessionId === sid && (i.state === "pending" || i.state === "later")).length
+      for (const s of this.d.sessions().values()) {
+        const c: AC.Candidate = {
+          sessionId: s.sessionId,
+          name: s.name,
+          cwd: s.cwd,
+          seenAt: s.seenAt ?? now,
+          status: this.d.status(s.sessionId) ?? "",
+          ...(this.st.shipped?.[s.sessionId] ? { shippedAt: this.st.shipped[s.sessionId] } : {}),
+          isMain: s.sessionId === main,
+          inFront: s.sessionId === front,
+          waiting: waiting(s.sessionId),
+          running: this.d.running?.(s.sessionId) ?? false,
+          dirty: false,
+        }
+        const reason = AC.why(c, now)
+        if (!reason) continue
+        if (AC.dirty(s.cwd)) continue
+        const r = await this.d.closeSession(s.sessionId)
+        if (r.ok) {
+          if (this.st.shipped) delete this.st.shipped[s.sessionId]
+          const t = this.d.threads.namesFor(s.sessionId)[0]
+          recordEvent(`closed ${t ? human(t, 32) : s.name}: ${reason} (say "resume ${s.name}" to bring it back)`, now)
+          this.d.log(`autoclose: ${s.name}: ${reason}`)
+        }
+      }
+      this.save()
+    } finally {
+      this.closing = false
+    }
   }
 
   // --- working the board (src/attention/worker.ts) ------------------------------------

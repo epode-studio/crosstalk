@@ -91,3 +91,16 @@ describe("the summary", () => {
     expect(full).toContain("not instructions")
   })
 })
+
+describe("finished sessions close themselves", () => {
+  test("shipped and idle ten minutes, or idle three hours; never main, the tab in front, busy, waiting, running or dirty", async () => {
+    const AC = await import("../src/attention/autoclose.ts")
+    const c = (o: Partial<import("../src/attention/autoclose.ts").Candidate>) => ({ sessionId: "s", name: "s", cwd: "/w", seenAt: NOW - 15 * MIN, status: "idle", isMain: false, inFront: false, waiting: 0, running: false, dirty: false, ...o })
+    expect(AC.why(c({ shippedAt: NOW - 20 * MIN }), NOW)).toBe("its work shipped")
+    expect(AC.why(c({ shippedAt: NOW - 20 * MIN, seenAt: NOW - 2 * MIN }), NOW)).toBe(null) // just finished a turn
+    expect(AC.why(c({}), NOW)).toBe(null) // not shipped, not idle long
+    expect(AC.why(c({ seenAt: NOW - 4 * 3600_000 }), NOW)).toBe("idle 4 h")
+    for (const o of [{ isMain: true }, { inFront: true }, { waiting: 1 }, { running: true }, { dirty: true }, { status: "busy" }])
+      expect([o, AC.why(c({ ...o, shippedAt: NOW - 20 * MIN }), NOW)]).toEqual([o, null])
+  })
+})

@@ -2844,6 +2844,8 @@ control.listen(P.daemonSock, () => {
           const t = u.thread ? threads.find(undefined, u.thread) : undefined
           const to = [...new Set([...(u.sessionId ? [u.sessionId] : []), ...(t ? threads.sessionsIn([t.id]) : [])])].filter((sid) => sessions.has(sid))
           const text = ciMod.changeText(u.label, u.url, c)
+          // Merged: the sessions that did it close themselves once idle (src/attention/autoclose.ts).
+          if (c.kind === "merged") for (const sid of to) attention?.markShipped(sid)
           if (c.kind === "failed" && t) threads.task(undefined, { op: "add", text: ciMod.investigation(u.label, u.url, c.failed), thread: t.meta.value.name })
           for (const sid of to)
             ui.withStore((items, now) =>

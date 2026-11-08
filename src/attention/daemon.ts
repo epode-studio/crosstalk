@@ -6,6 +6,8 @@ import { P } from "../config.ts"
 import type { ThreadService } from "../threads/service.ts"
 import type { Coordinator } from "../coordinator.ts"
 import * as spawn from "../spawn.ts"
+import * as Ctl from "../sessions/control.ts"
+import * as G from "../gather.ts"
 import { AttentionService, type Reg } from "./service.ts"
 
 export function createAttention(o: {
@@ -48,5 +50,22 @@ export function createAttention(o: {
     },
     background: backgroundOf,
     agentAlive: (name) => spawn.tmuxHas(name),
+    // Closing on crosstalk's own judgment: the same close a person's "close billing" makes (archived, resumable).
+    closeSession: async (sid) => {
+      const d = Ctl.liveDeps()
+      const lives = await Ctl.liveSessions(d)
+      const l = lives.find((x) => x.id === sid)
+      if (!l) return { ok: false, text: "gone" }
+      return Ctl.close(l, { services: "keep" }, d)
+    },
+    running: (sid) => {
+      const r = o.sessions().get(sid)
+      if (!r?.pid) return false
+      try {
+        return (G.liveSys().activity?.(r.pid) ?? []).length > 0
+      } catch {
+        return false
+      }
+    },
   })
 }
