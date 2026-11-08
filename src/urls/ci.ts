@@ -69,7 +69,9 @@ export function recordDuration(repo: string | undefined, ms: number) {
   all[repo] = [...(all[repo] ?? []), Math.round(ms)].slice(-20)
   try {
     fs.mkdirSync(P.root, { recursive: true, mode: 0o700 })
-    fs.writeFileSync(file(), JSON.stringify(all), { mode: 0o600 })
+    const tmp = `${file()}.${process.pid}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify(all), { mode: 0o600 })
+    fs.renameSync(tmp, file())
   } catch {}
 }
 
@@ -136,7 +138,9 @@ export function recordEvent(text: string, at = Date.now()) {
   all = [...all.filter((e) => at - e.at < 86_400_000), { text, at }].slice(-30)
   try {
     fs.mkdirSync(P.root, { recursive: true, mode: 0o700 })
-    fs.writeFileSync(events(), JSON.stringify(all), { mode: 0o600 })
+    const tmp = `${events()}.${process.pid}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify(all), { mode: 0o600 })
+    fs.renameSync(tmp, events())
   } catch {}
 }
 

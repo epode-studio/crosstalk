@@ -22,7 +22,16 @@ const safe = (id: string) => id.replace(/[^A-Za-z0-9._-]/g, "_")
 export function write(sessionId: string, r: Report, now = Date.now()) {
   fs.mkdirSync(dir(), { recursive: true, mode: 0o700 })
   const before = latest()
-  fs.writeFileSync(path.join(dir(), `${safe(sessionId)}.json`), JSON.stringify(r), { mode: 0o600 })
+  const f = path.join(dir(), `${safe(sessionId)}.json`)
+  fs.writeFileSync(`${f}.${process.pid}.tmp`, JSON.stringify(r), { mode: 0o600 })
+  fs.renameSync(`${f}.${process.pid}.tmp`, f)
+  // Reports of sessions gone two days are dropped, so the folder does not grow for ever.
+  try {
+    for (const n of fs.readdirSync(dir())) {
+      const p = path.join(dir(), n)
+      if (now - fs.statSync(p).mtimeMs > 2 * 86_400_000) fs.unlinkSync(p)
+    }
+  } catch {}
   crossed(before?.limits ?? [], r.limits, now)
 }
 

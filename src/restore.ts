@@ -743,10 +743,21 @@ export function itermScript(cmds: string[]): string {
 export function ghosttyScript(cmds: string[]): string {
   const L = [`set crosstalkFallback to ""`, `tell application "Ghostty" to activate`, `delay 0.5`, `try`]
   cmds.forEach((c, i) => {
+    // Ghostty in front before every keystroke: otherwise the command would be typed into another app.
+    const front = [
+      `\trepeat 10 times`,
+      `\t\tif frontmost of application "Ghostty" then exit repeat`,
+      `\t\ttell application "Ghostty" to activate`,
+      `\t\tdelay 0.2`,
+      `\tend repeat`,
+      `\tif not (frontmost of application "Ghostty") then error "Ghostty is not in front" number 1001`,
+    ]
     L.push(
+      ...front,
+      `\ttell application "System Events" to keystroke ${i === 0 ? `"n"` : `"t"`} using command down`,
+      `\tdelay 0.8`,
+      ...front,
       `\ttell application "System Events"`,
-      `\t\tkeystroke ${i === 0 ? `"n"` : `"t"`} using command down`,
-      `\t\tdelay 0.8`,
       `\t\tkeystroke ${asq(c)}`,
       `\t\tkey code 36`,
       `\tend tell`,
@@ -1217,7 +1228,10 @@ export function restore(o: RunOpts, only?: Rec[]): Outcome {
   // (another restore, the person by hand) are running again and left alone.
   const all = only ? only.filter((r) => !recAlive(r)) : lostSessions(ctxNow(), o.self)
   // "Only the recent N": the rest stay listed, for "restore them" later.
-  const lost = o.recentOnly ? recentOf(all) : all
+  // A session whose folder is gone (a worktree cleaned up) cannot reopen there: kept listed, and said.
+  const picked = o.recentOnly ? recentOf(all) : all
+  const folderGone = picked.filter((r) => r.cwd && !fs.existsSync(r.cwd))
+  const lost = picked.filter((r) => !folderGone.includes(r))
   if (!lost.length) return { ok: true, text: "◢ crosstalk: nothing to restore.", lost, restored: [] }
   claimPending() // anything waiting in the background is superseded by this
 
@@ -1231,6 +1245,7 @@ export function restore(o: RunOpts, only?: Rec[]): Outcome {
   let { plans, skipped } = plan(lost, e)
   const app = appName(e.current)
   const notes: string[] = []
+  if (folderGone.length) notes.push(`Not reopened: ${names(folderGone)}, whose folder${folderGone.length === 1 ? " is" : "s are"} gone. "Resume <name>" opens one in its repository.`)
   const state = loadState()
 
   // Tabs in Terminal.app and Ghostty are typed through System Events. Check

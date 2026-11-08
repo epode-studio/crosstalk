@@ -875,7 +875,15 @@ function itermScript(cmds) {
 function ghosttyScript(cmds) {
   const L = [`set crosstalkFallback to ""`, `tell application "Ghostty" to activate`, `delay 0.5`, `try`];
   cmds.forEach((c, i) => {
-    L.push(`	tell application "System Events"`, `		keystroke ${i === 0 ? `"n"` : `"t"`} using command down`, `		delay 0.8`, `		keystroke ${asq(c)}`, `		key code 36`, `	end tell`);
+    const front = [
+      `	repeat 10 times`,
+      `		if frontmost of application "Ghostty" then exit repeat`,
+      `		tell application "Ghostty" to activate`,
+      `		delay 0.2`,
+      `	end repeat`,
+      `	if not (frontmost of application "Ghostty") then error "Ghostty is not in front" number 1001`
+    ];
+    L.push(...front, `	tell application "System Events" to keystroke ${i === 0 ? `"n"` : `"t"`} using command down`, `	delay 0.8`, ...front, `	tell application "System Events"`, `		keystroke ${asq(c)}`, `		key code 36`, `	end tell`);
   });
   L.push(`on error errMsg number errNum`, `	set crosstalkFallback to (errNum as text)`, `end try`, `return "done " & crosstalkFallback`);
   return L.join(`
@@ -1187,7 +1195,9 @@ function restore(o, only) {
     return { ok: false, text: `\u25e2 crosstalk: ${bot}`, lost: [], restored: [] };
   const env = o.env ?? process.env;
   const all = only ? only.filter((r) => !recAlive(r)) : lostSessions(ctxNow(), o.self);
-  const lost = o.recentOnly ? recentOf(all) : all;
+  const picked = o.recentOnly ? recentOf(all) : all;
+  const folderGone = picked.filter((r) => r.cwd && !fs4.existsSync(r.cwd));
+  const lost = picked.filter((r) => !folderGone.includes(r));
   if (!lost.length)
     return { ok: true, text: "\u25e2 crosstalk: nothing to restore.", lost, restored: [] };
   claimPending();
@@ -1195,6 +1205,8 @@ function restore(o, only) {
   let { plans, skipped } = plan(lost, e);
   const app = appName(e.current);
   const notes = [];
+  if (folderGone.length)
+    notes.push(`Not reopened: ${names(folderGone)}, whose folder${folderGone.length === 1 ? " is" : "s are"} gone. "Resume <name>" opens one in its repository.`);
   const state = loadState();
   if (plans.some((p) => p.needsAccessibility) && accessibilityGranted() === false) {
     const opened = shouldOpenSettings({ pane: "accessibility", userAction: o.userAction, state, now: Date.now() });
@@ -6386,6 +6398,12 @@ function tacklePrompt(items, ids = []) {
 `);
 }
 var CHAIN_MAX = 3;
+function noteWaiting(sessionId, items, now = Date.now()) {
+  if (!items.length)
+    return;
+  const p = readPrefs();
+  writePrefs({ ...p, waitingOn: { ...p.waitingOn ?? {}, [sessionId]: { items, at: now } } });
+}
 function resetChain(sessionId) {
   const p = readPrefs();
   if (!p.chain?.[sessionId])
@@ -6408,12 +6426,12 @@ function atStop(o) {
   const newPersons = persons.filter(isNew);
   const id = hashOf([...todo, ...persons]);
   if (!items.length && !newPersons.length)
-    return todo.length || persons.length ? { items: [], waiting, persons: [], id, fresh: false, auto: false } : null;
+    return todo.length || persons.length || waiting.length ? { items: [], waiting, persons: [], id, fresh: false, auto: false } : null;
   const kept = [...(p.seenItems?.[o.sessionId] ?? []).filter((x) => now - x.at < 3 * 86400000), ...[...items, ...newPersons].map((t) => ({ t, at: now }))].slice(-200);
   const on = p.always !== false;
   const rounds = p.chain?.[o.sessionId] ?? 0;
   const auto = on && !o.continuing && items.length > 0 && rounds < CHAIN_MAX;
-  writePrefs({ ...p, seenItems: { ...p.seenItems ?? {}, [o.sessionId]: kept }, ...auto ? { chain: { ...p.chain ?? {}, [o.sessionId]: rounds + 1 } } : {} });
+  writePrefs({ ...p, seenItems: { ...p.seenItems ?? {}, [o.sessionId]: kept }, ...auto ? { chain: { ...p.chain ?? {}, [o.sessionId]: rounds + 1 } } : {}, ...waiting.length ? { waitingOn: { ...p.waitingOn ?? {}, [o.sessionId]: { items: waiting, at: now } } } : {} });
   return { items, waiting, persons: newPersons, id, fresh: !o.continuing, auto };
 }
 
@@ -6937,6 +6955,8 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
       }
     })();
     const r = started ? null : atStop({ reply: lastReply(typeof hook.transcript_path === "string" ? hook.transcript_path : undefined), sessionId, continuing: hook.stop_hook_active === true });
+    if (r?.waiting.length)
+      noteWaiting(sessionId, r.waiting);
     if (r?.fresh && (r.items.length || r.persons.length)) {
       let thread;
       const ids = [];

@@ -805,7 +805,15 @@ function itermScript(cmds) {
 function ghosttyScript(cmds) {
   const L = [`set crosstalkFallback to ""`, `tell application "Ghostty" to activate`, `delay 0.5`, `try`];
   cmds.forEach((c, i) => {
-    L.push(`	tell application "System Events"`, `		keystroke ${i === 0 ? `"n"` : `"t"`} using command down`, `		delay 0.8`, `		keystroke ${asq(c)}`, `		key code 36`, `	end tell`);
+    const front = [
+      `	repeat 10 times`,
+      `		if frontmost of application "Ghostty" then exit repeat`,
+      `		tell application "Ghostty" to activate`,
+      `		delay 0.2`,
+      `	end repeat`,
+      `	if not (frontmost of application "Ghostty") then error "Ghostty is not in front" number 1001`
+    ];
+    L.push(...front, `	tell application "System Events" to keystroke ${i === 0 ? `"n"` : `"t"`} using command down`, `	delay 0.8`, ...front, `	tell application "System Events"`, `		keystroke ${asq(c)}`, `		key code 36`, `	end tell`);
   });
   L.push(`on error errMsg number errNum`, `	set crosstalkFallback to (errNum as text)`, `end try`, `return "done " & crosstalkFallback`);
   return L.join(`
@@ -1047,7 +1055,9 @@ function restore(o, only) {
     return { ok: false, text: `\u25e2 crosstalk: ${bot}`, lost: [], restored: [] };
   const env = o.env ?? process.env;
   const all = only ? only.filter((r) => !recAlive(r)) : lostSessions(ctxNow(), o.self);
-  const lost = o.recentOnly ? recentOf(all) : all;
+  const picked = o.recentOnly ? recentOf(all) : all;
+  const folderGone = picked.filter((r) => r.cwd && !fs4.existsSync(r.cwd));
+  const lost = picked.filter((r) => !folderGone.includes(r));
   if (!lost.length)
     return { ok: true, text: "\u25e2 crosstalk: nothing to restore.", lost, restored: [] };
   claimPending();
@@ -1055,6 +1065,8 @@ function restore(o, only) {
   let { plans, skipped } = plan(lost, e);
   const app = appName(e.current);
   const notes = [];
+  if (folderGone.length)
+    notes.push(`Not reopened: ${names(folderGone)}, whose folder${folderGone.length === 1 ? " is" : "s are"} gone. "Resume <name>" opens one in its repository.`);
   const state = loadState();
   if (plans.some((p) => p.needsAccessibility) && accessibilityGranted() === false) {
     const opened = shouldOpenSettings({ pane: "accessibility", userAction: o.userAction, state, now: Date.now() });
@@ -8831,7 +8843,15 @@ function itermScript2(cmds) {
 function ghosttyScript2(cmds) {
   const L = [`set crosstalkFallback to ""`, `tell application "Ghostty" to activate`, `delay 0.5`, `try`];
   cmds.forEach((c, i) => {
-    L.push(`	tell application "System Events"`, `		keystroke ${i === 0 ? `"n"` : `"t"`} using command down`, `		delay 0.8`, `		keystroke ${asq2(c)}`, `		key code 36`, `	end tell`);
+    const front = [
+      `	repeat 10 times`,
+      `		if frontmost of application "Ghostty" then exit repeat`,
+      `		tell application "Ghostty" to activate`,
+      `		delay 0.2`,
+      `	end repeat`,
+      `	if not (frontmost of application "Ghostty") then error "Ghostty is not in front" number 1001`
+    ];
+    L.push(...front, `	tell application "System Events" to keystroke ${i === 0 ? `"n"` : `"t"`} using command down`, `	delay 0.8`, ...front, `	tell application "System Events"`, `		keystroke ${asq2(c)}`, `		key code 36`, `	end tell`);
   });
   L.push(`on error errMsg number errNum`, `	set crosstalkFallback to (errNum as text)`, `end try`, `return "done " & crosstalkFallback`);
   return L.join(`
@@ -9135,7 +9155,9 @@ function restore2(o, only) {
     return { ok: false, text: `\u25e2 crosstalk: ${bot}`, lost: [], restored: [] };
   const env = o.env ?? process.env;
   const all = only ? only.filter((r) => !recAlive2(r)) : lostSessions2(ctxNow2(), o.self);
-  const lost = o.recentOnly ? recentOf2(all) : all;
+  const picked = o.recentOnly ? recentOf2(all) : all;
+  const folderGone = picked.filter((r) => r.cwd && !fs22.existsSync(r.cwd));
+  const lost = picked.filter((r) => !folderGone.includes(r));
   if (!lost.length)
     return { ok: true, text: "\u25e2 crosstalk: nothing to restore.", lost, restored: [] };
   claimPending2();
@@ -9143,6 +9165,8 @@ function restore2(o, only) {
   let { plans, skipped } = plan2(lost, e);
   const app = appName2(e.current);
   const notes = [];
+  if (folderGone.length)
+    notes.push(`Not reopened: ${names4(folderGone)}, whose folder${folderGone.length === 1 ? " is" : "s are"} gone. "Resume <name>" opens one in its repository.`);
   const state = loadState3();
   if (plans.some((p) => p.needsAccessibility) && accessibilityGranted2() === false) {
     const opened = shouldOpenSettings2({ pane: "accessibility", userAction: o.userAction, state, now: Date.now() });
@@ -10091,7 +10115,9 @@ function recordDuration(repo, ms) {
   all[repo] = [...all[repo] ?? [], Math.round(ms)].slice(-20);
   try {
     fs26.mkdirSync(P.root, { recursive: true, mode: 448 });
-    fs26.writeFileSync(file7(), JSON.stringify(all), { mode: 384 });
+    const tmp = `${file7()}.${process.pid}.tmp`;
+    fs26.writeFileSync(tmp, JSON.stringify(all), { mode: 384 });
+    fs26.renameSync(tmp, file7());
   } catch {}
 }
 function median(xs) {
@@ -10138,7 +10164,9 @@ function recordEvent(text, at = Date.now()) {
   all = [...all.filter((e) => at - e.at < 86400000), { text, at }].slice(-30);
   try {
     fs26.mkdirSync(P.root, { recursive: true, mode: 448 });
-    fs26.writeFileSync(events(), JSON.stringify(all), { mode: 384 });
+    const tmp = `${events()}.${process.pid}.tmp`;
+    fs26.writeFileSync(tmp, JSON.stringify(all), { mode: 384 });
+    fs26.renameSync(tmp, events());
   } catch {}
 }
 function recentEvents(n = 6, now = Date.now()) {
@@ -10156,7 +10184,16 @@ var safe4 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
 function write3(sessionId, r, now = Date.now()) {
   fs27.mkdirSync(dir5(), { recursive: true, mode: 448 });
   const before = latest();
-  fs27.writeFileSync(path31.join(dir5(), `${safe4(sessionId)}.json`), JSON.stringify(r), { mode: 384 });
+  const f = path31.join(dir5(), `${safe4(sessionId)}.json`);
+  fs27.writeFileSync(`${f}.${process.pid}.tmp`, JSON.stringify(r), { mode: 384 });
+  fs27.renameSync(`${f}.${process.pid}.tmp`, f);
+  try {
+    for (const n of fs27.readdirSync(dir5())) {
+      const p = path31.join(dir5(), n);
+      if (now - fs27.statSync(p).mtimeMs > 2 * 86400000)
+        fs27.unlinkSync(p);
+    }
+  } catch {}
   crossed(before?.limits ?? [], r.limits, now);
 }
 function all() {
@@ -10370,7 +10407,7 @@ function prState(r) {
   return parts.filter(Boolean).map((x) => ` \u00b7 ${x}`).join("");
 }
 function inboxScore(it, now) {
-  const base = it.kind === "session" || it.kind === "restore" ? 120 : it.id.startsWith("relay:") || it.id.startsWith("attn:perm:") ? 100 : it.kind === "ask" ? 90 : it.kind === "ship" || it.kind === "conflict" ? 80 : it.id.startsWith("attn:staff:") ? 60 : it.kind === "route" || it.kind === "team" || it.kind === "steer" ? 55 : it.id.startsWith("open:") ? 40 : it.kind === "message" ? 35 : 30;
+  const base = it.kind === "session" || it.kind === "restore" ? 120 : it.id.startsWith("relay:") || it.id.startsWith("attn:perm:") || it.id.startsWith("attn:circle:") ? 100 : it.kind === "ask" ? 90 : it.kind === "ship" || it.kind === "conflict" ? 80 : it.id.startsWith("attn:staff:") ? 60 : it.kind === "route" || it.kind === "team" || it.kind === "steer" ? 55 : it.id.startsWith("open:") ? 40 : it.kind === "message" ? 35 : 30;
   const waitedMin = Math.max(0, (now - it.createdAt) / 60000);
   return base + Math.min(30, waitedMin / 2);
 }

@@ -7659,7 +7659,15 @@ function itermScript(cmds) {
 function ghosttyScript(cmds) {
   const L = [`set crosstalkFallback to ""`, `tell application "Ghostty" to activate`, `delay 0.5`, `try`];
   cmds.forEach((c, i) => {
-    L.push(`	tell application "System Events"`, `		keystroke ${i === 0 ? `"n"` : `"t"`} using command down`, `		delay 0.8`, `		keystroke ${asq(c)}`, `		key code 36`, `	end tell`);
+    const front = [
+      `	repeat 10 times`,
+      `		if frontmost of application "Ghostty" then exit repeat`,
+      `		tell application "Ghostty" to activate`,
+      `		delay 0.2`,
+      `	end repeat`,
+      `	if not (frontmost of application "Ghostty") then error "Ghostty is not in front" number 1001`
+    ];
+    L.push(...front, `	tell application "System Events" to keystroke ${i === 0 ? `"n"` : `"t"`} using command down`, `	delay 0.8`, ...front, `	tell application "System Events"`, `		keystroke ${asq(c)}`, `		key code 36`, `	end tell`);
   });
   L.push(`on error errMsg number errNum`, `	set crosstalkFallback to (errNum as text)`, `end try`, `return "done " & crosstalkFallback`);
   return L.join(`
@@ -7915,7 +7923,9 @@ function restore(o, only) {
     return { ok: false, text: `\u25e2 crosstalk: ${bot}`, lost: [], restored: [] };
   const env = o.env ?? process.env;
   const all = only ? only.filter((r) => !recAlive(r)) : lostSessions(ctxNow(), o.self);
-  const lost = o.recentOnly ? recentOf(all) : all;
+  const picked = o.recentOnly ? recentOf(all) : all;
+  const folderGone = picked.filter((r) => r.cwd && !fs6.existsSync(r.cwd));
+  const lost = picked.filter((r) => !folderGone.includes(r));
   if (!lost.length)
     return { ok: true, text: "\u25e2 crosstalk: nothing to restore.", lost, restored: [] };
   claimPending();
@@ -7923,6 +7933,8 @@ function restore(o, only) {
   let { plans, skipped } = plan(lost, e);
   const app = appName(e.current);
   const notes = [];
+  if (folderGone.length)
+    notes.push(`Not reopened: ${names(folderGone)}, whose folder${folderGone.length === 1 ? " is" : "s are"} gone. "Resume <name>" opens one in its repository.`);
   const state = loadState();
   if (plans.some((p) => p.needsAccessibility) && accessibilityGranted() === false) {
     const opened = shouldOpenSettings({ pane: "accessibility", userAction: o.userAction, state, now: Date.now() });
@@ -11654,7 +11666,7 @@ function prState(r) {
   return parts.filter(Boolean).map((x) => ` \u00b7 ${x}`).join("");
 }
 function inboxScore(it, now) {
-  const base = it.kind === "session" || it.kind === "restore" ? 120 : it.id.startsWith("relay:") || it.id.startsWith("attn:perm:") ? 100 : it.kind === "ask" ? 90 : it.kind === "ship" || it.kind === "conflict" ? 80 : it.id.startsWith("attn:staff:") ? 60 : it.kind === "route" || it.kind === "team" || it.kind === "steer" ? 55 : it.id.startsWith("open:") ? 40 : it.kind === "message" ? 35 : 30;
+  const base = it.kind === "session" || it.kind === "restore" ? 120 : it.id.startsWith("relay:") || it.id.startsWith("attn:perm:") || it.id.startsWith("attn:circle:") ? 100 : it.kind === "ask" ? 90 : it.kind === "ship" || it.kind === "conflict" ? 80 : it.id.startsWith("attn:staff:") ? 60 : it.kind === "route" || it.kind === "team" || it.kind === "steer" ? 55 : it.id.startsWith("open:") ? 40 : it.kind === "message" ? 35 : 30;
   const waitedMin = Math.max(0, (now - it.createdAt) / 60000);
   return base + Math.min(30, waitedMin / 2);
 }
