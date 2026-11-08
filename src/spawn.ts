@@ -36,6 +36,23 @@ import * as Env from "./env/index.ts"
 import * as EnvOffer from "./env/offer.ts"
 
 export const DEP_DIRS = ["node_modules", ".venv", "venv"]
+
+/**
+ * A workspace monorepo's node_modules holds its own packages as RELATIVE links (`../../packages/x`).
+ * Linked into a worktree, they resolve against the MAIN checkout's folders, so the agent's types and
+ * tests read whatever branch the main checkout is on, and an install in the worktree writes into the
+ * main checkout. Measured in epode-studio/palpable, 2026-11-06: 35 phantom test failures, six worktrees
+ * carrying the link. Such a repo gets no node_modules link; the worktree installs its own.
+ */
+export function isWorkspaceRepo(main: string, read: (p: string) => string | undefined): boolean {
+  if (read(path.join(main, "pnpm-workspace.yaml")) !== undefined) return true
+  try {
+    const pkg = JSON.parse(read(path.join(main, "package.json")) ?? "{}")
+    return !!pkg && typeof pkg === "object" && pkg.workspaces !== undefined
+  } catch {
+    return false
+  }
+}
 export const MAX_AGENTS = 8
 export const BRANCH_PREFIX = "crosstalk/"
 export const TMUX_SOCKET = "crosstalk"
@@ -181,6 +198,8 @@ export function planSpawn(o: {
   prompt?: string
   /** The thread the agents start in, so their tabs go beside its tabs. */
   thread?: string
+  /** The main checkout is a workspace monorepo: its node_modules is never linked (isWorkspaceRepo). */
+  workspace?: boolean
 }): Planned[] {
   const main = o.worktrees[0]?.path ?? o.top
   const where = worktreeHome({ main, worktrees: o.worktrees, home: o.home })
@@ -196,7 +215,7 @@ export function planSpawn(o: {
   return names.map((name) => {
     const worktree = path.join(where, name)
     const cwd = sub ? path.join(worktree, sub) : worktree
-    const links: [string, string][] = DEP_DIRS.filter((d) => o.exists(path.join(main, d))).map((d) => [path.join(main, d), path.join(worktree, d)])
+    const links: [string, string][] = DEP_DIRS.filter((d) => !(o.workspace && d === "node_modules") && o.exists(path.join(main, d))).map((d) => [path.join(main, d), path.join(worktree, d)])
     return { name, branch: BRANCH_PREFIX + name, worktree, cwd, links, tab: { cwd, argv: [o.claude, o.prompt ?? o.task], name, ...(o.thread ? { thread: o.thread } : {}) } }
   })
 }
@@ -396,6 +415,13 @@ export function spawnAgents(o: {
     branchExists: (b) => g(main, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]).ok,
     prompt,
     thread: o.thread?.name,
+    workspace: isWorkspaceRepo(main, (p) => {
+      try {
+        return fs.readFileSync(p, "utf8")
+      } catch {
+        return undefined
+      }
+    }),
   })
 
   const made: SpawnRec[] = []

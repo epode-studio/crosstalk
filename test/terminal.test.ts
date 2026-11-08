@@ -582,6 +582,23 @@ describe("new agents: names, worktrees, shared dependencies", () => {
     const plans = SP.planSpawn({ count: 1, task: "t", cwd: "/w/x", top: "/w/x", worktrees: [{ path: "/code/app" }, { path: "/w/x" }], home: "/h", claude: "claude", exists: (p) => p === "/code/app/node_modules", branchExists: () => false })
     expect(plans[0].links).toEqual([["/code/app/node_modules", path.join(plans[0].worktree, "node_modules")]])
   })
+  test("a workspace monorepo gets no node_modules link: its packages would resolve to the main checkout", () => {
+    const both = (p: string) => p === "/code/app/node_modules" || p === "/code/app/.venv"
+    const plan = (workspace: boolean) => SP.planSpawn({ count: 1, task: "t", cwd: "/code/app", top: "/code/app", worktrees: [{ path: "/code/app" }], home: "/h", claude: "claude", exists: both, branchExists: () => false, workspace })[0]
+    const ws = plan(true)
+    expect(ws.links).toEqual([["/code/app/.venv", path.join(ws.worktree, ".venv")]])
+    // CONTROL: the same repo without workspaces still shares node_modules.
+    expect(plan(false).links.map(([from]) => from)).toEqual(["/code/app/node_modules", "/code/app/.venv"])
+  })
+  test("a workspace repo is one whose package.json declares workspaces, or that has pnpm-workspace.yaml", () => {
+    const files = (f: Record<string, string>) => (p: string) => f[p]
+    expect(SP.isWorkspaceRepo("/r", files({ "/r/package.json": '{"workspaces":["packages/*"]}' }))).toBe(true)
+    expect(SP.isWorkspaceRepo("/r", files({ "/r/package.json": '{"workspaces":{"packages":["a"]}}' }))).toBe(true)
+    expect(SP.isWorkspaceRepo("/r", files({ "/r/pnpm-workspace.yaml": "packages: []" }))).toBe(true)
+    expect(SP.isWorkspaceRepo("/r", files({ "/r/package.json": '{"name":"one"}' }))).toBe(false)
+    expect(SP.isWorkspaceRepo("/r", files({ "/r/package.json": "not json" }))).toBe(false)
+    expect(SP.isWorkspaceRepo("/r", files({}))).toBe(false)
+  })
   test("at most eight at once", () => {
     expect(SP.planSpawn({ count: 50, task: "t", cwd: "/a", top: "/a", worktrees: [], home: "/h", claude: "claude", exists: () => false, branchExists: () => false })).toHaveLength(8)
   })
