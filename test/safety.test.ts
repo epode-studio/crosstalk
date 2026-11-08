@@ -77,7 +77,7 @@ function world(o: { recs?: Rec[]; focus?: string; background?: string[]; teammat
     recAlive: () => true,
     lastCommitAt: () => undefined,
     desktop: () => {},
-    env: { CROSSTALK_STAFF_EVERY_MS: "0", CROSSTALK_NO_NOTIFY: "1" },
+    env: { CROSSTALK_STAFF_EVERY_MS: "0", CROSSTALK_NO_NOTIFY: "1", CROSSTALK_ASK_FRESH: "1" },
   }
   const svc = new S.AttentionService(deps)
   const add = (sid: string, paths: string[]) => {
