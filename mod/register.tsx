@@ -149,6 +149,7 @@ function withContext(it: Item, q: string): string {
 function header(it: Item): string {
   if (it.id.startsWith('open:')) return 'Open items'
   if (it.id.startsWith('you:')) return 'For you'
+  if (it.id.startsWith('attn:circle:')) return 'In circles'
   if (it.id.startsWith('relay:')) return 'Question'
   if (it.kind === 'restore') return 'Restore'
   if (it.kind === 'route') return 'Route'
@@ -429,7 +430,7 @@ async function maybeRaise($: EngineInterface) {
 
 /** What stops an agent, or was just asked for: never held for a decision window (src/attention/calm.ts urgent). */
 function urgent(it: Item): boolean {
-  return it.kind === 'session' || it.kind === 'restore' || it.kind === 'ask' || it.id.startsWith('relay:') || it.id.startsWith('attn:perm:') || it.id.startsWith('sess:')
+  return it.kind === 'session' || it.kind === 'restore' || it.kind === 'ask' || it.id.startsWith('relay:') || it.id.startsWith('attn:perm:') || it.id.startsWith('attn:circle:') || it.id.startsWith('sess:')
 }
 
 /** How many more are waiting after the one being asked, for its header. */

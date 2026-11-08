@@ -115,6 +115,8 @@ type State = {
   shipped?: Record<string, number>
   /** When each session was last the one in front, for "where you left off". */
   lastFocus?: Record<string, number>
+  /** What each session had cost at its last edit, for spotting one going in circles. */
+  spendAtEdit?: Record<string, { usd: number; at: number; editAt: number; asked?: number }>
   /** Sessions whose own hook said they are a background agent (CROSSTALK_BG_AGENT). */
   bg: Record<string, string>
   /**
@@ -145,16 +147,18 @@ const empty = (now: number): State => ({
   bg: {},
 })
 
+export const CIRCLE_STOP = "Stop it"
+export const CIRCLE_LET = "Let it run"
 export const START_FRESH = "Start fresh"
 export const COMPACT = "Compact as usual"
 export const ALWAYS_FRESH = "Always start fresh"
 export const NOT_NOW = "Not now"
 export const DISPOSE_RULE_QUESTION = "That is twice you started a session fresh. Start sessions fresh from their thread by themselves from now on, whenever their context is spent?"
 
-type What = "dispose" | "staff" | "perm" | "rule"
+type What = "dispose" | "staff" | "perm" | "rule" | "circle"
 export const itemId = (what: What, key: string) => `attn:${what}:${key}`
 const parseId = (id: string) => {
-  const m = /^attn:(dispose|staff|perm|rule):(.+)$/.exec(id)
+  const m = /^attn:(dispose|staff|perm|rule|circle):(.+)$/.exec(id)
   return m ? { what: m[1] as What, key: m[2] } : null
 }
 
@@ -294,6 +298,7 @@ export class AttentionService {
       if (this.now() - this.lastCloseCheck >= Math.max(0, Number(this.env.CROSSTALK_CLOSE_EVERY_MS ?? 5 * 60_000))) {
         this.lastCloseCheck = this.now()
         void this.closeFinished()
+        this.circles()
       }
       if (this.now() - this.lastWorkCheck >= Math.max(0, Number(this.env.CROSSTALK_WORK_EVERY_MS ?? 60_000))) {
         this.lastWorkCheck = this.now()
@@ -630,6 +635,49 @@ export class AttentionService {
     this.save()
   }
 
+  // --- an agent going in circles --------------------------------------------------------
+
+  /**
+   * An agent that keeps spending without changing anything (CIRCLE_USD in
+   * CIRCLE_MS since its last edit, both from its mod's usage reports and its
+   * footprint): one question in main, Stop it / Let it run. Asked once per
+   * stretch; an edit starts a new one.
+   */
+  circles() {
+    const now = this.now()
+    const usd = Number(this.env.CROSSTALK_CIRCLE_USD ?? 5)
+    const ms = Number(this.env.CROSSTALK_CIRCLE_MS ?? 30 * 60_000)
+    const book = (this.st.spendAtEdit ??= {})
+    for (const s of this.d.sessions().values()) {
+      const spent = Usage.read(s.sessionId)?.usd
+      if (typeof spent !== "number") continue
+      const lastEdit = Math.max(0, ...Object.values(this.d.touched(s.sessionId) ?? {}))
+      const b = book[s.sessionId]
+      if (!b || lastEdit > b.editAt) {
+        book[s.sessionId] = { usd: spent, at: now, editAt: lastEdit }
+        continue
+      }
+      if (b.asked || spent - b.usd < usd || now - b.at < ms) continue
+      if (!/busy|working|running|thinking/i.test(this.d.status(s.sessionId) ?? "")) continue
+      b.asked = now
+      const t = this.d.threads.namesFor(s.sessionId)[0]
+      const who = t ? human(t, 32) : s.name
+      const to = this.target(s.sessionId)
+      if (!to) continue
+      this.put({
+        id: itemId("circle", s.sessionId),
+        sessionId: to,
+        from: who,
+        ...(t ? { thread: t } : {}),
+        question: `${who} has spent $${(spent - b.usd).toFixed(2)} in ${Math.round((now - b.at) / 60_000)} min without changing anything. Stop it?`,
+        text: "It may be going in circles: retrying the same thing, or stuck on something it cannot do. Stopping closes it (archived; resume brings it back).",
+        options: [CIRCLE_STOP, CIRCLE_LET],
+      })
+      this.d.log(`attention: ${who} may be going in circles`)
+    }
+    this.save()
+  }
+
   // --- finished sessions close themselves (src/attention/autoclose.ts) --------------------
 
   /** A session's work shipped: it closes once idle. */
@@ -921,6 +969,11 @@ export class AttentionService {
       return { ...r, item: claim.item }
     }
     if (p.what === "rule") return { ok: true, item: claim.item, text: this.setDisposeRule(answer === ALWAYS_FRESH) }
+    if (p.what === "circle") {
+      if (answer !== CIRCLE_STOP || !this.d.closeSession) return { ok: true, item: claim.item, text: `◢ crosstalk: ${claim.item.from ?? "it"} keeps going.` }
+      const r = await this.d.closeSession(p.key)
+      return { ok: r.ok, item: claim.item, text: r.ok ? `◢ crosstalk: stopped ${claim.item.from ?? "it"}. "Resume" brings it back.` : r.text }
+    }
     // staff
     if (answer !== St.ADD) return { ok: true, item: claim.item, text: "◢ crosstalk: no second agent. You will be asked again only if it gets stuck again." }
     const threadId = p.key.split(":")[0]

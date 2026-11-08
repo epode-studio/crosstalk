@@ -377,7 +377,7 @@ export function inboxScore(it: InboxItem, now: number): number {
   const base =
     it.kind === "session" || it.kind === "restore"
       ? 120
-      : it.id.startsWith("relay:") || it.id.startsWith("attn:perm:")
+      : it.id.startsWith("relay:") || it.id.startsWith("attn:perm:") || it.id.startsWith("attn:circle:")
         ? 100
         : it.kind === "ask"
           ? 90
