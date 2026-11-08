@@ -460,7 +460,7 @@ describe("the service", () => {
 
   test("context spent: the question once, or a fresh session at once by the standing rule", async () => {
     const recs = [rec("s1", { tmux: { pane: "%1" } }, { cwd: "/w/s1" })]
-    const asked = world({ recs })
+    const asked = world({ recs, env: { CROSSTALK_ASK_FRESH: "1" } })
     asked.add("s1", ["src/auth/a.ts", "src/auth/b.ts", "src/auth/c.ts"])
     asked.svc.context("s1", { percent: 91 })
     await asked.svc.context("s1", { percent: 92 })
