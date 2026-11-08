@@ -2,8 +2,8 @@
 // @bun
 
 // src/hook.ts
-import path52 from "path";
-import fs44 from "fs";
+import path53 from "path";
+import fs45 from "fs";
 
 // src/client.ts
 import net from "node:net";
@@ -6374,6 +6374,8 @@ function writePrefs(p) {
   fs37.renameSync(tmp, file9());
 }
 var setAlways = (on) => writePrefs({ ...readPrefs(), always: on });
+var DONE = "Done";
+var LATER = "Later";
 function tacklePrompt(items, ids = []) {
   return [
     `Tackle the open items you listed:`,
@@ -6383,24 +6385,36 @@ function tacklePrompt(items, ids = []) {
   ].join(`
 `);
 }
+var CHAIN_MAX = 3;
+function resetChain(sessionId) {
+  const p = readPrefs();
+  if (!p.chain?.[sessionId])
+    return;
+  const chain = { ...p.chain ?? {} };
+  delete chain[sessionId];
+  writePrefs({ ...p, chain });
+}
 function atStop(o) {
   const all = parseOpen(o.reply);
   if (!all.length)
     return null;
   const before = o.reply.slice(0, Math.max(0, o.reply.lastIndexOf(all[0].slice(0, 20)))) || o.reply;
   const { todo, waiting, persons } = ALL_PERSONS.test(before) ? { todo: [], waiting: [], persons: all } : split(all);
-  if (!todo.length)
-    return null;
   const now = o.now ?? Date.now();
   const p = readPrefs();
   const seen = (p.seenItems?.[o.sessionId] ?? []).map((x) => x.t);
-  const items = todo.filter((x) => !seen.some((y) => same(x, y)));
-  const id = hashOf(todo);
-  if (!items.length)
-    return { items: [], waiting, persons, id, fresh: false, auto: false };
-  const kept = [...(p.seenItems?.[o.sessionId] ?? []).filter((x) => now - x.at < 3 * 86400000), ...items.map((t) => ({ t, at: now }))].slice(-200);
-  writePrefs({ ...p, seenItems: { ...p.seenItems ?? {}, [o.sessionId]: kept } });
-  return { items, waiting, persons, id, fresh: !o.continuing || !p.always, auto: !!p.always && !o.continuing };
+  const isNew = (x) => !seen.some((y) => same(x, y));
+  const items = todo.filter(isNew);
+  const newPersons = persons.filter(isNew);
+  const id = hashOf([...todo, ...persons]);
+  if (!items.length && !newPersons.length)
+    return todo.length || persons.length ? { items: [], waiting, persons: [], id, fresh: false, auto: false } : null;
+  const kept = [...(p.seenItems?.[o.sessionId] ?? []).filter((x) => now - x.at < 3 * 86400000), ...[...items, ...newPersons].map((t) => ({ t, at: now }))].slice(-200);
+  const on = p.always !== false;
+  const rounds = p.chain?.[o.sessionId] ?? 0;
+  const auto = on && !o.continuing && items.length > 0 && rounds < CHAIN_MAX;
+  writePrefs({ ...p, seenItems: { ...p.seenItems ?? {}, [o.sessionId]: kept }, ...auto ? { chain: { ...p.chain ?? {}, [o.sessionId]: rounds + 1 } } : {} });
+  return { items, waiting, persons: newPersons, id, fresh: !o.continuing, auto };
 }
 
 // src/attention/calm.ts
@@ -6471,15 +6485,43 @@ function takeRound(s, sessionId) {
   return true;
 }
 
-// src/urls/ci.ts
+// src/main.ts
 import fs39 from "node:fs";
 import path47 from "node:path";
+var file11 = () => path47.join(P.root, "main.json");
+function readMain() {
+  try {
+    const r = JSON.parse(fs39.readFileSync(file11(), "utf8"));
+    if (r && typeof r.sessionId === "string" && r.sessionId)
+      return r;
+  } catch {}
+  return null;
+}
+var pidAlive3 = (pid) => {
+  if (!pid || pid <= 1)
+    return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+};
+function currentMain2(alive = (r) => pidAlive3(r.pid)) {
+  const m = readMain();
+  return m && alive(m) ? m : null;
+}
+var CROSS_CUTTING2 = new Set(["route", "team", "gather", "cleanup"]);
+
+// src/urls/ci.ts
+import fs40 from "node:fs";
+import path48 from "node:path";
 var FAIL = new Set(["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"]);
 var OK = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
-var events = () => path47.join(P.root, "events.json");
+var events = () => path48.join(P.root, "events.json");
 function recentEvents(n = 6, now = Date.now()) {
   try {
-    const all = JSON.parse(fs39.readFileSync(events(), "utf8")) ?? [];
+    const all = JSON.parse(fs40.readFileSync(events(), "utf8")) ?? [];
     return all.filter((e) => now - e.at < 86400000).slice(-n).reverse();
   } catch {
     return [];
@@ -6487,30 +6529,30 @@ function recentEvents(n = 6, now = Date.now()) {
 }
 
 // src/ui-extra/usage.ts
-import fs40 from "node:fs";
-import path48 from "node:path";
-var dir8 = () => path48.join(P.root, "usage");
+import fs41 from "node:fs";
+import path49 from "node:path";
+var dir8 = () => path49.join(P.root, "usage");
 function all2() {
   const out = new Map;
   let names = [];
   try {
-    names = fs40.readdirSync(dir8()).filter((n) => n.endsWith(".json"));
+    names = fs41.readdirSync(dir8()).filter((n) => n.endsWith(".json"));
   } catch {}
   for (const n of names)
     try {
-      out.set(n.slice(0, -5), JSON.parse(fs40.readFileSync(path48.join(dir8(), n), "utf8")));
+      out.set(n.slice(0, -5), JSON.parse(fs41.readFileSync(path49.join(dir8(), n), "utf8")));
     } catch {}
   return out;
 }
 
 // src/attention/calm.ts
-import fs41 from "node:fs";
-import path49 from "node:path";
-var file11 = () => path49.join(P.root, "calm.json");
+import fs42 from "node:fs";
+import path50 from "node:path";
+var file12 = () => path50.join(P.root, "calm.json");
 var WINDOW_OPEN_MS2 = 2 * 60000;
 function read4() {
   try {
-    return JSON.parse(fs41.readFileSync(file11(), "utf8")) ?? {};
+    return JSON.parse(fs42.readFileSync(file12(), "utf8")) ?? {};
   } catch {
     return {};
   }
@@ -6556,48 +6598,48 @@ function short(s, now = Date.now(), what = "While you were away") {
 }
 
 // src/attention/worker.ts
-import fs42 from "node:fs";
-import path50 from "node:path";
-var file12 = () => path50.join(P.root, "worker.json");
+import fs43 from "node:fs";
+import path51 from "node:path";
+var file13 = () => path51.join(P.root, "worker.json");
 var DEFAULT_MAX = 2;
 function read5() {
   try {
-    const p = JSON.parse(fs42.readFileSync(file12(), "utf8"));
+    const p = JSON.parse(fs43.readFileSync(file13(), "utf8"));
     return { on: !!p.on, max: Math.max(1, Math.min(4, Number(p.max) || DEFAULT_MAX)), ...Array.isArray(p.threads) ? { threads: p.threads.map(String) } : {}, running: Array.isArray(p.running) ? p.running : [], tried: Array.isArray(p.tried) ? p.tried.slice(-200) : [] };
   } catch {
     return { on: false, max: DEFAULT_MAX, running: [], tried: [] };
   }
 }
 function write4(p) {
-  fs42.mkdirSync(P.root, { recursive: true, mode: 448 });
-  const tmp = `${file12()}.${process.pid}.tmp`;
-  fs42.writeFileSync(tmp, JSON.stringify(p), { mode: 384 });
-  fs42.renameSync(tmp, file12());
+  fs43.mkdirSync(P.root, { recursive: true, mode: 448 });
+  const tmp = `${file13()}.${process.pid}.tmp`;
+  fs43.writeFileSync(tmp, JSON.stringify(p), { mode: 384 });
+  fs43.renameSync(tmp, file13());
 }
 
 // src/spawn.ts
-import fs43 from "node:fs";
-import path51 from "node:path";
-var dir9 = () => path51.join(P.root, "spawned");
+import fs44 from "node:fs";
+import path52 from "node:path";
+var dir9 = () => path52.join(P.root, "spawned");
 function readSpawned2() {
   let names;
   try {
-    names = fs43.readdirSync(dir9()).filter((f) => f.endsWith(".json"));
+    names = fs44.readdirSync(dir9()).filter((f) => f.endsWith(".json"));
   } catch {
     return [];
   }
   const out = [];
   for (const f of names)
     try {
-      const r = JSON.parse(fs43.readFileSync(path51.join(dir9(), f), "utf8"));
+      const r = JSON.parse(fs44.readFileSync(path52.join(dir9(), f), "utf8"));
       if (r?.id && r.worktree)
         out.push(r);
     } catch {}
   return out.sort((a, b) => a.createdAt - b.createdAt);
 }
 function spawnedAt2(cwd, recs = readSpawned2()) {
-  const c = path51.resolve(cwd);
-  return recs.find((r) => !r.removedAt && (c === path51.resolve(r.worktree) || c.startsWith(path51.resolve(r.worktree) + path51.sep))) ?? null;
+  const c = path52.resolve(cwd);
+  return recs.find((r) => !r.removedAt && (c === path52.resolve(r.worktree) || c.startsWith(path52.resolve(r.worktree) + path52.sep))) ?? null;
 }
 var STOP3 = new Set("a an the on to for and of in with at by from into onto this that it its be is are please can could would you start put get run spin up fire one two three four five six seven eight more another new agent agents session sessions claude someone somebody work working".split(" "));
 var TMUX_CONF2 = [
@@ -6652,8 +6694,8 @@ function agyCwd() {
   if (Array.isArray(ws) && typeof ws[0] === "string" && ws[0])
     return ws[0];
   const here = process.cwd();
-  if (AGENT_DIRS.has(path52.basename(here)))
-    return path52.dirname(here);
+  if (AGENT_DIRS.has(path53.basename(here)))
+    return path53.dirname(here);
   return here;
 }
 var cwd = hook.cwd ?? hook.working_dir ?? hook.workspace_roots?.[0] ?? (isAgy ? agyCwd() : process.cwd());
@@ -6821,10 +6863,10 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
       }
     })();
     const r = started ? null : atStop({ reply: lastReply(typeof hook.transcript_path === "string" ? hook.transcript_path : undefined), sessionId, continuing: hook.stop_hook_active === true });
-    if (r?.fresh && r.items.length) {
+    if (r?.fresh && (r.items.length || r.persons.length)) {
       let thread;
       const ids = [];
-      if (await ensureDaemon(root))
+      if (r.items.length && await ensureDaemon(root))
         for (const text of r.items)
           try {
             const t = await request({ op: "tasks", sessionId, cwd, write: "add", text }, 3000);
@@ -6833,25 +6875,27 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
             if (t?.ok && t.id)
               ids.push(String(t.id));
           } catch {}
+      for (const text of r.persons)
+        withStore((items, now) => upsert(items, { id: `you:${sessionId}:${hashOf([text])}`, kind: "attention", sessionId: currentMain2()?.sessionId ?? sessionId, from: thread ?? undefined, ...thread ? { thread } : {}, question: text, options: [DONE, LATER], ts: now }, now));
       const away = isAway() && update((s) => takeRound(s, sessionId));
       if ((r.auto || away && r.items.length) && modActive(sessionId)) {
         withStore((items, now) => upsert(items, { id: `tackle:${sessionId}:${r.id}`, kind: "attention", sessionId, text: tacklePrompt(r.items, ids), auto: true, ts: now }, now));
       } else if (r.auto || away && r.items.length) {
-        process.stdout.write(JSON.stringify({
-          decision: "block",
-          reason: tacklePrompt(r.items, ids),
-          systemMessage: `\u25E2 crosstalk: going on with the ${r.items.length} open item${r.items.length === 1 ? "" : "s"}, as you chose. "Stop tackling open items by itself" turns that off.`
-        }));
+        process.stdout.write(JSON.stringify({ decision: "block", reason: tacklePrompt(r.items, ids) }));
         process.exit(0);
-      }
-      const n = r.items.length;
-      const where = thread ? ` kept as tasks in ${thread}` : "";
-      const m = `\u25E2 crosstalk: ${n} open item${n === 1 ? "" : "s"}${where}. Say "tackle them" to go on, or "always tackle open items".`;
-      systemMessage = systemMessage ? `${systemMessage}
+      } else if (r.items.length) {
+        const n = r.items.length;
+        const m = `\u25E2 crosstalk: ${n} open item${n === 1 ? "" : "s"}${thread ? ` kept as tasks in ${thread}` : ""}. Say "tackle them" to go on.`;
+        systemMessage = systemMessage ? `${systemMessage}
 ${m}` : m;
+      }
     }
   } catch {}
 }
+if (sessionId && /^UserPromptSubmit$/.test(eventName) && !/^\s*(Tackle the open items you listed|I handed you the crosstalk message)/.test(String(hook.prompt ?? "")))
+  try {
+    resetChain(sessionId);
+  } catch {}
 if (restoreClient === "claude" && sessionId && /^UserPromptSubmit$/.test(eventName) && !process.env[BG_ENV] && isAway())
   try {
     const was = update((s) => end(s));
@@ -6871,10 +6915,10 @@ async function registerSession() {
   if (socket) {
     try {
       const dir = sessionsDir();
-      for (const f of fs44.readdirSync(dir)) {
+      for (const f of fs45.readdirSync(dir)) {
         if (!f.endsWith(".json"))
           continue;
-        const e = JSON.parse(fs44.readFileSync(path52.join(dir, f), "utf8"));
+        const e = JSON.parse(fs45.readFileSync(path53.join(dir, f), "utf8"));
         if (e.sessionId === sessionId) {
           name = e.name ?? name;
           break;
@@ -6882,7 +6926,7 @@ async function registerSession() {
       }
     } catch {}
   } else {
-    name = hook.thread_name ?? (path52.basename(cwd) || name);
+    name = hook.thread_name ?? (path53.basename(cwd) || name);
   }
   const registered = await request({
     op: "register",

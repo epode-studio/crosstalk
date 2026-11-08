@@ -10021,6 +10021,7 @@ function writePrefs(p) {
   fs25.renameSync(tmp, file6());
 }
 var setAlways = (on) => writePrefs({ ...readPrefs(), always: on });
+var DONE = "Done";
 var TACKLE = "Tackle them";
 var ALWAYS = "Always";
 var NOT_NOW = "Not now";
@@ -14014,6 +14015,20 @@ async function uiCmd(argv, root) {
         const yes = action !== "mute" && (value ?? "").trim() === CONNECT;
         const out = await connect({ slug: id.slice("connect:".length), yes, ensureDaemon: () => ensureDaemon(root), request });
         return print({ ok: out.ok, text: out.text, item: snapshot()[id] });
+      }
+      if (id.startsWith("you:")) {
+        if (action === "raised" || action === "later")
+          return print(withStore((items, now) => act(items, id, action, now)));
+        const v = (value ?? "").trim();
+        if (v !== DONE)
+          return print(withStore((items, now) => act(items, id, "later", now)));
+        const claim = withStore((items, now) => act(items, id, "answer", now, v));
+        if (!claim.ok)
+          return print({ ok: false, error: claim.error });
+        const asker = id.split(":")[1] ?? "";
+        const what = claim.item?.question ?? "";
+        withStore((items, now) => upsert(items, { id: `you-done:${id}`, kind: "message", sessionId: asker, from: "crosstalk", ...claim.item?.thread ? { thread: claim.item.thread } : {}, text: `The person has done this, from your open list: ${what}`, auto: true, ts: now }, now));
+        return print({ ok: true, item: claim.item, text: "told the agent" });
       }
       if (id.startsWith("tackle:")) {
         const it = snapshot()[id];
