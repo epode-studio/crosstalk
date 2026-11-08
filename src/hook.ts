@@ -438,6 +438,7 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
       }
     })()
     const r = started ? null : openItems.atStop({ reply: openItems.lastReply(typeof hook.transcript_path === "string" ? hook.transcript_path : undefined), sessionId, continuing: hook.stop_hook_active === true })
+    if (r?.waiting.length) openItems.noteWaiting(sessionId, r.waiting)
     if (r?.fresh && (r.items.length || r.persons.length)) {
       let thread: string | undefined
       const ids: string[] = []

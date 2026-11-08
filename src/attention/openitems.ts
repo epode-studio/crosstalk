@@ -155,7 +155,7 @@ export const hashOf = (items: string[]) => crypto.createHash("sha256").update(it
 
 // --- the preference and what was already taken in --------------------------------------
 
-type Prefs = { always?: boolean; seen?: Record<string, number>; seenItems?: Record<string, { t: string; at: number }[]>; /** Rounds carried on in a row since the person last typed, per session. */ chain?: Record<string, number> }
+type Prefs = { /** What each session's last open list only waited on: chased when it happens. */ waitingOn?: Record<string, { items: string[]; at: number }>; always?: boolean; seen?: Record<string, number>; seenItems?: Record<string, { t: string; at: number }[]>; /** Rounds carried on in a row since the person last typed, per session. */ chain?: Record<string, number> }
 const file = () => path.join(P.root, "open-items.json")
 
 export function readPrefs(): Prefs {
@@ -209,6 +209,34 @@ export function tacklePrompt(items: string[], ids: string[] = []): string {
  */
 export const CHAIN_MAX = 3
 
+/** Remember what a session's open list only waits on, even when nothing else in it is new. */
+export function noteWaiting(sessionId: string, items: string[], now = Date.now()) {
+  if (!items.length) return
+  const p = readPrefs()
+  writePrefs({ ...p, waitingOn: { ...(p.waitingOn ?? {}), [sessionId]: { items, at: now } } })
+}
+
+/**
+ * Something a session waited on happened (its PR's checks passed, it merged):
+ * the prompt that carries it on, and its waiting items forgotten. Null when it
+ * waited on nothing, or that was more than two days ago.
+ */
+export function chase(sessionId: string, what: string, now = Date.now()): string | null {
+  const p = readPrefs()
+  const w = p.waitingOn?.[sessionId]
+  if (!w || now - w.at > 2 * 86_400_000) return null
+  const waitingOn = { ...(p.waitingOn ?? {}) }
+  delete waitingOn[sessionId]
+  writePrefs({ ...p, waitingOn })
+  return [
+    `What you were waiting on has moved: ${what}`,
+    `You had left these waiting:`,
+    ...w.items.map((x, i) => `${i + 1}. ${x}`),
+    ``,
+    `Carry on with whichever of them this unblocks. Leave the rest as they are, and list only what is still open.`,
+  ].join("\n")
+}
+
 /** A prompt the person typed: the next open lists may carry on again. */
 export function resetChain(sessionId: string) {
   const p = readPrefs()
@@ -232,13 +260,13 @@ export function atStop(o: { reply: string; sessionId: string; continuing: boolea
   const items = todo.filter(isNew)
   const newPersons = persons.filter(isNew)
   const id = hashOf([...todo, ...persons])
-  if (!items.length && !newPersons.length) return todo.length || persons.length ? { items: [], waiting, persons: [], id, fresh: false, auto: false } : null
+  if (!items.length && !newPersons.length) return todo.length || persons.length || waiting.length ? { items: [], waiting, persons: [], id, fresh: false, auto: false } : null
   const kept = [...(p.seenItems?.[o.sessionId] ?? []).filter((x) => now - x.at < 3 * 86_400_000), ...[...items, ...newPersons].map((t) => ({ t, at: now }))].slice(-200)
   // crosstalk manages open items itself unless told not to: work the agent can do, it carries on
   // with, at most CHAIN_MAX rounds in a row before the person types again.
   const on = p.always !== false
   const rounds = p.chain?.[o.sessionId] ?? 0
   const auto = on && !o.continuing && items.length > 0 && rounds < CHAIN_MAX
-  writePrefs({ ...p, seenItems: { ...(p.seenItems ?? {}), [o.sessionId]: kept }, ...(auto ? { chain: { ...(p.chain ?? {}), [o.sessionId]: rounds + 1 } } : {}) })
+  writePrefs({ ...p, seenItems: { ...(p.seenItems ?? {}), [o.sessionId]: kept }, ...(auto ? { chain: { ...(p.chain ?? {}), [o.sessionId]: rounds + 1 } } : {}), ...(waiting.length ? { waitingOn: { ...(p.waitingOn ?? {}), [o.sessionId]: { items: waiting, at: now } } } : {}) })
   return { items, waiting, persons: newPersons, id, fresh: !o.continuing, auto }
 }

@@ -58,7 +58,8 @@ describe("waiting is not work", () => {
       expect([t, O.isWaiting(t)]).toEqual([t, false])
   })
   test("a list that only waits asks nothing", () => {
-    expect(O.atStop({ reply: "Done.\n\nOpen\n- CI is still running.\n- Waiting for marie's review.", sessionId: "w1", continuing: false })).toBe(null)
+    const r = O.atStop({ reply: "Done.\n\nOpen\n- CI is still running.\n- Waiting for marie's review.", sessionId: "w1", continuing: false })!
+    expect([r.items, r.persons, r.auto, r.fresh]).toEqual([[], [], false, false]) // nothing to do, nothing to ask: only remembered, to chase
   })
   test("the question shows what is left alone", () => {
     expect(O.context(["ship B"], ["CI is still running"])).toBe("· ship B\nWaiting on (left alone): CI is still running")
@@ -139,5 +140,19 @@ describe("working the board", () => {
     expect(W.read().on).toBe(false)
     W.write({ on: true, max: 2, running: [{ taskId: "a", thread: "auth", agent: "auth-1", startedAt: 0 }], tried: [] })
     expect(W.describe(W.read())).toBe(`◢ crosstalk: working through the open tasks, at most 2 agents at once, in the background. Working on: auth (auth-1). Say "stop working the board" to stop.`)
+  })
+})
+
+describe("chasing what waits", () => {
+  test("a list that only waits is remembered; when it moves, the session carries on with it, once", () => {
+    const r = O.atStop({ reply: "Done.\n\nOpen\n- CI is still running on #12.\n- Waiting for #12 to merge.", sessionId: "c1", continuing: false })!
+    expect(r.items).toEqual([])
+    expect(r.waiting).toHaveLength(2)
+    O.noteWaiting("c1", r.waiting)
+    const p = O.chase("c1", "auth · PR #12: checks passed (https://x).")!
+    expect(p).toContain("What you were waiting on has moved: auth · PR #12: checks passed")
+    expect(p).toContain("1. CI is still running on #12.")
+    expect(O.chase("c1", "again")).toBe(null) // once
+    expect(O.chase("nobody", "x")).toBe(null)
   })
 })

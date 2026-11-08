@@ -63,6 +63,7 @@ import { createSessionOps } from "./sessions/daemon.ts"
 // Registers crosstalk services with the session manager (setServices), for close here.
 import "./services/service.ts"
 import * as ciMod from "./urls/ci.ts"
+import * as openItemsMod from "./attention/openitems.ts"
 import { createUrls } from "./urls/daemon.ts"
 import { createShares } from "./share/daemon.ts"
 import { createStreamGate } from "./streamgate.ts"
@@ -2846,6 +2847,12 @@ control.listen(P.daemonSock, () => {
           const text = ciMod.changeText(u.label, u.url, c)
           // Merged: the sessions that did it close themselves once idle (src/attention/autoclose.ts).
           if (c.kind === "merged") for (const sid of to) attention?.markShipped(sid)
+          // Chasing what waits: a session whose open list waited on this carries on, sent by its mod once idle.
+          if (c.kind === "passed" || c.kind === "merged")
+            for (const sid of to) {
+              const prompt = openItemsMod.chase(sid, text)
+              if (prompt) ui.withStore((items, now) => ui.upsert(items, { id: `tackle:${sid}:chase-${u.id}-${c.kind}`, kind: "attention", sessionId: sid, text: prompt, auto: true, ts: now }, now))
+            }
           if (c.kind === "failed" && t) threads.task(undefined, { op: "add", text: ciMod.investigation(u.label, u.url, c.failed), thread: t.meta.value.name })
           for (const sid of to)
             ui.withStore((items, now) =>
