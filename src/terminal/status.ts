@@ -255,6 +255,8 @@ export type TabFile = {
   broken?: string
   /** The state last asked for, before `broken` was laid over it. */
   base?: TabState
+  /** Terminal.app: the title last given to the tab (nameTab). */
+  title?: string
 }
 
 /** What a tab shows for a state asked for, with `broken` laid over it. */
@@ -446,6 +448,45 @@ export function applyOnce(id: string, state: TabState, f: TabFile | null, sys: S
   }
   if (restored) return { ok, restored }
   return { ok, appleOriginal }
+}
+
+/**
+ * Terminal.app: the tab's own title, so the tab says what the session is
+ * (`🟣 auth · auth-1`) instead of the command it was started with. Only the
+ * title crosstalk sets is shown in it; whether Terminal also adds the running
+ * command is the profile's own Tab setting. Never launches Terminal.
+ */
+export const appleTitleScript = (tty: string, title: string) =>
+  appleTab(tty, [
+    `set custom title of t to ${R.asq(title.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 120))}`,
+    `set title displays custom title of t to true`,
+    `set title displays device name of t to false`,
+    `set title displays shell path of t to false`,
+    `set title displays window size of t to false`,
+    `set title displays file name of t to false`,
+    `return "done"`,
+  ])
+
+/**
+ * Name the session's Terminal.app tab, when the title changed since last
+ * time: one detached osascript, so the hook never waits on Terminal.
+ */
+export function nameTab(sessionId: string, title: string, o: { platform?: NodeJS.Platform; spawnIt?: (input: string) => void } = {}): boolean {
+  if ((o.platform ?? process.platform) !== "darwin" || process.env.CROSSTALK_NO_TERM) return false
+  const t = R.readOne(sessionId)?.terminal
+  if (!t?.tty || R.kindOf(t) !== "apple") return false
+  const f = readTab(sessionId)
+  if (f?.title === title) return false
+  withFile(sessionId, (cur) => writeTab({ ...(cur ?? { sessionId, want: "off", wantAt: Date.now() }), title }))
+  const input = appleTitleScript(t.tty, title)
+  try {
+    ;(o.spawnIt ?? ((inp: string) => {
+      const c = spawn("osascript", ["-"], { detached: true, stdio: ["pipe", "ignore", "ignore"] })
+      c.stdin?.end(inp)
+      c.unref()
+    }))(input)
+  } catch {}
+  return true
 }
 
 /** Terminal.app's background tint is opt-in: CROSSTALK_TAB_COLOUR=1. */

@@ -228,7 +228,7 @@ has "$OUT" "is called payments now" "renamed on the person's own words"
 SS=$(rpc "$A" '{"op":"sessions"}')
 has "$(field "$SS" 'r.sessions.map(s => s.name).join(",")')" "payments" "the session list says payments"
 HOOK=$(printf '{"session_id":"%s","cwd":"%s","hook_event_name":"UserPromptSubmit","prompt":"hello"}' "$API" "$R/shop-auth" | CROSSTALK_HOME="$A" CLAUDE_CONFIG_DIR="$A/claude" CROSSTALK_NO_RESTORE=1 bun src/hook.ts 2>&1)
-has "$HOOK" '"sessionTitle":"auth · payments"' "the session's next hook carries the new title"
+has "$HOOK" 'auth · payments"' "the session's next hook carries the new title"
 TH=$(rpc "$A" "{\"op\":\"threads\",\"sessionId\":\"$API\",\"consume\":true}")
 check "$(field "$TH" 'r.currentTitle')" "auth · payments" "and the title its next hook shows"
 TR=$(rpc "$A" "{\"op\":\"thread_read\",\"sessionId\":\"$API\"}")

@@ -36,6 +36,7 @@ import * as pastSessions from "./sessions/index.ts"
 import * as urlTrack from "./urls/index.ts"
 import * as shots from "./urls/shots/index.ts"
 import * as intro from "./intro.ts"
+import * as tabStatus from "./terminal/status.ts"
 import * as openItems from "./attention/openitems.ts"
 
 const input = await new Promise<string>((resolve) => {
@@ -323,7 +324,14 @@ const chromeOut = (hookSpecific?: Record<string, unknown>) => {
   const renamed = sessionId && /^(SessionStart|UserPromptSubmit)$/.test(eventName) ? sessionNames.nameOf(sessionId) : undefined
   // In a thread, the daemon's title already carries the name, and is offered only when it changes.
   const named = termHook.withBadge(renamed ? (sessionTitle ?? (threadNames?.length ? undefined : renamed)) : chrome.sessionTitle && /^(SessionStart|UserPromptSubmit)$/.test(eventName) ? chrome.sessionTitle : sessionTitle, chrome.badge)
-  const title = named ? { sessionTitle: named } : {}
+  // The thread's colour in front, so its tabs go together (src/terminal/hook.ts withDot).
+  const dotted = termHook.withDot(named, threadNames?.[0])
+  const title = dotted ? { sessionTitle: dotted } : {}
+  // Terminal.app's tab says it too, not the command it was started with.
+  if (dotted && sessionId)
+    try {
+      tabStatus.nameTab(sessionId, dotted)
+    } catch {}
   // The worktree's ports and its running services, for the agent at SessionStart (src/services/).
   if (chrome.context && isSessionStart) {
     const extra = hookSpecific?.additionalContext

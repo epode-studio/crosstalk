@@ -1067,7 +1067,17 @@ export function askOnce(self: string, current: Term): string | null {
 }
 
 /** The question as askOnce puts it, with what the mod's picker needs to put it its own way. */
-export type Offer = { text: string; count: number; names: string[]; restart: boolean }
+export type Offer = { text: string; count: number; names: string[]; restart: boolean; /** How many were used in the last few hours before the newest: offered alone as "Only the recent N". */ recent?: number }
+
+/** How long before the most recently used lost session the others still count as recent. */
+export const RECENT_MS = () => Number(process.env.CROSSTALK_RESTORE_RECENT_MS ?? 4 * 3600_000)
+
+/** The lost sessions used close to the last one: the work in hand when it stopped. */
+export function recentOf<T extends Pick<Rec, "seenAt">>(lost: T[], ms = RECENT_MS()): T[] {
+  if (!lost.length) return []
+  const newest = Math.max(...lost.map((r) => r.seenAt))
+  return lost.filter((r) => newest - r.seenAt <= ms)
+}
 
 /** askOnce, keeping what it claimed, for a surface that phrases the question itself. */
 export function askOnceOffer(self: string, current: Term): Offer | null {
@@ -1095,6 +1105,7 @@ export function askOnceOffer(self: string, current: Term): Offer | null {
       count: fresh.length,
       names: fresh.slice(0, 4).map(label).concat(fresh.length > 4 ? ["…"] : []),
       restart: fresh.some((r) => r.seenAt < c.boot),
+      recent: recentOf(fresh).length,
     }
   } finally {
     try {
@@ -1176,6 +1187,8 @@ export type RunOpts = {
    * they asked, each Cmd-T only after Terminal is checked to be in front.
    */
   asked?: boolean
+  /** Only the sessions used close to the last one (recentOf); the others stay to restore later. */
+  recentOnly?: boolean
   /** The peer this is done for, if any: an agent (a bot) is refused. */
   peer?: string
 }
@@ -1201,7 +1214,9 @@ export function restore(o: RunOpts, only?: Rec[]): Outcome {
   const env = o.env ?? process.env
   // Those handed in were lost when someone asked; any that came back since
   // (another restore, the person by hand) are running again and left alone.
-  const lost = only ? only.filter((r) => !recAlive(r)) : lostSessions(ctxNow(), o.self)
+  const all = only ? only.filter((r) => !recAlive(r)) : lostSessions(ctxNow(), o.self)
+  // "Only the recent N": the rest stay listed, for "restore them" later.
+  const lost = o.recentOnly ? recentOf(all) : all
   if (!lost.length) return { ok: true, text: "◢ crosstalk: nothing to restore.", lost, restored: [] }
   claimPending() // anything waiting in the background is superseded by this
 

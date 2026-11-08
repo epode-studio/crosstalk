@@ -396,3 +396,12 @@ describe("a restore finished later", () => {
     expect(R.tabsFor({ userAction: false, asked: true, tabs: false })).toBe(false)
   })
 })
+
+describe("only the recent ones", () => {
+  test("the sessions used within a few hours of the last one", () => {
+    const H = 3600_000
+    const lost = [{ seenAt: 100 * H }, { seenAt: 98 * H }, { seenAt: 90 * H }, { seenAt: 20 * H }]
+    expect(R.recentOf(lost, 4 * H)).toEqual([{ seenAt: 100 * H }, { seenAt: 98 * H }])
+    expect(R.recentOf([], 4 * H)).toEqual([])
+  })
+})

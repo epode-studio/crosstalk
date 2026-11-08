@@ -2,8 +2,8 @@
 // @bun
 
 // src/hook.ts
-import path45 from "path";
-import fs37 from "fs";
+import path46 from "path";
+import fs38 from "fs";
 
 // src/client.ts
 import net from "node:net";
@@ -1101,6 +1101,13 @@ function question(lost, boot, current) {
   const firstTime = (k === "apple" || k === "ghostty") && process.platform === "darwin" && !loadState().tabsWorked && n > 1 ? ` The first time, macOS asks whether ${appName(current)} may control System Events: allow it, so they open as tabs.` : "";
   return `\u25e2 crosstalk: ${what} (${names(lost)}). Say "restore them" to bring ${n === 1 ? "it" : "them"} back.${firstTime}`;
 }
+var RECENT_MS = () => Number(process.env.CROSSTALK_RESTORE_RECENT_MS ?? 4 * 3600000);
+function recentOf(lost, ms = RECENT_MS()) {
+  if (!lost.length)
+    return [];
+  const newest = Math.max(...lost.map((r) => r.seenAt));
+  return lost.filter((r) => newest - r.seenAt <= ms);
+}
 function askOnceOffer(self, current) {
   const c = ctxNow();
   const lost = lostSessions(c, self);
@@ -1131,7 +1138,8 @@ function askOnceOffer(self, current) {
       text,
       count: fresh.length,
       names: fresh.slice(0, 4).map(label).concat(fresh.length > 4 ? ["\u2026"] : []),
-      restart: fresh.some((r) => r.seenAt < c.boot)
+      restart: fresh.some((r) => r.seenAt < c.boot),
+      recent: recentOf(fresh).length
     };
   } finally {
     try {
@@ -1178,7 +1186,8 @@ function restore(o, only) {
   if (bot)
     return { ok: false, text: `\u25e2 crosstalk: ${bot}`, lost: [], restored: [] };
   const env = o.env ?? process.env;
-  const lost = only ? only.filter((r) => !recAlive(r)) : lostSessions(ctxNow(), o.self);
+  const all = only ? only.filter((r) => !recAlive(r)) : lostSessions(ctxNow(), o.self);
+  const lost = o.recentOnly ? recentOf(all) : all;
   if (!lost.length)
     return { ok: true, text: "\u25e2 crosstalk: nothing to restore.", lost, restored: [] };
   claimPending();
@@ -1573,6 +1582,7 @@ function gatherSurface(sessionId, offer, mod = modActive(sessionId)) {
     return { systemMessage: offer.text };
   }
 }
+var recentLabel = (n) => `Only the recent ${n}`;
 function storeRestore(sessionId, offer, n, when) {
   return withStore((items, now) => upsert(items, {
     id: restoreId(sessionId),
@@ -1581,7 +1591,7 @@ function storeRestore(sessionId, offer, n, when) {
     count: n,
     names: offer.names,
     question: `Restore ${n} session${n === 1 ? "" : "s"} ${when}? (${offer.names.join(", ")})`,
-    options: ["Restore", "Open as windows", "Not now"]
+    options: offer.recent && offer.recent < n ? ["Restore", recentLabel(offer.recent), "Open as windows", "Not now"] : ["Restore", "Open as windows", "Not now"]
   }, now));
 }
 
@@ -4418,6 +4428,14 @@ function syncServices(o = {}) {
 // src/terminal/hook.ts
 var badgeText = (b) => b.replace(/[^a-z0-9.:\- \u2026]/gi, "").slice(0, 80);
 var withBadge = (title, badge) => title && badge ? `${title} \u00b7 ${badgeText(badge)}` : title;
+var DOTS = ["\uD83D\uDD34", "\uD83D\uDFE0", "\uD83D\uDFE1", "\uD83D\uDFE2", "\uD83D\uDD35", "\uD83D\uDFE3", "\uD83D\uDFE4"];
+function dotFor(thread) {
+  let h = 2166136261;
+  for (const c of thread.toLowerCase())
+    h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return DOTS[(h >>> 0) % DOTS.length];
+}
+var withDot = (title, thread, env = process.env) => title && thread && !env.CROSSTALK_NO_TITLE_DOT && !DOTS.some((d) => title.startsWith(d)) ? `${dotFor(thread)} ${title}` : title;
 function named(cwd, ports) {
   if (!ports)
     return ports;
@@ -6073,10 +6091,126 @@ function welcomeOnce() {
   }
 }
 
-// src/attention/openitems.ts
-import crypto4 from "node:crypto";
+// src/terminal/status.ts
 import fs36 from "node:fs";
 import path44 from "node:path";
+import { spawn as spawn9, spawnSync as spawnSync14 } from "node:child_process";
+var appleTab2 = (tty, body) => [
+  `if application "Terminal" is running then`,
+  `	tell application "Terminal"`,
+  `		repeat with w in windows`,
+  `			repeat with t in tabs of w`,
+  `				if (tty of t) is ${asq2(tty)} then`,
+  ...body.map((l) => `					${l}`),
+  `				end if`,
+  `			end repeat`,
+  `		end repeat`,
+  `	end tell`,
+  `end if`,
+  `return ""`
+].join(`
+`);
+var dir7 = () => path44.join(P.root, "tabs");
+var safe7 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
+var fileOf6 = (id) => path44.join(dir7(), `${safe7(id)}.json`);
+function readTab2(id) {
+  try {
+    return JSON.parse(fs36.readFileSync(fileOf6(id), "utf8"));
+  } catch {
+    return null;
+  }
+}
+function writeTab2(f) {
+  fs36.mkdirSync(dir7(), { recursive: true, mode: 448 });
+  const tmp = `${fileOf6(f.sessionId)}.${process.pid}.tmp`;
+  fs36.writeFileSync(tmp, JSON.stringify(f), { mode: 384 });
+  fs36.renameSync(tmp, fileOf6(f.sessionId));
+}
+var sleepSync9 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function withFile2(id, fn) {
+  fs36.mkdirSync(dir7(), { recursive: true, mode: 448 });
+  const lock = `${fileOf6(id)}.lock`;
+  let held = false;
+  for (let i = 0;i < 50 && !held; i++) {
+    try {
+      fs36.mkdirSync(lock);
+      held = true;
+    } catch {
+      try {
+        if (Date.now() - fs36.statSync(lock).mtimeMs > 5000)
+          fs36.rmdirSync(lock);
+      } catch {}
+      sleepSync9(5);
+    }
+  }
+  try {
+    return fn(readTab2(id));
+  } finally {
+    if (held)
+      try {
+        fs36.rmdirSync(lock);
+      } catch {}
+  }
+}
+var appleTitleScript = (tty, title) => appleTab2(tty, [
+  `set custom title of t to ${asq2(title.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 120))}`,
+  `set title displays custom title of t to true`,
+  `set title displays device name of t to false`,
+  `set title displays shell path of t to false`,
+  `set title displays window size of t to false`,
+  `set title displays file name of t to false`,
+  `return "done"`
+]);
+function nameTab(sessionId, title, o = {}) {
+  if ((o.platform ?? process.platform) !== "darwin" || process.env.CROSSTALK_NO_TERM)
+    return false;
+  const t = readOne2(sessionId)?.terminal;
+  if (!t?.tty || kindOf2(t) !== "apple")
+    return false;
+  const f = readTab2(sessionId);
+  if (f?.title === title)
+    return false;
+  withFile2(sessionId, (cur) => writeTab2({ ...cur ?? { sessionId, want: "off", wantAt: Date.now() }, title }));
+  const input = appleTitleScript(t.tty, title);
+  try {
+    (o.spawnIt ?? ((inp) => {
+      const c = spawn9("osascript", ["-"], { detached: true, stdio: ["pipe", "ignore", "ignore"] });
+      c.stdin?.end(inp);
+      c.unref();
+    }))(input);
+  } catch {}
+  return true;
+}
+var appleProfileBgAllScript2 = [
+  `if application "Terminal" is not running then return "0"`,
+  `set c to 0`,
+  `tell application "Terminal"`,
+  `	repeat with w in windows`,
+  `		repeat with t in tabs of w`,
+  `			try`,
+  `				set want to background color of settings set (name of current settings of t)`,
+  `				if (background color of t) is not want then`,
+  `					set background color of t to want`,
+  `					set c to c + 1`,
+  `				end if`,
+  `			end try`,
+  `		end repeat`,
+  `	end repeat`,
+  `end tell`,
+  `return c as text`
+].join(`
+`);
+var TMUX_SNIPPET2 = [
+  `# crosstalk: show each agent's state in the window list`,
+  `set -ga window-status-format ' #{?#{==:#{@crosstalk_state},broken},#[fg=colour160]\u25cf broken#[default],#{?#{==:#{@crosstalk_state},waiting},#[fg=colour208]\u25cf waiting#[default],#{?#{==:#{@crosstalk_state},working},#[fg=colour33]\u25cf working#[default],#{?#{==:#{@crosstalk_state},done},#[fg=colour34]\u2713#[default],}}}}'`,
+  `set -ga window-status-current-format ' #{?#{==:#{@crosstalk_state},broken},#[fg=colour160]\u25cf broken#[default],#{?#{==:#{@crosstalk_state},waiting},#[fg=colour208]\u25cf waiting#[default],#{?#{==:#{@crosstalk_state},working},#[fg=colour33]\u25cf working#[default],#{?#{==:#{@crosstalk_state},done},#[fg=colour34]\u2713#[default],}}}}'`
+].join(`
+`);
+
+// src/attention/openitems.ts
+import crypto4 from "node:crypto";
+import fs37 from "node:fs";
+import path45 from "node:path";
 var HEAD = /^\s*(?:#{1,4}\s*)?\**\s*(open|open items|still open|open questions|remaining|left to do|next steps|to do|todo)\s*\**\s*:?\s*\**\s*$/i;
 var BULLET = /^\s*(?:[-*\u2022]|\d+[.)])\s+(.+)$/;
 function parseOpen(text) {
@@ -6149,21 +6283,21 @@ function split(items) {
 }
 var hashOf = (items) => crypto4.createHash("sha256").update(items.join(`
 `)).digest("hex").slice(0, 12);
-var file9 = () => path44.join(P.root, "open-items.json");
+var file9 = () => path45.join(P.root, "open-items.json");
 function readPrefs() {
   try {
-    return JSON.parse(fs36.readFileSync(file9(), "utf8")) ?? {};
+    return JSON.parse(fs37.readFileSync(file9(), "utf8")) ?? {};
   } catch {
     return {};
   }
 }
 function writePrefs(p) {
-  fs36.mkdirSync(P.root, { recursive: true, mode: 448 });
+  fs37.mkdirSync(P.root, { recursive: true, mode: 448 });
   const week = Date.now() - 7 * 86400000;
   const seen = Object.fromEntries(Object.entries(p.seen ?? {}).filter(([, at]) => at > week));
   const tmp = `${file9()}.${process.pid}.tmp`;
-  fs36.writeFileSync(tmp, JSON.stringify({ ...p, seen }), { mode: 384 });
-  fs36.renameSync(tmp, file9());
+  fs37.writeFileSync(tmp, JSON.stringify({ ...p, seen }), { mode: 384 });
+  fs37.renameSync(tmp, file9());
 }
 var TACKLE = "Tackle them";
 var ALWAYS = "Always";
@@ -6230,8 +6364,8 @@ function agyCwd() {
   if (Array.isArray(ws) && typeof ws[0] === "string" && ws[0])
     return ws[0];
   const here = process.cwd();
-  if (AGENT_DIRS.has(path45.basename(here)))
-    return path45.dirname(here);
+  if (AGENT_DIRS.has(path46.basename(here)))
+    return path46.dirname(here);
   return here;
 }
 var cwd = hook.cwd ?? hook.working_dir ?? hook.workspace_roots?.[0] ?? (isAgy ? agyCwd() : process.cwd());
@@ -6326,7 +6460,12 @@ var chromeOut = (hookSpecific) => {
     out.terminalSequence = chrome.terminalSequence;
   const renamed = sessionId && /^(SessionStart|UserPromptSubmit)$/.test(eventName) ? nameOf2(sessionId) : undefined;
   const named = withBadge(renamed ? sessionTitle ?? (threadNames?.length ? undefined : renamed) : chrome.sessionTitle && /^(SessionStart|UserPromptSubmit)$/.test(eventName) ? chrome.sessionTitle : sessionTitle, chrome.badge);
-  const title = named ? { sessionTitle: named } : {};
+  const dotted = withDot(named, threadNames?.[0]);
+  const title = dotted ? { sessionTitle: dotted } : {};
+  if (dotted && sessionId)
+    try {
+      nameTab(sessionId, dotted);
+    } catch {}
   if (chrome.context && isSessionStart) {
     const extra = hookSpecific?.additionalContext;
     hookSpecific = { ...hookSpecific ?? {}, additionalContext: [chrome.context, extra].filter(Boolean).join(`
@@ -6424,10 +6563,10 @@ async function registerSession() {
   if (socket) {
     try {
       const dir = sessionsDir();
-      for (const f of fs37.readdirSync(dir)) {
+      for (const f of fs38.readdirSync(dir)) {
         if (!f.endsWith(".json"))
           continue;
-        const e = JSON.parse(fs37.readFileSync(path45.join(dir, f), "utf8"));
+        const e = JSON.parse(fs38.readFileSync(path46.join(dir, f), "utf8"));
         if (e.sessionId === sessionId) {
           name = e.name ?? name;
           break;
@@ -6435,7 +6574,7 @@ async function registerSession() {
       }
     } catch {}
   } else {
-    name = hook.thread_name ?? (path45.basename(cwd) || name);
+    name = hook.thread_name ?? (path46.basename(cwd) || name);
   }
   const registered = await request({
     op: "register",

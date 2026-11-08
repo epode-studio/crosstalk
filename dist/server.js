@@ -7857,6 +7857,12 @@ function ctxNow() {
   const now = Date.now();
   return { now, boot: bootTime(process.env, now), all: readAll(), alive: recAlive };
 }
+function recentOf(lost, ms = RECENT_MS()) {
+  if (!lost.length)
+    return [];
+  const newest = Math.max(...lost.map((r) => r.seenAt));
+  return lost.filter((r) => newest - r.seenAt <= ms);
+}
 function describe2(self, env = process.env, dry = false) {
   const lost = lostSessions(ctxNow(), self);
   if (!lost.length)
@@ -7908,7 +7914,8 @@ function restore(o, only) {
   if (bot)
     return { ok: false, text: `\u25e2 crosstalk: ${bot}`, lost: [], restored: [] };
   const env = o.env ?? process.env;
-  const lost = only ? only.filter((r) => !recAlive(r)) : lostSessions(ctxNow(), o.self);
+  const all = only ? only.filter((r) => !recAlive(r)) : lostSessions(ctxNow(), o.self);
+  const lost = o.recentOnly ? recentOf(all) : all;
   if (!lost.length)
     return { ok: true, text: "\u25e2 crosstalk: nothing to restore.", lost, restored: [] };
   claimPending();
@@ -8040,7 +8047,7 @@ var dir = () => path9.join(P2.root, "open"), safe = (id) => id.replace(/[^A-Za-z
   for (const x of xs)
     m.set(key(x), [...m.get(key(x)) ?? [], x]);
   return m;
-}, num = (n) => n === undefined || Number.isNaN(n) ? Infinity : n, wtArg = (s) => s.replace(/;/g, "\\;"), SETTINGS_URL, REOPEN_SETTINGS_MS, JXA_AX = `ObjC.import("ApplicationServices"); var f; try { f = $.AXIsProcessTrusted() } catch (e) { ObjC.bindFunction("AXIsProcessTrusted", ["bool", []]); f = $.AXIsProcessTrusted() } f ? "yes" : "no"`, tmuxWindowIndex = (t, env = process.env) => tmuxWindowOf(t, env)?.index, label = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path9.basename(r.cwd) || r.sessionId.slice(0, 8), names = (rs, max = 4) => rs.slice(0, max).map(label).join(", ") + (rs.length > max ? ", \u2026" : ""), commandsFile = () => path9.join(P2.root, "restore-commands.sh"), pendingFile = () => path9.join(P2.root, "restore-pending.json"), tabsFor = (o) => o.userAction || o.asked ? o.tabs ?? true : false, WAIT_MS = () => Number(process.env.CROSSTALK_RESTORE_WAIT_MS ?? 2 * 60 * 1000);
+}, num = (n) => n === undefined || Number.isNaN(n) ? Infinity : n, wtArg = (s) => s.replace(/;/g, "\\;"), SETTINGS_URL, REOPEN_SETTINGS_MS, JXA_AX = `ObjC.import("ApplicationServices"); var f; try { f = $.AXIsProcessTrusted() } catch (e) { ObjC.bindFunction("AXIsProcessTrusted", ["bool", []]); f = $.AXIsProcessTrusted() } f ? "yes" : "no"`, tmuxWindowIndex = (t, env = process.env) => tmuxWindowOf(t, env)?.index, label = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path9.basename(r.cwd) || r.sessionId.slice(0, 8), names = (rs, max = 4) => rs.slice(0, max).map(label).join(", ") + (rs.length > max ? ", \u2026" : ""), commandsFile = () => path9.join(P2.root, "restore-commands.sh"), RECENT_MS = () => Number(process.env.CROSSTALK_RESTORE_RECENT_MS ?? 4 * 3600000), pendingFile = () => path9.join(P2.root, "restore-pending.json"), tabsFor = (o) => o.userAction || o.asked ? o.tabs ?? true : false, WAIT_MS = () => Number(process.env.CROSSTALK_RESTORE_WAIT_MS ?? 2 * 60 * 1000);
 var init_restore = __esm(() => {
   init_config();
   init_paths();

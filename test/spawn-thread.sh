@@ -152,7 +152,7 @@ echo "the daemon has them in auth from the start"
 for n in 1 2; do
   WT="$CROSSTALK_HOME/worktrees/api/auth-$n"
   OUT=$(hook "{\"hook_event_name\":\"SessionStart\",\"session_id\":\"agent-$n\",\"cwd\":\"$WT\",\"source\":\"startup\"}")
-  has "$OUT" "\"sessionTitle\":\"auth · auth-$n\"" "auth-$n's session title is its thread, then its name"
+  has "$OUT" " auth · auth-$n\"" "auth-$n's session title is its thread, then its name"
   check "$(names_of agent-$n)" "auth" "auth-$n is in auth"
 done
 # Its own branch and its files (billing's) would place it elsewhere.

@@ -221,3 +221,28 @@ describe("a new agent's first prompt", () => {
     expect(B.shortArgv(["claude", long], dir, { excludeFile: () => null })).toEqual(["claude", long]) // not git: as before
   })
 })
+
+describe("tabs that say what they are", () => {
+  test("each thread has its colour, the same every time, in front of the title", async () => {
+    const H = await import("../src/terminal/hook.ts")
+    expect(H.dotFor("auth")).toBe(H.dotFor("Auth"))
+    expect(H.withDot("auth · auth-1", "auth", {})).toBe(`${H.dotFor("auth")} auth · auth-1`)
+    expect(H.withDot(`${H.dotFor("auth")} auth · auth-1`, "auth", {})).toBe(`${H.dotFor("auth")} auth · auth-1`) // never twice
+    expect(H.withDot("bg", undefined, {})).toBe("bg") // no thread, no colour
+    expect(H.withDot("auth · x", "auth", { CROSSTALK_NO_TITLE_DOT: "1" })).toBe("auth · x")
+    const colours = new Set(["auth", "billing", "search", "payments", "onboarding", "api"].map(H.dotFor))
+    expect(colours.size).toBeGreaterThan(2)
+  })
+  test("Terminal.app's tab is given the title itself, never launching Terminal", async () => {
+    const S = await import("../src/terminal/status.ts")
+    const s = S.appleTitleScript("/dev/ttys004", "🟣 auth · auth-1")
+    expect(s.startsWith(`if application "Terminal" is running then`)).toBe(true)
+    expect(s).toContain(`set custom title of t to "🟣 auth · auth-1"`)
+    expect(s).toContain(`set title displays custom title of t to true`)
+  })
+  test("restore's picker offers only the recent ones when fewer than all were", async () => {
+    const U = await import("../src/uicli.ts")
+    expect(U.restoreWant("answer", "Only the recent 4")).toBe("recent")
+    expect(U.restoreWant("answer", "Restore")).toBe("yes")
+  })
+})

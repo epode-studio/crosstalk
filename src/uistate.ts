@@ -378,7 +378,7 @@ export const restoreId = (sessionId: string) => `restore:${sessionId}`
  */
 export function restoreSurface(
   sessionId: string,
-  offer: { text: string; count: number; names: string[]; restart?: boolean } | null,
+  offer: { text: string; count: number; names: string[]; restart?: boolean; recent?: number } | null,
 ): { systemMessage?: string; item?: UiItem } {
   if (!offer) return {}
   if (!modActive(sessionId)) return { systemMessage: offer.text }
@@ -432,7 +432,10 @@ export function gatherSurface(
   }
 }
 
-function storeRestore(sessionId: string, offer: { count: number; names: string[] }, n: number, when: string): UiItem {
+/** "Only the recent 4": offered when fewer than all were used recently. */
+export const recentLabel = (n: number) => `Only the recent ${n}`
+
+function storeRestore(sessionId: string, offer: { count: number; names: string[]; recent?: number }, n: number, when: string): UiItem {
   return withStore((items, now) =>
     upsert(
       items,
@@ -443,7 +446,7 @@ function storeRestore(sessionId: string, offer: { count: number; names: string[]
         count: n,
         names: offer.names,
         question: `Restore ${n} session${n === 1 ? "" : "s"} ${when}? (${offer.names.join(", ")})`,
-        options: ["Restore", "Open as windows", "Not now"],
+        options: offer.recent && offer.recent < n ? ["Restore", recentLabel(offer.recent), "Open as windows", "Not now"] : ["Restore", "Open as windows", "Not now"],
       },
       now,
     ),

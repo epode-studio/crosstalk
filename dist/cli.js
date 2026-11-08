@@ -951,6 +951,12 @@ function ctxNow() {
   const now = Date.now();
   return { now, boot: bootTime(process.env, now), all: readAll(), alive: recAlive };
 }
+function recentOf(lost, ms = RECENT_MS()) {
+  if (!lost.length)
+    return [];
+  const newest = Math.max(...lost.map((r) => r.seenAt));
+  return lost.filter((r) => newest - r.seenAt <= ms);
+}
 function forget(self) {
   const lost = lostSessions(ctxNow(), self);
   for (const r of lost)
@@ -988,7 +994,8 @@ function restore(o, only) {
   if (bot)
     return { ok: false, text: `\u25e2 crosstalk: ${bot}`, lost: [], restored: [] };
   const env = o.env ?? process.env;
-  const lost = only ? only.filter((r) => !recAlive(r)) : lostSessions(ctxNow(), o.self);
+  const all = only ? only.filter((r) => !recAlive(r)) : lostSessions(ctxNow(), o.self);
+  const lost = o.recentOnly ? recentOf(all) : all;
   if (!lost.length)
     return { ok: true, text: "\u25e2 crosstalk: nothing to restore.", lost, restored: [] };
   claimPending();
@@ -1120,7 +1127,7 @@ var dir = () => path6.join(P.root, "open"), safe = (id) => id.replace(/[^A-Za-z0
   for (const x of xs)
     m.set(key(x), [...m.get(key(x)) ?? [], x]);
   return m;
-}, num = (n) => n === undefined || Number.isNaN(n) ? Infinity : n, wtArg = (s) => s.replace(/;/g, "\\;"), SETTINGS_URL, REOPEN_SETTINGS_MS, JXA_AX = `ObjC.import("ApplicationServices"); var f; try { f = $.AXIsProcessTrusted() } catch (e) { ObjC.bindFunction("AXIsProcessTrusted", ["bool", []]); f = $.AXIsProcessTrusted() } f ? "yes" : "no"`, tmuxWindowIndex = (t, env = process.env) => tmuxWindowOf(t, env)?.index, label = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path6.basename(r.cwd) || r.sessionId.slice(0, 8), names = (rs, max = 4) => rs.slice(0, max).map(label).join(", ") + (rs.length > max ? ", \u2026" : ""), commandsFile = () => path6.join(P.root, "restore-commands.sh"), pendingFile = () => path6.join(P.root, "restore-pending.json"), tabsFor = (o) => o.userAction || o.asked ? o.tabs ?? true : false, WAIT_MS = () => Number(process.env.CROSSTALK_RESTORE_WAIT_MS ?? 2 * 60 * 1000);
+}, num = (n) => n === undefined || Number.isNaN(n) ? Infinity : n, wtArg = (s) => s.replace(/;/g, "\\;"), SETTINGS_URL, REOPEN_SETTINGS_MS, JXA_AX = `ObjC.import("ApplicationServices"); var f; try { f = $.AXIsProcessTrusted() } catch (e) { ObjC.bindFunction("AXIsProcessTrusted", ["bool", []]); f = $.AXIsProcessTrusted() } f ? "yes" : "no"`, tmuxWindowIndex = (t, env = process.env) => tmuxWindowOf(t, env)?.index, label = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path6.basename(r.cwd) || r.sessionId.slice(0, 8), names = (rs, max = 4) => rs.slice(0, max).map(label).join(", ") + (rs.length > max ? ", \u2026" : ""), commandsFile = () => path6.join(P.root, "restore-commands.sh"), RECENT_MS = () => Number(process.env.CROSSTALK_RESTORE_RECENT_MS ?? 4 * 3600000), pendingFile = () => path6.join(P.root, "restore-pending.json"), tabsFor = (o) => o.userAction || o.asked ? o.tabs ?? true : false, WAIT_MS = () => Number(process.env.CROSSTALK_RESTORE_WAIT_MS ?? 2 * 60 * 1000);
 var init_restore = __esm(() => {
   init_config();
   init_paths();
@@ -9001,6 +9008,13 @@ function ctxNow2() {
   const now = Date.now();
   return { now, boot: bootTime2(process.env, now), all: readAll3(), alive: recAlive2 };
 }
+var RECENT_MS2 = () => Number(process.env.CROSSTALK_RESTORE_RECENT_MS ?? 4 * 3600000);
+function recentOf2(lost, ms = RECENT_MS2()) {
+  if (!lost.length)
+    return [];
+  const newest = Math.max(...lost.map((r) => r.seenAt));
+  return lost.filter((r) => newest - r.seenAt <= ms);
+}
 function describe(self, env = process.env, dry = false) {
   const lost = lostSessions2(ctxNow2(), self);
   if (!lost.length)
@@ -9065,7 +9079,8 @@ function restore2(o, only) {
   if (bot)
     return { ok: false, text: `\u25e2 crosstalk: ${bot}`, lost: [], restored: [] };
   const env = o.env ?? process.env;
-  const lost = only ? only.filter((r) => !recAlive2(r)) : lostSessions2(ctxNow2(), o.self);
+  const all = only ? only.filter((r) => !recAlive2(r)) : lostSessions2(ctxNow2(), o.self);
+  const lost = o.recentOnly ? recentOf2(all) : all;
   if (!lost.length)
     return { ok: true, text: "\u25e2 crosstalk: nothing to restore.", lost, restored: [] };
   claimPending2();
@@ -13551,7 +13566,7 @@ function restoreWant(action, value) {
   const v = (value ?? "").trim();
   if (action !== "answer")
     return "no";
-  return v === "Restore" ? "yes" : v === "Open as windows" ? "windows" : "no";
+  return v === "Restore" ? "yes" : /^Only the recent \d+$/.test(v) ? "recent" : v === "Open as windows" ? "windows" : "no";
 }
 var gatherYes = (action, value) => action === "answer" && (value ?? "").trim() === GATHER_OPTIONS[0];
 function restoreAct(session, id, action, value, root) {
@@ -13564,7 +13579,7 @@ function restoreAct(session, id, action, value, root) {
     return claim;
   if (want === "no")
     return { ok: true, item: claim.item, text: `Left them closed for now. Say "restore them" any time.` };
-  const out = restore({ self: session, tabs: want !== "windows", userAction: true, root });
+  const out = restore({ self: session, tabs: want !== "windows", userAction: true, root, ...want === "recent" ? { recentOnly: true } : {} });
   return { ok: out.ok, item: claim.item, text: out.text, restored: out.restored.length };
 }
 function gatherAct(session, id, action, value, root) {

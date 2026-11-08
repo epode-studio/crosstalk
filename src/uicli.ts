@@ -139,10 +139,10 @@ async function watch(session: string, interval: number) {
  * The restore offer's answer: its options word for word ("Restore", "Open as
  * windows"); anything else, "nope", "not yet", "don't", is not now.
  */
-export function restoreWant(action: string, value: string | undefined): "yes" | "windows" | "no" {
+export function restoreWant(action: string, value: string | undefined): "yes" | "recent" | "windows" | "no" {
   const v = (value ?? "").trim()
   if (action !== "answer") return "no"
-  return v === "Restore" ? "yes" : v === "Open as windows" ? "windows" : "no"
+  return v === "Restore" ? "yes" : /^Only the recent \d+$/.test(v) ? "recent" : v === "Open as windows" ? "windows" : "no"
 }
 
 /** The gather offer's answer: only its own yes, word for word, brings them in. */
@@ -156,7 +156,7 @@ function restoreAct(session: string, id: string, action: string, value: string |
   if (!claim.ok) return claim
   // Not now forgets nothing: "restore them" still brings them back.
   if (want === "no") return { ok: true, item: claim.item, text: `Left them closed for now. Say "restore them" any time.` }
-  const out = restore.restore({ self: session, tabs: want !== "windows", userAction: true, root })
+  const out = restore.restore({ self: session, tabs: want !== "windows", userAction: true, root, ...(want === "recent" ? { recentOnly: true } : {}) })
   return { ok: out.ok, item: claim.item, text: out.text, restored: out.restored.length }
 }
 

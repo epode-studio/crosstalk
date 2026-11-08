@@ -41,6 +41,21 @@ export const badgeText = (b: string) => b.replace(/[^a-z0-9.:\- …]/gi, "").sli
 /** `auth · :4100` or `auth · auth.localhost:1355`: a title with where its services are after it. */
 export const withBadge = (title: string | undefined, badge: string | undefined) => (title && badge ? `${title} · ${badgeText(badge)}` : title)
 
+/**
+ * A coloured dot per thread, at the front of its sessions' titles, so tabs on
+ * the same work go together at a glance in any terminal: Terminal.app can only
+ * colour a whole background, which crosstalk leaves alone. The same thread
+ * always gets the same colour. CROSSTALK_NO_TITLE_DOT=1 leaves titles plain.
+ */
+export const DOTS = ["🔴", "🟠", "🟡", "🟢", "🔵", "🟣", "🟤"] as const
+export function dotFor(thread: string): string {
+  let h = 2166136261
+  for (const c of thread.toLowerCase()) h = Math.imul(h ^ c.charCodeAt(0), 16777619)
+  return DOTS[(h >>> 0) % DOTS.length]
+}
+export const withDot = (title: string | undefined, thread: string | undefined, env: NodeJS.ProcessEnv = process.env) =>
+  title && thread && !env.CROSSTALK_NO_TITLE_DOT && !DOTS.some((d) => title.startsWith(d)) ? `${dotFor(thread)} ${title}` : title
+
 /** The worktree's proxy name while the proxy is up and a service runs here, else the ports. */
 function named(cwd: string, ports: string | undefined): string | undefined {
   if (!ports) return ports
