@@ -39,6 +39,7 @@ import * as intro from "./intro.ts"
 import * as tabStatus from "./terminal/status.ts"
 import * as openItems from "./attention/openitems.ts"
 import * as calmMod from "./attention/calm.ts"
+import * as mainS from "./main.ts"
 import * as summaryMod from "./attention/summary.ts"
 import * as workerMod from "./attention/worker.ts"
 import * as spawnMod from "./spawn.ts"
@@ -436,16 +437,21 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
       }
     })()
     const r = started ? null : openItems.atStop({ reply: openItems.lastReply(typeof hook.transcript_path === "string" ? hook.transcript_path : undefined), sessionId, continuing: hook.stop_hook_active === true })
-    if (r?.fresh && r.items.length) {
+    if (r?.fresh && (r.items.length || r.persons.length)) {
       let thread: string | undefined
       const ids: string[] = []
-      if (await ensureDaemon(root))
+      if (r.items.length && (await ensureDaemon(root)))
         for (const text of r.items)
           try {
             const t = await request({ op: "tasks", sessionId, cwd, write: "add", text }, 3000)
             if (t?.ok && t.thread) thread = t.thread
             if (t?.ok && t.id) ids.push(String(t.id))
           } catch {}
+      // What only the person can do: a short to-do in main's inbox (Done tells the agent).
+      for (const text of r.persons)
+        ui.withStore((items, now) =>
+          ui.upsert(items, { id: `you:${sessionId}:${openItems.hashOf([text])}`, kind: "attention", sessionId: mainS.currentMain()?.sessionId ?? sessionId, from: thread ?? undefined, ...(thread ? { thread } : {}), question: text, options: [openItems.DONE, openItems.LATER], ts: now }, now),
+        )
       // Away: open lists are tackled by themselves, a few rounds per session.
       const away = calmMod.isAway() && calmMod.update((s) => calmMod.takeRound(s, sessionId))
       if ((r.auto || (away && r.items.length)) && ui.modActive(sessionId)) {
@@ -453,23 +459,23 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
         // the crosstalk plugin": never late, never shown as a hook error.
         ui.withStore((items, now) => ui.upsert(items, { id: `tackle:${sessionId}:${r.id}`, kind: "attention", sessionId, text: openItems.tacklePrompt(r.items, ids), auto: true, ts: now }, now))
       } else if (r.auto || (away && r.items.length)) {
-        process.stdout.write(
-          JSON.stringify({
-            decision: "block",
-            reason: openItems.tacklePrompt(r.items, ids),
-            systemMessage: `◢ crosstalk: going on with the ${r.items.length} open item${r.items.length === 1 ? "" : "s"}, as you chose. "Stop tackling open items by itself" turns that off.`,
-          }),
-        )
+        process.stdout.write(JSON.stringify({ decision: "block", reason: openItems.tacklePrompt(r.items, ids) }))
         process.exit(0)
+      } else if (r.items.length) {
+        // Carrying on is off, or the rounds are used up: one quiet line, nothing to pick.
+        const n = r.items.length
+        const m = `◢ crosstalk: ${n} open item${n === 1 ? "" : "s"}${thread ? ` kept as tasks in ${thread}` : ""}. Say "tackle them" to go on.`
+        systemMessage = systemMessage ? `${systemMessage}\n${m}` : m
       }
-      // Never a picker: a quiet line under the turn, which takes nothing from the keyboard.
-      const n = r.items.length
-      const where = thread ? ` kept as tasks in ${thread}` : ""
-      const m = `◢ crosstalk: ${n} open item${n === 1 ? "" : "s"}${where}. Say "tackle them" to go on, or "always tackle open items".`
-      systemMessage = systemMessage ? `${systemMessage}\n${m}` : m
     }
   } catch {}
 }
+
+// The person typed: open lists may carry on again (openItems.CHAIN_MAX rounds in a row at most).
+if (sessionId && /^UserPromptSubmit$/.test(eventName) && !/^\s*(Tackle the open items you listed|I handed you the crosstalk message)/.test(String(hook.prompt ?? "")))
+  try {
+    openItems.resetChain(sessionId)
+  } catch {}
 
 /**
  * Back from away (src/attention/calm.ts): the person's first message in any

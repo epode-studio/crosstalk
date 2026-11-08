@@ -269,6 +269,18 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
         const out = await firstuse.connect({ slug: id.slice("connect:".length), yes, ensureDaemon: () => ensureDaemon(root), request })
         return print({ ok: out.ok, text: out.text, item: ui.snapshot()[id] })
       }
+      // Something only the person could do, from an agent's open list: Done tells that agent.
+      if (id.startsWith("you:")) {
+        if (action === "raised" || action === "later") return print(ui.withStore((items, now) => ui.act(items, id, action, now)))
+        const v = (value ?? "").trim()
+        if (v !== openItems.DONE) return print(ui.withStore((items, now) => ui.act(items, id, "later", now)))
+        const claim = ui.withStore((items, now) => ui.act(items, id, "answer", now, v))
+        if (!claim.ok) return print({ ok: false, error: claim.error })
+        const asker = id.split(":")[1] ?? ""
+        const what = claim.item?.question ?? ""
+        ui.withStore((items, now) => ui.upsert(items, { id: `you-done:${id}`, kind: "message", sessionId: asker, from: "crosstalk", ...(claim.item?.thread ? { thread: claim.item.thread } : {}), text: `The person has done this, from your open list: ${what}`, auto: true, ts: now }, now))
+        return print({ ok: true, item: claim.item, text: "told the agent" })
+      }
       // Carrying on with open items (src/attention/openitems.ts): taken once by this session's mod.
       if (id.startsWith("tackle:")) {
         const it = ui.snapshot()[id]

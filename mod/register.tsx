@@ -148,6 +148,7 @@ function withContext(it: Item, q: string): string {
 
 function header(it: Item): string {
   if (it.id.startsWith('open:')) return 'Open items'
+  if (it.id.startsWith('you:')) return 'For you'
   if (it.id.startsWith('relay:')) return 'Question'
   if (it.kind === 'restore') return 'Restore'
   if (it.kind === 'route') return 'Route'

@@ -66,26 +66,28 @@ describe("waiting is not work", () => {
 })
 
 describe("at the end of a turn", () => {
-  test("asked once per item, however reworded; under Always it goes on, and a continued turn never asks", () => {
+  test("crosstalk carries on by itself: once per new item, never on a continued turn, three rounds at most until the person types", () => {
     const first = O.atStop({ reply: REPLY, sessionId: "s1", continuing: false })!
     expect(first.items).toHaveLength(2)
-    expect(first.fresh).toBe(true)
-    expect(first.auto).toBe(false) // nobody said Always yet: asked
+    expect(first.auto).toBe(true) // nobody has to say Always
     const again = O.atStop({ reply: REPLY.replace("**Open**", "**Still open**").replace("whichever chat is selected", "whichever chat is currently selected"), sessionId: "s1", continuing: false })!
     expect(again.items).toEqual([]) // the same items, reworded: nothing new
-    expect(again.fresh).toBe(false)
+    expect(again.auto).toBe(false)
+    const cont = O.atStop({ reply: REPLY.trimEnd() + "\n- Write the release notes for B.\n", sessionId: "s1", continuing: true })!
+    expect(cont.auto).toBe(false) // a Stop-hook continuation never chains
+    for (const n of ["Add a rollback for the migration.", "Add caching to the projects endpoint."]) {
+      const r = O.atStop({ reply: REPLY.trimEnd() + `\n- ${n}\n`, sessionId: "s1", continuing: false })!
+      expect([n, r.auto]).toEqual([n, true])
+    }
+    const fourth = O.atStop({ reply: REPLY.trimEnd() + "\n- Update the onboarding docs page.\n", sessionId: "s1", continuing: false })!
+    expect(fourth.auto).toBe(false) // three rounds in a row: it stops and says so quietly
+    O.resetChain("s1") // the person typed
+    expect(O.atStop({ reply: REPLY.trimEnd() + "\n- Delete stale fixtures from tests.\n", sessionId: "s1", continuing: false })!.auto).toBe(true)
+    O.setAlways(false) // "stop tackling open items by itself"
+    expect(O.atStop({ reply: REPLY.trimEnd() + "\n- Rename the feature flag in config.\n", sessionId: "s1", continuing: false })!.auto).toBe(false)
     O.setAlways(true)
-    const next = REPLY.trimEnd() + "\n- Write the release notes for B.\n"
-    const cont = O.atStop({ reply: next, sessionId: "s1", continuing: true })!
-    expect(cont.auto).toBe(false) // already a continued turn: no loop
-    expect(cont.fresh).toBe(false) // and no question either
-    const third = REPLY.trimEnd() + "\n- Add a rollback for the migration.\n"
-    const t = O.atStop({ reply: third, sessionId: "s1", continuing: false })!
-    expect(t.auto).toBe(true)
-    expect(t.items).toEqual(["Add a rollback for the migration."]) // only what is new
-    O.setAlways(false)
   })
-  test("what is the person's is never work: their console, their prompts, decisions, questions", () => {
+  test("what is the person's goes to them as a short to-do, never to an agent", () => {
     const reply = `All of this is waiting on you: what your console printed, then the four prompts.
 
 **Open**
@@ -93,7 +95,11 @@ describe("at the end of a turn", () => {
 - **The four prompts in a new Claude Code session:** list, /mcp count, rename, delete.
 - **Then I check:** your user id against the flag.
 `
-    expect(O.atStop({ reply, sessionId: "s2", continuing: false })).toBe(null)
+    const r = O.atStop({ reply, sessionId: "s2", continuing: false })!
+    expect(r.items).toEqual([])
+    expect(r.auto).toBe(false)
+    expect(r.persons).toHaveLength(3)
+    expect(O.atStop({ reply, sessionId: "s2", continuing: false })!.persons).toEqual([]) // once
     for (const p of ["Should I merge PR #12?", "Decide whether to keep the old API (your call)", "Deploy to production", "Marie needs to approve the design", "Run the four prompts in your browser"])
       expect([p, O.isPersons(p)]).toEqual([p, true])
     expect(O.isPersons("Write the migration for device ids.")).toBe(false)

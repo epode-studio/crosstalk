@@ -155,7 +155,7 @@ export const hashOf = (items: string[]) => crypto.createHash("sha256").update(it
 
 // --- the preference and what was already taken in --------------------------------------
 
-type Prefs = { always?: boolean; seen?: Record<string, number>; seenItems?: Record<string, { t: string; at: number }[]> }
+type Prefs = { always?: boolean; seen?: Record<string, number>; seenItems?: Record<string, { t: string; at: number }[]>; /** Rounds carried on in a row since the person last typed, per session. */ chain?: Record<string, number> }
 const file = () => path.join(P.root, "open-items.json")
 
 export function readPrefs(): Prefs {
@@ -181,6 +181,8 @@ export const setAlways = (on: boolean) => writePrefs({ ...readPrefs(), always: o
 
 // --- words ----------------------------------------------------------------------------
 
+export const DONE = "Done"
+export const LATER = "Later"
 export const TACKLE = "Tackle them"
 export const ALWAYS = "Always"
 export const NOT_NOW = "Not now"
@@ -205,23 +207,38 @@ export function tacklePrompt(items: string[], ids: string[] = []): string {
  * What to do at a Stop: the items, and whether they are new. Pure apart from
  * the preference file, which it updates: a list is taken in once.
  */
+export const CHAIN_MAX = 3
+
+/** A prompt the person typed: the next open lists may carry on again. */
+export function resetChain(sessionId: string) {
+  const p = readPrefs()
+  if (!p.chain?.[sessionId]) return
+  const chain = { ...(p.chain ?? {}) }
+  delete chain[sessionId]
+  writePrefs({ ...p, chain })
+}
+
 export function atStop(o: { reply: string; sessionId: string; continuing: boolean; now?: number }): { items: string[]; waiting: string[]; persons: string[]; id: string; fresh: boolean; auto: boolean } | null {
   const all = parseOpen(o.reply)
   if (!all.length) return null
   // The agent said it in so many words: what is left is the person's.
   const before = o.reply.slice(0, Math.max(0, o.reply.lastIndexOf(all[0]!.slice(0, 20)))) || o.reply
   const { todo, waiting, persons } = ALL_PERSONS.test(before) ? { todo: [] as string[], waiting: [] as string[], persons: all } : split(all)
-  // Only what waits or is the person's: nothing to tackle, nothing to keep, nothing to ask.
-  if (!todo.length) return null
   const now = o.now ?? Date.now()
   const p = readPrefs()
-  // Seen before in this session, however it was reworded: not new. Only new items are asked about.
+  // Seen before in this session, however it was reworded: not new. Only what is new is acted on.
   const seen = (p.seenItems?.[o.sessionId] ?? []).map((x) => x.t)
-  const items = todo.filter((x) => !seen.some((y) => same(x, y)))
-  const id = hashOf(todo)
-  if (!items.length) return { items: [], waiting, persons, id, fresh: false, auto: false }
-  const kept = [...(p.seenItems?.[o.sessionId] ?? []).filter((x) => now - x.at < 3 * 86_400_000), ...items.map((t) => ({ t, at: now }))].slice(-200)
-  writePrefs({ ...p, seenItems: { ...(p.seenItems ?? {}), [o.sessionId]: kept } })
-  // A turn that is already a continuation never asks: under Always it simply ends there.
-  return { items, waiting, persons, id, fresh: !o.continuing || !p.always, auto: !!p.always && !o.continuing }
+  const isNew = (x: string) => !seen.some((y) => same(x, y))
+  const items = todo.filter(isNew)
+  const newPersons = persons.filter(isNew)
+  const id = hashOf([...todo, ...persons])
+  if (!items.length && !newPersons.length) return todo.length || persons.length ? { items: [], waiting, persons: [], id, fresh: false, auto: false } : null
+  const kept = [...(p.seenItems?.[o.sessionId] ?? []).filter((x) => now - x.at < 3 * 86_400_000), ...[...items, ...newPersons].map((t) => ({ t, at: now }))].slice(-200)
+  // crosstalk manages open items itself unless told not to: work the agent can do, it carries on
+  // with, at most CHAIN_MAX rounds in a row before the person types again.
+  const on = p.always !== false
+  const rounds = p.chain?.[o.sessionId] ?? 0
+  const auto = on && !o.continuing && items.length > 0 && rounds < CHAIN_MAX
+  writePrefs({ ...p, seenItems: { ...(p.seenItems ?? {}), [o.sessionId]: kept }, ...(auto ? { chain: { ...(p.chain ?? {}), [o.sessionId]: rounds + 1 } } : {}) })
+  return { items, waiting, persons: newPersons, id, fresh: !o.continuing, auto }
 }
