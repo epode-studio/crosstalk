@@ -48,6 +48,7 @@ import * as Usage from "../ui-extra/usage.ts"
 import { recordEvent } from "../urls/ci.ts"
 import { dotFor, human } from "../ui-extra/pure.ts"
 import * as AC from "./autoclose.ts"
+import { lastReply } from "./openitems.ts"
 import * as Pm from "./permission.ts"
 import { BG_ENV } from "./background.ts"
 import * as PP from "../services/postpone.ts"
@@ -112,6 +113,8 @@ type State = {
   told: Record<string, number>
   /** When a session's work shipped (its PR merged): it closes itself once idle (autoclose.ts). */
   shipped?: Record<string, number>
+  /** When each session was last the one in front, for "where you left off". */
+  lastFocus?: Record<string, number>
   /** Sessions whose own hook said they are a background agent (CROSSTALK_BG_AGENT). */
   bg: Record<string, string>
   /**
@@ -265,6 +268,21 @@ export class AttentionService {
     try {
       const f = this.focused()
       if (f && f.how !== "last typed" && f.sessionId !== this.st.focus.sessionId) {
+        // Back in a tab after a while: one line of where it is, so nothing has to be remembered.
+        const away = this.now() - (this.st.lastFocus?.[f.sessionId] ?? this.now())
+        if (away >= Number(this.env.CROSSTALK_WHERE_MS ?? 30 * 60_000)) {
+          const t = this.d.threads.namesFor(f.sessionId)[0]
+          const th = t ? this.d.threads.find(undefined, t) : undefined
+          const recap = th ? M.recap(th) : ""
+          const reg = this.d.sessions().get(f.sessionId)
+          let last = ""
+          try {
+            last = reg?.transcript ? lastReply(reg.transcript).replace(/\s+/g, " ").trim() : ""
+          } catch {}
+          const bits = [recap ? `${recap.slice(0, 160)}` : "", last ? `Last: ${last.slice(0, 160)}${last.length > 160 ? "…" : ""}` : ""].filter(Boolean)
+          if (bits.length) this.note(f.sessionId, { id: `where:${f.sessionId}:${this.now()}`, text: `◢ Where you left off${t ? ` in ${human(t, 32)}` : ""}: ${bits.join(" · ")}` })
+        }
+        if (this.st.focus.sessionId) (this.st.lastFocus ??= {})[this.st.focus.sessionId] = this.now()
         this.st.focus = { sessionId: f.sessionId, how: f.how, changedAt: this.now() }
         this.save()
       }

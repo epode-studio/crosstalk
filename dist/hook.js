@@ -2,8 +2,8 @@
 // @bun
 
 // src/hook.ts
-import path53 from "path";
-import fs45 from "fs";
+import path54 from "path";
+import fs46 from "fs";
 
 // src/client.ts
 import net from "node:net";
@@ -6485,43 +6485,19 @@ function takeRound(s, sessionId) {
   return true;
 }
 
-// src/main.ts
-import fs39 from "node:fs";
-import path47 from "node:path";
-var file11 = () => path47.join(P.root, "main.json");
-function readMain() {
-  try {
-    const r = JSON.parse(fs39.readFileSync(file11(), "utf8"));
-    if (r && typeof r.sessionId === "string" && r.sessionId)
-      return r;
-  } catch {}
-  return null;
-}
-var pidAlive3 = (pid) => {
-  if (!pid || pid <= 1)
-    return true;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return e.code === "EPERM";
-  }
-};
-function currentMain2(alive = (r) => pidAlive3(r.pid)) {
-  const m = readMain();
-  return m && alive(m) ? m : null;
-}
-var CROSS_CUTTING2 = new Set(["route", "team", "gather", "cleanup"]);
+// src/attention/day.ts
+import fs42 from "node:fs";
+import path50 from "node:path";
 
 // src/urls/ci.ts
-import fs40 from "node:fs";
-import path48 from "node:path";
+import fs39 from "node:fs";
+import path47 from "node:path";
 var FAIL = new Set(["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"]);
 var OK = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
-var events = () => path48.join(P.root, "events.json");
+var events = () => path47.join(P.root, "events.json");
 function recentEvents(n = 6, now = Date.now()) {
   try {
-    const all = JSON.parse(fs40.readFileSync(events(), "utf8")) ?? [];
+    const all = JSON.parse(fs39.readFileSync(events(), "utf8")) ?? [];
     return all.filter((e) => now - e.at < 86400000).slice(-n).reverse();
   } catch {
     return [];
@@ -6529,30 +6505,30 @@ function recentEvents(n = 6, now = Date.now()) {
 }
 
 // src/ui-extra/usage.ts
-import fs41 from "node:fs";
-import path49 from "node:path";
-var dir8 = () => path49.join(P.root, "usage");
+import fs40 from "node:fs";
+import path48 from "node:path";
+var dir8 = () => path48.join(P.root, "usage");
 function all2() {
   const out = new Map;
   let names = [];
   try {
-    names = fs41.readdirSync(dir8()).filter((n) => n.endsWith(".json"));
+    names = fs40.readdirSync(dir8()).filter((n) => n.endsWith(".json"));
   } catch {}
   for (const n of names)
     try {
-      out.set(n.slice(0, -5), JSON.parse(fs41.readFileSync(path49.join(dir8(), n), "utf8")));
+      out.set(n.slice(0, -5), JSON.parse(fs40.readFileSync(path48.join(dir8(), n), "utf8")));
     } catch {}
   return out;
 }
 
 // src/attention/calm.ts
-import fs42 from "node:fs";
-import path50 from "node:path";
-var file12 = () => path50.join(P.root, "calm.json");
+import fs41 from "node:fs";
+import path49 from "node:path";
+var file11 = () => path49.join(P.root, "calm.json");
 var WINDOW_OPEN_MS2 = 2 * 60000;
 function read4() {
   try {
-    return JSON.parse(fs42.readFileSync(file12(), "utf8")) ?? {};
+    return JSON.parse(fs41.readFileSync(file11(), "utf8")) ?? {};
   } catch {
     return {};
   }
@@ -6597,49 +6573,147 @@ function short(s, now = Date.now(), what = "While you were away") {
   return `\u25e2 ${what} (${dur(now - s.since)}): ${bits.join(" \u00b7 ")}. Say "what happened while I was away" for the details.`;
 }
 
-// src/attention/worker.ts
-import fs43 from "node:fs";
-import path51 from "node:path";
-var file13 = () => path51.join(P.root, "worker.json");
-var DEFAULT_MAX = 2;
+// src/attention/day.ts
+var file12 = () => path50.join(P.root, "day.json");
+var QUIET_MS = () => Number(process.env.CROSSTALK_MORNING_QUIET_MS ?? 6 * 3600000);
 function read5() {
   try {
-    const p = JSON.parse(fs43.readFileSync(file13(), "utf8"));
+    return JSON.parse(fs42.readFileSync(file12(), "utf8")) ?? {};
+  } catch {
+    return {};
+  }
+}
+function write4(d) {
+  fs42.mkdirSync(P.root, { recursive: true, mode: 448 });
+  const tmp = `${file12()}.${process.pid}.tmp`;
+  fs42.writeFileSync(tmp, JSON.stringify(d), { mode: 384 });
+  fs42.renameSync(tmp, file12());
+}
+function seen(now) {
+  const d = read5();
+  if (d.lastSeen && now - d.lastSeen < 60000)
+    return;
+  write4({ ...d, lastSeen: now });
+}
+function morning(now) {
+  const d = read5();
+  if (!d.lastSeen || now - d.lastSeen < QUIET_MS() || d.morningAt && d.morningAt > d.lastSeen)
+    return null;
+  write4({ ...d, morningAt: now });
+  const s = gather(d.lastSeen, { now });
+  return `${short(s, now, "Since you were last here").replace(/ Say "what happened while I was away" for the details\.$/, "")} Say "plan my day" to pick today's work, or "pick up where I left off".`;
+}
+
+// src/main.ts
+import fs43 from "node:fs";
+import path51 from "node:path";
+var file13 = () => path51.join(P.root, "main.json");
+function readMain() {
+  try {
+    const r = JSON.parse(fs43.readFileSync(file13(), "utf8"));
+    if (r && typeof r.sessionId === "string" && r.sessionId)
+      return r;
+  } catch {}
+  return null;
+}
+var pidAlive3 = (pid) => {
+  if (!pid || pid <= 1)
+    return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+};
+function currentMain2(alive = (r) => pidAlive3(r.pid)) {
+  const m = readMain();
+  return m && alive(m) ? m : null;
+}
+var CROSS_CUTTING2 = new Set(["route", "team", "gather", "cleanup"]);
+
+// src/attention/summary.ts
+var one2 = (s, n = 140) => {
+  const t = s.replace(/\s+/g, " ").trim();
+  return t.length > n ? t.slice(0, n - 1) + "\u2026" : t;
+};
+var totalUsd2 = (reports = all2()) => [...reports.values()].reduce((n, r) => n + (typeof r.usd === "number" ? r.usd : 0), 0);
+function gather2(since, o = {}) {
+  const now = o.now ?? Date.now();
+  const done = [];
+  try {
+    for (const t of Object.values(readThreads().threads))
+      for (const n of notes(t, "task"))
+        if (n.state === "done" && (n.doneAt ?? 0) >= since)
+          done.push(`${t.meta.value.name}: ${one2(n.text)}`);
+  } catch {}
+  const decided = (read4().decisions ?? []).filter((d) => d.at >= since).map((d) => `${d.who}: ${one2(d.question, 90)} \u2192 ${one2(d.answer, 60)}${d.how === "default" ? " (its recommendation, unanswered)" : ""}`);
+  const happened = recentEvents(30, now).filter((e) => e.at >= since).reverse().map((e) => e.text);
+  let waiting = [];
+  try {
+    waiting = Object.values(snapshot()).filter((i) => (i.state === "pending" || i.state === "later") && i.question).map((i) => one2(i.question, 120));
+  } catch {}
+  const spent = o.usdAtStart !== undefined ? Math.max(0, totalUsd2() - o.usdAtStart) : undefined;
+  return { done, decided, happened, waiting, ...spent !== undefined ? { spent } : {}, since };
+}
+var dur2 = (ms) => {
+  const m = Math.round(ms / 60000);
+  return m < 60 ? `${m} min` : `${Math.round(m / 6) / 10} h`.replace(".0 h", " h");
+};
+function short2(s, now = Date.now(), what = "While you were away") {
+  const bits = [
+    s.done.length ? `${s.done.length} task${s.done.length === 1 ? "" : "s"} done` : "",
+    s.decided.length ? `${s.decided.length} decision${s.decided.length === 1 ? "" : "s"} made for you` : "",
+    s.happened.length ? `${s.happened.length} update${s.happened.length === 1 ? "" : "s"}` : "",
+    s.waiting.length ? `${s.waiting.length} waiting on you` : "nothing waiting on you",
+    s.spent ? `$${s.spent.toFixed(2)} spent` : ""
+  ].filter(Boolean);
+  return `\u25e2 ${what} (${dur2(now - s.since)}): ${bits.join(" \u00b7 ")}. Say "what happened while I was away" for the details.`;
+}
+
+// src/attention/worker.ts
+import fs44 from "node:fs";
+import path52 from "node:path";
+var file14 = () => path52.join(P.root, "worker.json");
+var DEFAULT_MAX = 2;
+function read6() {
+  try {
+    const p = JSON.parse(fs44.readFileSync(file14(), "utf8"));
     return { on: !!p.on, max: Math.max(1, Math.min(4, Number(p.max) || DEFAULT_MAX)), ...Array.isArray(p.threads) ? { threads: p.threads.map(String) } : {}, running: Array.isArray(p.running) ? p.running : [], tried: Array.isArray(p.tried) ? p.tried.slice(-200) : [] };
   } catch {
     return { on: false, max: DEFAULT_MAX, running: [], tried: [] };
   }
 }
-function write4(p) {
-  fs43.mkdirSync(P.root, { recursive: true, mode: 448 });
-  const tmp = `${file13()}.${process.pid}.tmp`;
-  fs43.writeFileSync(tmp, JSON.stringify(p), { mode: 384 });
-  fs43.renameSync(tmp, file13());
+function write5(p) {
+  fs44.mkdirSync(P.root, { recursive: true, mode: 448 });
+  const tmp = `${file14()}.${process.pid}.tmp`;
+  fs44.writeFileSync(tmp, JSON.stringify(p), { mode: 384 });
+  fs44.renameSync(tmp, file14());
 }
 
 // src/spawn.ts
-import fs44 from "node:fs";
-import path52 from "node:path";
-var dir9 = () => path52.join(P.root, "spawned");
+import fs45 from "node:fs";
+import path53 from "node:path";
+var dir9 = () => path53.join(P.root, "spawned");
 function readSpawned2() {
   let names;
   try {
-    names = fs44.readdirSync(dir9()).filter((f) => f.endsWith(".json"));
+    names = fs45.readdirSync(dir9()).filter((f) => f.endsWith(".json"));
   } catch {
     return [];
   }
   const out = [];
   for (const f of names)
     try {
-      const r = JSON.parse(fs44.readFileSync(path52.join(dir9(), f), "utf8"));
+      const r = JSON.parse(fs45.readFileSync(path53.join(dir9(), f), "utf8"));
       if (r?.id && r.worktree)
         out.push(r);
     } catch {}
   return out.sort((a, b) => a.createdAt - b.createdAt);
 }
 function spawnedAt2(cwd, recs = readSpawned2()) {
-  const c = path52.resolve(cwd);
-  return recs.find((r) => !r.removedAt && (c === path52.resolve(r.worktree) || c.startsWith(path52.resolve(r.worktree) + path52.sep))) ?? null;
+  const c = path53.resolve(cwd);
+  return recs.find((r) => !r.removedAt && (c === path53.resolve(r.worktree) || c.startsWith(path53.resolve(r.worktree) + path53.sep))) ?? null;
 }
 var STOP3 = new Set("a an the on to for and of in with at by from into onto this that it its be is are please can could would you start put get run spin up fire one two three four five six seven eight more another new agent agents session sessions claude someone somebody work working".split(" "));
 var TMUX_CONF2 = [
@@ -6694,8 +6768,8 @@ function agyCwd() {
   if (Array.isArray(ws) && typeof ws[0] === "string" && ws[0])
     return ws[0];
   const here = process.cwd();
-  if (AGENT_DIRS.has(path53.basename(here)))
-    return path53.dirname(here);
+  if (AGENT_DIRS.has(path54.basename(here)))
+    return path54.dirname(here);
   return here;
 }
 var cwd = hook.cwd ?? hook.working_dir ?? hook.workspace_roots?.[0] ?? (isAgy ? agyCwd() : process.cwd());
@@ -6892,6 +6966,17 @@ ${m}` : m;
     }
   } catch {}
 }
+if (restoreClient === "claude" && sessionId && isSessionStart && !process.env[BG_ENV] && process.env.CLAUDE_CODE_ENTRYPOINT === "cli")
+  try {
+    const m = morning(Date.now());
+    if (m)
+      systemMessage = systemMessage ? `${systemMessage}
+${m}` : m;
+  } catch {}
+if (sessionId && /^UserPromptSubmit$/.test(eventName) && !process.env[BG_ENV])
+  try {
+    seen(Date.now());
+  } catch {}
 if (sessionId && /^UserPromptSubmit$/.test(eventName) && !/^\s*(Tackle the open items you listed|I handed you the crosstalk message)/.test(String(hook.prompt ?? "")))
   try {
     resetChain(sessionId);
@@ -6900,9 +6985,9 @@ if (restoreClient === "claude" && sessionId && /^UserPromptSubmit$/.test(eventNa
   try {
     const was = update((s) => end(s));
     if (!was.workerWasOn)
-      write4({ ...read5(), on: false });
+      write5({ ...read6(), on: false });
     setAlways(false);
-    const m = short(gather(was.since ?? Date.now() - 8 * 3600000, { ...was.usdAtStart !== undefined ? { usdAtStart: was.usdAtStart } : {} }));
+    const m = short2(gather2(was.since ?? Date.now() - 8 * 3600000, { ...was.usdAtStart !== undefined ? { usdAtStart: was.usdAtStart } : {} }));
     systemMessage = systemMessage ? `${systemMessage}
 ${m}` : m;
   } catch {}
@@ -6915,10 +7000,10 @@ async function registerSession() {
   if (socket) {
     try {
       const dir = sessionsDir();
-      for (const f of fs45.readdirSync(dir)) {
+      for (const f of fs46.readdirSync(dir)) {
         if (!f.endsWith(".json"))
           continue;
-        const e = JSON.parse(fs45.readFileSync(path53.join(dir, f), "utf8"));
+        const e = JSON.parse(fs46.readFileSync(path54.join(dir, f), "utf8"));
         if (e.sessionId === sessionId) {
           name = e.name ?? name;
           break;
@@ -6926,7 +7011,7 @@ async function registerSession() {
       }
     } catch {}
   } else {
-    name = hook.thread_name ?? (path53.basename(cwd) || name);
+    name = hook.thread_name ?? (path54.basename(cwd) || name);
   }
   const registered = await request({
     op: "register",

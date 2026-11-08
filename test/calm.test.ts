@@ -104,3 +104,18 @@ describe("finished sessions close themselves", () => {
       expect([o, AC.why(c({ ...o, shippedAt: NOW - 20 * MIN }), NOW)]).toEqual([o, null])
   })
 })
+
+describe("the day", () => {
+  test("the first session after a quiet stretch says what happened since, once; plan and wrap up read the threads", async () => {
+    const D = await import("../src/attention/day.ts")
+    D.seen(NOW)
+    expect(D.morning(NOW + 3600_000)).toBe(null) // not a quiet stretch
+    const m = D.morning(NOW + 9 * 3600_000)!
+    expect(m).toContain("Since you were last here")
+    expect(m).toContain(`"plan my day"`)
+    expect(D.morning(NOW + 9 * 3600_000 + 60_000)).toBe(null) // once
+    expect(D.plan()).toContain("A clear day") // no threads in this home
+    expect(D.wrapUp(NOW + 10 * 3600_000)).toContain("Today")
+    expect(D.pickUp(NOW + 11 * 3600_000)).toContain("Since you left off")
+  })
+})

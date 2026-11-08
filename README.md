@@ -141,6 +141,25 @@ you, it asks.
   *Always* and the agent just carries on with them from then on. *"Stop
   tackling open items by itself"* turns that off.
 
+**Your day**
+- The first session of the day says what happened since you were last
+  here, in one paragraph.
+- *"Plan my day."* The open work, thread by thread; pick today's few and
+  agents take those, the rest wait.
+- *"Wrap up for today."* What shipped and was decided, and what is open for
+  tomorrow. *"Pick up where I left off"* brings it back.
+- Back in a tab after a while, one line says where you left off there.
+
+**crosstalk keeps things in shape by itself**
+- A session whose pull request merged closes once it is idle; any session
+  idle three hours closes too. Never one that is busy, waiting on you, running
+  a server or holding uncommitted changes. Each says so in Lately, and
+  *"resume <name>"* brings it back with its conversation.
+- A session whose context runs out starts fresh from its thread, in the same
+  tab, at a natural break. *"Stop starting fresh by itself"* compacts as usual.
+- New agents work out of sight while a main session is open; their questions
+  come to main.
+
 **Less to carry**
 - *"I'm focusing for an hour."* Only what stops an agent interrupts you; the
   rest waits, and one line at the end says what did.

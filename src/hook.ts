@@ -39,6 +39,7 @@ import * as intro from "./intro.ts"
 import * as tabStatus from "./terminal/status.ts"
 import * as openItems from "./attention/openitems.ts"
 import * as calmMod from "./attention/calm.ts"
+import * as dayMod from "./attention/day.ts"
 import * as mainS from "./main.ts"
 import * as summaryMod from "./attention/summary.ts"
 import * as workerMod from "./attention/worker.ts"
@@ -470,6 +471,17 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
     }
   } catch {}
 }
+
+// The first session of the day (six quiet hours or more): what happened since, and an offer to plan the day.
+if (restoreClient === "claude" && sessionId && isSessionStart && !process.env[BG_ENV] && process.env.CLAUDE_CODE_ENTRYPOINT === "cli")
+  try {
+    const m = dayMod.morning(Date.now())
+    if (m) systemMessage = systemMessage ? `${systemMessage}\n${m}` : m
+  } catch {}
+if (sessionId && /^UserPromptSubmit$/.test(eventName) && !process.env[BG_ENV])
+  try {
+    dayMod.seen(Date.now())
+  } catch {}
 
 // The person typed: open lists may carry on again (openItems.CHAIN_MAX rounds in a row at most).
 if (sessionId && /^UserPromptSubmit$/.test(eventName) && !/^\s*(Tackle the open items you listed|I handed you the crosstalk message)/.test(String(hook.prompt ?? "")))

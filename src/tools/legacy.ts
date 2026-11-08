@@ -29,6 +29,7 @@ import * as openItemsPrefs from "../attention/openitems.ts"
 import * as Openitems from "../attention/openitems.ts"
 import * as Calm from "../attention/calm.ts"
 import * as Summary from "../attention/summary.ts"
+import * as Day from "../attention/day.ts"
 import * as Worker from "../attention/worker.ts"
 import * as Transcripts from "../sessions/transcripts.ts"
 
@@ -323,6 +324,9 @@ export async function callLegacy(name: string, a: any, o: Ctx): Promise<Result |
         Openitems.setAlways(true)
         return text(`◢ crosstalk: away mode. Agents keep going as far as they safely can: a question takes the agent's own recommendation, or it picks the safest reversible choice and writes down why; open lists are tackled; open tasks are worked, at most two agents, paused near your plan's limit. Permission prompts, deploys and anything only you can do wait for you. Your first message back gives the summary.`)
       }
+      if (a.mode === "plan") return text(Day.plan())
+      if (a.mode === "wrap_up") return text(Day.wrapUp(now))
+      if (a.mode === "pick_up") return text(Day.pickUp(now))
       // back: end whichever mode, and say what happened.
       const was = Calm.update((s) => Calm.end(s))
       if (was.mode === "away") {
