@@ -9960,20 +9960,21 @@ function writePrefs(p) {
   fs24.mkdirSync(P.root, { recursive: true, mode: 448 });
   const week = Date.now() - 7 * 86400000;
   const seen = Object.fromEntries(Object.entries(p.seen ?? {}).filter(([, at]) => at > week));
+  const seenItems = Object.fromEntries(Object.entries(p.seenItems ?? {}).filter(([, l]) => l.some((x) => x.at > week)));
   const tmp = `${file5()}.${process.pid}.tmp`;
-  fs24.writeFileSync(tmp, JSON.stringify({ ...p, seen }), { mode: 384 });
+  fs24.writeFileSync(tmp, JSON.stringify({ ...p, seen, seenItems }), { mode: 384 });
   fs24.renameSync(tmp, file5());
 }
 var setAlways = (on) => writePrefs({ ...readPrefs(), always: on });
 var TACKLE = "Tackle them";
 var ALWAYS = "Always";
 var NOT_NOW = "Not now";
-function tacklePrompt(items) {
+function tacklePrompt(items, ids = []) {
   return [
     `Tackle the open items you listed:`,
-    ...items.map((x, i) => `${i + 1}. ${x}`),
+    ...items.map((x, i) => `${i + 1}. ${x}${ids[i] ? ` (task ${ids[i]})` : ""}`),
     ``,
-    `Do each one you can do yourself. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). For any that needs a decision or an action only the person can take, ask them (one question for all of those, at the end) instead of guessing. When you finish, list only what is still open.`
+    `Do each one you can do yourself${ids.length ? `, and mark it done with crosstalk_thread action "task", op "done" and its task id` : ""}. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). For any that needs a decision or an action only the person can take, ask them (one question for all of those, at the end) instead of guessing. When you finish, list only what is still open; if nothing is, say so and leave out the Open list.`
   ].join(`
 `);
 }
@@ -13777,10 +13778,11 @@ async function uiCmd(argv, root) {
         if (!claim.ok)
           return print({ ok: false, error: claim.error });
         const list = claim.item?.names ?? [];
+        const ids = list.map((x) => claim.item?.targets?.[x] ?? "");
         if (v === ALWAYS)
           setAlways(true);
         if ((v === TACKLE || v === ALWAYS) && list.length)
-          return print({ ok: true, item: claim.item, prompt: tacklePrompt(list), text: v === ALWAYS ? "tackling them, and from now on by itself" : "tackling them" });
+          return print({ ok: true, item: claim.item, prompt: tacklePrompt(list, ids), text: v === ALWAYS ? "tackling them, and from now on by itself" : "tackling them" });
         return print({ ok: true, item: claim.item, text: "left them as tasks" });
       }
       if (id.startsWith("env:"))

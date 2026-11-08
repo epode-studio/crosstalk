@@ -23286,8 +23286,9 @@ function writePrefs(p) {
   fs26.mkdirSync(P2.root, { recursive: true, mode: 448 });
   const week = Date.now() - 7 * 86400000;
   const seen = Object.fromEntries(Object.entries(p.seen ?? {}).filter(([, at]) => at > week));
+  const seenItems = Object.fromEntries(Object.entries(p.seenItems ?? {}).filter(([, l]) => l.some((x) => x.at > week)));
   const tmp = `${file8()}.${process.pid}.tmp`;
-  fs26.writeFileSync(tmp, JSON.stringify({ ...p, seen }), { mode: 384 });
+  fs26.writeFileSync(tmp, JSON.stringify({ ...p, seen, seenItems }), { mode: 384 });
   fs26.renameSync(tmp, file8());
 }
 var setAlways = (on) => writePrefs({ ...readPrefs(), always: on });

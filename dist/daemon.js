@@ -4644,7 +4644,7 @@ class ThreadService {
         return { ok: false, error: "somebody else has that one. Pick a different task rather than doing it twice." };
       put(t, "notes", k.id, { ...data, state: "claimed", claimedBy: this.label }, this.me, now);
     } else
-      put(t, "notes", k.id, { ...data, state: "done", doneBy: this.label, ...o.note ? { note: o.note } : {} }, this.me, now);
+      put(t, "notes", k.id, { ...data, state: "done", doneBy: this.label, doneAt: now, ...o.note ? { note: o.note } : {} }, this.me, now);
     this.touched.add(t.id);
     this.flush();
     return { ok: true, thread: t.meta.value.name, id: k.id };

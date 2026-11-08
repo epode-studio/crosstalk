@@ -89,7 +89,7 @@ export type TaskState = "open" | "claimed" | "done"
 export type Decision = NoteBase & { kind: "decision"; rationale?: string; session?: string }
 /** `confirmed`: who has since said it still holds; `supersededBy`: the fact that corrected it. */
 export type Fact = NoteBase & { kind: "fact"; confirmed?: { by: string; at: number }[]; supersededBy?: string; reason?: string }
-export type Task = NoteBase & { kind: "task"; state: TaskState; claimedBy?: string; doneBy?: string; note?: string }
+export type Task = NoteBase & { kind: "task"; state: TaskState; claimedBy?: string; doneBy?: string; doneAt?: number; note?: string }
 /**
  * A standing rule ("Answers become rules"). `when` describes the kind of
  * question, `then` the standing answer, `sig` the author's signature

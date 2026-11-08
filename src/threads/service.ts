@@ -1072,7 +1072,7 @@ export class ThreadService {
     if (o.op === "claim") {
       if (k.state !== "open" && k.claimedBy !== this.label) return { ok: false as const, error: "somebody else has that one. Pick a different task rather than doing it twice." }
       M.put(t, "notes", k.id, { ...data, state: "claimed", claimedBy: this.label }, this.me, now)
-    } else M.put(t, "notes", k.id, { ...data, state: "done", doneBy: this.label, ...(o.note ? { note: o.note } : {}) }, this.me, now)
+    } else M.put(t, "notes", k.id, { ...data, state: "done", doneBy: this.label, doneAt: now, ...(o.note ? { note: o.note } : {}) }, this.me, now)
     this.touched.add(t.id)
     this.flush()
     return { ok: true as const, thread: t.meta.value.name, id: k.id }

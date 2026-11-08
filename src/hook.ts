@@ -38,6 +38,8 @@ import * as shots from "./urls/shots/index.ts"
 import * as intro from "./intro.ts"
 import * as tabStatus from "./terminal/status.ts"
 import * as openItems from "./attention/openitems.ts"
+import * as spawnMod from "./spawn.ts"
+import { BG_ENV } from "./attention/background.ts"
 
 const input = await new Promise<string>((resolve) => {
   let raw = ""
@@ -422,20 +424,30 @@ if (restoreClient === "claude" && /^(SessionStart|UserPromptSubmit|Stop|PreCompa
  */
 if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !process.env.CROSSTALK_NO_OPEN_ITEMS && !/^sdk/i.test(process.env.CLAUDE_CODE_ENTRYPOINT ?? "")) {
   try {
-    const r = openItems.atStop({ reply: openItems.lastReply(typeof hook.transcript_path === "string" ? hook.transcript_path : undefined), sessionId, continuing: hook.stop_hook_active === true })
-    if (r?.fresh) {
+    // Agents crosstalk started (the board's workers, background agents) never feed the board or carry on by themselves.
+    const started = !!process.env[BG_ENV] || (() => {
+      try {
+        return !!spawnMod.spawnedAt(cwd)
+      } catch {
+        return false
+      }
+    })()
+    const r = started ? null : openItems.atStop({ reply: openItems.lastReply(typeof hook.transcript_path === "string" ? hook.transcript_path : undefined), sessionId, continuing: hook.stop_hook_active === true })
+    if (r?.fresh && r.items.length) {
       let thread: string | undefined
+      const ids: string[] = []
       if (await ensureDaemon(root))
         for (const text of r.items)
           try {
             const t = await request({ op: "tasks", sessionId, cwd, write: "add", text }, 3000)
             if (t?.ok && t.thread) thread = t.thread
+            if (t?.ok && t.id) ids.push(String(t.id))
           } catch {}
       if (r.auto) {
         process.stdout.write(
           JSON.stringify({
             decision: "block",
-            reason: openItems.tacklePrompt(r.items),
+            reason: openItems.tacklePrompt(r.items, ids),
             systemMessage: `◢ crosstalk: going on with the ${r.items.length} open item${r.items.length === 1 ? "" : "s"}, as you chose. "Stop tackling open items by itself" turns that off.`,
           }),
         )
@@ -444,7 +456,7 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
       const kept = thread ? ` Kept as tasks in ${thread}.` : ""
       if (ui.modActive(sessionId))
         ui.withStore((items, now) =>
-          ui.upsert(items, { id: `open:${sessionId}:${r.id}`, kind: "attention", sessionId, ...(thread ? { thread } : {}), question: openItems.question(r.items.length), text: openItems.context(r.items, r.waiting) + kept, names: r.items, options: [openItems.TACKLE, openItems.ALWAYS, openItems.NOT_NOW], ts: now }, now),
+          ui.upsert(items, { id: `open:${sessionId}:${r.id}`, kind: "attention", sessionId, ...(thread ? { thread } : {}), question: openItems.question(r.items.length), text: openItems.context(r.items, r.waiting, r.persons) + kept, names: r.items, ...(ids.length ? { targets: Object.fromEntries(r.items.map((x, i) => [x, ids[i] ?? ""])) } : {}), options: [openItems.TACKLE, openItems.ALWAYS, openItems.NOT_NOW], ts: now }, now),
         )
       else {
         const m = `◢ crosstalk: ${r.items.length} open item${r.items.length === 1 ? "" : "s"} in that reply.${kept} Say "tackle them" to go on.`

@@ -102,19 +102,60 @@ export function isWaiting(item: string): boolean {
   return WAITING.some((r) => r.test(item))
 }
 
-/** An Open list split into work to do and things only waited on. */
-export function split(items: string[]): { todo: string[]; waiting: string[] } {
+/**
+ * Whether an item is the person's, not work for an agent: a question, a
+ * decision, something they have to do or report ("your console output", "run
+ * this in Terminal", "approve", "merge", "deploy"). Mentioned, never kept as a
+ * task or tackled.
+ */
+const PERSON = [
+  /\?\s*$/,
+  /^\s*(?:decide|should|approve|confirm|choose|pick|sign|log ?in|merge|deploy|release|ship it|your call)\b/i,
+  /\b(?:you|your|yours|the person|the user|only you|up to you|on your side|in your browser)\b/i,
+  /\b(?:needs?|waiting on|waits on|awaiting)\b[^.]*\b(?:you|approval|review|sign-?off|decision|answer)\b/i,
+  /\bneeds? to (?:approve|review|sign|decide|confirm|answer|test)\b/i,
+]
+
+export function isPersons(item: string): boolean {
+  return PERSON.some((r) => r.test(item))
+}
+
+/** A reply that says, in its own words, that what is left is the person's. */
+const ALL_PERSONS = /\b(?:(?:all|everything|each)\b[^.\n]{0,40}\b(?:waiting on|waits on|needs|is up to) you|i can'?t do (?:any|all|these|this|them)\b|only you can|is on your side|waiting on you\b)/i
+
+/** Lowercase words only: the same item, however it was bolded, punctuated or reworded slightly. */
+export const norm = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^a-z0-9#]+/g, " ")
+    .trim()
+
+/** Near enough the same item: most of the shorter one's words are in the other. */
+export function same(a: string, b: string): boolean {
+  const x = new Set(norm(a).split(" ").filter((w) => w.length > 2))
+  const y = new Set(norm(b).split(" ").filter((w) => w.length > 2))
+  if (!x.size || !y.size) return norm(a) === norm(b)
+  const small = x.size <= y.size ? x : y
+  const big = small === x ? y : x
+  let hit = 0
+  for (const w of small) if (big.has(w)) hit++
+  return hit / small.size >= 0.75
+}
+
+/** An Open list split into work to do, things only waited on, and the person's own. */
+export function split(items: string[]): { todo: string[]; waiting: string[]; persons: string[] } {
   const todo: string[] = []
   const waiting: string[] = []
-  for (const x of items) (isWaiting(x) ? waiting : todo).push(x)
-  return { todo, waiting }
+  const persons: string[] = []
+  for (const x of items) (isWaiting(x) ? waiting : isPersons(x) ? persons : todo).push(x)
+  return { todo, waiting, persons }
 }
 
 export const hashOf = (items: string[]) => crypto.createHash("sha256").update(items.join("\n")).digest("hex").slice(0, 12)
 
 // --- the preference and what was already taken in --------------------------------------
 
-type Prefs = { always?: boolean; seen?: Record<string, number> }
+type Prefs = { always?: boolean; seen?: Record<string, number>; seenItems?: Record<string, { t: string; at: number }[]> }
 const file = () => path.join(P.root, "open-items.json")
 
 export function readPrefs(): Prefs {
@@ -130,8 +171,9 @@ export function writePrefs(p: Prefs) {
   // The seen list stays small: a week of lists.
   const week = Date.now() - 7 * 86_400_000
   const seen = Object.fromEntries(Object.entries(p.seen ?? {}).filter(([, at]) => at > week))
+  const seenItems = Object.fromEntries(Object.entries(p.seenItems ?? {}).filter(([, l]) => l.some((x) => x.at > week)))
   const tmp = `${file()}.${process.pid}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify({ ...p, seen }), { mode: 0o600 })
+  fs.writeFileSync(tmp, JSON.stringify({ ...p, seen, seenItems }), { mode: 0o600 })
   fs.renameSync(tmp, file())
 }
 
@@ -145,17 +187,17 @@ export const NOT_NOW = "Not now"
 
 export const question = (n: number) => `Tackle the ${n} open item${n === 1 ? "" : "s"} from that reply?`
 
-/** The picker's context: the work, then what is only waited on (not tackled, not kept as tasks). */
-export const context = (todo: string[], waiting: string[]) =>
-  [...todo.map((x) => `· ${x}`), ...(waiting.length ? [`Waiting on (left alone): ${waiting.join("; ")}`] : [])].join("\n")
+/** The picker's context: the work, then what is only waited on and what is the person's (neither tackled nor kept). */
+export const context = (todo: string[], waiting: string[], persons: string[] = []) =>
+  [...todo.map((x) => `· ${x}`), ...(persons.length ? [`For you (left to you): ${persons.join("; ")}`] : []), ...(waiting.length ? [`Waiting on (left alone): ${waiting.join("; ")}`] : [])].join("\n")
 
 /** The turn that tackles them, in crosstalk's words (the person picked it, or said Always). */
-export function tacklePrompt(items: string[]): string {
+export function tacklePrompt(items: string[], ids: string[] = []): string {
   return [
     `Tackle the open items you listed:`,
-    ...items.map((x, i) => `${i + 1}. ${x}`),
+    ...items.map((x, i) => `${i + 1}. ${x}${ids[i] ? ` (task ${ids[i]})` : ""}`),
     ``,
-    `Do each one you can do yourself. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). For any that needs a decision or an action only the person can take, ask them (one question for all of those, at the end) instead of guessing. When you finish, list only what is still open.`,
+    `Do each one you can do yourself${ids.length ? `, and mark it done with crosstalk_thread action "task", op "done" and its task id` : ""}. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). For any that needs a decision or an action only the person can take, ask them (one question for all of those, at the end) instead of guessing. When you finish, list only what is still open; if nothing is, say so and leave out the Open list.`,
   ].join("\n")
 }
 
@@ -163,16 +205,23 @@ export function tacklePrompt(items: string[]): string {
  * What to do at a Stop: the items, and whether they are new. Pure apart from
  * the preference file, which it updates: a list is taken in once.
  */
-export function atStop(o: { reply: string; sessionId: string; continuing: boolean; now?: number }): { items: string[]; waiting: string[]; id: string; fresh: boolean; auto: boolean } | null {
+export function atStop(o: { reply: string; sessionId: string; continuing: boolean; now?: number }): { items: string[]; waiting: string[]; persons: string[]; id: string; fresh: boolean; auto: boolean } | null {
   const all = parseOpen(o.reply)
-  const { todo: items, waiting } = split(all)
-  // Only waiting: nothing to tackle and nothing to keep.
-  if (!items.length) return null
-  const id = hashOf(items)
+  if (!all.length) return null
+  // The agent said it in so many words: what is left is the person's.
+  const before = o.reply.slice(0, Math.max(0, o.reply.lastIndexOf(all[0]!.slice(0, 20)))) || o.reply
+  const { todo, waiting, persons } = ALL_PERSONS.test(before) ? { todo: [] as string[], waiting: [] as string[], persons: all } : split(all)
+  // Only what waits or is the person's: nothing to tackle, nothing to keep, nothing to ask.
+  if (!todo.length) return null
+  const now = o.now ?? Date.now()
   const p = readPrefs()
-  const key = `${o.sessionId}:${id}`
-  const fresh = !p.seen?.[key]
-  if (fresh) writePrefs({ ...p, seen: { ...(p.seen ?? {}), [key]: o.now ?? Date.now() } })
-  // Continuing by itself once per prompt the person typed: Claude Code says when a turn is already one.
-  return { items, waiting, id, fresh, auto: !!p.always && !o.continuing && fresh }
+  // Seen before in this session, however it was reworded: not new. Only new items are asked about.
+  const seen = (p.seenItems?.[o.sessionId] ?? []).map((x) => x.t)
+  const items = todo.filter((x) => !seen.some((y) => same(x, y)))
+  const id = hashOf(todo)
+  if (!items.length) return { items: [], waiting, persons, id, fresh: false, auto: false }
+  const kept = [...(p.seenItems?.[o.sessionId] ?? []).filter((x) => now - x.at < 3 * 86_400_000), ...items.map((t) => ({ t, at: now }))].slice(-200)
+  writePrefs({ ...p, seenItems: { ...(p.seenItems ?? {}), [o.sessionId]: kept } })
+  // A turn that is already a continuation never asks: under Always it simply ends there.
+  return { items, waiting, persons, id, fresh: !o.continuing || !p.always, auto: !!p.always && !o.continuing }
 }

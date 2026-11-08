@@ -2,8 +2,8 @@
 // @bun
 
 // src/hook.ts
-import path46 from "path";
-import fs38 from "fs";
+import path47 from "path";
+import fs39 from "fs";
 
 // src/client.ts
 import net from "node:net";
@@ -6309,12 +6309,38 @@ var WAITING = [
 function isWaiting(item) {
   return WAITING.some((r) => r.test(item));
 }
+var PERSON = [
+  /\?\s*$/,
+  /^\s*(?:decide|should|approve|confirm|choose|pick|sign|log ?in|merge|deploy|release|ship it|your call)\b/i,
+  /\b(?:you|your|yours|the person|the user|only you|up to you|on your side|in your browser)\b/i,
+  /\b(?:needs?|waiting on|waits on|awaiting)\b[^.]*\b(?:you|approval|review|sign-?off|decision|answer)\b/i,
+  /\bneeds? to (?:approve|review|sign|decide|confirm|answer|test)\b/i
+];
+function isPersons(item) {
+  return PERSON.some((r) => r.test(item));
+}
+var ALL_PERSONS = /\b(?:(?:all|everything|each)\b[^.\n]{0,40}\b(?:waiting on|waits on|needs|is up to) you|i can'?t do (?:any|all|these|this|them)\b|only you can|is on your side|waiting on you\b)/i;
+var norm = (s) => s.toLowerCase().replace(/[^a-z0-9#]+/g, " ").trim();
+function same(a, b) {
+  const x = new Set(norm(a).split(" ").filter((w) => w.length > 2));
+  const y = new Set(norm(b).split(" ").filter((w) => w.length > 2));
+  if (!x.size || !y.size)
+    return norm(a) === norm(b);
+  const small = x.size <= y.size ? x : y;
+  const big = small === x ? y : x;
+  let hit = 0;
+  for (const w of small)
+    if (big.has(w))
+      hit++;
+  return hit / small.size >= 0.75;
+}
 function split(items) {
   const todo = [];
   const waiting = [];
+  const persons = [];
   for (const x of items)
-    (isWaiting(x) ? waiting : todo).push(x);
-  return { todo, waiting };
+    (isWaiting(x) ? waiting : isPersons(x) ? persons : todo).push(x);
+  return { todo, waiting, persons };
 }
 var hashOf = (items) => crypto4.createHash("sha256").update(items.join(`
 `)).digest("hex").slice(0, 12);
@@ -6330,38 +6356,86 @@ function writePrefs(p) {
   fs37.mkdirSync(P.root, { recursive: true, mode: 448 });
   const week = Date.now() - 7 * 86400000;
   const seen = Object.fromEntries(Object.entries(p.seen ?? {}).filter(([, at]) => at > week));
+  const seenItems = Object.fromEntries(Object.entries(p.seenItems ?? {}).filter(([, l]) => l.some((x) => x.at > week)));
   const tmp = `${file9()}.${process.pid}.tmp`;
-  fs37.writeFileSync(tmp, JSON.stringify({ ...p, seen }), { mode: 384 });
+  fs37.writeFileSync(tmp, JSON.stringify({ ...p, seen, seenItems }), { mode: 384 });
   fs37.renameSync(tmp, file9());
 }
 var TACKLE = "Tackle them";
 var ALWAYS = "Always";
 var NOT_NOW2 = "Not now";
 var question2 = (n) => `Tackle the ${n} open item${n === 1 ? "" : "s"} from that reply?`;
-var context = (todo, waiting) => [...todo.map((x) => `\u00b7 ${x}`), ...waiting.length ? [`Waiting on (left alone): ${waiting.join("; ")}`] : []].join(`
+var context = (todo, waiting, persons = []) => [...todo.map((x) => `\u00b7 ${x}`), ...persons.length ? [`For you (left to you): ${persons.join("; ")}`] : [], ...waiting.length ? [`Waiting on (left alone): ${waiting.join("; ")}`] : []].join(`
 `);
-function tacklePrompt(items) {
+function tacklePrompt(items, ids = []) {
   return [
     `Tackle the open items you listed:`,
-    ...items.map((x, i) => `${i + 1}. ${x}`),
+    ...items.map((x, i) => `${i + 1}. ${x}${ids[i] ? ` (task ${ids[i]})` : ""}`),
     ``,
-    `Do each one you can do yourself. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). For any that needs a decision or an action only the person can take, ask them (one question for all of those, at the end) instead of guessing. When you finish, list only what is still open.`
+    `Do each one you can do yourself${ids.length ? `, and mark it done with crosstalk_thread action "task", op "done" and its task id` : ""}. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). For any that needs a decision or an action only the person can take, ask them (one question for all of those, at the end) instead of guessing. When you finish, list only what is still open; if nothing is, say so and leave out the Open list.`
   ].join(`
 `);
 }
 function atStop(o) {
   const all = parseOpen(o.reply);
-  const { todo: items, waiting } = split(all);
-  if (!items.length)
+  if (!all.length)
     return null;
-  const id = hashOf(items);
+  const before = o.reply.slice(0, Math.max(0, o.reply.lastIndexOf(all[0].slice(0, 20)))) || o.reply;
+  const { todo, waiting, persons } = ALL_PERSONS.test(before) ? { todo: [], waiting: [], persons: all } : split(all);
+  if (!todo.length)
+    return null;
+  const now = o.now ?? Date.now();
   const p = readPrefs();
-  const key = `${o.sessionId}:${id}`;
-  const fresh = !p.seen?.[key];
-  if (fresh)
-    writePrefs({ ...p, seen: { ...p.seen ?? {}, [key]: o.now ?? Date.now() } });
-  return { items, waiting, id, fresh, auto: !!p.always && !o.continuing && fresh };
+  const seen = (p.seenItems?.[o.sessionId] ?? []).map((x) => x.t);
+  const items = todo.filter((x) => !seen.some((y) => same(x, y)));
+  const id = hashOf(todo);
+  if (!items.length)
+    return { items: [], waiting, persons, id, fresh: false, auto: false };
+  const kept = [...(p.seenItems?.[o.sessionId] ?? []).filter((x) => now - x.at < 3 * 86400000), ...items.map((t) => ({ t, at: now }))].slice(-200);
+  writePrefs({ ...p, seenItems: { ...p.seenItems ?? {}, [o.sessionId]: kept } });
+  return { items, waiting, persons, id, fresh: !o.continuing || !p.always, auto: !!p.always && !o.continuing };
 }
+
+// src/spawn.ts
+import fs38 from "node:fs";
+import path46 from "node:path";
+var dir8 = () => path46.join(P.root, "spawned");
+function readSpawned2() {
+  let names;
+  try {
+    names = fs38.readdirSync(dir8()).filter((f) => f.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const f of names)
+    try {
+      const r = JSON.parse(fs38.readFileSync(path46.join(dir8(), f), "utf8"));
+      if (r?.id && r.worktree)
+        out.push(r);
+    } catch {}
+  return out.sort((a, b) => a.createdAt - b.createdAt);
+}
+function spawnedAt2(cwd, recs = readSpawned2()) {
+  const c = path46.resolve(cwd);
+  return recs.find((r) => !r.removedAt && (c === path46.resolve(r.worktree) || c.startsWith(path46.resolve(r.worktree) + path46.sep))) ?? null;
+}
+var STOP3 = new Set("a an the on to for and of in with at by from into onto this that it its be is are please can could would you start put get run spin up fire one two three four five six seven eight more another new agent agents session sessions claude someone somebody work working".split(" "));
+var TMUX_CONF2 = [
+  `# crosstalk's own tmux server (tmux -L crosstalk), for agents it runs in the background.`,
+  `set -g status-left '#[bold]\u25e2 crosstalk#[default] #S  '`,
+  `set -g status-left-length 40`,
+  `set -g status-right '#{?#{==:#{@crosstalk_state},waiting},#[fg=colour208]\u25cf waiting on you,#{?#{==:#{@crosstalk_state},working},#[fg=colour33]\u25cf working,#{?#{==:#{@crosstalk_state},done},#[fg=colour34]\u2713 done,}}}'`,
+  `set -g set-titles on`,
+  `set -g set-titles-string '#S'`,
+  `set -g detach-on-destroy on`,
+  `set -g history-limit 50000`,
+  ``
+].join(`
+`);
+
+// src/attention/background.ts
+var BG_ENV = "CROSSTALK_BG_AGENT";
 
 // src/hook.ts
 var input = await new Promise((resolve) => {
@@ -6399,8 +6473,8 @@ function agyCwd() {
   if (Array.isArray(ws) && typeof ws[0] === "string" && ws[0])
     return ws[0];
   const here = process.cwd();
-  if (AGENT_DIRS.has(path46.basename(here)))
-    return path46.dirname(here);
+  if (AGENT_DIRS.has(path47.basename(here)))
+    return path47.dirname(here);
   return here;
 }
 var cwd = hook.cwd ?? hook.working_dir ?? hook.workspace_roots?.[0] ?? (isAgy ? agyCwd() : process.cwd());
@@ -6560,27 +6634,37 @@ ${a.systemMessage}` : a.systemMessage;
 }
 if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !process.env.CROSSTALK_NO_OPEN_ITEMS && !/^sdk/i.test(process.env.CLAUDE_CODE_ENTRYPOINT ?? "")) {
   try {
-    const r = atStop({ reply: lastReply(typeof hook.transcript_path === "string" ? hook.transcript_path : undefined), sessionId, continuing: hook.stop_hook_active === true });
-    if (r?.fresh) {
+    const started = !!process.env[BG_ENV] || (() => {
+      try {
+        return !!spawnedAt2(cwd);
+      } catch {
+        return false;
+      }
+    })();
+    const r = started ? null : atStop({ reply: lastReply(typeof hook.transcript_path === "string" ? hook.transcript_path : undefined), sessionId, continuing: hook.stop_hook_active === true });
+    if (r?.fresh && r.items.length) {
       let thread;
+      const ids = [];
       if (await ensureDaemon(root))
         for (const text of r.items)
           try {
             const t = await request({ op: "tasks", sessionId, cwd, write: "add", text }, 3000);
             if (t?.ok && t.thread)
               thread = t.thread;
+            if (t?.ok && t.id)
+              ids.push(String(t.id));
           } catch {}
       if (r.auto) {
         process.stdout.write(JSON.stringify({
           decision: "block",
-          reason: tacklePrompt(r.items),
+          reason: tacklePrompt(r.items, ids),
           systemMessage: `\u25E2 crosstalk: going on with the ${r.items.length} open item${r.items.length === 1 ? "" : "s"}, as you chose. "Stop tackling open items by itself" turns that off.`
         }));
         process.exit(0);
       }
       const kept = thread ? ` Kept as tasks in ${thread}.` : "";
       if (modActive(sessionId))
-        withStore((items, now) => upsert(items, { id: `open:${sessionId}:${r.id}`, kind: "attention", sessionId, ...thread ? { thread } : {}, question: question2(r.items.length), text: context(r.items, r.waiting) + kept, names: r.items, options: [TACKLE, ALWAYS, NOT_NOW2], ts: now }, now));
+        withStore((items, now) => upsert(items, { id: `open:${sessionId}:${r.id}`, kind: "attention", sessionId, ...thread ? { thread } : {}, question: question2(r.items.length), text: context(r.items, r.waiting, r.persons) + kept, names: r.items, ...ids.length ? { targets: Object.fromEntries(r.items.map((x, i) => [x, ids[i] ?? ""])) } : {}, options: [TACKLE, ALWAYS, NOT_NOW2], ts: now }, now));
       else {
         const m = `\u25E2 crosstalk: ${r.items.length} open item${r.items.length === 1 ? "" : "s"} in that reply.${kept} Say "tackle them" to go on.`;
         systemMessage = systemMessage ? `${systemMessage}
@@ -6598,10 +6682,10 @@ async function registerSession() {
   if (socket) {
     try {
       const dir = sessionsDir();
-      for (const f of fs38.readdirSync(dir)) {
+      for (const f of fs39.readdirSync(dir)) {
         if (!f.endsWith(".json"))
           continue;
-        const e = JSON.parse(fs38.readFileSync(path46.join(dir, f), "utf8"));
+        const e = JSON.parse(fs39.readFileSync(path47.join(dir, f), "utf8"));
         if (e.sessionId === sessionId) {
           name = e.name ?? name;
           break;
@@ -6609,7 +6693,7 @@ async function registerSession() {
       }
     } catch {}
   } else {
-    name = hook.thread_name ?? (path46.basename(cwd) || name);
+    name = hook.thread_name ?? (path47.basename(cwd) || name);
   }
   const registered = await request({
     op: "register",

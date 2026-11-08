@@ -66,19 +66,37 @@ describe("waiting is not work", () => {
 })
 
 describe("at the end of a turn", () => {
-  test("a list is taken in once; under Always the turn goes on, but only once per prompt", () => {
+  test("asked once per item, however reworded; under Always it goes on, and a continued turn never asks", () => {
     const first = O.atStop({ reply: REPLY, sessionId: "s1", continuing: false })!
     expect(first.items).toHaveLength(2)
-    expect(first.waiting).toEqual(["B is not live until its local checks pass and it ships."])
     expect(first.fresh).toBe(true)
     expect(first.auto).toBe(false) // nobody said Always yet: asked
-    expect(O.atStop({ reply: REPLY, sessionId: "s1", continuing: false })!.fresh).toBe(false) // the same list again: not again
+    const again = O.atStop({ reply: REPLY.replace("**Open**", "**Still open**").replace("whichever chat is selected", "whichever chat is currently selected"), sessionId: "s1", continuing: false })!
+    expect(again.items).toEqual([]) // the same items, reworded: nothing new
+    expect(again.fresh).toBe(false)
     O.setAlways(true)
-    const next = REPLY.replace("is selected", "is picked")
-    expect(O.atStop({ reply: next, sessionId: "s1", continuing: true })!.auto).toBe(false) // already a continued turn: no loop
-    const third = REPLY.replace("is selected", "is chosen")
-    expect(O.atStop({ reply: third, sessionId: "s1", continuing: false })!.auto).toBe(true)
+    const next = REPLY.trimEnd() + "\n- Write the release notes for B.\n"
+    const cont = O.atStop({ reply: next, sessionId: "s1", continuing: true })!
+    expect(cont.auto).toBe(false) // already a continued turn: no loop
+    expect(cont.fresh).toBe(false) // and no question either
+    const third = REPLY.trimEnd() + "\n- Add a rollback for the migration.\n"
+    const t = O.atStop({ reply: third, sessionId: "s1", continuing: false })!
+    expect(t.auto).toBe(true)
+    expect(t.items).toEqual(["Add a rollback for the migration."]) // only what is new
     O.setAlways(false)
+  })
+  test("what is the person's is never work: their console, their prompts, decisions, questions", () => {
+    const reply = `All of this is waiting on you: what your console printed, then the four prompts.
+
+**Open**
+- **The console output:** the user id and http number, plus claude mcp add run in Terminal.
+- **The four prompts in a new Claude Code session:** list, /mcp count, rename, delete.
+- **Then I check:** your user id against the flag.
+`
+    expect(O.atStop({ reply, sessionId: "s2", continuing: false })).toBe(null)
+    for (const p of ["Should I merge PR #12?", "Decide whether to keep the old API (your call)", "Deploy to production", "Marie needs to approve the design", "Run the four prompts in your browser"])
+      expect([p, O.isPersons(p)]).toEqual([p, true])
+    expect(O.isPersons("Write the migration for device ids.")).toBe(false)
   })
   test("the turn that tackles them lists them and says what to leave to the person", () => {
     const p = O.tacklePrompt(["ship B", "decide the Pi pose"])

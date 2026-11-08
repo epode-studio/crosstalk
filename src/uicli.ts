@@ -254,9 +254,10 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
         const claim = ui.withStore((items, now) => ui.act(items, id, "answer", now, v || openItems.NOT_NOW))
         if (!claim.ok) return print({ ok: false, error: claim.error })
         const list = claim.item?.names ?? []
+        const ids = list.map((x) => claim.item?.targets?.[x] ?? "")
         if (v === openItems.ALWAYS) openItems.setAlways(true)
         if ((v === openItems.TACKLE || v === openItems.ALWAYS) && list.length)
-          return print({ ok: true, item: claim.item, prompt: openItems.tacklePrompt(list), text: v === openItems.ALWAYS ? "tackling them, and from now on by itself" : "tackling them" })
+          return print({ ok: true, item: claim.item, prompt: openItems.tacklePrompt(list, ids), text: v === openItems.ALWAYS ? "tackling them, and from now on by itself" : "tackling them" })
         return print({ ok: true, item: claim.item, text: "left them as tasks" })
       }
       // Copying a repo's gitignored local files into new worktrees (src/env/): no daemon needed.
