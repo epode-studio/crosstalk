@@ -236,7 +236,7 @@ has "$NOTES" 'Say "show me bg1"' "the session in front gets a receipt naming the
 echo
 echo "4. a stuck thread: add a second agent?"
 stop_daemon
-start_daemon CROSSTALK_STUCK_MS=1500 CROSSTALK_STAFF_EVERY_MS=200
+start_daemon CROSSTALK_STUCK_MS=1500 CROSSTALK_STAFF_EVERY_MS=200 CROSSTALK_STAFFING=1
 AUTH_ID=$(field "$(rpc '{"op":"thread_read","thread":"auth"}')" 'r.threads[0].id')
 IT=$(wait_for 15 item_anywhere "attn:staff:$AUTH_ID")
 [ -n "$IT" ] && pass "nothing moved in auth: a question" || fail "nothing moved in auth: a question"

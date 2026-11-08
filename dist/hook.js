@@ -1897,6 +1897,9 @@ import fs14 from "node:fs";
 import path19 from "node:path";
 import { spawnSync as spawnSync8 } from "node:child_process";
 
+// src/main.ts
+var CROSS_CUTTING = new Set(["route", "team", "gather", "cleanup"]);
+
 // src/attention/focus.ts
 var appleFrontTtyScript = [
   `if application "Terminal" is running then`,
