@@ -240,7 +240,12 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
       }
       // An agent's question answered in main (src/attention/relay.ts): the pick is kept for the asking session's mod.
       if (id.startsWith("relay:")) {
-        if (action === "raised" || action === "later") return print(ui.withStore((items, now) => ui.act(items, id, action, now)))
+        // The agent that asked is gone: nobody to answer, so it is not asked.
+        if (!relay.askerAlive(id)) return print(ui.withStore((items, now) => ui.act(items, id, "mute", now)))
+        // Put off in main: asked in its own tab instead, rather than leaving the agent waiting.
+        if (action === "later") return print(ui.withStore((items, now) => ui.act(items, id, "answer", now, "")))
+        if (action === "raised") return print(ui.withStore((items, now) => ui.act(items, id, action, now)))
+        if (ui.snapshot()[id]?.sessionId !== session) return print({ ok: false, error: "only the main session it was put to answers it" })
         if (action === "answer" && insideAgent()) return print({ ok: false, error: "this is for a person: answer it in crosstalk's picker" })
         const claim = ui.withStore((items, now) => ui.act(items, id, "answer", now, (value ?? "").trim()))
         if (!claim.ok) return print({ ok: false, error: claim.error })

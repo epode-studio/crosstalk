@@ -58,6 +58,7 @@ export function agentsFrom(o: {
       ...(state === "idle" ? { idleMin: Math.max(0, Math.floor((o.now - r.seenAt) / 60_000)) } : {}),
       ...(r.terminal?.tmux?.socket && path.basename(r.terminal.tmux.socket) === "crosstalk" ? { background: true } : {}),
       ...(r.sessionId === o.self ? { here: true } : {}),
+      sessionId: r.sessionId,
       ...(asks ? { asks } : {}),
       ...(o.cost?.(r.sessionId) ? { cost: o.cost(r.sessionId) } : {}),
     })

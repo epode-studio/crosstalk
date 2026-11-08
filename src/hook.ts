@@ -453,15 +453,11 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
         )
         process.exit(0)
       }
-      const kept = thread ? ` Kept as tasks in ${thread}.` : ""
-      if (ui.modActive(sessionId))
-        ui.withStore((items, now) =>
-          ui.upsert(items, { id: `open:${sessionId}:${r.id}`, kind: "attention", sessionId, ...(thread ? { thread } : {}), question: openItems.question(r.items.length), text: openItems.context(r.items, r.waiting, r.persons) + kept, names: r.items, ...(ids.length ? { targets: Object.fromEntries(r.items.map((x, i) => [x, ids[i] ?? ""])) } : {}), options: [openItems.TACKLE, openItems.ALWAYS, openItems.NOT_NOW], ts: now }, now),
-        )
-      else {
-        const m = `◢ crosstalk: ${r.items.length} open item${r.items.length === 1 ? "" : "s"} in that reply.${kept} Say "tackle them" to go on.`
-        systemMessage = systemMessage ? `${systemMessage}\n${m}` : m
-      }
+      // Never a picker: a quiet line under the turn, which takes nothing from the keyboard.
+      const n = r.items.length
+      const where = thread ? ` kept as tasks in ${thread}` : ""
+      const m = `◢ crosstalk: ${n} open item${n === 1 ? "" : "s"}${where}. Say "tackle them" to go on, or "always tackle open items".`
+      systemMessage = systemMessage ? `${systemMessage}\n${m}` : m
     }
   } catch {}
 }

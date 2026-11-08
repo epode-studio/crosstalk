@@ -22,6 +22,9 @@ import * as ui from "../uistate.ts"
 import { currentMain } from "../main.ts"
 import * as F from "./focus.ts"
 import * as N from "../sessions/names.ts"
+import path from "node:path"
+import { human } from "../ui-extra/pure.ts"
+import { modActive } from "../uistate.ts"
 import * as T from "../sessions/transcripts.ts"
 import { lastReply } from "./openitems.ts"
 
@@ -42,6 +45,8 @@ export function relayable(qs: unknown): qs is [Question] {
 export function target(sessionId: string, o: { main?: string | null; focused?: { sessionId: string; sure: boolean } | null } = {}): string | null {
   const main = o.main !== undefined ? o.main : (currentMain()?.sessionId ?? null)
   if (!main || main === sessionId) return null
+  // A main without crosstalk's mod cannot show it: asked where it was asked.
+  if (o.main === undefined && !modActive(main)) return null
   let f = o.focused
   if (f === undefined)
     try {
@@ -58,7 +63,7 @@ const clean = (s: string, n: number) => s.replace(/[\u0000-\u001f\u007f-\u009f]+
 /** Put the question to main. Returns the item's id. */
 export function relay(sessionId: string, q: Question, main: string, now = Date.now()): string {
   const rec = R.readOne(sessionId)
-  const name = N.nameOf(sessionId) ?? rec?.name ?? sessionId.slice(0, 8)
+  const name = rec?.thread ? human(rec.thread, 32) : N.nameOf(sessionId) ?? (rec?.cwd ? human(path.basename(rec.cwd), 32) : "An agent")
   const id = `relay:${sessionId}:${crypto.randomBytes(4).toString("hex")}`
   const opts = (q.options ?? []).slice(0, 4)
   const described = opts.filter((o) => o.description).map((o) => `${clean(o.label, 60)}: ${clean(o.description!, 160)}`)
@@ -78,7 +83,7 @@ export function relay(sessionId: string, q: Question, main: string, now = Date.n
         sessionId: main,
         from: clean(name, 60),
         ...(rec?.thread ? { thread: rec.thread } : {}),
-        question: `${clean(name, 60)} asks: ${clean(q.question, 400)}`,
+        question: clean(q.question, 400),
         ...(described.length ? { text: described.join("\n") } : {}),
         options: opts.map((o) => clean(o.label, 60)),
         ts: now,
@@ -90,6 +95,13 @@ export function relay(sessionId: string, q: Question, main: string, now = Date.n
 }
 
 /** Where a relayed question stands: answered (and with what), waiting, or gone back to its tab. */
+/** Whether the session that asked is still there to receive an answer. */
+export function askerAlive(id: string): boolean {
+  const sid = id.split(":")[1] ?? ""
+  const r = R.readOne(sid)
+  return !!r && !r.endedAt && R.recAlive(r)
+}
+
 export function poll(id: string, o: { mainAlive?: () => boolean } = {}): { answer?: string; fallback?: boolean } {
   const it = ui.snapshot()[id]
   if (!it) return { fallback: true }

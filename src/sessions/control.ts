@@ -53,7 +53,6 @@ import * as PP from "../services/postpone.ts"
 import type { Activity } from "../services/procs.ts"
 import * as TD from "./tidy.ts"
 import { currentMain } from "../main.ts"
-import { resetColours as resetTabColours } from "../terminal/status.ts"
 
 export type Out = { ok: boolean; text: string; pending?: boolean; [k: string]: unknown }
 type Ask = (req: Record<string, unknown>, timeoutMs?: number) => Promise<any>
@@ -544,7 +543,8 @@ async function tidy(a: Extract<Action, { kind: "tidy" }>, by: string, d: Deps, f
     const live = new Set((await liveSessions(d)).map((l) => l.terminal.tty).filter((t): t is string => !!t))
     for (const r of TD.leftoverTabs(recs, live))
       try {
-        const why = TD.closeTabWhy(r.terminal, d.run)
+        // A tab left earlier must show that very session's id: a reused tty may be someone's own tab now.
+        const why = TD.closeTabWhy(r.terminal, d.run, process.platform, r.sessionId)
         if (why === "closed") tabs++
         else if (why !== "gone") stayed.set(why, (stayed.get(why) ?? 0) + 1)
       } catch {}
@@ -555,10 +555,7 @@ async function tidy(a: Extract<Action, { kind: "tidy" }>, by: string, d: Deps, f
         ? `${n} tab${n === 1 ? "" : "s"} stayed open: Terminal may not press keys for crosstalk. Turn on Terminal in System Settings ▸ Privacy & Security ▸ Accessibility, then tidy up again.`
         : `${n} tab${n === 1 ? "" : "s"} stayed open: ${TD.WHY_OPEN[why] ?? why}.`,
     )
-  // Any background crosstalk once tinted goes back to its profile's.
-  try {
-    if (process.platform === "darwin") resetTabColours()
-  } catch {}
+
   let merged = false
   if (a.merge && process.platform === "darwin") {
     const r = d.run({ cmd: "osascript", args: ["-"], input: TD.appleMergeScript })

@@ -69,7 +69,7 @@ export const ago = (min: number) => (min < 60 ? `${min} min` : min < 48 * 60 ? `
 /** How many of crosstalk's cards and questions wait on a session. */
 export function waitingFor(sessionId: string): number {
   try {
-    return Object.values(ui.snapshot()).filter((i: any) => i.sessionId === sessionId && !["answered", "handed", "muted"].includes(i.state)).length
+    return Object.values(ui.snapshot()).filter((i: any) => i.sessionId === sessionId && !["answered", "handed", "muted", "later"].includes(i.state)).length
   } catch {
     return 0
   }
@@ -101,7 +101,7 @@ export const statusOf = () => {
  * very tab selected. Returns "closed", "busy", "not-claude", "not-front" or ""
  * when there is no such tab. Never launches Terminal.
  */
-export function appleCloseIdleTabScript(tty: string): string {
+export function appleCloseIdleTabScript(tty: string, mark = "claude"): string {
   const q = R.asq(tty)
   return [
     `if application "Terminal" is not running then return ""`,
@@ -116,7 +116,7 @@ export function appleCloseIdleTabScript(tty: string): string {
     `\t\t\t\tend repeat`,
     `\t\t\t\tif busy of t then return "busy"`,
     // Case does not count in AppleScript: "claude --resume …" or Claude Code's banner.
-    `\t\t\t\tif (history of t) does not contain "claude" then return "not-claude"`,
+    `\t\t\t\tif (history of t) does not contain ${R.asq(mark)} then return "not-claude"`,
     `\t\t\t\tset selected of t to true`,
     `\t\t\t\tset index of w to 1`,
     `\t\t\t\tset found to true`,
@@ -162,19 +162,26 @@ export const appleMergeScript = [
 const tmuxBase = (t: NonNullable<Term["tmux"]>) => (t.socket ? ["-S", t.socket] : [])
 
 /** The steps that close a tab left with only its shell, per terminal. Empty: this terminal keeps its tab. */
-export function closeTabSteps(t: Term, platform: NodeJS.Platform = process.platform): { probe?: Step; close: Step; closesIf: (probeOut: string) => boolean }[] {
+/**
+ * `mark`: text the tab must show to be closed. A session that just ended is
+ * known to be in its own tab ("claude"); a tab left by one that ended earlier
+ * could be someone's own tab on a reused tty, so it must show that very
+ * session's id (Claude Code prints it on exit, restore types it).
+ */
+export function closeTabSteps(t: Term, platform: NodeJS.Platform = process.platform, mark = "claude"): { probe?: Step; mark?: Step; close: Step; closesIf: (probeOut: string) => boolean }[] {
   if (t.tmux?.pane) {
     const base = tmuxBase(t.tmux)
     return [
       {
         probe: { cmd: "tmux", args: [...base, "display-message", "-p", "-t", t.tmux.pane, "#{pane_current_command}"] },
+        ...(mark !== "claude" ? { mark: { cmd: "tmux", args: [...base, "capture-pane", "-p", "-t", t.tmux.pane, "-S", "-400"] } } : {}),
         close: { cmd: "tmux", args: [...base, "kill-pane", "-t", t.tmux.pane] },
         closesIf: (out) => SHELLS.has(out.trim()),
       },
     ]
   }
   if (R.kindOf(t) === "apple" && t.tty && platform === "darwin")
-    return [{ close: { cmd: "osascript", args: ["-"], input: appleCloseIdleTabScript(t.tty) }, closesIf: () => true }]
+    return [{ close: { cmd: "osascript", args: ["-"], input: appleCloseIdleTabScript(t.tty, mark) }, closesIf: () => true }]
   return []
 }
 
@@ -193,14 +200,18 @@ export const WHY_OPEN: Record<string, string> = {
   unsupported: "this terminal's tabs are left as they are",
 }
 
-export function closeTabWhy(t: Term, run: (s: Step) => { ok: boolean; out: string }, platform: NodeJS.Platform = process.platform): string {
-  const steps = closeTabSteps(t, platform)
+export function closeTabWhy(t: Term, run: (s: Step) => { ok: boolean; out: string }, platform: NodeJS.Platform = process.platform, mark = "claude"): string {
+  const steps = closeTabSteps(t, platform, mark)
   if (!steps.length) return "unsupported"
   for (const s of steps) {
     if (s.probe) {
       const p = run(s.probe)
       if (!p.ok) return "gone"
       if (!s.closesIf(p.out)) return "no-shell"
+      if (s.mark) {
+        const m = run(s.mark)
+        if (!m.ok || !m.out.includes(mark)) return "not-claude"
+      }
       return run(s.close).ok ? "closed" : "gone"
     }
     const r = run(s.close)
@@ -246,13 +257,17 @@ export function similar(o: {
   waiting: (id: string) => number
   self?: string
   main?: string
+  now?: number
+  idleMin?: number
 }): Fold[] {
   const seen = new Map(o.recs.map((r) => [r.sessionId, r.seenAt]))
   const groups = new Map<string, typeof o.lives>()
   for (const l of o.lives) {
     // Main does no thread's work (it left its threads): nothing is folded into it, and it is never folded.
     if (l.id === o.main || (l.id === o.self && !l.threads.length)) continue
-    const key = l.threads.length ? `thread:${l.threads[0]}` : `cwd:${l.cwd}`
+    // The same work is the same thread in the same folder: parallel agents in
+    // their own worktrees are separate lines of work, never folded together.
+    const key = l.threads.length ? `thread:${l.threads[0]}|${l.cwd}` : `cwd:${l.cwd}`
     groups.set(key, [...(groups.get(key) ?? []), l])
   }
   const out: Fold[] = []
@@ -264,9 +279,11 @@ export function similar(o: {
       g.find((l) => l.id === o.main) ??
       g.find(used) ??
       [...g].sort((a, b) => (seen.get(b.id) ?? 0) - (seen.get(a.id) ?? 0))[0]
-    const why = key.startsWith("thread:") ? `same thread, ${key.slice(7)}` : "same folder"
+    const why = key.startsWith("thread:") ? `same thread, ${key.slice(7).split("|")[0]}` : "same folder"
     for (const l of g) {
-      if (l.id === keep.id || l.id === o.self || l.id === o.main || used(l) || o.waiting(l.id) > 0) continue
+      // Only one left alone a while: a session that finished a turn seconds ago is not done.
+      const idleMin = Math.floor(((o.now ?? Date.now()) - (seen.get(l.id) ?? 0)) / 60_000)
+      if (l.id === keep.id || l.id === o.self || l.id === o.main || used(l) || o.waiting(l.id) > 0 || idleMin < (o.idleMin ?? IDLE_MIN())) continue
       out.push({ id: l.id, name: l.name, into: keep.id, intoName: keep.name, why })
     }
   }

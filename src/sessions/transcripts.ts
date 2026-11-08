@@ -169,7 +169,9 @@ export function recent(env: NodeJS.ProcessEnv = process.env, limit = 400): strin
 }
 
 /** Lines Claude Code writes as the user that the person did not type, or that came from elsewhere (a channel, a hook). */
-const NOT_TYPED = /^\s*(<|Caveat:|\[Request interrupted)/
+// Also what crosstalk's mod submitted for the person (a handed message, tackling open items):
+// never counted as their own words for anything that needs them.
+const NOT_TYPED = /^\s*(<|Caveat:|\[Request interrupted|I handed you the crosstalk message|Tackle the open items you listed|◢ crosstalk)/
 
 /**
  * The last prompt the person typed in a session, and when. Tool results,

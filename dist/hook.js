@@ -687,7 +687,7 @@ function anchorFor(repo, o) {
   if (o.asking && kindOf(o.asking.terminal) && o.keyOf(o.asking.cwd) === repo)
     return o.asking.terminal;
   const live = o.recs.filter((r) => !r.endedAt && r.interactive !== false && kindOf(r.terminal) && !isCrosstalkSocket(r.terminal.tmux?.socket) && o.keyOf(r.cwd) === repo && o.alive(r)).sort((a, b) => b.seenAt - a.seenAt);
-  return live[0]?.terminal ?? null;
+  return live[0]?.terminal ?? (o.asking && kindOf(o.asking.terminal) ? o.asking.terminal : null);
 }
 function sameWindow(a, b) {
   if (a.tmux || b.tmux)
@@ -3536,6 +3536,7 @@ function dotFor(thread) {
 }
 var SIGN = { waiting: "\u2753", working: "\u23f3", done: "\u2705", broken: "\u2757", idle: "\uD83D\uDCA4" };
 var LEGEND = `${SIGN.waiting} needs you \u00b7 ${SIGN.working} working \u00b7 ${SIGN.done} done \u00b7 ${SIGN.broken} something broke \u00b7 ${SIGN.idle} idle \u00b7 a coloured dot per thread`;
+var ACRONYMS = new Set(["mcp", "ai", "pr", "ci", "api", "ui", "ux", "led", "pal", "esp32", "sdk", "cli", "id", "ids", "url", "db", "css", "html", "ios", "qr", "llm", "cbmc", "scd30"]);
 
 // src/terminal/status.ts
 var COLOUR = {
@@ -3774,7 +3775,7 @@ function applyOnce(id, state, f, sys) {
   let restored = false;
   let appleOriginal = f?.appleOriginal;
   if (kindOf2(t) === "apple" && t.tty && sys.platform === "darwin" && f?.title && !process.env.CROSSTALK_NO_TITLE_SIGN)
-    ok = sys.run({ cmd: "osascript", args: ["-"], input: appleTitleScript(t.tty, signed(f.title, state)) }).ok && ok;
+    ok = sys.run({ cmd: "osascript", args: ["-"], input: state === "off" ? appleUntitleScript(t.tty) : appleTitleScript(t.tty, signed(f.title, state)) }).ok && ok;
   if ((state === "waiting" || state === "broken") && f?.applied !== state && t.tty && !process.env.CROSSTALK_NO_BELL)
     sys.writeTty(t.tty, "\x07");
   for (const a of actionsFor(t, state, sys.platform)) {
@@ -3827,6 +3828,7 @@ function signed(title, state) {
     return dot ? `${dot} ${rest}` : rest;
   return dot ? `${dot}${sign} ${rest}` : `${sign} ${rest}`;
 }
+var appleUntitleScript = (tty) => appleTab(tty, [`set custom title of t to ""`, `set title displays custom title of t to false`, `return "done"`]);
 var appleTintOn = (env = process.env) => /^(1|true|yes|on)$/i.test(env.CROSSTALK_TAB_COLOUR ?? env.CROSSTALK_TAB_COLOR ?? "");
 var appleProfileBgScript = (tty) => appleTab(tty, [`set n to name of current settings of t`, `set background color of t to background color of settings set n`, `return "done"`]);
 var appleProfileBgAllScript = [
@@ -3919,7 +3921,7 @@ var TMUX_SNIPPET = [
 `);
 function pendingFor(sessionId, snapshot) {
   try {
-    return Object.values(snapshot()).filter((i) => i.sessionId === sessionId && !["answered", "handed", "muted"].includes(i.state)).length;
+    return Object.values(snapshot()).filter((i) => i.sessionId === sessionId && !["answered", "handed", "muted", "later"].includes(i.state)).length;
   } catch {
     return 0;
   }
@@ -6206,7 +6208,7 @@ function nameTab(sessionId, title, o = {}) {
   if (f?.title === title)
     return false;
   withFile2(sessionId, (cur) => writeTab2({ ...cur ?? { sessionId, want: "off", wantAt: Date.now() }, title }));
-  const input = appleTitleScript2(t.tty, signed2(title, f?.applied ?? "off"));
+  const input = appleTitleScript2(t.tty, signed2(title, f?.base ?? f?.want ?? "off"));
   try {
     (o.spawnIt ?? ((inp) => {
       const c = spawn9("osascript", ["-"], { detached: true, stdio: ["pipe", "ignore", "ignore"] });
@@ -6361,12 +6363,6 @@ function writePrefs(p) {
   fs37.writeFileSync(tmp, JSON.stringify({ ...p, seen, seenItems }), { mode: 384 });
   fs37.renameSync(tmp, file9());
 }
-var TACKLE = "Tackle them";
-var ALWAYS = "Always";
-var NOT_NOW2 = "Not now";
-var question2 = (n) => `Tackle the ${n} open item${n === 1 ? "" : "s"} from that reply?`;
-var context = (todo, waiting, persons = []) => [...todo.map((x) => `\u00b7 ${x}`), ...persons.length ? [`For you (left to you): ${persons.join("; ")}`] : [], ...waiting.length ? [`Waiting on (left alone): ${waiting.join("; ")}`] : []].join(`
-`);
 function tacklePrompt(items, ids = []) {
   return [
     `Tackle the open items you listed:`,
@@ -6662,14 +6658,11 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
         }));
         process.exit(0);
       }
-      const kept = thread ? ` Kept as tasks in ${thread}.` : "";
-      if (modActive(sessionId))
-        withStore((items, now) => upsert(items, { id: `open:${sessionId}:${r.id}`, kind: "attention", sessionId, ...thread ? { thread } : {}, question: question2(r.items.length), text: context(r.items, r.waiting, r.persons) + kept, names: r.items, ...ids.length ? { targets: Object.fromEntries(r.items.map((x, i) => [x, ids[i] ?? ""])) } : {}, options: [TACKLE, ALWAYS, NOT_NOW2], ts: now }, now));
-      else {
-        const m = `\u25E2 crosstalk: ${r.items.length} open item${r.items.length === 1 ? "" : "s"} in that reply.${kept} Say "tackle them" to go on.`;
-        systemMessage = systemMessage ? `${systemMessage}
+      const n = r.items.length;
+      const where = thread ? ` kept as tasks in ${thread}` : "";
+      const m = `\u25E2 crosstalk: ${n} open item${n === 1 ? "" : "s"}${where}. Say "tackle them" to go on, or "always tackle open items".`;
+      systemMessage = systemMessage ? `${systemMessage}
 ${m}` : m;
-      }
     }
   } catch {}
 }

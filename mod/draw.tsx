@@ -64,45 +64,39 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number) {
           </Text>
           <Text dimColor> · {clean(p.status)}</Text>
         </Text>
-        {p.usage ? (
-          <Text wrap="truncate" dimColor={!p.usage.hot}>
-            {p.usage.hot ? <Text color={BROKEN}>{clean(p.usage.text)}</Text> : clean(p.usage.text)}
-          </Text>
-        ) : null}
-        {p.inbox?.length ? (
-          <Box flexDirection="column" marginTop={1}>
-            <Text bold>Inbox</Text>
-            {p.inbox.map((l, i) => (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold>Needs you{p.inbox?.length ? ` · ${p.inbox.length}` : ''}</Text>
+          {p.inbox?.length ? (
+            p.inbox.map((l, i) => (
               <Text key={`i${i}`} wrap="truncate" bold={i === 0}>
                 {' '}
                 {i + 1}. {clean(l)}
               </Text>
+            ))
+          ) : (
+            <Text dimColor> nothing right now</Text>
+          )}
+        </Box>
+        {p.agents.length ? (
+          <Box flexDirection="column" marginTop={1}>
+            <Text bold>Working · {p.agents.length}</Text>
+            {p.agents.map((a, i) => (
+              <Text key={`a${i}`} wrap="truncate">
+                {' '}
+                {clean(agentLine(a))}
+              </Text>
             ))}
           </Box>
         ) : null}
-        <Box flexDirection="column" marginTop={1}>
-          {p.agents.length ? (
-            p.agents.map((a, i) => (
-              <Box key={`a${i}`} flexDirection="column">
-                <Text wrap="truncate" bold={a.state === 'waiting'} dimColor={a.state === 'idle'}>
-                  {a.state === 'waiting' ? <Text color={THREAD}>{clean(agentLine(a))}</Text> : clean(agentLine(a))}
-                </Text>
-                {agentAsks(a) ? <Text wrap="wrap">{clean(agentAsks(a)!)}</Text> : null}
-              </Box>
-            ))
-          ) : (
-            <Text dimColor>none open</Text>
-          )}
-        </Box>
         {p.prs?.length ? (
           <Box flexDirection="column" marginTop={1}>
             <Text bold>Pull requests</Text>
             {p.prs.map((r, i) => (
-              <Text key={`p${i}`} wrap="truncate" dimColor={!r.alive}>
+              <Text key={`p${i}`} wrap="truncate">
                 {' '}
-                {r.checks === 'failed' && r.alive ? <Text color={BROKEN}>{clean(runningLine(r, now))}</Text> : clean(runningLine(r, now))}
+                {r.checks === 'failed' ? <Text color={BROKEN}>{clean(runningLine(r, now))}</Text> : clean(runningLine(r, now))}
                 {r.url && linkable(r.url) ? ' ' : ''}
-                {r.url && linkable(r.url) ? <Link href={r.url}>{clean(r.url.replace(/^https?:\/\/github\.com\//, ''))}</Link> : null}
+                {r.url && linkable(r.url) ? <Link href={r.url}>open</Link> : null}
               </Text>
             ))}
           </Box>
@@ -116,6 +110,13 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number) {
                 {clean(e.text)} · {ago(e.at, now)}
               </Text>
             ))}
+          </Box>
+        ) : null}
+        {p.idle || p.usage ? (
+          <Box marginTop={1}>
+            <Text wrap="truncate" dimColor={!p.usage?.hot}>
+              {[p.idle ? `${p.idle} idle` : '', p.usage ? p.usage.text : ''].filter(Boolean).join(' · ')}
+            </Text>
           </Box>
         ) : null}
       </Box>
@@ -321,6 +322,17 @@ export function bandTree(E: Els, open: Item[], digest: string, now: number, body
   const { Box, Text } = E
   const W = Math.max(24, Math.min(bodyColumns, CARD_MAX))
   const later = (it: Item) => (raisable(it) ? '' : ' · picker after your next turn')
+  // Calm: never a wall. Nothing empty, nothing stale (a day old and not blocking), no open-list leftovers;
+  // at most two shown, the rest counted.
+  const DAY = 86_400_000
+  const keep = open.filter(
+    it =>
+      !it.id.startsWith('open:') &&
+      !((it.kind === 'message' || it.kind === 'ask') && !(it.text ?? '').trim()) &&
+      (now - (it.ts ?? it.createdAt) < DAY || it.id.startsWith('relay:') || it.id.startsWith('attn:perm:') || it.kind === 'ask'),
+  )
+  const shown = keep.slice(0, 2)
+  const more = keep.length - shown.length
   return (
     <Box flexDirection="column">
       {digest ? (
@@ -328,7 +340,12 @@ export function bandTree(E: Els, open: Item[], digest: string, now: number, body
           {clean(digest)}
         </Text>
       ) : null}
-      {open.map(it => (it.kind === 'message' || it.kind === 'ask' ? card(E, it, W, now, later(it)) : questionRow(E, it, later(it)) ?? card(E, it, W, now, later(it))))}
+      {shown.map(it => (it.kind === 'message' || it.kind === 'ask' ? card(E, it, W, now, later(it)) : questionRow(E, it, later(it)) ?? card(E, it, W, now, later(it))))}
+      {more > 0 ? (
+        <Text key="more" wrap="truncate" dimColor>
+          {'  '}and {more} more, one at a time
+        </Text>
+      ) : null}
     </Box>
   )
 }

@@ -37,7 +37,7 @@ describe("asking and answering", () => {
     const id = Rl.relay("work-1", Q, "main-s")
     const it = ui.snapshot()[id]
     expect(it.sessionId).toBe("main-s")
-    expect(it.question).toContain("asks: Keep the Pi flat?")
+    expect(it.question).toBe("Keep the Pi flat?") // who asks is on the line (its thread), never an id
     expect(it.options).toEqual(["Pi flat", "Keep any tilt"])
     expect(it.text).toBe("Pi flat: Host on floor posts, like production")
     expect(Rl.poll(id, { mainAlive: () => true })).toEqual({})

@@ -88,7 +88,8 @@ export function line(o: { reports?: Map<string, Report>; now?: number } = {}): {
     usd += r.usd
     n++
   }
-  if (n) parts.push(`$${usd.toFixed(2)} across ${n} session${n === 1 ? "" : "s"} today`)
+  void n
+  void usd
   return parts.length ? { text: parts.join(" · "), hot } : null
 }
 

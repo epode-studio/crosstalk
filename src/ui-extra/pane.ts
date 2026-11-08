@@ -8,7 +8,7 @@
 
 import * as M from "../threads/model.ts"
 import * as ui from "../uistate.ts"
-import { inboxLine, inboxOrder, type PaneModel, type PaneNote, type PaneRunning } from "./pure.ts"
+import { dotFor, human, inboxLine, inboxOrder, shortQuestion, type PaneModel, type PaneNote, type PaneRunning } from "./pure.ts"
 import { defaultThread, findThread, readThreads, type ThreadState } from "./threadfile.ts"
 import type * as Svc from "../services/service.ts"
 import { currentMain, itemsFor } from "../main.ts"
@@ -79,30 +79,53 @@ export const AGENTS = /^(agents?|all|everything|sessions|my agents|all my agents
 
 /** Every agent on this machine, as a pane of its own. */
 export function agentsPane(sessionId?: string, list = allAgents(sessionId)): PaneOut {
-  const waiting = list.filter((a) => a.state === "waiting").length
-  const working = list.filter((a) => a.state === "working").length
-  const status = [`${list.length} open`, working ? `${working} working` : "", waiting ? `${waiting} waiting on you` : ""].filter(Boolean).join(" · ")
+  const now = Date.now()
+  // Main itself is not one of the agents it shows.
+  const others = list.filter((a) => !a.here)
+  const working = others.filter((a) => a.state === "working")
+  const idle = others.filter((a) => a.state === "idle").length
+  // Needs you: what main will ask, one at a time, in that order; then what agents ask in their own tabs.
+  let needs: string[] = []
+  let relayed = new Set<string>()
+  try {
+    const open = Object.values(ui.snapshot()).filter((i) => (i.state === "pending" || i.state === "later") && !i.id.startsWith("open:") && now - i.createdAt < 86_400_000)
+    relayed = new Set(open.filter((i) => i.id.startsWith("relay:")).map((i) => i.id.split(":")[1] ?? ""))
+    const mine = sessionId ? itemsFor(open, sessionId, currentMain()?.sessionId) : []
+    needs = inboxOrder(mine, now).map((i) => inboxLine(i, now))
+  } catch {}
+  for (const a of others)
+    if (a.state === "waiting" && a.asks && !(a.sessionId && relayed.has(a.sessionId)))
+      needs.push(`${a.thread ? dotFor(a.thread) + " " : ""}${human(a.thread ?? a.name, 24)} — ${shortQuestion(a.asks)} (in its tab)`)
   let prs: PaneRunning[] = []
   let events: { text: string; at: number }[] = []
   try {
-    prs = allPrs()
-    events = recentEvents()
-  } catch {}
-  // The inbox: what waits on the person here (main's own, and everything cross-cutting), in asking order.
-  let inbox: string[] = []
-  try {
-    const now = Date.now()
-    const open = Object.values(ui.snapshot()).filter((i) => i.state === "pending" || i.state === "later")
-    const mine = sessionId ? itemsFor(open, sessionId, currentMain()?.sessionId) : []
-    inbox = inboxOrder(mine, now)
-      .slice(0, 8)
-      .map((i) => inboxLine(i, now))
+    // Only pull requests still moving or needing a look; merged ones show under Lately.
+    prs = allPrs().filter((r) => r.alive && r.state !== "MERGED" && r.state !== "CLOSED" && (r.checks === "running" || r.checks === "failed"))
+    events = recentEvents(4)
   } catch {}
   let usage: { text: string; hot: boolean } | null = null
   try {
     usage = usageLine()
   } catch {}
-  return { ok: true, pane: { thread: "your agents", status, people: [], sessions: 0, waiting: [], recent: [], features: [], agents: list, ...(inbox.length ? { inbox } : {}), ...(usage ? { usage } : {}), ...(prs.length ? { prs } : {}), ...(events.length ? { events } : {}) } }
+  const status = [needs.length ? `${needs.length} need${needs.length === 1 ? "s" : ""} you` : "nothing needs you", working.length ? `${working.length} working` : ""].filter(Boolean).join(" · ")
+  return {
+    ok: true,
+    pane: {
+      thread: "main",
+      status,
+      people: [],
+      sessions: 0,
+      waiting: [],
+      recent: [],
+      features: [],
+      agents: working,
+      inbox: needs.slice(0, 8),
+      ...(idle ? { idle } : {}),
+      ...(usage ? { usage } : {}),
+      ...(prs.length ? { prs } : {}),
+      ...(events.length ? { events } : {}),
+    },
+  }
 }
 
 export function pane(o: { sessionId?: string; thread?: string; st?: ThreadState; items?: Record<string, ui.UiItem>; services?: Svc.Shown[] }): PaneOut {

@@ -138,13 +138,15 @@ export type PaneModel = {
   events?: PaneEvent[]
   /** What waits on the person, most pressing first, in the order it will be asked (inboxOrder). */
   inbox?: string[]
+  /** Agents with nothing to do, counted, not listed. */
+  idle?: number
   /** The plan's windows and today's spend, `5-hour 42% (resets 3:10 PM) · week 18% · $12.40 …`; hot at 80%. */
   usage?: { text: string; hot: boolean }
   /** A QR code crosstalk_look action "qr" made for the phone (src/urls/history/phone.ts): half-block rows, drawn white on black. */
   qr?: { label: string; caption: string; rows: string[]; at: number; why?: string }
 }
 
-export type PaneAgent = { name: string; thread?: string; state: "working" | "waiting" | "idle"; forYou?: number; idleMin?: number; background?: boolean; here?: boolean; /** What its own agent is asking, waiting in that tab. */ asks?: string; /** What it has cost so far, `$1.20`. */ cost?: string }
+export type PaneAgent = { name: string; thread?: string; state: "working" | "waiting" | "idle"; forYou?: number; idleMin?: number; background?: boolean; here?: boolean; /** What its own agent is asking, waiting in that tab. */ asks?: string; sessionId?: string; /** What it has cost so far, `$1.20`. */ cost?: string }
 
 export type PaneShot = { label: string; path?: string; before?: { file: string; at: number }; after: { file: string; at: number } }
 
@@ -300,12 +302,13 @@ export function paneLines(p: PaneModel, now: number): string[] {
   if (p.agents)
     return [
       `◢ ${p.thread} · ${p.status}`,
-      ...(p.usage ? [`${p.usage.hot ? "! " : ""}${p.usage.text}`] : []),
-      ...(p.inbox?.length ? ["", "Inbox", ...p.inbox.map((l, i) => ` ${i + 1}. ${l}`)] : []),
       "",
-      ...(p.agents.length ? p.agents.flatMap((a) => [` ${agentLine(a)}`, ...(agentAsks(a) ? [agentAsks(a)!] : [])]) : [" none open"]),
+      `Needs you${p.inbox?.length ? ` · ${p.inbox.length}` : ""}`,
+      ...(p.inbox?.length ? p.inbox.map((l, i) => ` ${i + 1}. ${l}`) : [" nothing right now"]),
+      ...(p.agents.length ? ["", `Working · ${p.agents.length}`, ...p.agents.map((a) => ` ${agentLine(a)}`)] : []),
       ...(p.prs?.length ? ["", "Pull requests", ...p.prs.map((r) => ` ${runningLine(r, now)}`)] : []),
       ...(p.events?.length ? ["", "Lately", ...p.events.map((e) => ` ${e.text} · ${ago(e.at, now)}`)] : []),
+      ...(p.idle || p.usage ? ["", [p.idle ? `${p.idle} idle` : "", p.usage ? p.usage.text : ""].filter(Boolean).join(" · ")] : []),
     ]
   const out = [`◢ ${p.thread} · ${p.status}${p.sessions ? ` · ${p.sessions} working` : ""}`, p.people.length ? p.people.join("  ") : "nobody yet"]
   if (p.recap) out.push("", p.recap)
@@ -333,9 +336,10 @@ const agoMin = (min: number) => (min < 1 ? "just now" : min < 60 ? `${min} min` 
 
 /** One agent as the pane writes it: `? billing · billing-v2 · 2 for you`. */
 export function agentLine(a: PaneAgent): string {
-  const mark = (a.thread ? dotFor(a.thread) : "") + (a.state === "waiting" ? SIGN.waiting : a.state === "working" ? SIGN.working : (a.idleMin ?? 0) >= 60 ? SIGN.idle : SIGN.done)
-  const what = a.state === "waiting" ? (a.forYou ? `${a.forYou} for you` : "waiting on you") : a.state === "working" ? "working" : `idle ${agoMin(a.idleMin ?? 0)}`
-  return [`${mark} ${a.name}${a.here ? " (this one)" : ""}`, a.thread && a.thread !== a.name ? a.thread : "", what, a.background ? "in the background" : "", a.cost ?? ""].filter(Boolean).join(" · ")
+  const sign = a.state === "waiting" ? SIGN.waiting : a.state === "working" ? SIGN.working : (a.idleMin ?? 0) >= 60 ? SIGN.idle : SIGN.done
+  const name = human(a.thread ?? a.name, 36)
+  const what = a.state === "waiting" ? (a.forYou ? `${a.forYou} for you` : "waiting on you") : a.state === "working" ? "" : `idle ${agoMin(a.idleMin ?? 0)}`
+  return [`${a.thread ? dotFor(a.thread) : ""}${sign} ${name}`, what, a.background ? "out of sight" : "", a.cost ?? ""].filter(Boolean).join(" · ")
 }
 
 /** The question an agent is waiting on, on the line under it: `    asks: Keep the Pi flat? (Pi flat / Keep any tilt)`. */
@@ -399,10 +403,9 @@ export function inboxOrder<T extends InboxItem>(items: T[], now: number): T[] {
 
 /** One line of the inbox, for the main session's pane: `organic-case-81 asks: Keep the Pi flat? · 12m`. */
 export function inboxLine(it: InboxItem, now: number): string {
-  const what = (it.question ?? it.text ?? it.id).replace(/\s+/g, " ").trim()
-  const who = it.from && !what.startsWith(it.from) ? `${it.from}: ` : ""
-  const cut = (s: string) => (s.length > 120 ? s.slice(0, 119) + "…" : s)
-  return `${it.thread ? dotFor(it.thread) : ""}${SIGN.waiting} ${cut(who + what)} · ${ago(it.createdAt, now) || "now"}`
+  const what = shortQuestion(it.question ?? it.text ?? it.id)
+  const where = it.thread ? human(it.thread, 24) : it.from ? human(it.from, 24) : ""
+  return `${it.thread ? dotFor(it.thread) + " " : ""}${where ? `${where} — ` : ""}${what} · ${ago(it.createdAt, now) || "now"}`
 }
 
 
@@ -422,3 +425,33 @@ export type Sign = keyof typeof SIGN
 
 /** The legend, said once in the welcome. */
 export const LEGEND = `${SIGN.waiting} needs you · ${SIGN.working} working · ${SIGN.done} done · ${SIGN.broken} something broke · ${SIGN.idle} idle · a coloured dot per thread`
+
+// --- plain words: what a person reads, not ids or slugs --------------------------------
+
+const ACRONYMS = new Set(["mcp", "ai", "pr", "ci", "api", "ui", "ux", "led", "pal", "esp32", "sdk", "cli", "id", "ids", "url", "db", "css", "html", "ios", "qr", "llm", "cbmc", "scd30"])
+
+/** A thread or session name as words: `mcp-endpoint-so-any-ai-app-can-control-p` → `MCP endpoint so any AI app…`. */
+export function human(name: string, max = 32): string {
+  const words = name
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .map((w) => (ACRONYMS.has(w.toLowerCase()) ? w.toUpperCase() : w))
+  if (!words.length || !words[0]) return name
+  words[0] = words[0][0]!.toUpperCase() + words[0].slice(1)
+  let out = ""
+  for (const w of words) {
+    if ((out ? out.length + 1 : 0) + w.length > max) return out ? `${out}…` : `${w.slice(0, max - 1)}…`
+    out = out ? `${out} ${w}` : w
+  }
+  return out
+}
+
+/** A question in one line: who asks dropped (the line says it), cut to fit. */
+export function shortQuestion(q: string, max = 72): string {
+  const t = q
+    .replace(/^\s*\S+ asks:\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim()
+  return t.length > max ? t.slice(0, max - 1) + "…" : t
+}

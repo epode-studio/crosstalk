@@ -2751,7 +2751,7 @@ setInterval(() => {
 if (process.platform === "darwin" && !tabStatus.appleTintOn())
   setTimeout(() => {
     try {
-      const r = tabStatus.resetColours()
+      const r = tabStatus.resetColours(undefined, { once: true })
       if (r.reset) log(`terminal: ${r.reset} tab background(s) back to their profile's`)
     } catch {}
   }, 2000).unref()

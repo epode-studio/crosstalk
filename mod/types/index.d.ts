@@ -38,12 +38,13 @@ export type Pane = {
   thread: string
   status: string
   /** Every agent, for "show me all my agents" and the main session's pane (src/ui-extra/agents.ts). */
-  agents?: { name: string; thread?: string; state: 'working' | 'waiting' | 'idle'; forYou?: number; idleMin?: number; background?: boolean; here?: boolean; asks?: string; cost?: string }[]
+  agents?: { name: string; thread?: string; state: 'working' | 'waiting' | 'idle'; forYou?: number; idleMin?: number; background?: boolean; here?: boolean; asks?: string; cost?: string; sessionId?: string }[]
   /** With the agents: every pull request, and what just happened. */
   prs?: Running[]
   events?: { text: string; at: number }[]
   /** What waits on the person, most pressing first. */
   inbox?: string[]
+  idle?: number
   /** The plan's windows and today's spend; hot at 80%. */
   usage?: { text: string; hot: boolean }
   repo?: string

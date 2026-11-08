@@ -97,7 +97,7 @@ export async function callTool(name: string, a: any, o: { sessionId: string; cwd
         // Agents started by themselves: only on the person's own words, typed in this session.
         const said = T.lastPrompt(T.transcriptOf(o.sessionId, o.cwd, d.env))
         const fresh = !!said && d.now() - said.at < 15 * 60_000
-        if (!fresh || !/\b(work|go|chew|get)\b[^.]*\b(tasks?|board|todos?|list)\b/i.test(said!.text))
+        if (!fresh || !/\b(work|go|chew|get)\b[^.]*\b(tasks?|board|todos?|list|items?|open|everything)\b/i.test(said!.text))
           return text({ ok: false, text: `◢ crosstalk: working the board starts agents by themselves, so it needs your user's own words, typed here ("work through the open tasks"). Nothing was started.` })
       }
       if (typeof a.on === "boolean") {

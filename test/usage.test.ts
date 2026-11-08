@@ -24,7 +24,7 @@ describe("usage", () => {
       ["old", { usd: 9, limits: [], at: NOW - 3 * 86_400_000 }],
     ])
     const l = U.line({ reports, now: NOW })!
-    expect(l.text).toBe("5-hour 42% (resets 3:15 PM) · week 18% (resets Sat) · $3.75 across 2 sessions today")
+    expect(l.text).toBe("5-hour 42% (resets 3:15 PM) · week 18% (resets Sat)") // no dollar sums: they misled
     expect(l.hot).toBe(false)
     reports.set("b", { ...reports.get("b")!, limits: [{ kind: "five_hour", percentUsed: 86, resetsAt: at(15.25) }] })
     expect(U.line({ reports, now: NOW })!.hot).toBe(true)
@@ -44,6 +44,6 @@ describe("usage", () => {
     expect(U.usdText(1.234)).toBe("$1.23")
     expect(U.usdText(14.6)).toBe("$15")
     expect(U.usdText(0)).toBe("")
-    expect(pure.agentLine({ name: "auth", state: "working", cost: "$1.23" })).toBe("⏳ auth · working · $1.23")
+    expect(pure.agentLine({ name: "auth", state: "working", cost: "$1.23" })).toBe("⏳ Auth · $1.23")
   })
 })

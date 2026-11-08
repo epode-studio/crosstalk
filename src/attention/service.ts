@@ -44,6 +44,9 @@ import * as N from "./notify.ts"
 import * as D from "./dispose.ts"
 import * as St from "./staffing.ts"
 import * as W from "./worker.ts"
+import * as Usage from "../ui-extra/usage.ts"
+import { recordEvent } from "../urls/ci.ts"
+import { dotFor } from "../ui-extra/pure.ts"
 import * as Pm from "./permission.ts"
 import { BG_ENV } from "./background.ts"
 import * as PP from "../services/postpone.ts"
@@ -63,7 +66,7 @@ export type Deps = {
   /** Repo-relative path → when this session last touched it. */
   touched: (sessionId: string) => Record<string, number> | undefined
   repoOf: (sessionId: string) => string | undefined
-  spawn: (o: { task: string; name: string; cwd: string; by?: string; background: boolean; thread?: { id: string; name: string; view?: ReturnType<typeof M.view> } }) => { ok: boolean; text: string; agents: { name: string }[] }
+  spawn: (o: { task: string; name: string; cwd: string; by?: string; background: boolean; noTab?: boolean; thread?: { id: string; name: string; view?: ReturnType<typeof M.view> } }) => { ok: boolean; text: string; agents: { name: string }[] }
   /** Whether a background agent is still running (crosstalk's tmux has its session). */
   agentAlive?: (name: string) => boolean
   /** Sessions crosstalk runs in the background: never where a question is put. */
@@ -434,8 +437,8 @@ export class AttentionService {
     if (rule === COMPACT || this.st.disposeAsked[sessionId]) return false
     this.st.disposeAsked[sessionId] = this.now()
     this.save()
-    const to = this.target(sessionId)
-    if (!to) return false
+    // About this session's own conversation: asked there, never in main.
+    const to = sessionId
     const name = this.nameOf(sessionId)
     const question = `${name}'s context is ${percent ? `${percent}% ` : "nearly "}spent. Start a fresh session from ${can.thread.meta.value.name} instead of compacting? The thread carries the recap, decisions, questions and tasks.`
     this.put({ id: itemId("dispose", sessionId), sessionId: to, from: name, thread: can.thread.meta.value.name, question, options: [START_FRESH, COMPACT] })
@@ -544,6 +547,8 @@ export class AttentionService {
   // --- staffing ------------------------------------------------------------------------
 
   private staffing() {
+    // "Add a second agent?" is opt-in: unasked, it was noise about threads waiting on the person.
+    if (this.env.CROSSTALK_STAFFING !== "1") return
     const ms = St.stuckMs(this.env)
     const sessions = this.d.sessions()
     for (const t of this.d.threads.all()) {
@@ -597,25 +602,43 @@ export class AttentionService {
   workBoard() {
     const p = W.read()
     if (!p.on) return
-    const alive = this.d.agentAlive ?? (() => true)
+    const now = this.now()
     const tasks: W.OpenTask[] = []
     for (const t of this.d.threads.all()) {
       if (!M.isLive(t) || t.meta.value.status === "done") continue
-      for (const n of M.notes(t, "task")) tasks.push({ id: n.id, text: n.text, thread: t.meta.value.name, threadId: t.id, at: n.at, claimedBy: n.claimedBy, state: n.state ?? "open" })
+      for (const n of M.notes(t, "task")) tasks.push({ id: n.id, text: n.text, thread: t.meta.value.name, threadId: t.id, at: n.at, claimedBy: n.claimedBy, state: n.state ?? "open", who: n.who })
     }
-    // Finished: the agent's session has ended. Not marked done: not picked again by itself.
+    // An agent's session: the one working in its worktree (named after it).
+    const sessions = [...this.d.sessions().values()]
+    const sessionOf = (agent: string) => sessions.find((x) => path.basename(x.cwd ?? "") === agent || x.name === agent)
+    // Finished: its task is done, its session has been idle ten minutes, or it never showed up and is gone.
     const still: W.Running[] = []
     for (const r of p.running) {
-      if (alive(r.agent)) still.push(r)
-      else {
-        const t = tasks.find((x) => x.id === r.taskId)
+      const t = tasks.find((x) => x.id === r.taskId)
+      const sx = sessionOf(r.agent)
+      const idleFor = sx && (this.d.status(sx.sessionId) ?? "").toLowerCase() === "idle" ? now - (sx.seenAt ?? r.startedAt) : 0
+      const gone = !sx && now - r.startedAt > 10 * 60_000 && !(this.d.agentAlive?.(r.agent) ?? false)
+      if (t?.state === "done" || idleFor > 10 * 60_000 || gone) {
         if (t && t.state !== "done") p.tried = [...(p.tried ?? []), r.taskId]
-        this.d.log(`worker: ${r.agent} ended (${t?.state === "done" ? "task done" : "task left open"})`)
-      }
+        this.d.log(`worker: ${r.agent} finished (${t?.state === "done" ? "task done" : "task left open"})`)
+      } else still.push(r)
     }
     p.running = still
+    // Near the plan's limit: no new agents until the window resets.
+    const limit = (Usage.latest()?.limits ?? []).find((l) => l.kind === "five_hour" && l.percentUsed >= 90)
+    if (limit) {
+      W.save(p)
+      return
+    }
+    // Threads someone is working in now: theirs.
+    const busyThreads = new Set(
+      this.d.threads
+        .all()
+        .filter((t) => this.d.threads.sessionsIn([t.id]).some((sid) => !p.running.some((r) => sessionOf(r.agent)?.sessionId === sid) && /busy|working|running|thinking/i.test(this.d.status(sid) ?? "")))
+        .map((t) => t.id),
+    )
     while (p.running.length < p.max) {
-      const next = W.pick(tasks, { threads: p.threads, tried: p.tried ?? [], running: p.running })
+      const next = W.pick(tasks, { threads: p.threads, tried: p.tried ?? [], running: p.running, me: this.d.threads.label, busyThreads })
       if (!next) break
       const t = this.d.threads.thread(next.threadId)
       // A checkout of its repository: where a session of the thread works, else the repo's known root (as staffing does).
@@ -630,16 +653,18 @@ export class AttentionService {
         p.tried = [...(p.tried ?? []), next.id]
         continue
       }
-      const r = this.d.spawn({ task: W.prompt(next), name: next.thread, cwd, background: true, thread: { id: t.id, name: next.thread, view: M.view(t) } })
+      // Out of sight, never a tab: the board works in the background or not at all.
+      const r = this.d.spawn({ task: W.prompt(next), name: next.thread, cwd, background: true, noTab: true, thread: { id: t.id, name: next.thread, view: M.view(t) } })
       if (!r.ok || !r.agents.length) {
         p.tried = [...(p.tried ?? []), next.id]
         this.d.log(`worker: could not start an agent on "${next.text}": ${r.text}`)
         continue
       }
-      p.running.push({ taskId: next.id, thread: next.thread, agent: r.agents[0].name, startedAt: this.now() })
+      p.running.push({ taskId: next.id, thread: next.thread, agent: r.agents[0].name, startedAt: now })
       this.d.log(`worker: ${r.agents[0].name} took "${next.text}" in ${next.thread}`)
+      recordEvent(`${dotFor(next.thread)} ${r.agents[0].name} took "${next.text.slice(0, 80)}"`, now)
     }
-    W.write(p)
+    W.save(p)
   }
 
   private active(sid: string): boolean {
@@ -686,6 +711,8 @@ export class AttentionService {
   /** Held open until the person answers, or `waitMs` passes (null: the dialog stays where it was). */
   permission(sessionId: string, o: { agent?: string; tool: string; input: unknown; suggestions?: unknown; cwd?: string }): Promise<{ ok: true; decision: Pm.Decision | null; asked?: string }> {
     if (o.agent) this.markBackground(sessionId, o.agent)
+    // Asking is not a permission: the question itself comes to the person (src/attention/relay.ts).
+    if (o.tool === "AskUserQuestion") return Promise.resolve({ ok: true, decision: { behavior: "allow" } })
     const agent = o.agent || this.bgOf(sessionId) || this.nameOf(sessionId)
     const key = `${sessionId.slice(0, 40)}-${this.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
     const id = itemId("perm", key)

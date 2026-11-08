@@ -424,7 +424,8 @@ export function applyOnce(id: string, state: TabState, f: TabFile | null, sys: S
   let appleOriginal = f?.appleOriginal
   // Terminal.app: the tab's title carries the state too (❓ ⏳ ✅ ❗), next to its thread's colour.
   if (R.kindOf(t) === "apple" && t.tty && sys.platform === "darwin" && f?.title && !process.env.CROSSTALK_NO_TITLE_SIGN)
-    ok = sys.run({ cmd: "osascript", args: ["-"], input: appleTitleScript(t.tty, signed(f.title, state)) }).ok && ok
+    // Ended ("off"): the title is given back, so the shell left in the tab no longer looks like a live session.
+    ok = sys.run({ cmd: "osascript", args: ["-"], input: state === "off" ? appleUntitleScript(t.tty) : appleTitleScript(t.tty, signed(f.title, state)) }).ok && ok
   // The bell, when it needs the person: Terminal puts its bell on that tab
   // (and can bounce the Dock), other terminals mark the tab or window. Only
   // when it turns to needing them, never again while it stays so.
@@ -485,6 +486,9 @@ export function signed(title: string, state: TabState): string {
   return dot ? `${dot}${sign} ${rest}` : `${sign} ${rest}`
 }
 
+/** Terminal.app: the tab's title given back to Terminal (the session in it has ended). */
+export const appleUntitleScript = (tty: string) => appleTab(tty, [`set custom title of t to ""`, `set title displays custom title of t to false`, `return "done"`])
+
 /**
  * Name the session's Terminal.app tab, when the title changed since last
  * time: one detached osascript, so the hook never waits on Terminal.
@@ -496,7 +500,7 @@ export function nameTab(sessionId: string, title: string, o: { platform?: NodeJS
   const f = readTab(sessionId)
   if (f?.title === title) return false
   withFile(sessionId, (cur) => writeTab({ ...(cur ?? { sessionId, want: "off", wantAt: Date.now() }), title }))
-  const input = appleTitleScript(t.tty, signed(title, f?.applied ?? "off"))
+  const input = appleTitleScript(t.tty, signed(title, f?.base ?? f?.want ?? "off"))
   try {
     ;(o.spawnIt ?? ((inp: string) => {
       const c = spawn("osascript", ["-"], { detached: true, stdio: ["pipe", "ignore", "ignore"] })
@@ -544,10 +548,17 @@ export const appleProfileBgAllScript = [
  * With tints off: every Terminal.app tab back to its profile's background, and
  * every remembered colour forgotten, so nothing is ever painted from one.
  */
-export function resetColours(sys: Sys = liveSys()): { reset: number; ok: boolean } {
+export function resetColours(sys: Sys = liveSys(), o: { once?: boolean } = {}): { reset: number; ok: boolean } {
   let reset = 0
   let ok = true
-  if (sys.platform === "darwin") {
+  // Every tab, only once per machine (the tints an earlier version left): after that a tab the person coloured is theirs.
+  const marker = path.join(P.root, "colours-reset-v1")
+  const sweep = !o.once || !fs.existsSync(marker)
+  if (sys.platform === "darwin" && sweep) {
+    try {
+      fs.mkdirSync(P.root, { recursive: true, mode: 0o700 })
+      fs.writeFileSync(marker, String(Date.now()))
+    } catch {}
     const r = sys.run({ cmd: "osascript", args: ["-"], input: appleProfileBgAllScript })
     ok = r.ok
     reset = r.ok ? Number(r.out.trim()) || 0 : 0
@@ -649,7 +660,7 @@ export const TMUX_SNIPPET = [
 
 export function pendingFor(sessionId: string, snapshot: () => Record<string, { sessionId: string; state: string }>): number {
   try {
-    return Object.values(snapshot()).filter((i) => i.sessionId === sessionId && !["answered", "handed", "muted"].includes(i.state)).length
+    return Object.values(snapshot()).filter((i) => i.sessionId === sessionId && !["answered", "handed", "muted", "later"].includes(i.state)).length
   } catch {
     return 0
   }

@@ -493,7 +493,7 @@ describe("the service", () => {
   })
 
   test("a stuck thread: one question, and yes starts an agent with the brief", async () => {
-    const w = world({ env: { CROSSTALK_STUCK_MS: "1" } })
+    const w = world({ env: { CROSSTALK_STUCK_MS: "1", CROSSTALK_STAFFING: "1" } })
     w.add("s-auth", ["src/auth/a.ts", "src/auth/b.ts", "src/auth/c.ts"])
     await new Promise((r) => setTimeout(r, 5))
     w.svc.tick()

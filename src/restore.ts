@@ -452,7 +452,8 @@ export function anchorFor(
   const live = o.recs
     .filter((r) => !r.endedAt && r.interactive !== false && kindOf(r.terminal) && !isCrosstalkSocket(r.terminal.tmux?.socket) && o.keyOf(r.cwd) === repo && o.alive(r))
     .sort((a, b) => b.seenAt - a.seenAt)
-  return live[0]?.terminal ?? null
+  // No window of this repository's: the window the person is in, never a new window.
+  return live[0]?.terminal ?? (o.asking && kindOf(o.asking.terminal) ? o.asking.terminal : null)
 }
 
 /** Whether two tabs are in the same window, as far as their terminal says. */

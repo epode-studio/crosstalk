@@ -371,7 +371,8 @@ async function maybeRaise($: EngineInterface) {
     const own = all.find(i => i.auto && isCard(i) && i.state === 'pending' && i.raisedAt === undefined)
     // The inbox, one at a time: the most pressing first (pure.ts inboxOrder).
     const now0 = await $.clock.now()
-    const queue = inboxOrder(all.filter(raisable), now0)
+    // Open lists never take the keyboard any more (a quiet line instead); any left from before are not raised.
+    const queue = inboxOrder(all.filter(i => raisable(i) && !i.id.startsWith('open:')), now0)
     const next = own ?? queue[0]
     if (!next) return
     const box = await $.prompt.read()

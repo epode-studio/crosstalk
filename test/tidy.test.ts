@@ -35,13 +35,15 @@ describe("what is offered", () => {
 describe("similar sessions", () => {
   test("same thread or same folder fold into one; the kept one is this, else in use, else used last", () => {
     const folds = TD.similar({
-      lives: [live("a1", { threads: ["auth"] }), live("a2", { threads: ["auth"] }), live("me", { threads: ["auth"] }), live("b1", { cwd: "/w/billing" }), live("b2", { cwd: "/w/billing" }), live("c", { cwd: "/w/c" })],
-      recs: [seen("a1", 10), seen("a2", 10), seen("me", 0), seen("b1", 90), seen("b2", 30), seen("c", 999)],
+      lives: [live("a1", { threads: ["auth"], cwd: "/w/app" }), live("a2", { threads: ["auth"], cwd: "/w/app" }), live("me", { threads: ["auth"], cwd: "/w/app" }), live("a3", { threads: ["auth"], cwd: "/w/worktrees/auth-3" }), live("b1", { cwd: "/w/billing" }), live("b2", { cwd: "/w/billing" }), live("c", { cwd: "/w/c" })],
+      recs: [seen("a1", 30), seen("a2", 25), seen("me", 0), seen("a3", 90), seen("b1", 90), seen("b2", 30), seen("c", 999)],
       status: () => "idle",
       waiting: () => 0,
       self: "me",
+      now: NOW,
+      idleMin: 20,
     })
-    expect(folds.map((f) => `${f.id}>${f.into}`).sort()).toEqual(["a1>me", "a2>me", "b1>b2"])
+    expect(folds.map((f) => `${f.id}>${f.into}`).sort()).toEqual(["a1>me", "a2>me", "b1>b2"]) // a3 works in its own worktree: a separate line of work
     expect(folds.find((f) => f.id === "a1")!.why).toBe("same thread, auth")
     expect(folds.find((f) => f.id === "b1")!.why).toBe("same folder")
   })
@@ -53,17 +55,21 @@ describe("similar sessions", () => {
       waiting: () => 0,
       self: "main",
       main: "main",
+      now: NOW,
+      idleMin: 20,
     })
     expect(folds.map((f) => `${f.id}>${f.into}`)).toEqual(["x>y"])
   })
   test("a busy session is never folded away, and is the one kept", () => {
     const folds = TD.similar({
-      lives: [live("x1", { threads: ["t"] }), live("x2", { threads: ["t"] }), live("x3", { threads: ["t"] })],
-      recs: [seen("x1", 1), seen("x2", 100), seen("x3", 100)],
+      lives: [live("x1", { threads: ["t"], cwd: "/w/t" }), live("x2", { threads: ["t"], cwd: "/w/t" }), live("x3", { threads: ["t"], cwd: "/w/t" }), live("x4", { threads: ["t"], cwd: "/w/t" })],
+      recs: [seen("x1", 30), seen("x2", 100), seen("x3", 100), seen("x4", 2)],
       status: (id) => (id === "x2" ? "busy" : "idle"),
       waiting: (id) => (id === "x3" ? 2 : 0),
+      now: NOW,
+      idleMin: 20,
     })
-    expect(folds.map((f) => `${f.id}>${f.into}`)).toEqual(["x1>x2"])
+    expect(folds.map((f) => `${f.id}>${f.into}`)).toEqual(["x1>x2"]) // x4 finished a turn two minutes ago: not yet
   })
   test("the note the kept session is handed", () => {
     const n = TD.foldNote({ name: "auth-2", why: "same thread, auth" }, { recap: "Token v2\nparsing done", files: ["src/a.ts"] })
@@ -143,7 +149,7 @@ describe("every agent at a glance", () => {
       now: NOW,
     })
     const dot = (await import("../src/ui-extra/pure.ts")).dotFor("auth")
-    expect(list.map((a) => A.agentLine(a))).toEqual(["❓ asks · waiting on you", "❓ q · 2 for you", `${dot}⏳ busy (this one) · auth · working`, "✅ idle1 · idle 30 min"])
+    expect(list.map((a) => A.agentLine(a))).toEqual(["❓ Asks · waiting on you", "❓ Q · 2 for you", `${dot}⏳ Auth`, "✅ Idle1 · idle 30 min"]) // named by its work, in words
   })
   test("\"show me all my agents\" is the pane's agents view, and the main session's pane", async () => {
     const P = await import("../src/ui-extra/pane.ts")
@@ -151,7 +157,7 @@ describe("every agent at a glance", () => {
     expect(P.AGENTS.test("all my agents")).toBe(true)
     expect(P.AGENTS.test("auth")).toBe(false)
     const out = P.agentsPane("me", [{ name: "a", state: "waiting", forYou: 1 }, { name: "b", state: "working" }])
-    expect(out.ok && out.pane.status).toBe("2 open · 1 working · 1 waiting on you")
+    expect(out.ok && out.pane.status).toBe("nothing needs you · 1 working") // main's own inbox is empty here; the waiting one asks nothing yet
   })
 })
 
@@ -183,24 +189,24 @@ describe("questions already waiting", () => {
     fs.appendFileSync(f, JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tu1", content: "Pi flat" }] } }) + "\n")
     expect(T.openQuestion(f)).toBe(null)
   })
-  test("the agents pane shows it under the agent, as waiting on you", async () => {
-    const A = await import("../src/ui-extra/agents.ts")
+  test("main's pane: what needs you (an agent's own question too), then what works; in words", async () => {
+    const P = await import("../src/ui-extra/pane.ts")
     const pure = await import("../src/ui-extra/pure.ts")
-    const list = A.agentsFrom({
-      recs: [{ sessionId: "case", cwd: "/w/case", pid: 10, seenAt: NOW - 5 * MIN, terminal: {} } as any],
-      status: () => "busy",
-      waiting: () => 0,
-      alive: () => true,
-      name: () => "organic-case-81",
-      asks: () => "Keep the Pi flat? (Pi flat / Keep any tilt)",
-      now: NOW,
-    })
-    expect(pure.paneLines({ thread: "your agents", status: "1 open", people: [], sessions: 0, waiting: [], recent: [], features: [], agents: list }, NOW)).toEqual([
-      "◢ your agents · 1 open",
-      "",
-      " ❓ organic-case-81 · waiting on you",
-      "   asks: Keep the Pi flat? (Pi flat / Keep any tilt)",
-    ])
+    const list = [
+      { name: "organic-case-81", thread: "organic-case-shape-brief-design", state: "waiting" as const, asks: "Keep the Pi flat? (Pi flat / Keep any tilt)", sessionId: "case" },
+      { name: "palpable-5d", thread: "a-module-change", state: "working" as const, sessionId: "w" },
+      { name: "palpable-9", state: "idle" as const, idleMin: 300, sessionId: "i" },
+      { name: "main", state: "waiting" as const, forYou: 21, here: true, sessionId: "me" },
+    ]
+    const out = P.agentsPane("me", list)
+    if (!out.ok) throw new Error("no pane")
+    const lines = pure.paneLines(out.pane, NOW)
+    const dot = pure.dotFor("organic-case-shape-brief-design")
+    expect(lines.slice(0, 4)).toEqual(["◢ main · 1 needs you · 1 working", "", "Needs you · 1", ` 1. ${dot} Organic case shape brief… — Keep the Pi flat? (Pi flat / Keep any tilt) (in its tab)`])
+    expect(lines).toContain("Working · 1")
+    expect(lines.some((l) => l.includes("A module change"))).toBe(true)
+    expect(lines.join("\n")).not.toContain("palpable-") // never a session's id
+    expect(lines.at(-1)).toContain("1 idle")
   })
 })
 
@@ -257,7 +263,7 @@ describe("the inbox", () => {
       NOW,
     ).map((i) => i.id)
     expect(order).toEqual(["sess:1", "relay:s:1", "m1", "attn:staff:t:1", "open:s:1"]) // the ten-hour-old card has risen past staffing
-    expect(pure.inboxLine({ id: "relay:s:1", kind: "attention", createdAt: NOW - 12 * MIN, question: "organic-case-81 asks: Keep the Pi flat?", from: "organic-case-81" }, NOW)).toBe("❓ organic-case-81 asks: Keep the Pi flat? · 12m")
+    expect(pure.inboxLine({ id: "relay:s:1", kind: "attention", createdAt: NOW - 12 * MIN, question: "organic-case-81 asks: Keep the Pi flat?", from: "organic-case-81" }, NOW)).toBe("Organic case 81 — Keep the Pi flat? · 12m") // plain words: the work's name, the question, how long
   })
 })
 
