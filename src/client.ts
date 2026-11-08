@@ -96,6 +96,70 @@ export function daemonOutdated(mine: string): boolean {
 }
 
 /**
+ * One daemon starting at a time. Two hooks firing together each see no socket
+ * and each start one; the second would unlink the first's socket and come up
+ * alongside it. The first to create the file wins; a file left by a start that
+ * died (its pid gone, or older than 30 s) is taken over.
+ */
+export function takeStartLock(file = path.join(P.root, "daemon.starting"), now = Date.now()): boolean {
+  const take = () => {
+    try {
+      fs.writeFileSync(file, JSON.stringify({ pid: process.pid, at: now }), { flag: "wx", mode: 0o600 })
+      return true
+    } catch {
+      return false
+    }
+  }
+  if (take()) return true
+  try {
+    const o = JSON.parse(fs.readFileSync(file, "utf8"))
+    let alive = true
+    try {
+      process.kill(Number(o.pid), 0)
+    } catch {
+      alive = false
+    }
+    if (alive && o.pid !== process.pid && now - Number(o.at) < 30_000) return false
+  } catch {}
+  try {
+    fs.unlinkSync(file)
+  } catch {}
+  return take()
+}
+
+export function dropStartLock(file = path.join(P.root, "daemon.starting")) {
+  try {
+    if (JSON.parse(fs.readFileSync(file, "utf8")).pid === process.pid) fs.unlinkSync(file)
+  } catch {}
+}
+
+/** An upgrade whose daemon would not start: that version is not tried again for an hour. */
+const failedFile = () => path.join(P.root, "upgrade-failed.json")
+export function upgradeFailed(version: string, now = Date.now()): boolean {
+  try {
+    const o = JSON.parse(fs.readFileSync(failedFile(), "utf8"))
+    return o.version === version && now - Number(o.at) < 3_600_000
+  } catch {
+    return false
+  }
+}
+export function noteUpgradeFailed(version: string, now = Date.now()) {
+  try {
+    fs.writeFileSync(failedFile(), JSON.stringify({ version, at: now }), { mode: 0o600 })
+  } catch {}
+}
+
+/** The install the running daemon came from, so a failed upgrade can bring it back. */
+export function daemonRoot(): string | undefined {
+  try {
+    const r = String(JSON.parse(fs.readFileSync(P.daemonVersion, "utf8")).root ?? "")
+    return r && fs.existsSync(r) ? r : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Whether a pid is a crosstalk daemon: never this process, and its command
  * line runs crosstalk's daemon entry, so a stale lock naming a reused pid is
  * never signalled.
@@ -131,10 +195,23 @@ async function stopOutdated(): Promise<boolean> {
 
 /** Start the daemon detached if it is not already up. Safe to call repeatedly. A daemon from an older install is replaced. */
 export async function ensureDaemon(root = rootFrom(import.meta.url)): Promise<boolean> {
+  let fallback: string | undefined
+  const mine = pluginVersion(root)
   if (daemonRunning()) {
-    if (!daemonOutdated(pluginVersion(root))) return true
+    if (!daemonOutdated(mine) || upgradeFailed(mine)) return true
+    fallback = daemonRoot()
     if (!(await stopOutdated())) return true // it would not go: keep using it
   }
+  if (await start(root)) return true
+  // The newer install's daemon would not start: bring the old one back, and leave that version alone for an hour.
+  if (fallback && fallback !== root) {
+    noteUpgradeFailed(mine)
+    return start(fallback)
+  }
+  return false
+}
+
+async function start(root: string): Promise<boolean> {
   let child
   try {
     fs.mkdirSync(P.root, { recursive: true, mode: 0o700 })

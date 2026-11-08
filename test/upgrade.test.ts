@@ -52,3 +52,26 @@ describe("daemon upgrade", () => {
     expect(`${r.stdout}${r.stderr}`).toMatch(/daemon (stopped|was not running)/)
   })
 })
+
+describe("one daemon at a time", () => {
+  test("the first start holds the lock; a dead or stale holder is taken over", () => {
+    const f = path.join(P.root, "daemon.starting")
+    fs.rmSync(f, { force: true })
+    expect(C.takeStartLock(f)).toBe(true)
+    fs.writeFileSync(f, JSON.stringify({ pid: process.ppid, at: Date.now() }))
+    expect(C.takeStartLock(f)).toBe(false) // someone alive is starting one
+    fs.writeFileSync(f, JSON.stringify({ pid: process.ppid, at: Date.now() - 60_000 }))
+    expect(C.takeStartLock(f)).toBe(true) // stale
+    fs.writeFileSync(f, JSON.stringify({ pid: 999_999_9, at: Date.now() }))
+    expect(C.takeStartLock(f)).toBe(true) // its starter died
+    C.dropStartLock(f)
+    expect(fs.existsSync(f)).toBe(false)
+  })
+  test("an upgrade that would not start is left alone for an hour", () => {
+    expect(C.upgradeFailed("0.9.9")).toBe(false)
+    C.noteUpgradeFailed("0.9.9", 1000)
+    expect(C.upgradeFailed("0.9.9", 2000)).toBe(true)
+    expect(C.upgradeFailed("0.9.8", 2000)).toBe(false)
+    expect(C.upgradeFailed("0.9.9", 1000 + 3_600_001)).toBe(false)
+  })
+})
