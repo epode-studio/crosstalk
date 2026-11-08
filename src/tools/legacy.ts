@@ -26,6 +26,11 @@ import * as historyTools from "../urls/history/tools.ts"
 import * as envTools from "../env/tools.ts"
 import { introText } from "../intro.ts"
 import * as openItemsPrefs from "../attention/openitems.ts"
+import * as Openitems from "../attention/openitems.ts"
+import * as Calm from "../attention/calm.ts"
+import * as Summary from "../attention/summary.ts"
+import * as Worker from "../attention/worker.ts"
+import * as Transcripts from "../sessions/transcripts.ts"
 
 export type Ctx = { sessionId: string; cwd: string; root: string }
 export type Result = { content: { type: "text"; text: string }[]; isError?: boolean }
@@ -297,6 +302,36 @@ export async function callLegacy(name: string, a: any, o: Ctx): Promise<Result |
 
     case "crosstalk_intro":
       return { content: [{ type: "text", text: introText() }] }
+
+    case "crosstalk_calm": {
+      const now = Date.now()
+      const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] })
+      if (a.mode === "focus") {
+        Calm.update((s) => Calm.startFocus(s, Number(a.minutes) || 60, now))
+        const until = Calm.read().until ?? now
+        return text(`◢ crosstalk: focus until ${new Date(until).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}. Only what stops an agent will interrupt; the rest waits, and a summary comes at the end. Say "I'm back" to end it sooner.`)
+      }
+      if (a.mode === "away") {
+        // Starts work by itself: only on the person's own words, typed in this session.
+        const said = Transcripts.lastPrompt(Transcripts.transcriptOf(SESSION_ID, CWD))
+        if (!said || now - said.at > 15 * 60_000 || !/\b(bed|sleep|night|walk|away|leav\w*|out|lunch|dinner|gym|errands?|afk|keep (?:going|working)|back (?:in|later|tomorrow))\b/i.test(said.text))
+          return text(`◢ crosstalk: away mode lets agents keep going by themselves, so it needs your user's own words, typed here ("I'm going to bed"). Nothing was changed.`)
+        const before = Worker.read()
+        Calm.update((s) => Calm.startAway(s, { now, workerWasOn: before.on, usd: Summary.totalUsd(), hours: Number(a.hours) || undefined }))
+        // The board is worked while away (two agents at most, paused near the plan's limit).
+        if (!before.on) Worker.write({ ...before, on: true, tried: [] })
+        Openitems.setAlways(true)
+        return text(`◢ crosstalk: away mode. Agents keep going as far as they safely can: a question takes the agent's own recommendation, or it picks the safest reversible choice and writes down why; open lists are tackled; open tasks are worked, at most two agents, paused near your plan's limit. Permission prompts, deploys and anything only you can do wait for you. Your first message back gives the summary.`)
+      }
+      // back: end whichever mode, and say what happened.
+      const was = Calm.update((s) => Calm.end(s))
+      if (was.mode === "away") {
+        if (!was.workerWasOn) Worker.write({ ...Worker.read(), on: false })
+        Openitems.setAlways(false)
+      }
+      const since = was.since ?? now - 8 * 3600_000
+      return text(Summary.full(Summary.gather(since, { ...(was.usdAtStart !== undefined ? { usdAtStart: was.usdAtStart } : {}) }), now, was.mode === "focus" ? "While you focused" : "While you were away"))
+    }
 
     case "crosstalk_open_items": {
       if (typeof a.on !== "boolean") return err("pass on: true or false")

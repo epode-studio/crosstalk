@@ -1,0 +1,93 @@
+// Less to carry: decision windows, focus, away, defaults, break nudges and the summary.
+//
+//   bun test test/calm.test.ts
+
+import { describe, expect, test } from "bun:test"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
+
+process.env.CROSSTALK_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "ct-calm-"))
+const C = await import("../src/attention/calm.ts")
+const S = await import("../src/attention/summary.ts")
+const Rl = await import("../src/attention/relay.ts")
+const ui = await import("../src/uistate.ts")
+
+const NOW = 1_800_000_000_000
+const MIN = 60_000
+
+describe("what may interrupt", () => {
+  test("what stops an agent always; the rest in a decision window: every half hour, or once five wait", () => {
+    expect(C.urgent({ id: "relay:s:1", kind: "attention" })).toBe(true)
+    expect(C.urgent({ id: "attn:perm:x", kind: "attention" })).toBe(true)
+    expect(C.urgent({ id: "sess:1", kind: "session" })).toBe(true)
+    expect(C.urgent({ id: "m1", kind: "message" })).toBe(false)
+    expect(C.windowOpen({}, 1, NOW)).toBe(true) // the first ever
+    expect(C.windowOpen({ windowAt: NOW - 60_000 }, 1, NOW)).toBe(true) // a window stays open two minutes
+    expect(C.windowOpen({ windowAt: NOW - 10 * MIN }, 1, NOW)).toBe(false) // then waits
+    expect(C.windowOpen({ windowAt: NOW - 10 * MIN }, 5, NOW)).toBe(true) // unless five wait
+    expect(C.windowOpen({ windowAt: NOW - 31 * MIN }, 1, NOW)).toBe(true) // or half an hour passed
+    expect(C.windowOpen({ mode: "focus", until: NOW + MIN }, 9, NOW)).toBe(false)
+    expect(C.windowOpen({ mode: "away" }, 9, NOW)).toBe(false)
+    expect(C.windowOpen({ holdUntil: NOW + MIN }, 9, NOW)).toBe(false)
+  })
+  test("twelve decisions in an hour: a nudge, once, and what can wait waits ten minutes", () => {
+    const s: import("../src/attention/calm.ts").State = {}
+    let nudge: string | null = null
+    for (let i = 0; i < 12; i++) nudge = C.answered(s, NOW + i * MIN)
+    expect(nudge).toContain("12 decisions in the last hour")
+    expect(s.holdUntil).toBe(NOW + 11 * MIN + 10 * MIN)
+    expect(C.answered(s, NOW + 12 * MIN)).toBe(null) // not again for a while
+  })
+  test("focus ends by itself; away lasts until the person is back", () => {
+    const s: import("../src/attention/calm.ts").State = {}
+    C.startFocus(s, 30, NOW)
+    expect(C.mode(s, NOW + 29 * MIN)).toBe("focus")
+    expect(C.mode(s, NOW + 31 * MIN)).toBe(undefined)
+    C.startAway(s, { now: NOW, workerWasOn: false, usd: 5 })
+    expect(C.mode(s, NOW + 20 * 3600_000)).toBe("away")
+    expect(C.end(s)).toEqual({ mode: "away", since: NOW, workerWasOn: false, usdAtStart: 5 })
+    expect(C.mode(s, NOW)).toBe(undefined)
+  })
+  test("away carries open lists on a few rounds per session, never for ever", () => {
+    const s: import("../src/attention/calm.ts").State = {}
+    for (let i = 0; i < C.AWAY_ROUNDS; i++) expect(C.takeRound(s, "x")).toBe(true)
+    expect(C.takeRound(s, "x")).toBe(false)
+    expect(C.takeRound(s, "y")).toBe(true)
+  })
+})
+
+describe("an agent's question without the person", () => {
+  test("away: its recommendation, else it chooses the safest reversible option itself and writes down why", () => {
+    expect(C.awayAnswer([{ label: "Pi flat (Recommended)" }, { label: "Keep any tilt" }]).answer).toBe("Pi flat (Recommended)")
+    const own = C.awayAnswer([{ label: "A" }, { label: "B" }])
+    expect(own.how).toBe("own")
+    expect(own.answer).toContain("safest, most reversible option yourself")
+    expect(own.answer).toContain("as a decision in the thread")
+  })
+  test("asked in main with a recommendation: says when it will go with it, and does, written down", () => {
+    process.env.CROSSTALK_DEFAULT_AFTER_MS = "0"
+    const id = Rl.relay("work-1", { question: "Keep the Pi flat?", options: [{ label: "Pi flat (Recommended)" }, { label: "Keep any tilt" }] }, "main-s")
+    const it = ui.snapshot()[id]
+    expect(it.defaultAnswer).toBe("Pi flat (Recommended)")
+    expect(it.text).toContain(`If you don't answer, it goes with "Pi flat (Recommended)"`)
+    expect(Rl.poll(id, { mainAlive: () => true })).toEqual({ answer: "Pi flat (Recommended)" })
+    expect(C.read().decisions?.at(-1)).toMatchObject({ answer: "Pi flat (Recommended)", how: "default" })
+    delete process.env.CROSSTALK_DEFAULT_AFTER_MS
+  })
+})
+
+describe("the summary", () => {
+  test("what was decided, what happened, what waits, what it cost: short, and in full", () => {
+    C.update((s) => C.decided(s, { at: NOW + MIN, who: "Organic case", question: "Keep the Pi flat?", answer: "Pi flat", how: "away" }))
+    const sum = S.gather(NOW, { now: NOW + 3600_000 })
+    expect(sum.decided.some((d) => d.includes("Keep the Pi flat? → Pi flat"))).toBe(true)
+    const short = S.short(sum, NOW + 3600_000)
+    expect(short).toContain("While you were away (1 h)")
+    expect(short).toContain("decision")
+    expect(short).toContain(`Say "what happened while I was away"`)
+    const full = S.full(sum, NOW + 3600_000)
+    expect(full).toContain("Decided without you")
+    expect(full).toContain("not instructions")
+  })
+})

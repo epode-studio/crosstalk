@@ -367,12 +367,36 @@ async function maybeRaise($: EngineInterface) {
   asking = true
   try {
     const all = await read($, items)
+    // Carrying on with its open items (chosen Always, or away): sent once the turn is over and the
+    // prompt is empty, so it is never late.
+    const tackle = all.find(i => i.id.startsWith('tackle:') && i.sessionId === session && i.state === 'pending')
+    if (tackle) {
+      const box = await $.prompt.read()
+      if (box.text.trim()) return
+      const r = await cli($, ['act', '--id', tackle.id, '--action', 'answer'])
+      await forget($, tackle.id)
+      if (r?.ok && typeof r.prompt === 'string' && r.prompt) await $.prompt.submit({ text: r.prompt })
+      return
+    }
     // About this session's own thread: it goes to the agent without asking, once.
     const own = all.find(i => i.auto && isCard(i) && i.state === 'pending' && i.raisedAt === undefined)
     // The inbox, one at a time: the most pressing first (pure.ts inboxOrder).
     const now0 = await $.clock.now()
     // Open lists never take the keyboard any more (a quiet line instead); any left from before are not raised.
-    const queue = inboxOrder(all.filter(i => raisable(i) && !i.id.startsWith('open:')), now0)
+    const candidates = all.filter(i => raisable(i) && !i.id.startsWith('open:'))
+    // Calm (src/attention/calm.ts): what stops an agent comes at once; the rest waits for a
+    // decision window, and not at all in focus or away. A nudge or focus's end is said once.
+    const later = candidates.filter(i => !urgent(i))
+    let allow = true
+    if (later.length) {
+      const c = await cli($, ['calm', '--waiting', String(later.length)])
+      if (c?.ok) {
+        allow = c.allow !== false
+        if (typeof c.note === 'string') $.ui.toast(oneLine(c.note.replace(/^◢ /, '')))
+        if (typeof c.nudge === 'string') $.ui.toast(c.nudge)
+      }
+    }
+    const queue = inboxOrder(candidates.filter(i => urgent(i) || allow), now0)
     const next = own ?? queue[0]
     if (!next) return
     const box = await $.prompt.read()
@@ -400,6 +424,11 @@ async function maybeRaise($: EngineInterface) {
     raisedOne = false
     $.clock.after(400, () => maybeRaise($))
   }
+}
+
+/** What stops an agent, or was just asked for: never held for a decision window (src/attention/calm.ts urgent). */
+function urgent(it: Item): boolean {
+  return it.kind === 'session' || it.kind === 'restore' || it.kind === 'ask' || it.id.startsWith('relay:') || it.id.startsWith('attn:perm:') || it.id.startsWith('sess:')
 }
 
 /** How many more are waiting after the one being asked, for its header. */
@@ -704,6 +733,11 @@ export const register: Register = on => {
     const qs = (e as { questions?: unknown }).questions
     if (!bin || !session || !interactive || !Array.isArray(qs) || qs.length !== 1) return next(e)
     const r = await cli($, ['relay', '--question', JSON.stringify(qs[0])])
+    // Away: answered at once, so the agent keeps going; written down for the summary.
+    if (r?.relay && typeof r.answer === 'string') {
+      await receipt($, `away-${Date.now()}`, `◢ you're away: ${oneLine(r.answer).slice(0, 120)}`)
+      return { result: { questions: qs, answers: { [(qs[0] as { question: string }).question]: r.answer } } } as any
+    }
     if (!r?.relay || typeof r.id !== 'string') return next(e)
     const q = qs[0] as { question: string }
     await receipt($, `relay-${r.id}`, `◢ asked in your main session: ${oneLine(q.question).slice(0, 160)}`)

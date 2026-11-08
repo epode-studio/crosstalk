@@ -2,8 +2,8 @@
 // @bun
 
 // src/hook.ts
-import path47 from "path";
-import fs39 from "fs";
+import path52 from "path";
+import fs44 from "fs";
 
 // src/client.ts
 import net from "node:net";
@@ -1939,6 +1939,13 @@ var LEGACY_LISTS = { decisions: "decision", facts: "fact", tasks: "task", rules:
 var LEGACY_SECTIONS = ["recap", ...Object.keys(LEGACY_LISTS)];
 var COMMITTED_NOTES = new Set(["decision", "rule"]);
 var newer2 = (a, b) => a.l !== b.l ? a.l > b.l : a.by > b.by;
+function notes(t, kind) {
+  const want = kind === undefined ? null : new Set(typeof kind === "string" ? [kind] : kind);
+  return live(t, "notes").filter((n) => (!want || want.has(n.kind)) && !(n.kind === "recap" && !n.text));
+}
+function live(t, list) {
+  return Object.values(t[list]).filter((i) => !i.gone).sort((a, b) => (a.at ?? 0) - (b.at ?? 0) || (a.id < b.id ? -1 : 1));
+}
 function slug(s, max = 40) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, max).replace(/-+$/g, "") || "thread";
 }
@@ -6363,6 +6370,7 @@ function writePrefs(p) {
   fs37.writeFileSync(tmp, JSON.stringify({ ...p, seen, seenItems }), { mode: 384 });
   fs37.renameSync(tmp, file9());
 }
+var setAlways = (on) => writePrefs({ ...readPrefs(), always: on });
 function tacklePrompt(items, ids = []) {
   return [
     `Tackle the open items you listed:`,
@@ -6392,29 +6400,201 @@ function atStop(o) {
   return { items, waiting, persons, id, fresh: !o.continuing || !p.always, auto: !!p.always && !o.continuing };
 }
 
-// src/spawn.ts
+// src/attention/calm.ts
 import fs38 from "node:fs";
 import path46 from "node:path";
-var dir8 = () => path46.join(P.root, "spawned");
+var file10 = () => path46.join(P.root, "calm.json");
+var WINDOW_OPEN_MS = 2 * 60000;
+var AWAY_ROUNDS = 5;
+function read3() {
+  try {
+    return JSON.parse(fs38.readFileSync(file10(), "utf8")) ?? {};
+  } catch {
+    return {};
+  }
+}
+function update(fn) {
+  fs38.mkdirSync(P.root, { recursive: true, mode: 448 });
+  const lock = `${file10()}.lock`;
+  let held = false;
+  for (let i = 0;i < 40 && !held; i++) {
+    try {
+      fs38.mkdirSync(lock);
+      held = true;
+    } catch {
+      try {
+        if (Date.now() - fs38.statSync(lock).mtimeMs > 5000)
+          fs38.rmdirSync(lock);
+      } catch {}
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+    }
+  }
+  try {
+    const s = read3();
+    const out = fn(s);
+    const tmp = `${file10()}.${process.pid}.tmp`;
+    fs38.writeFileSync(tmp, JSON.stringify(s), { mode: 384 });
+    fs38.renameSync(tmp, file10());
+    return out;
+  } finally {
+    if (held)
+      try {
+        fs38.rmdirSync(lock);
+      } catch {}
+  }
+}
+function mode(s = read3(), now = Date.now()) {
+  if (!s.mode)
+    return;
+  if (s.until && now >= s.until && s.mode === "focus")
+    return;
+  return s.mode;
+}
+var isAway = (now = Date.now()) => mode(read3(), now) === "away";
+function end(s) {
+  const was = { mode: s.mode, since: s.since, workerWasOn: s.workerWasOn, usdAtStart: s.usdAtStart };
+  delete s.mode;
+  delete s.until;
+  delete s.rounds;
+  delete s.workerWasOn;
+  delete s.usdAtStart;
+  return was;
+}
+function takeRound(s, sessionId) {
+  const r = s.rounds ??= {};
+  if ((r[sessionId] ?? 0) >= AWAY_ROUNDS)
+    return false;
+  r[sessionId] = (r[sessionId] ?? 0) + 1;
+  return true;
+}
+
+// src/urls/ci.ts
+import fs39 from "node:fs";
+import path47 from "node:path";
+var FAIL = new Set(["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"]);
+var OK = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
+var events = () => path47.join(P.root, "events.json");
+function recentEvents(n = 6, now = Date.now()) {
+  try {
+    const all = JSON.parse(fs39.readFileSync(events(), "utf8")) ?? [];
+    return all.filter((e) => now - e.at < 86400000).slice(-n).reverse();
+  } catch {
+    return [];
+  }
+}
+
+// src/ui-extra/usage.ts
+import fs40 from "node:fs";
+import path48 from "node:path";
+var dir8 = () => path48.join(P.root, "usage");
+function all2() {
+  const out = new Map;
+  let names = [];
+  try {
+    names = fs40.readdirSync(dir8()).filter((n) => n.endsWith(".json"));
+  } catch {}
+  for (const n of names)
+    try {
+      out.set(n.slice(0, -5), JSON.parse(fs40.readFileSync(path48.join(dir8(), n), "utf8")));
+    } catch {}
+  return out;
+}
+
+// src/attention/calm.ts
+import fs41 from "node:fs";
+import path49 from "node:path";
+var file11 = () => path49.join(P.root, "calm.json");
+var WINDOW_OPEN_MS2 = 2 * 60000;
+function read4() {
+  try {
+    return JSON.parse(fs41.readFileSync(file11(), "utf8")) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+// src/attention/summary.ts
+var one = (s, n = 140) => {
+  const t = s.replace(/\s+/g, " ").trim();
+  return t.length > n ? t.slice(0, n - 1) + "\u2026" : t;
+};
+var totalUsd = (reports = all2()) => [...reports.values()].reduce((n, r) => n + (typeof r.usd === "number" ? r.usd : 0), 0);
+function gather(since, o = {}) {
+  const now = o.now ?? Date.now();
+  const done = [];
+  try {
+    for (const t of Object.values(readThreads().threads))
+      for (const n of notes(t, "task"))
+        if (n.state === "done" && (n.doneAt ?? 0) >= since)
+          done.push(`${t.meta.value.name}: ${one(n.text)}`);
+  } catch {}
+  const decided = (read4().decisions ?? []).filter((d) => d.at >= since).map((d) => `${d.who}: ${one(d.question, 90)} \u2192 ${one(d.answer, 60)}${d.how === "default" ? " (its recommendation, unanswered)" : ""}`);
+  const happened = recentEvents(30, now).filter((e) => e.at >= since).reverse().map((e) => e.text);
+  let waiting = [];
+  try {
+    waiting = Object.values(snapshot()).filter((i) => (i.state === "pending" || i.state === "later") && i.question).map((i) => one(i.question, 120));
+  } catch {}
+  const spent = o.usdAtStart !== undefined ? Math.max(0, totalUsd() - o.usdAtStart) : undefined;
+  return { done, decided, happened, waiting, ...spent !== undefined ? { spent } : {}, since };
+}
+var dur = (ms) => {
+  const m = Math.round(ms / 60000);
+  return m < 60 ? `${m} min` : `${Math.round(m / 6) / 10} h`.replace(".0 h", " h");
+};
+function short(s, now = Date.now(), what = "While you were away") {
+  const bits = [
+    s.done.length ? `${s.done.length} task${s.done.length === 1 ? "" : "s"} done` : "",
+    s.decided.length ? `${s.decided.length} decision${s.decided.length === 1 ? "" : "s"} made for you` : "",
+    s.happened.length ? `${s.happened.length} update${s.happened.length === 1 ? "" : "s"}` : "",
+    s.waiting.length ? `${s.waiting.length} waiting on you` : "nothing waiting on you",
+    s.spent ? `$${s.spent.toFixed(2)} spent` : ""
+  ].filter(Boolean);
+  return `\u25e2 ${what} (${dur(now - s.since)}): ${bits.join(" \u00b7 ")}. Say "what happened while I was away" for the details.`;
+}
+
+// src/attention/worker.ts
+import fs42 from "node:fs";
+import path50 from "node:path";
+var file12 = () => path50.join(P.root, "worker.json");
+var DEFAULT_MAX = 2;
+function read5() {
+  try {
+    const p = JSON.parse(fs42.readFileSync(file12(), "utf8"));
+    return { on: !!p.on, max: Math.max(1, Math.min(4, Number(p.max) || DEFAULT_MAX)), ...Array.isArray(p.threads) ? { threads: p.threads.map(String) } : {}, running: Array.isArray(p.running) ? p.running : [], tried: Array.isArray(p.tried) ? p.tried.slice(-200) : [] };
+  } catch {
+    return { on: false, max: DEFAULT_MAX, running: [], tried: [] };
+  }
+}
+function write4(p) {
+  fs42.mkdirSync(P.root, { recursive: true, mode: 448 });
+  const tmp = `${file12()}.${process.pid}.tmp`;
+  fs42.writeFileSync(tmp, JSON.stringify(p), { mode: 384 });
+  fs42.renameSync(tmp, file12());
+}
+
+// src/spawn.ts
+import fs43 from "node:fs";
+import path51 from "node:path";
+var dir9 = () => path51.join(P.root, "spawned");
 function readSpawned2() {
   let names;
   try {
-    names = fs38.readdirSync(dir8()).filter((f) => f.endsWith(".json"));
+    names = fs43.readdirSync(dir9()).filter((f) => f.endsWith(".json"));
   } catch {
     return [];
   }
   const out = [];
   for (const f of names)
     try {
-      const r = JSON.parse(fs38.readFileSync(path46.join(dir8(), f), "utf8"));
+      const r = JSON.parse(fs43.readFileSync(path51.join(dir9(), f), "utf8"));
       if (r?.id && r.worktree)
         out.push(r);
     } catch {}
   return out.sort((a, b) => a.createdAt - b.createdAt);
 }
 function spawnedAt2(cwd, recs = readSpawned2()) {
-  const c = path46.resolve(cwd);
-  return recs.find((r) => !r.removedAt && (c === path46.resolve(r.worktree) || c.startsWith(path46.resolve(r.worktree) + path46.sep))) ?? null;
+  const c = path51.resolve(cwd);
+  return recs.find((r) => !r.removedAt && (c === path51.resolve(r.worktree) || c.startsWith(path51.resolve(r.worktree) + path51.sep))) ?? null;
 }
 var STOP3 = new Set("a an the on to for and of in with at by from into onto this that it its be is are please can could would you start put get run spin up fire one two three four five six seven eight more another new agent agents session sessions claude someone somebody work working".split(" "));
 var TMUX_CONF2 = [
@@ -6469,8 +6649,8 @@ function agyCwd() {
   if (Array.isArray(ws) && typeof ws[0] === "string" && ws[0])
     return ws[0];
   const here = process.cwd();
-  if (AGENT_DIRS.has(path47.basename(here)))
-    return path47.dirname(here);
+  if (AGENT_DIRS.has(path52.basename(here)))
+    return path52.dirname(here);
   return here;
 }
 var cwd = hook.cwd ?? hook.working_dir ?? hook.workspace_roots?.[0] ?? (isAgy ? agyCwd() : process.cwd());
@@ -6650,7 +6830,10 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
             if (t?.ok && t.id)
               ids.push(String(t.id));
           } catch {}
-      if (r.auto) {
+      const away = isAway() && update((s) => takeRound(s, sessionId));
+      if ((r.auto || away && r.items.length) && modActive(sessionId)) {
+        withStore((items, now) => upsert(items, { id: `tackle:${sessionId}:${r.id}`, kind: "attention", sessionId, text: tacklePrompt(r.items, ids), auto: true, ts: now }, now));
+      } else if (r.auto || away && r.items.length) {
         process.stdout.write(JSON.stringify({
           decision: "block",
           reason: tacklePrompt(r.items, ids),
@@ -6666,6 +6849,16 @@ ${m}` : m;
     }
   } catch {}
 }
+if (restoreClient === "claude" && sessionId && /^UserPromptSubmit$/.test(eventName) && !process.env[BG_ENV] && isAway())
+  try {
+    const was = update((s) => end(s));
+    if (!was.workerWasOn)
+      write4({ ...read5(), on: false });
+    setAlways(false);
+    const m = short(gather(was.since ?? Date.now() - 8 * 3600000, { ...was.usdAtStart !== undefined ? { usdAtStart: was.usdAtStart } : {} }));
+    systemMessage = systemMessage ? `${systemMessage}
+${m}` : m;
+  } catch {}
 var socket = process.env.CLAUDE_CODE_MESSAGING_SOCKET;
 var REGISTER_TIMEOUT_MS = Number(process.env.CROSSTALK_REGISTER_TIMEOUT_MS ?? 4000);
 async function registerSession() {
@@ -6675,10 +6868,10 @@ async function registerSession() {
   if (socket) {
     try {
       const dir = sessionsDir();
-      for (const f of fs39.readdirSync(dir)) {
+      for (const f of fs44.readdirSync(dir)) {
         if (!f.endsWith(".json"))
           continue;
-        const e = JSON.parse(fs39.readFileSync(path47.join(dir, f), "utf8"));
+        const e = JSON.parse(fs44.readFileSync(path52.join(dir, f), "utf8"));
         if (e.sessionId === sessionId) {
           name = e.name ?? name;
           break;
@@ -6686,7 +6879,7 @@ async function registerSession() {
       }
     } catch {}
   } else {
-    name = hook.thread_name ?? (path47.basename(cwd) || name);
+    name = hook.thread_name ?? (path52.basename(cwd) || name);
   }
   const registered = await request({
     op: "register",

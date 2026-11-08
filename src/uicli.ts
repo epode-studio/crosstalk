@@ -16,6 +16,8 @@ import { daemonRunning, ensureDaemon, request } from "./client.ts"
 import * as openItems from "./attention/openitems.ts"
 import * as usage from "./ui-extra/usage.ts"
 import * as relay from "./attention/relay.ts"
+import * as calm from "./attention/calm.ts"
+import * as summary from "./attention/summary.ts"
 import * as firstuse from "./repotrust/firstuse.ts"
 import * as restore from "./restore.ts"
 import * as ui from "./uistate.ts"
@@ -189,9 +191,30 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
         q = JSON.parse(arg(argv, "--question") ?? "null")
       } catch {}
       if (!relay.relayable([q])) return print({ ok: true, relay: false })
+      // Away: the agent keeps going; the answer is given now and written down for the summary.
+      if (calm.isAway()) return print({ ok: true, relay: true, answer: relay.answerAway(session, q as relay.Question), away: true })
       const main = relay.target(session)
       if (!main) return print({ ok: true, relay: false })
       return print({ ok: true, relay: true, id: relay.relay(session, q as relay.Question, main) })
+    }
+    // What may interrupt now (src/attention/calm.ts): non-urgent questions only in a decision window;
+    // a nudge or focus's end said once.
+    case "calm": {
+      const now = Date.now()
+      const waitingN = Number(arg(argv, "--waiting") ?? 0)
+      const out = calm.update((s) => {
+        let note: string | undefined
+        if (s.mode === "focus" && s.until && now >= s.until) {
+          const was = calm.end(s)
+          note = summary.short(summary.gather(was.since ?? now - 3600_000), now, "Focus time is over")
+        }
+        const allow = calm.windowOpen(s, waitingN, now)
+        if (allow && waitingN > 0 && (!s.windowAt || now - s.windowAt >= calm.WINDOW_OPEN_MS)) s.windowAt = now
+        const nudge = s.nudge
+        delete s.nudge
+        return { allow, mode: calm.mode(s, now) ?? null, ...(note ? { note } : {}), ...(nudge ? { nudge } : {}) }
+      })
+      return print({ ok: true, ...out })
     }
     case "relay-wait":
       return print({ ok: true, ...relay.poll(arg(argv, "--id") ?? "") })
@@ -222,6 +245,14 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
       const id = arg(argv, "--id") ?? ""
       const action = arg(argv, "--action") ?? ""
       const value = arg(argv, "--value")
+      // Every answer counts toward the break nudge.
+      if (action === "answer")
+        try {
+          calm.update((s) => {
+            const n = calm.answered(s, Date.now())
+            if (n) s.nudge = n
+          })
+        } catch {}
       if (id.startsWith("restore:")) return print(restoreAct(session, id, action, value, root))
       if (id.startsWith("gather:")) return print(gatherAct(session, id, action, value, root))
       if (id.startsWith("cleanup:")) return print(cleanup.act(session, id, action, value))
@@ -237,6 +268,13 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
         const yes = action !== "mute" && (value ?? "").trim() === firstuse.CONNECT
         const out = await firstuse.connect({ slug: id.slice("connect:".length), yes, ensureDaemon: () => ensureDaemon(root), request })
         return print({ ok: out.ok, text: out.text, item: ui.snapshot()[id] })
+      }
+      // Carrying on with open items (src/attention/openitems.ts): taken once by this session's mod.
+      if (id.startsWith("tackle:")) {
+        const it = ui.snapshot()[id]
+        if (!it || it.sessionId !== session) return print({ ok: false, error: "not this session's" })
+        const claim = ui.withStore((items, now) => ui.act(items, id, "answer", now, "sent"))
+        return print(claim.ok ? { ok: true, prompt: it.text } : { ok: false, error: claim.error })
       }
       // An agent's question answered in main (src/attention/relay.ts): the pick is kept for the asking session's mod.
       if (id.startsWith("relay:")) {

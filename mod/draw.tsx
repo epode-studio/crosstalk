@@ -328,6 +328,7 @@ export function bandTree(E: Els, open: Item[], digest: string, now: number, body
   const keep = open.filter(
     it =>
       !it.id.startsWith('open:') &&
+      !it.id.startsWith('tackle:') &&
       !((it.kind === 'message' || it.kind === 'ask') && !(it.text ?? '').trim()) &&
       (now - (it.ts ?? it.createdAt) < DAY || it.id.startsWith('relay:') || it.id.startsWith('attn:perm:') || it.kind === 'ask'),
   )

@@ -38,6 +38,9 @@ import * as shots from "./urls/shots/index.ts"
 import * as intro from "./intro.ts"
 import * as tabStatus from "./terminal/status.ts"
 import * as openItems from "./attention/openitems.ts"
+import * as calmMod from "./attention/calm.ts"
+import * as summaryMod from "./attention/summary.ts"
+import * as workerMod from "./attention/worker.ts"
 import * as spawnMod from "./spawn.ts"
 import { BG_ENV } from "./attention/background.ts"
 
@@ -443,7 +446,13 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
             if (t?.ok && t.thread) thread = t.thread
             if (t?.ok && t.id) ids.push(String(t.id))
           } catch {}
-      if (r.auto) {
+      // Away: open lists are tackled by themselves, a few rounds per session.
+      const away = calmMod.isAway() && calmMod.update((s) => calmMod.takeRound(s, sessionId))
+      if ((r.auto || (away && r.items.length)) && ui.modActive(sessionId)) {
+        // With the mod: it sends this when the turn is over and the prompt is empty, as "Prompt from
+        // the crosstalk plugin": never late, never shown as a hook error.
+        ui.withStore((items, now) => ui.upsert(items, { id: `tackle:${sessionId}:${r.id}`, kind: "attention", sessionId, text: openItems.tacklePrompt(r.items, ids), auto: true, ts: now }, now))
+      } else if (r.auto || (away && r.items.length)) {
         process.stdout.write(
           JSON.stringify({
             decision: "block",
@@ -461,6 +470,19 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
     }
   } catch {}
 }
+
+/**
+ * Back from away (src/attention/calm.ts): the person's first message in any
+ * session ends it, and they see what happened, in one paragraph.
+ */
+if (restoreClient === "claude" && sessionId && /^UserPromptSubmit$/.test(eventName) && !process.env[BG_ENV] && calmMod.isAway())
+  try {
+    const was = calmMod.update((s) => calmMod.end(s))
+    if (!was.workerWasOn) workerMod.write({ ...workerMod.read(), on: false })
+    openItems.setAlways(false)
+    const m = summaryMod.short(summaryMod.gather(was.since ?? Date.now() - 8 * 3600_000, { ...(was.usdAtStart !== undefined ? { usdAtStart: was.usdAtStart } : {}) }))
+    systemMessage = systemMessage ? `${systemMessage}\n${m}` : m
+  } catch {}
 
 // Claude Code hands every hook the session's inbox socket. Codex has none, and
 // that absence is what tells the daemon to hold messages for the hook to pull.

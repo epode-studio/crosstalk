@@ -27,6 +27,8 @@ import { human } from "../ui-extra/pure.ts"
 import { modActive } from "../uistate.ts"
 import * as T from "../sessions/transcripts.ts"
 import { lastReply } from "./openitems.ts"
+import * as Calm from "./calm.ts"
+import { recordEvent } from "../urls/ci.ts"
 
 export type Question = { question: string; header?: string; options?: { label: string; description?: string }[]; multiSelect?: boolean; kind?: string }
 
@@ -60,6 +62,19 @@ export function target(sessionId: string, o: { main?: string | null; focused?: {
 
 const clean = (s: string, n: number) => s.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, n)
 
+/**
+ * Away: answered at once, without the person. The recommended option, else
+ * words that let the agent choose safely itself; written down as a decision.
+ */
+export function answerAway(sessionId: string, q: Question, now = Date.now()): string {
+  const s = Calm.read()
+  const a = Calm.awayAnswer(q.options ?? [], s.until)
+  const rec = R.readOne(sessionId)
+  const who = rec?.thread ? human(rec.thread, 32) : "An agent"
+  Calm.update((st) => Calm.decided(st, { at: now, who, question: clean(q.question, 200), answer: a.how === "recommended" ? a.answer : "left to the agent (safest reversible choice)", how: "away" }))
+  return a.answer
+}
+
 /** Put the question to main. Returns the item's id. */
 export function relay(sessionId: string, q: Question, main: string, now = Date.now()): string {
   const rec = R.readOne(sessionId)
@@ -74,6 +89,10 @@ export function relay(sessionId: string, q: Question, main: string, now = Date.n
     where = file ? clean(lastReply(file), 500) : ""
   } catch {}
   if (where) described.unshift(`Where it is: ${where}`)
+  // The agent's own recommendation is taken if nobody answers in a while, and said so.
+  const rec0 = Calm.recommended(opts)
+  const defaultAt = rec0 ? now + Calm.DEFAULT_AFTER_MS() : undefined
+  if (rec0 && defaultAt) described.push(`If you don't answer, it goes with "${clean(rec0.label, 60)}" at ${new Date(defaultAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}.`)
   ui.withStore((items, t) =>
     ui.upsert(
       items,
@@ -86,6 +105,7 @@ export function relay(sessionId: string, q: Question, main: string, now = Date.n
         question: clean(q.question, 400),
         ...(described.length ? { text: described.join("\n") } : {}),
         options: opts.map((o) => clean(o.label, 60)),
+        ...(rec0 && defaultAt ? { defaultAnswer: clean(rec0.label, 60), defaultAt } : {}),
         ts: now,
       },
       t,
@@ -107,6 +127,16 @@ export function poll(id: string, o: { mainAlive?: () => boolean } = {}): { answe
   if (!it) return { fallback: true }
   if (it.state === "answered") return typeof it.answer === "string" && it.answer.trim() ? { answer: it.answer } : { fallback: true }
   if (it.state === "muted") return { fallback: true }
+  // Unanswered past its default: the agent's own recommendation, written down.
+  if (it.defaultAnswer && it.defaultAt && Date.now() >= it.defaultAt) {
+    const claim = ui.withStore((items, now) => ui.act(items, id, "answer", now, it.defaultAnswer))
+    if (claim.ok) {
+      const at = Date.now()
+      Calm.update((st) => Calm.decided(st, { at, who: it.from ?? "An agent", question: it.question ?? "", answer: it.defaultAnswer!, how: "default" }))
+      recordEvent(`${it.from ?? "An agent"}: went with "${it.defaultAnswer}" (its recommendation, unanswered)`, at)
+      return { answer: it.defaultAnswer }
+    }
+  }
   const alive = o.mainAlive ?? (() => currentMain()?.sessionId === it.sessionId)
   if (!alive()) {
     ui.withStore((items, now) => ui.act(items, id, "answer", now, ""))

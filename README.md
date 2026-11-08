@@ -141,6 +141,24 @@ you, it asks.
   *Always* and the agent just carries on with them from then on. *"Stop
   tackling open items by itself"* turns that off.
 
+**Less to carry**
+- *"I'm focusing for an hour."* Only what stops an agent interrupts you; the
+  rest waits, and one line at the end says what did.
+- *"I'm going to bed"* or *"out for a walk."* Agents keep going as far as
+  they safely can: a question takes the agent's own recommendation, or it
+  picks the safest reversible choice and writes down why; open lists are
+  tackled; open tasks are worked, two agents at most, paused near your plan's
+  limit. Permission prompts, deploys and anything only you can do wait. Your
+  first message back says what happened, what was decided for you, and what
+  it cost.
+- Questions that don't stop an agent come together, every half hour or so,
+  not one by one as they arise. After a dozen decisions in an hour,
+  crosstalk suggests a break and holds what can wait.
+- An agent's question that names a recommended option says so, and goes with
+  it if you don't answer within fifteen minutes. You can always change it.
+- A reply that ends with an Open list never stops you: its items are kept as
+  tasks, and one quiet line says so.
+
 **When something is off**
 - *"Is crosstalk OK?"* It checks itself and tells you what to fix.
 

@@ -22,7 +22,9 @@ export const THINGS: Group[] = [
       `"work through the open tasks" — agents take the open tasks by themselves, two at a time ("stop working the board" to stop)`,
       `"close billing" · "resume the one where I fixed login" · "call this one payments"`,
       `"restore them" — after a restart, every session back in its tab`,
-      `"make this the main session" — one place for questions about everything`,
+      `"make this the main session" — your inbox: questions come there, one at a time`,
+      `"I'm focusing for an hour" — only what stops an agent interrupts; a summary at the end`,
+      `"I'm going to bed" / "out for a walk" — agents keep going as far as they safely can; a summary when you're back`,
     ],
   },
   {

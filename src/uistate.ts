@@ -66,6 +66,9 @@ export type UiItem = {
   names?: string[]
   /** route: each option's session id, so a session renamed meanwhile is still the one picked. */
   targets?: Record<string, string>
+  /** An agent's question: the option it recommended, taken at defaultAt if nobody answers (src/attention/calm.ts). */
+  defaultAnswer?: string
+  defaultAt?: number
   ts?: number
   /** message: about this session's own thread, so the mod hands it to the agent without asking. */
   auto?: boolean

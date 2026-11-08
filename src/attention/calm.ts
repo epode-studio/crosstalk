@@ -47,6 +47,8 @@ export type State = {
   /** Answers given, the last hour's, for the break nudge. */
   answers?: number[]
   nudgedAt?: number
+  /** A break nudge, shown once by the next session that asks. */
+  nudge?: string
   /** Decisions made without the person: by a default, or while away. */
   decisions?: Decision[]
 }
