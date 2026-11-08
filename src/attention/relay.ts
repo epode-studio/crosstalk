@@ -144,3 +144,17 @@ export function poll(id: string, o: { mainAlive?: () => boolean } = {}): { answe
   }
   return {}
 }
+
+/**
+ * Questions relayed to main whose asker has gone (its session ended or died),
+ * or that nobody answered in a day: put away, so main's inbox only holds what
+ * someone is still waiting on. Returns how many.
+ */
+export function sweep(now = Date.now(), alive: (id: string) => boolean = askerAlive): number {
+  const gone = Object.values(ui.snapshot()).filter((i) => i.id.startsWith("relay:") && i.state === "pending" && (!alive(i.id) || now - (i.ts ?? now) > 86_400_000))
+  if (!gone.length) return 0
+  ui.withStore((items, t) => {
+    for (const i of gone) ui.act(items, i.id, "mute", t)
+  })
+  return gone.length
+}

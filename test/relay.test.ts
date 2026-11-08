@@ -56,3 +56,18 @@ describe("asking and answering", () => {
     expect(Mn.itemsFor(open, "work-3", "main-s").some((i) => i.id === id)).toBe(false)
   })
 })
+
+describe("questions nobody can receive any more", () => {
+  test("are put away when the asker has gone, or after a day", () => {
+    const now = Date.now()
+    ui.withStore((items, t) => {
+      ui.upsert(items, { id: "relay:gone1:a", kind: "attention", sessionId: "m", question: "x?", options: ["a"], ts: now }, t)
+      ui.upsert(items, { id: "relay:here1:b", kind: "attention", sessionId: "m", question: "y?", options: ["a"], ts: now }, t)
+      ui.upsert(items, { id: "relay:here1:old", kind: "attention", sessionId: "m", question: "z?", options: ["a"], ts: now - 2 * 86_400_000 }, t)
+    })
+    expect(Rl.sweep(now, (id) => !id.includes("gone1"))).toBe(2)
+    const s = ui.snapshot()
+    expect([s["relay:gone1:a"].state, s["relay:here1:b"].state, s["relay:here1:old"].state]).toEqual(["muted", "pending", "muted"])
+    expect(Rl.sweep(now, () => true)).toBe(0)
+  })
+})

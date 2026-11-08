@@ -52,6 +52,7 @@ import { lastReply } from "./openitems.ts"
 import * as Pm from "./permission.ts"
 import { BG_ENV } from "./background.ts"
 import * as PP from "../services/postpone.ts"
+import * as Relay from "./relay.ts"
 
 export type Reg = { sessionId: string; name: string; cwd: string; transcript?: string; pid?: number; seenAt?: number }
 
@@ -299,6 +300,11 @@ export class AttentionService {
         this.lastCloseCheck = this.now()
         void this.closeFinished()
         this.circles()
+        // Relayed questions nobody can receive an answer to any more (src/attention/relay.ts).
+        try {
+          const n = Relay.sweep(this.now())
+          if (n) this.d.log(`attention: put away ${n} relayed question${n === 1 ? "" : "s"} whose asker has gone`)
+        } catch {}
       }
       if (this.now() - this.lastWorkCheck >= Math.max(0, Number(this.env.CROSSTALK_WORK_EVERY_MS ?? 60_000))) {
         this.lastWorkCheck = this.now()
