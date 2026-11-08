@@ -2,9 +2,9 @@
 // @bun
 
 // src/daemon.ts
-import fs83 from "fs";
+import fs85 from "fs";
 import net6 from "net";
-import path95 from "path";
+import path97 from "path";
 import crypto33 from "crypto";
 
 // src/config.ts
@@ -6813,7 +6813,28 @@ function tail(file, lines = 40) {
 `);
   return kept.length > 16384 ? kept.slice(-16384) : kept;
 }
+var lastDetect = 0;
+var shownCache = null;
 var roots = new Map;
+function forSession(sessionId, o = {}) {
+  if (!readAll2().some((s) => !s.stoppedAt))
+    return [];
+  const cwd = o.cwd ?? (sessionId ? readOne(sessionId)?.cwd : undefined) ?? process.cwd();
+  const now = o.now ?? Date.now();
+  if (shownCache && shownCache.cwd === cwd && now - shownCache.at < 3000)
+    return shownCache.value;
+  const root = roots.get(cwd) ?? roots.set(cwd, rootOf(cwd)).get(cwd);
+  const detect = now - lastDetect > 1e4;
+  if (detect)
+    lastDetect = now;
+  const live = detect ? list2({ root }).filter((s) => s.state === "running") : running(root);
+  const value = live.map((s) => {
+    const ports = portsOf(s);
+    return { name: s.name, ports, ...ports.length ? { url: url(ports[0]) } : {} };
+  });
+  shownCache = { cwd, at: now, value };
+  return value;
+}
 function sessionServices(o, look = liveLook()) {
   let root = "";
   try {
@@ -11086,6 +11107,13 @@ function forEvidence(o) {
         out.push(s.file);
   return out.slice(0, o.max ?? 10);
 }
+function paneShots(o) {
+  try {
+    return pairsOf(o).slice(0, 4).map((p) => ({ label: p.label, ...p.path ? { path: p.path } : {}, ...p.before ? { before: { file: p.before.file, at: p.before.at } } : {}, after: { file: p.after.file, at: p.after.at } }));
+  } catch {
+    return [];
+  }
+}
 
 // src/shipping/metrics.ts
 function parseMetrics(out) {
@@ -14823,6 +14851,67 @@ function makeSlice(label, content) {
 // src/ui-extra/pure.ts
 var STEER_YES = "Tell it";
 var STEER_NO = "Don't";
+function runningLine(r, now) {
+  const mark = r.alive ? "\u25cf" : "\u25cb";
+  if (r.kind === "screenshot")
+    return `${r.label}${r.path ? ` ${r.path}` : ""} \u00b7 ${r.before ? `before ${ago(r.before.at, now)}` : "no before yet"} \u00b7 after ${ago(r.after?.at, now)}`;
+  if (r.broken)
+    return `${mark} ${r.label} \u00b7 broken: ${r.broken}`;
+  if (r.kind === "server" && !r.url && !r.ports?.length)
+    return `${mark} ${r.label} \u00b7 starting`;
+  const who = r.kind === "share" ? r.owner === "you" ? r.with?.length ? ` \u00b7 with ${r.with.join(", ")}` : "" : ` \u00b7 from ${r.owner}` : "";
+  const left = r.kind === "share" && r.alive && r.until ? ` \u00b7 ${until(r.until, now)} left` : "";
+  if (r.kind === "pr")
+    return `${mark} ${r.label}${prState(r)}`;
+  const dead = r.alive ? "" : r.kind === "share" ? " \u00b7 ended" : " \u00b7 dead";
+  return `${mark} ${r.label}${who}${left}${dead}`;
+}
+function until(ts, now) {
+  const s = Math.max(0, Math.round((ts - now) / 1000));
+  if (s < 3600)
+    return `${Math.max(1, Math.round(s / 60))}m`;
+  if (s < 86400)
+    return `${Math.round(s / 3600)}h`;
+  return `${Math.round(s / 86400)}d`;
+}
+function featureLine(f) {
+  const parts = [f.name, f.risk];
+  if (f.flag)
+    parts.push(`flag ${f.flag}${f.stage ? ` at ${f.stage}` : ""}`);
+  else if (f.stage)
+    parts.push(`at ${f.stage}`);
+  if (f.state)
+    parts.push(f.state);
+  return parts.join(" \u00b7 ");
+}
+function ago(ts, now) {
+  if (!ts)
+    return "";
+  const s = Math.max(0, Math.round((now - ts) / 1000));
+  if (s < 60)
+    return "now";
+  if (s < 3600)
+    return `${Math.round(s / 60)}m`;
+  if (s < 86400)
+    return `${Math.round(s / 3600)}h`;
+  return `${Math.round(s / 86400)}d`;
+}
+function prState(r) {
+  if (r.state === "MERGED")
+    return " \u00b7 merged";
+  if (r.state === "CLOSED")
+    return " \u00b7 closed";
+  if (!r.alive)
+    return " \u00b7 dead";
+  const parts = [r.draft ? "draft" : ""];
+  if (r.checks === "running")
+    parts.push("checks running", r.eta ?? "");
+  else if (r.checks === "failed")
+    parts.push(`checks failed${r.failed?.length ? `: ${r.failed.join(", ")}` : ""}`);
+  else if (r.checks === "passed")
+    parts.push("checks passed");
+  return parts.filter(Boolean).map((x) => ` \u00b7 ${x}`).join("");
+}
 
 // src/ui-extra/mute.ts
 import fs60 from "node:fs";
@@ -17172,7 +17261,7 @@ function lookup2(ref, entries) {
     return null;
   return entries.find((p) => p.id === r) ?? (r.length >= 6 ? entries.find((p) => p.id.startsWith(r)) : undefined) ?? entries.find((p) => (p.title ?? "").toLowerCase() === r.toLowerCase()) ?? entries.find((p) => p.threads.some((t) => t.toLowerCase() === r.toLowerCase())) ?? null;
 }
-var ago = (t, now = Date.now()) => {
+var ago2 = (t, now = Date.now()) => {
   if (!t)
     return "some time ago";
   const m = Math.round((now - t) / 60000);
@@ -17190,7 +17279,7 @@ function describeHits(hits, now = Date.now()) {
   for (const { past: p } of hits) {
     const label = p.title || path81.basename(p.cwd);
     const where = [p.threads.length ? p.threads.join(", ") : "", p.branch ?? ""].filter(Boolean).join(" \u00b7 ");
-    lines.push(`  ${p.id.slice(0, 8)}  ${label}${where ? ` (${where})` : ""}, ended ${ago(p.endedAt, now)}${p.archived ? ", closed" : ""}${p.source === "claude" ? ", from Claude Code's history" : ""}`);
+    lines.push(`  ${p.id.slice(0, 8)}  ${label}${where ? ` (${where})` : ""}, ended ${ago2(p.endedAt, now)}${p.archived ? ", closed" : ""}${p.source === "claude" ? ", from Claude Code's history" : ""}`);
     lines.push(`            ${p.cwd}`);
     if (p.recap)
       lines.push(`            ${p.recap.length > 160 ? p.recap.slice(0, 159) + "\u2026" : p.recap}`);
@@ -18257,6 +18346,26 @@ function recordDuration(repo, ms) {
     fs76.mkdirSync(P2.root, { recursive: true, mode: 448 });
     fs76.writeFileSync(file14(), JSON.stringify(all), { mode: 384 });
   } catch {}
+}
+function median2(xs) {
+  if (!xs.length)
+    return;
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.floor(s.length / 2)];
+}
+function etaMs(repo, startedAt, now, history = read5()) {
+  if (!repo || !startedAt)
+    return;
+  const m = median2(history[repo] ?? []);
+  if (!m)
+    return;
+  return Math.max(60000, m - (now - startedAt));
+}
+function etaText(ms) {
+  if (ms === undefined)
+    return "";
+  const min = Math.round(ms / 60000);
+  return min < 60 ? `about ${Math.max(1, min)} min left` : `about ${Math.round(min / 60)} h left`;
 }
 function change(before, after) {
   if (!before)
@@ -20706,6 +20815,282 @@ var TMUX_SNIPPET2 = [
 ].join(`
 `);
 
+// src/ui-extra/board.ts
+import fs84 from "node:fs";
+import path96 from "node:path";
+
+// src/urls/health/index.ts
+import fs83 from "node:fs";
+import path95 from "node:path";
+var file17 = () => path95.join(P2.root, "health.json");
+function readHealth2() {
+  try {
+    const raw = JSON.parse(fs83.readFileSync(file17(), "utf8"));
+    return raw && typeof raw.services === "object" ? raw.services : {};
+  } catch {
+    return {};
+  }
+}
+function brokenIn(root) {
+  if (!root)
+    return [];
+  return Object.values(readHealth2()).filter((h) => h.root === root && h.brokenAt !== undefined).map((h) => ({ name: h.name, why: h.why ?? "broken" }));
+}
+
+// src/threads/running.ts
+var ORDER = { server: 0, preview: 1, pr: 2, share: 3, link: 4, screenshot: 5 };
+function project(thread, s) {
+  const now = s.now ?? Date.now();
+  const want = thread?.toLowerCase();
+  const mine = (t) => !want || (t ?? "").toLowerCase() === want;
+  const out = [];
+  const urls = s.urls ?? [];
+  const servers = s.servers ?? [];
+  const named = new Set;
+  for (const sv of servers) {
+    const rec = urls.find((u) => u.kind === "local" && u.source === "service" && u.service === sv.name);
+    if (rec)
+      named.add(rec.id);
+    const url = rec ? shownUrl(rec, s.proxy ?? null) : sv.url;
+    out.push({
+      kind: "server",
+      label: rec?.label ?? sv.name,
+      ...url ? { url } : {},
+      ...rec && url && url !== rec.url ? { raw: rec.url } : !rec && sv.url && url !== sv.url ? { raw: sv.url } : {},
+      ...rec?.name ? { name: rec.name } : {},
+      alive: !sv.broken && (rec ? rec.alive || !rec.lastCheck : true),
+      owner: "you",
+      ...rec?.thread ? { thread: rec.thread } : thread ? { thread } : {},
+      ...sv.ports.length ? { ports: sv.ports } : {},
+      ...sv.broken ? { broken: sv.broken } : {}
+    });
+  }
+  const outById = new Map((s.out ?? []).map((x) => [`share:${x.id}`, x]));
+  const inById = new Map((s.in ?? []).map((x) => [`shared:${x.id}`, x]));
+  const seenShares = new Set;
+  for (const u of urls) {
+    if (named.has(u.id) || !mine(u.thread))
+      continue;
+    const kind = u.kind === "local" ? u.source === "service" ? "server" : "link" : u.kind === "shared" ? "share" : u.kind;
+    const mineOut = outById.get(u.id);
+    const given = inById.get(u.id) ?? (u.kind === "shared" && !mineOut ? (s.in ?? []).find((x) => u.name && x.name && u.name.startsWith(`${x.name}.`)) : undefined);
+    if (mineOut)
+      seenShares.add(mineOut.id);
+    const shown = shownUrl(u, s.proxy ?? null);
+    const share = mineOut ?? given;
+    out.push({
+      kind,
+      label: share?.label ?? u.label,
+      url: shown,
+      ...shown !== u.url && kind !== "share" ? { raw: u.url } : {},
+      ...u.name ? { name: u.name } : {},
+      alive: share ? u.alive && active(share, now) : u.alive,
+      owner: given ? given.owner : u.kind === "shared" && !mineOut && u.id.startsWith("shared:") ? "someone" : "you",
+      ...mineOut ? { with: mineOut.with.map((w) => w.label) } : {},
+      ...share && active(share, now) ? { until: share.expiresAt } : {},
+      ...u.thread ? { thread: u.thread } : {},
+      ...u.kind === "pr" ? prFields(u, now) : {}
+    });
+  }
+  for (const sh of s.out ?? []) {
+    if (seenShares.has(sh.id) || !active(sh, now) || !mine(sh.thread))
+      continue;
+    out.push({ kind: "share", label: sh.label, alive: true, owner: "you", with: sh.with.map((w) => w.label), until: sh.expiresAt, ...sh.public ? { url: sh.public.url } : {}, ...sh.thread ? { thread: sh.thread } : {} });
+  }
+  for (const p of s.shots ?? [])
+    out.push({ kind: "screenshot", label: p.label, alive: true, owner: "you", ...p.path ? { path: p.path } : {}, ...p.before ? { before: p.before } : {}, after: p.after, ...thread ? { thread } : {} });
+  return out.sort((a, b) => ORDER[a.kind] - ORDER[b.kind] || Number(b.alive) - Number(a.alive));
+}
+function ofThread(store, thread) {
+  const exact = store.forThread(thread);
+  if (exact.length)
+    return exact;
+  const want = thread.toLowerCase();
+  return store.list().filter((u) => (u.thread ?? "").toLowerCase().startsWith(want) || u.label.toLowerCase().startsWith(`${want} \u00b7`));
+}
+function running2(thread, o = {}) {
+  const store = urls();
+  let worktree = o.worktree;
+  try {
+    const cwd = !worktree && o.sessionId ? readOne(o.sessionId)?.cwd : undefined;
+    if (cwd)
+      worktree = rootOf2(cwd);
+  } catch {}
+  let servers = [];
+  try {
+    const shown = o.servers ?? (o.sessionId || worktree ? forSession(o.sessionId, worktree ? { cwd: worktree } : {}) : []);
+    const broken = brokenIn(worktree);
+    servers = [...shown.map((s) => ({ ...s, ...broken.find((b) => b.name === s.name) ? { broken: broken.find((b) => b.name === s.name).why } : {} })), ...broken.filter((b) => !shown.some((s) => s.name === b.name)).map((b) => ({ name: b.name, ports: [], broken: b.why }))];
+  } catch {}
+  let urls2 = [];
+  try {
+    if (o.main)
+      urls2 = store.list();
+    else {
+      const here = o.sessionId ? store.forSession({ sessionId: o.sessionId, worktree, thread }) : [];
+      const ids = new Set(here.map((u) => u.id));
+      urls2 = [...here, ...(thread ? ofThread(store, thread) : o.everyone ? store.list() : []).filter((u) => !ids.has(u.id))];
+    }
+  } catch {}
+  let shares = { v: 1, out: [], in: [] };
+  try {
+    shares = read6();
+  } catch {}
+  const shots = paneShots({ thread, worktree });
+  const items = project(undefined, { servers, urls: urls2, out: shares.out.filter((s) => o.main || !thread || !s.thread || s.thread === thread), in: shares.in, shots, proxy: readState(), now: o.now });
+  return items.slice(0, o.max ?? 30);
+}
+function prFields(u, now) {
+  const eta = u.checks === "running" ? etaText(etaMs(repoOf2(u.url), u.checksSince, now)) : "";
+  return {
+    ...u.state ? { state: u.state } : {},
+    ...u.checks ? { checks: u.checks } : {},
+    ...u.failed?.length ? { failed: u.failed } : {},
+    ...u.draft ? { draft: true } : {},
+    ...eta ? { eta } : {}
+  };
+}
+
+// src/urls/history/phone.ts
+var QR_TTL_MS = 30 * 60000;
+// src/ui-extra/agents.ts
+var askCache = new Map;
+
+// src/ui-extra/pane.ts
+var oneLine4 = (s) => s.replace(/\s+/g, " ").trim();
+function paneNotes(t, max = 6) {
+  const open = notes(t, "task").filter((k) => k.state !== "done");
+  const rest = notes(t, ["decision", "fact", "rule"]).sort((a, b) => b.at - a.at);
+  return [...open, ...rest].slice(0, max).map((n) => ({
+    kind: n.kind,
+    text: oneLine4(n.text),
+    ...n.kind === "task" ? { state: n.state, ...n.claimedBy ? { who: n.claimedBy } : {} } : { who: n.who, at: n.at }
+  }));
+}
+function paneModel(t, items, o = {}) {
+  const name = t.meta.value.name;
+  const about = (it) => (it.thread ?? "").toLowerCase() === name;
+  const open = Object.values(items).filter((i) => !FINAL2.has(i.state) && about(i));
+  const waiting = [
+    ...live(t, "questions").filter((q) => !q.answer).sort((a, b) => Number(!!b.blocking) - Number(!!a.blocking)).map((q) => `${oneLine4(q.text)}${q.blocking ? " (blocking)" : ""}`),
+    ...open.filter((i) => i.kind === "ask").map((i) => `${i.from} asks: ${oneLine4(i.text ?? "")}`),
+    ...open.filter((i) => i.question && i.kind !== "message" && i.kind !== "ask").map((i) => oneLine4(i.question))
+  ];
+  const recent = Object.values(items).filter((i) => (i.kind === "message" || i.kind === "ask") && about(i)).sort((a, b) => (b.ts ?? b.createdAt) - (a.ts ?? a.createdAt)).slice(0, o.recent ?? 5).map((i) => ({ from: i.from ?? "someone", text: oneLine4(i.text ?? ""), ts: i.ts ?? i.createdAt }));
+  const notes = paneNotes(t);
+  const recap2 = recap(t);
+  return {
+    thread: name,
+    status: t.meta.value.status,
+    repo: t.meta.value.repo || undefined,
+    recap: recap2 ? oneLine4(recap2) : undefined,
+    people: live(t, "people").map((p) => p.label),
+    sessions: live(t, "sessions").length,
+    waiting,
+    ...notes.length ? { notes } : {},
+    recent,
+    features: live(t, "features").map((f) => ({
+      name: f.name,
+      risk: f.risk,
+      ...f.flag ? { flag: f.flag } : {},
+      ...f.ship?.stage ? { stage: f.ship.stage } : {},
+      ...f.ship?.state ? { state: f.ship.state } : {}
+    }))
+  };
+}
+
+// src/terminal/hook.ts
+var DOTS = ["\uD83D\uDD34", "\uD83D\uDFE0", "\uD83D\uDFE1", "\uD83D\uDFE2", "\uD83D\uDD35", "\uD83D\uDFE3", "\uD83D\uDFE4"];
+function dotFor(thread) {
+  let h = 2166136261;
+  for (const c of thread.toLowerCase())
+    h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return DOTS[(h >>> 0) % DOTS.length];
+}
+
+// src/ui-extra/board.ts
+var boardFile = () => path96.join(P2.root, "board.html");
+var esc3 = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+var slug3 = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "thread";
+var safeUrl2 = (u) => /^https?:\/\/[^\s"'<>]+$/.test(u) ? u : "";
+function boardHtml(threads, now) {
+  const live = threads.filter((t) => t.status !== "done");
+  const done = threads.filter((t) => t.status === "done");
+  const waitingTotal = live.reduce((n, t) => n + t.waiting.length, 0);
+  const tasksOpen = (t) => (t.notes ?? []).filter((n) => n.kind === "task" && n.state !== "done");
+  const card = (t) => `
+    <a class="card" href="#${esc3(slug3(t.thread))}">
+      <div class="name">${dotFor(t.thread)} ${esc3(t.thread)}</div>
+      <div class="meta">${esc3(t.status)}${t.sessions ? ` \u00b7 ${t.sessions} working` : ""}${t.waiting.length ? ` \u00b7 <b>${t.waiting.length} for you</b>` : ""}${tasksOpen(t).length ? ` \u00b7 ${tasksOpen(t).length} open tasks` : ""}</div>
+      ${t.recap ? `<div class="recap">${esc3(t.recap)}</div>` : ""}
+    </a>`;
+  const list = (title, rows) => rows.length ? `<h3>${esc3(title)}</h3><ul>${rows.map((r) => `<li>${r}</li>`).join("")}</ul>` : "";
+  const section = (t) => {
+    const prs = (t.running ?? []).filter((r) => r.kind === "pr");
+    const other = (t.running ?? []).filter((r) => r.kind !== "pr" && r.kind !== "screenshot");
+    return `
+    <section id="${esc3(slug3(t.thread))}">
+      <h2>${dotFor(t.thread)} ${esc3(t.thread)} <span class="meta">${esc3(t.status)}${t.repo ? ` \u00b7 ${esc3(t.repo)}` : ""}</span></h2>
+      ${t.recap ? `<p class="recap">${esc3(t.recap)}</p>` : ""}
+      ${t.people.length ? `<p class="meta">With ${esc3(t.people.join(", "))}</p>` : ""}
+      ${list("Waiting on you", t.waiting.map(esc3))}
+      ${list("Open tasks", tasksOpen(t).map((n) => `${esc3(n.text)}${n.who ? ` <span class="meta">\u00b7 ${esc3(n.who)}</span>` : ""}`))}
+      ${list("Decided", (t.notes ?? []).filter((n) => n.kind === "decision" || n.kind === "rule").map((n) => `${esc3(n.text)}${n.at ? ` <span class="meta">\u00b7 ${esc3(ago(n.at, now))}</span>` : ""}`))}
+      ${list("Features", t.features.map((f) => esc3(featureLine(f))))}
+      ${list("Pull requests", prs.map((r) => `${safeUrl2(r.url ?? "") ? `<a href="${esc3(r.url)}">${esc3(r.label)}</a>` : esc3(r.label)}${esc3(prState(r))}`))}
+      ${list("Running", other.map((r) => esc3(runningLine(r, now))))}
+      ${list("Latest", t.recent.map((m) => `<b>${esc3(m.from)}</b>: ${esc3(m.text)}`))}
+    </section>`;
+  };
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="60"><title>crosstalk board</title>
+<style>
+:root{--bg:#fbfaf8;--fg:#1d1c1a;--dim:#6b6862;--line:#e6e2dc;--card:#fff;--accent:#5b4bd6}
+@media (prefers-color-scheme:dark){:root{--bg:#161514;--fg:#ecebe8;--dim:#9a968f;--line:#2c2a27;--card:#1e1d1b;--accent:#a99cff}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+main{max-width:980px;margin:0 auto;padding:24px 16px 64px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:18px;margin:40px 0 4px;padding-top:16px;border-top:1px solid var(--line)}h3{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim);margin:18px 0 6px}
+.meta{color:var(--dim);font-size:13px;font-weight:400}.recap{margin:6px 0}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin:20px 0}
+.card{display:block;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--accent)}.name{font-weight:600}
+ul{margin:0;padding-left:20px}li{margin:3px 0}a{color:var(--accent)}
+</style></head><body><main>
+<h1>Your threads</h1>
+<p class="meta">${live.length} going${waitingTotal ? ` \u00b7 ${waitingTotal} waiting on you` : ""} \u00b7 updated ${esc3(new Date(now).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }))} \u00b7 answers go in crosstalk's questions, in your main session</p>
+<div class="cards">${live.map(card).join("") || `<p class="meta">No threads yet.</p>`}</div>
+${live.map(section).join("")}
+${done.length ? `<h2>Done</h2><ul>${done.map((t) => `<li>${esc3(t.thread)}${t.recap ? ` <span class="meta">\u00b7 ${esc3(t.recap)}</span>` : ""}</li>`).join("")}</ul>` : ""}
+</main></body></html>
+`;
+}
+function writeBoard(now = Date.now()) {
+  const st = readThreads();
+  const items = snapshot2();
+  const threads = Object.values(st.threads).filter((t) => !t.meta.value.combinedInto).map((t) => {
+    const m = paneModel(t, items);
+    let run = [];
+    try {
+      run = running2(m.thread, {});
+    } catch {}
+    return { ...m, ...run.length ? { running: run } : {} };
+  }).sort((a, b) => b.waiting.length - a.waiting.length || a.thread.localeCompare(b.thread));
+  fs84.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  const file = boardFile();
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs84.writeFileSync(tmp, boardHtml(threads, now), { mode: 384 });
+  fs84.renameSync(tmp, file);
+  return file;
+}
+function boardWanted(now = Date.now()) {
+  try {
+    return now - fs84.statSync(boardFile() + ".opened").mtimeMs < 86400000;
+  } catch {
+    return false;
+  }
+}
+
 // src/daemon.ts
 var identity = loadIdentity();
 if (!identity) {
@@ -20749,12 +21134,12 @@ var threads2 = new ThreadService({
   peers: () => loadPeers(),
   send: (label, env) => sendEnvelope(label, env),
   log,
-  file: path95.join(P.root, "threads.json"),
+  file: path97.join(P.root, "threads.json"),
   settleMs: Number(process.env.CROSSTALK_THREAD_SETTLE_MS ?? 3000),
   network: process.env.CROSSTALK_THREADS_NO_PUSH !== "1",
   fadeDays: Number(process.env.CROSSTALK_THREAD_FADE_DAYS ?? 14),
   connected: (repo) => {
-    const slug = repo.startsWith("github.com/") ? repo.slice("github.com/".length) : `local/${path95.basename(repo)}`;
+    const slug = repo.startsWith("github.com/") ? repo.slice("github.com/".length) : `local/${path97.basename(repo)}`;
     return consent2(slug) === "yes";
   }
 });
@@ -22427,8 +22812,8 @@ async function handle(req, sock) {
       if (!fp.repo)
         return { ok: true, shared: false };
       const root = fp.root ?? threads2.rootFor(fp.repo);
-      const file = root ? path95.relative(root, abs).split(path95.sep).join("/") : "";
-      if (!file || file.startsWith("..") || path95.isAbsolute(file))
+      const file = root ? path97.relative(root, abs).split(path97.sep).join("/") : "";
+      if (!file || file.startsWith("..") || path97.isAbsolute(file))
         return { ok: true, shared: true };
       const key = `${self.sessionId}|${fp.repo}|${file}`;
       const c = editShared.get(key);
@@ -22903,6 +23288,12 @@ shares = createShares({
   note: (id, text) => coord.note({ id, text })
 });
 setInterval(() => attention?.tick(), Math.max(200, Number(process.env.CROSSTALK_ATTENTION_TICK_MS ?? 15000)));
+setInterval(() => {
+  try {
+    if (boardWanted())
+      writeBoard();
+  } catch {}
+}, 60000).unref();
 if (process.platform === "darwin" && !appleTintOn2())
   setTimeout(() => {
     try {
@@ -22911,7 +23302,7 @@ if (process.platform === "darwin" && !appleTintOn2())
         log(`terminal: ${r.reset} tab background(s) back to their profile's`);
     } catch {}
   }, 2000).unref();
-fs83.mkdirSync(path95.dirname(P.daemonSock), { recursive: true, mode: 448 });
+fs85.mkdirSync(path97.dirname(P.daemonSock), { recursive: true, mode: 448 });
 var control = net6.createServer((sock) => {
   let rest = "";
   sock.on("data", async (buf) => {
@@ -22937,7 +23328,7 @@ var control = net6.createServer((sock) => {
   sock.on("error", () => {});
 });
 var alreadyRunning = () => new Promise((resolve) => {
-  if (!fs83.existsSync(P.daemonSock))
+  if (!fs85.existsSync(P.daemonSock))
     return resolve(false);
   const probe = net6.createConnection(P.daemonSock);
   const done = (answer) => {
@@ -22951,19 +23342,19 @@ var alreadyRunning = () => new Promise((resolve) => {
 if (await alreadyRunning()) {
   let who = "";
   try {
-    who = ` as pid ${Number(fs83.readFileSync(P.daemonLock, "utf8"))}`;
+    who = ` as pid ${Number(fs85.readFileSync(P.daemonLock, "utf8"))}`;
   } catch {}
   console.error(`crosstalk: a daemon is already running${who}`);
   process.exit(0);
 }
 try {
-  fs83.unlinkSync(P.daemonSock);
+  fs85.unlinkSync(P.daemonSock);
 } catch {}
 control.listen(P.daemonSock, () => {
-  fs83.chmodSync(P.daemonSock, 384);
-  fs83.writeFileSync(P.daemonLock, String(process.pid), { mode: 384 });
+  fs85.chmodSync(P.daemonSock, 384);
+  fs85.writeFileSync(P.daemonLock, String(process.pid), { mode: 384 });
   try {
-    fs83.writeFileSync(P.daemonVersion, JSON.stringify({ pid: process.pid, version: pluginVersion(rootFrom2(import.meta.url)) }), { mode: 384 });
+    fs85.writeFileSync(P.daemonVersion, JSON.stringify({ pid: process.pid, version: pluginVersion(rootFrom2(import.meta.url)) }), { mode: 384 });
   } catch {}
   log(`daemon up as "${identity.label}" on ${P.daemonSock}`);
   connect();
@@ -23021,14 +23412,14 @@ setInterval(() => {
 var bye = () => {
   let mine = false;
   try {
-    mine = Number(fs83.readFileSync(P.daemonLock, "utf8")) === process.pid;
+    mine = Number(fs85.readFileSync(P.daemonLock, "utf8")) === process.pid;
   } catch {}
   if (mine) {
     try {
-      fs83.unlinkSync(P.daemonSock);
+      fs85.unlinkSync(P.daemonSock);
     } catch {}
     try {
-      fs83.unlinkSync(P.daemonLock);
+      fs85.unlinkSync(P.daemonLock);
     } catch {}
   }
   process.exit(0);

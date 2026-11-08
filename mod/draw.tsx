@@ -69,6 +69,17 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number) {
             {p.usage.hot ? <Text color={BROKEN}>{clean(p.usage.text)}</Text> : clean(p.usage.text)}
           </Text>
         ) : null}
+        {p.inbox?.length ? (
+          <Box flexDirection="column" marginTop={1}>
+            <Text bold>Inbox</Text>
+            {p.inbox.map((l, i) => (
+              <Text key={`i${i}`} wrap="truncate" bold={i === 0}>
+                {' '}
+                {i + 1}. {clean(l)}
+              </Text>
+            ))}
+          </Box>
+        ) : null}
         <Box flexDirection="column" marginTop={1}>
           {p.agents.length ? (
             p.agents.map((a, i) => (

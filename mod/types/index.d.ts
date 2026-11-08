@@ -42,6 +42,8 @@ export type Pane = {
   /** With the agents: every pull request, and what just happened. */
   prs?: Running[]
   events?: { text: string; at: number }[]
+  /** What waits on the person, most pressing first. */
+  inbox?: string[]
   /** The plan's windows and today's spend; hot at 80%. */
   usage?: { text: string; hot: boolean }
   repo?: string

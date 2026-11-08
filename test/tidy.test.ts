@@ -246,3 +246,49 @@ describe("tabs that say what they are", () => {
     expect(U.restoreWant("answer", "Restore")).toBe("yes")
   })
 })
+
+describe("the inbox", () => {
+  test("most pressing first: what you just asked for, then an agent stopped on you, then the rest; waiting raises", async () => {
+    const pure = await import("../src/ui-extra/pure.ts")
+    const it = (id: string, kind: string, minAgo: number) => ({ id, kind, createdAt: NOW - minAgo * MIN })
+    const order = pure.inboxOrder(
+      [it("open:s:1", "attention", 5), it("attn:staff:t:1", "attention", 2), it("relay:s:1", "attention", 1), it("sess:1", "session", 0), it("m1", "message", 600)],
+      NOW,
+    ).map((i) => i.id)
+    expect(order).toEqual(["sess:1", "relay:s:1", "m1", "attn:staff:t:1", "open:s:1"]) // the ten-hour-old card has risen past staffing
+    expect(pure.inboxLine({ id: "relay:s:1", kind: "attention", createdAt: NOW - 12 * MIN, question: "organic-case-81 asks: Keep the Pi flat?", from: "organic-case-81" }, NOW)).toBe("organic-case-81 asks: Keep the Pi flat? · 12m")
+  })
+})
+
+describe("the board", () => {
+  test("every thread, what waits, tasks, decisions and PRs; escaped; no scripts", async () => {
+    const B = await import("../src/ui-extra/board.ts")
+    const html = B.boardHtml(
+      [
+        {
+          thread: "auth",
+          status: "active",
+          repo: "acme/app",
+          recap: "Token v2 <b>",
+          people: ["marie"],
+          sessions: 2,
+          waiting: ["Keep v1 for one more release? (blocking)"],
+          notes: [{ kind: "task", text: "write the expiry migration", state: "open" }, { kind: "decision", text: "tokens are JWTs", at: NOW - 60 * MIN }],
+          recent: [{ from: "marie", text: "landed" }],
+          features: [{ name: "v2 tokens", risk: "risky", flag: "auth-v2", stage: "internal" }],
+          running: [{ kind: "pr", label: "auth · PR #12", url: "https://github.com/acme/app/pull/12", alive: true, owner: "you", state: "OPEN", checks: "failed", failed: ["e2e"] }],
+        },
+        { thread: "old", status: "done", people: [], sessions: 0, waiting: [], recent: [], features: [] },
+      ] as any,
+      NOW,
+    )
+    expect(html).toContain("1 going · 1 waiting on you")
+    expect(html).toContain("Token v2 &lt;b&gt;")
+    expect(html).toContain("<h3>Waiting on you</h3>")
+    expect(html).toContain("write the expiry migration")
+    expect(html).toContain("tokens are JWTs")
+    expect(html).toContain(`<a href="https://github.com/acme/app/pull/12">auth · PR #12</a> · checks failed: e2e`)
+    expect(html).toContain("<h2>Done</h2>")
+    expect(html).not.toContain("<script")
+  })
+})

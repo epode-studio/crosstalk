@@ -69,6 +69,7 @@ import { createStreamGate } from "./streamgate.ts"
 import { createHealth } from "./urls/health/index.ts"
 import { startHistory } from "./urls/history/sync.ts"
 import * as tabStatus from "./terminal/status.ts"
+import * as boardMod from "./ui-extra/board.ts"
 
 const identity = loadIdentity()
 if (!identity) {
@@ -2737,6 +2738,13 @@ shares = createShares({
   note: (id, text) => coord.note({ id, text }),
 })
 setInterval(() => attention?.tick(), Math.max(200, Number(process.env.CROSSTALK_ATTENTION_TICK_MS ?? 15_000)))
+
+// The board (src/ui-extra/board.ts): kept current every minute while it is in use.
+setInterval(() => {
+  try {
+    if (boardMod.boardWanted()) boardMod.writeBoard()
+  } catch {}
+}, 60_000).unref()
 
 // Terminal.app tints are opt-in (CROSSTALK_TAB_COLOUR=1). With them off, put
 // back any background an earlier version tinted, once, off the start path.

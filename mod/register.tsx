@@ -72,7 +72,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Item, Pane } from './types'
-import { HANDED_PROMPT, LATER, MORE, MORE_OPTIONS, MUTE, OPEN_THREAD, cardOptions, parseAt, statusLine, takesAt } from '../src/ui-extra/pure.ts'
+import { HANDED_PROMPT, LATER, MORE, MORE_OPTIONS, MUTE, OPEN_THREAD, cardOptions, inboxOrder, parseAt, statusLine, takesAt } from '../src/ui-extra/pure.ts'
 import { bandTree, paneTree } from './draw.tsx'
 
 const items = atom({ plugin: 'crosstalk', key: 'items' } as const, [])
@@ -140,7 +140,8 @@ const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim()
  * a peer's words: those are cards, drawn above).
  */
 function withContext(it: Item, q: string): string {
-  const elsewhere = it.sessionId && it.sessionId !== session && it.thread ? `◢ ${it.thread}` : ''
+  const more = inboxLeft > 0 ? `${inboxLeft} more after this` : ''
+  const elsewhere = [it.thread && ((it.sessionId && it.sessionId !== session) || it.id.startsWith('relay:')) ? `◢ ${it.thread}` : '', more].filter(Boolean).join(' · ')
   const ctx = typeof it.text === 'string' ? it.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '').trim().slice(0, 700) : ''
   return [elsewhere, ctx, q].filter(Boolean).join('\n')
 }
@@ -366,7 +367,10 @@ async function maybeRaise($: EngineInterface) {
     const all = await read($, items)
     // About this session's own thread: it goes to the agent without asking, once.
     const own = all.find(i => i.auto && isCard(i) && i.state === 'pending' && i.raisedAt === undefined)
-    const next = own ?? all.find(raisable)
+    // The inbox, one at a time: the most pressing first (pure.ts inboxOrder).
+    const now0 = await $.clock.now()
+    const queue = inboxOrder(all.filter(raisable), now0)
+    const next = own ?? queue[0]
     if (!next) return
     const box = await $.prompt.read()
     if (box.text.trim()) return
@@ -382,11 +386,22 @@ async function maybeRaise($: EngineInterface) {
       return
     }
     await markRaised($, next.id, r.item?.raisedAt ?? (await $.clock.now()))
+    inboxLeft = Math.max(0, queue.length - 1)
     await raise($, next)
+    raisedOne = true
   } finally {
     asking = false
   }
+  // Answered: that one is closed, and the next comes straight after, one at a time.
+  if (raisedOne) {
+    raisedOne = false
+    $.clock.after(400, () => maybeRaise($))
+  }
 }
+
+/** How many more are waiting after the one being asked, for its header. */
+let inboxLeft = 0
+let raisedOne = false
 
 async function raise($: EngineInterface, it: Item) {
   let answer: string

@@ -22,6 +22,8 @@ import * as ui from "../uistate.ts"
 import { currentMain } from "../main.ts"
 import * as F from "./focus.ts"
 import * as N from "../sessions/names.ts"
+import * as T from "../sessions/transcripts.ts"
+import { lastReply } from "./openitems.ts"
 
 export type Question = { question: string; header?: string; options?: { label: string; description?: string }[]; multiSelect?: boolean; kind?: string }
 
@@ -60,6 +62,13 @@ export function relay(sessionId: string, q: Question, main: string, now = Date.n
   const id = `relay:${sessionId}:${crypto.randomBytes(4).toString("hex")}`
   const opts = (q.options ?? []).slice(0, 4)
   const described = opts.filter((o) => o.description).map((o) => `${clean(o.label, 60)}: ${clean(o.description!, 160)}`)
+  // The brief: what the agent said just before asking, so the answer needs no trip to its tab.
+  let where = ""
+  try {
+    const file = rec ? T.transcriptOf(sessionId, rec.cwd) : null
+    where = file ? clean(lastReply(file), 500) : ""
+  } catch {}
+  if (where) described.unshift(`Where it is: ${where}`)
   ui.withStore((items, t) =>
     ui.upsert(
       items,

@@ -8,10 +8,10 @@
 
 import * as M from "../threads/model.ts"
 import * as ui from "../uistate.ts"
-import type { PaneModel, PaneNote, PaneRunning } from "./pure.ts"
+import { inboxLine, inboxOrder, type PaneModel, type PaneNote, type PaneRunning } from "./pure.ts"
 import { defaultThread, findThread, readThreads, type ThreadState } from "./threadfile.ts"
 import type * as Svc from "../services/service.ts"
-import { currentMain } from "../main.ts"
+import { currentMain, itemsFor } from "../main.ts"
 import { allPrs, running } from "../threads/running.ts"
 import { recentEvents } from "../urls/ci.ts"
 import { line as usageLine } from "./usage.ts"
@@ -88,11 +88,21 @@ export function agentsPane(sessionId?: string, list = allAgents(sessionId)): Pan
     prs = allPrs()
     events = recentEvents()
   } catch {}
+  // The inbox: what waits on the person here (main's own, and everything cross-cutting), in asking order.
+  let inbox: string[] = []
+  try {
+    const now = Date.now()
+    const open = Object.values(ui.snapshot()).filter((i) => i.state === "pending" || i.state === "later")
+    const mine = sessionId ? itemsFor(open, sessionId, currentMain()?.sessionId) : []
+    inbox = inboxOrder(mine, now)
+      .slice(0, 8)
+      .map((i) => inboxLine(i, now))
+  } catch {}
   let usage: { text: string; hot: boolean } | null = null
   try {
     usage = usageLine()
   } catch {}
-  return { ok: true, pane: { thread: "your agents", status, people: [], sessions: 0, waiting: [], recent: [], features: [], agents: list, ...(usage ? { usage } : {}), ...(prs.length ? { prs } : {}), ...(events.length ? { events } : {}) } }
+  return { ok: true, pane: { thread: "your agents", status, people: [], sessions: 0, waiting: [], recent: [], features: [], agents: list, ...(inbox.length ? { inbox } : {}), ...(usage ? { usage } : {}), ...(prs.length ? { prs } : {}), ...(events.length ? { events } : {}) } }
 }
 
 export function pane(o: { sessionId?: string; thread?: string; st?: ThreadState; items?: Record<string, ui.UiItem>; services?: Svc.Shown[] }): PaneOut {

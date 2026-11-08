@@ -15,6 +15,8 @@ import * as doctor from "./doctor.ts"
 import { digest, parseSince, standup } from "./digest.ts"
 import { chooseEditor, findWorktree, launch } from "./open.ts"
 import { pane } from "./pane.ts"
+import * as board from "./board.ts"
+import { spawn } from "node:child_process"
 
 const ok = (text: string) => ({ content: [{ type: "text" as const, text }] })
 const err = (m: string) => ({ content: [{ type: "text" as const, text: `crosstalk error: ${m}` }], isError: true })
@@ -34,6 +36,17 @@ async function modHere(sessionId: string, cwd: string): Promise<boolean> {
 /** The call, or null when the tool is not one of these. */
 export async function callTool(name: string, a: any, o: { sessionId: string; cwd: string; root: string }) {
   switch (name) {
+    case "crosstalk_board": {
+      const file = board.writeBoard()
+      board.markOpened()
+      const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open"
+      try {
+        const c = spawn(opener, [file], { detached: true, stdio: "ignore" })
+        c.on("error", () => {})
+        c.unref()
+      } catch {}
+      return ok(`Opened the board in the browser (${file}): every thread, what waits on the user, open tasks, decisions, features, pull requests and what runs. It refreshes itself every minute while it is in use. Answers still go in crosstalk's questions.`)
+    }
     case "crosstalk_pane": {
       const p = pane({ sessionId: o.sessionId, thread: a.thread ? String(a.thread) : undefined })
       if (!p.ok) return err(`${p.error}${p.threads.length ? `. Threads: ${p.threads.join(", ")}` : ""}`)

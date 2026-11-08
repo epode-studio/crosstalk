@@ -136,6 +136,8 @@ export type PaneModel = {
   /** With the agents: every pull request, and what just happened (checks passed or failed, merges). */
   prs?: PaneRunning[]
   events?: PaneEvent[]
+  /** What waits on the person, most pressing first, in the order it will be asked (inboxOrder). */
+  inbox?: string[]
   /** The plan's windows and today's spend, `5-hour 42% (resets 3:10 PM) · week 18% · $12.40 …`; hot at 80%. */
   usage?: { text: string; hot: boolean }
   /** A QR code crosstalk_look action "qr" made for the phone (src/urls/history/phone.ts): half-block rows, drawn white on black. */
@@ -294,6 +296,7 @@ export function paneLines(p: PaneModel, now: number): string[] {
     return [
       `◢ ${p.thread} · ${p.status}`,
       ...(p.usage ? [`${p.usage.hot ? "! " : ""}${p.usage.text}`] : []),
+      ...(p.inbox?.length ? ["", "Inbox", ...p.inbox.map((l, i) => ` ${i + 1}. ${l}`)] : []),
       "",
       ...(p.agents.length ? p.agents.flatMap((a) => [` ${agentLine(a)}`, ...(agentAsks(a) ? [agentAsks(a)!] : [])]) : [" none open"]),
       ...(p.prs?.length ? ["", "Pull requests", ...p.prs.map((r) => ` ${runningLine(r, now)}`)] : []),
@@ -348,3 +351,51 @@ export function prState(r: Pick<PaneRunning, "state" | "draft" | "checks" | "fai
 
 /** Something that just happened, for the main session's pane: `#2841 checks passed · 3m`. */
 export type PaneEvent = { text: string; at: number }
+
+// --- the inbox: one thing at a time, most pressing first -------------------------------
+
+/** What the inbox orders by: kind, id and age, as the store keeps them. */
+export type InboxItem = { id: string; kind: string; createdAt: number; from?: string; thread?: string; question?: string; text?: string }
+
+/**
+ * How pressing an item is. What the person just asked for (a tidy or close to
+ * confirm, a restore) first; then an agent stopped until you answer (its own
+ * question relayed to main, a permission prompt, a teammate's question); then
+ * shipping steps, failures and staffing; offers last. Waiting raises any item,
+ * up to half an hour's worth, so nothing old sinks for ever.
+ */
+export function inboxScore(it: InboxItem, now: number): number {
+  const base =
+    it.kind === "session" || it.kind === "restore"
+      ? 120
+      : it.id.startsWith("relay:") || it.id.startsWith("attn:perm:")
+        ? 100
+        : it.kind === "ask"
+          ? 90
+          : it.kind === "ship" || it.kind === "conflict"
+            ? 80
+            : it.id.startsWith("attn:staff:")
+              ? 60
+              : it.kind === "route" || it.kind === "team" || it.kind === "steer"
+                ? 55
+                : it.id.startsWith("open:")
+                  ? 40
+                  : it.kind === "message"
+                    ? 35
+                    : 30
+  const waitedMin = Math.max(0, (now - it.createdAt) / 60_000)
+  return base + Math.min(30, waitedMin / 2)
+}
+
+/** The inbox in order: most pressing first, the older first among equals. */
+export function inboxOrder<T extends InboxItem>(items: T[], now: number): T[] {
+  return [...items].sort((a, b) => inboxScore(b, now) - inboxScore(a, now) || a.createdAt - b.createdAt)
+}
+
+/** One line of the inbox, for the main session's pane: `organic-case-81 asks: Keep the Pi flat? · 12m`. */
+export function inboxLine(it: InboxItem, now: number): string {
+  const what = (it.question ?? it.text ?? it.id).replace(/\s+/g, " ").trim()
+  const who = it.from && !what.startsWith(it.from) ? `${it.from}: ` : ""
+  const cut = (s: string) => (s.length > 120 ? s.slice(0, 119) + "…" : s)
+  return `${cut(who + what)} · ${ago(it.createdAt, now) || "now"}`
+}
