@@ -17,6 +17,8 @@ export const THINGS: Group[] = [
       `"show me all my agents" — a live list beside the chat: who's working, who's waiting on you`,
       `"what's running?" — the same, as an answer`,
       `"tidy up my sessions" — closes the ones you're not using, folds duplicates into one`,
+      `"show me the board" — every thread on one page in your browser: what waits on you, tasks, decisions, PRs`,
+      `"work through the open tasks" — agents take the open tasks by themselves, two at a time ("stop working the board" to stop)`,
       `"close billing" · "resume the one where I fixed login" · "call this one payments"`,
       `"restore them" — after a restart, every session back in its tab`,
       `"make this the main session" — one place for questions about everything`,

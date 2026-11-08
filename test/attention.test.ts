@@ -568,3 +568,26 @@ describe("the service", () => {
     expect(w.svc.target()).not.toBe("b")
   })
 })
+
+describe("working the board", () => {
+  test("off: nothing starts; on: the open task is claimed and an agent starts on it, up to the cap; a finished agent lets go", async () => {
+    const Wk = await import("../src/attention/worker.ts")
+    const w = world({ env: { CROSSTALK_WORK_EVERY_MS: "0" } })
+    w.add("s-auth", ["src/auth/a.ts", "src/auth/b.ts", "src/auth/c.ts"])
+    w.threads.task("s-auth", { op: "add", text: "write the expiry migration" })
+    w.threads.task("s-auth", { op: "add", text: "wait for the merge train to land" })
+    w.svc.workBoard()
+    expect(w.spawned).toEqual([])
+    Wk.write({ on: true, max: 1, running: [], tried: [] })
+    w.svc.workBoard()
+    expect(w.spawned.length).toBe(1)
+    expect(w.spawned[0].task).toContain("write the expiry migration")
+    expect(w.spawned[0].background).toBe(true)
+    const t = w.threads.find(undefined, "auth")!
+    expect(M.notes(t, "task").find((n) => n.text === "write the expiry migration")!.claimedBy).toBeTruthy()
+    w.svc.workBoard() // at the cap, and the other task only waits: nothing more
+    expect(w.spawned.length).toBe(1)
+    expect(Wk.read().running.length).toBe(1)
+    Wk.write({ on: false, max: 1, running: [], tried: [] })
+  })
+})

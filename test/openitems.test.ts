@@ -86,3 +86,34 @@ describe("at the end of a turn", () => {
     expect(p).toContain("ask them (one question for all of those, at the end) instead of guessing")
   })
 })
+
+describe("working the board", () => {
+  test("picks investigations first, then the oldest; never a claimed, waiting, tried or running one", async () => {
+    const W = await import("../src/attention/worker.ts")
+    const t = (id: string, text: string, at: number, o: Record<string, unknown> = {}) => ({ id, text, thread: "auth", threadId: "t1", at, state: "open", ...o }) as any
+    const tasks = [
+      t("a", "write the expiry migration", 1),
+      t("b", "Investigate why e2e failed on auth · PR #12 (https://x)", 5),
+      t("c", "wait for the merge train to land", 0),
+      t("d", "fix the flaky test", 2, { claimedBy: "marie" }),
+      t("e", "rename the helper", 3),
+    ]
+    expect(W.pick(tasks, { tried: [], running: [] })!.id).toBe("b")
+    expect(W.pick(tasks, { tried: ["b"], running: [] })!.id).toBe("a")
+    expect(W.pick(tasks, { tried: ["b"], running: [{ taskId: "a", thread: "auth", agent: "auth-1", startedAt: 0 }] })!.id).toBe("e")
+    expect(W.pick(tasks, { threads: ["billing"], tried: [], running: [] })).toBe(null)
+  })
+  test("the agent is told what to do, to mark it done, and to ask rather than guess", async () => {
+    const W = await import("../src/attention/worker.ts")
+    const p = W.prompt({ id: "k1", text: "fix the flaky test", thread: "auth", threadId: "t", at: 0, state: "open" })
+    expect(p).toContain("fix the flaky test")
+    expect(p).toContain(`op "done" and id "k1"`)
+    expect(p).toContain("never deploying to production yourself")
+  })
+  test("off until turned on; says what it is doing", async () => {
+    const W = await import("../src/attention/worker.ts")
+    expect(W.read().on).toBe(false)
+    W.write({ on: true, max: 2, running: [{ taskId: "a", thread: "auth", agent: "auth-1", startedAt: 0 }], tried: [] })
+    expect(W.describe(W.read())).toBe(`◢ crosstalk: working through the open tasks, at most 2 agents at once, in the background. Working on: auth (auth-1). Say "stop working the board" to stop.`)
+  })
+})

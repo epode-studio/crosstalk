@@ -6,6 +6,8 @@
 
 import * as C from "./control.ts"
 import * as I from "./index.ts"
+import * as W from "../attention/worker.ts"
+import * as T from "./transcripts.ts"
 
 const text = (out: { ok: boolean; text: string }) => ({ content: [{ type: "text" as const, text: out.text }], ...(out.ok ? {} : { isError: true }) })
 
@@ -88,6 +90,26 @@ export async function callTool(name: string, a: any, o: { sessionId: string; cwd
       const folds = action.folds.length ? `\nSimilar: ${action.folds.map((f) => `${f.name} → ${f.intoName} (${f.why})`).join(", ")}.` : ""
       const win = plan.windows > 1 && !merge ? `\nTerminal has ${plan.windows} windows; with merge: true they become tabs of one, if your user wants that.` : ""
       return text({ ...out, text: `${out.text}${why}${folds}${win}${missing}` })
+    }
+    case "crosstalk_work_board": {
+      const p = W.read()
+      if (a.on === true && !p.on) {
+        // Agents started by themselves: only on the person's own words, typed in this session.
+        const said = T.lastPrompt(T.transcriptOf(o.sessionId, o.cwd, d.env))
+        const fresh = !!said && d.now() - said.at < 15 * 60_000
+        if (!fresh || !/\b(work|go|chew|get)\b[^.]*\b(tasks?|board|todos?|list)\b/i.test(said!.text))
+          return text({ ok: false, text: `◢ crosstalk: working the board starts agents by themselves, so it needs your user's own words, typed here ("work through the open tasks"). Nothing was started.` })
+      }
+      if (typeof a.on === "boolean") {
+        p.on = a.on
+        if (a.on) {
+          if (a.count) p.max = Math.max(1, Math.min(4, Number(a.count)))
+          p.threads = a.thread ? [String(a.thread)] : undefined
+          p.tried = []
+        }
+        W.write(p)
+      }
+      return text({ ok: true, text: W.describe(W.read()) })
     }
     case "crosstalk_popout":
       return text(C.popout({ name: String(a.name ?? ""), cwd: o.cwd, by: o.sessionId || undefined, env: d.env }))

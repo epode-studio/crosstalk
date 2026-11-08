@@ -43,6 +43,7 @@ import * as A from "./activity.ts"
 import * as N from "./notify.ts"
 import * as D from "./dispose.ts"
 import * as St from "./staffing.ts"
+import * as W from "./worker.ts"
 import * as Pm from "./permission.ts"
 import { BG_ENV } from "./background.ts"
 import * as PP from "../services/postpone.ts"
@@ -62,7 +63,9 @@ export type Deps = {
   /** Repo-relative path → when this session last touched it. */
   touched: (sessionId: string) => Record<string, number> | undefined
   repoOf: (sessionId: string) => string | undefined
-  spawn: (o: { task: string; name: string; cwd: string; by?: string; background: boolean; thread?: { id: string; name: string } }) => { ok: boolean; text: string; agents: { name: string }[] }
+  spawn: (o: { task: string; name: string; cwd: string; by?: string; background: boolean; thread?: { id: string; name: string; view?: ReturnType<typeof M.view> } }) => { ok: boolean; text: string; agents: { name: string }[] }
+  /** Whether a background agent is still running (crosstalk's tmux has its session). */
+  agentAlive?: (name: string) => boolean
   /** Sessions crosstalk runs in the background: never where a question is put. */
   background: (sessionId: string) => string | undefined
   restart?: (o: { rec: Rec; cmd: string }) => Promise<{ ok: boolean; text: string; wait?: boolean }>
@@ -151,6 +154,7 @@ export class AttentionService {
   private postponed = new Map<string, { since: number; rule?: boolean; timer?: ReturnType<typeof setTimeout> }>()
   private ticking = false
   private lastStaffCheck = 0
+  private lastWorkCheck = 0
   private env: NodeJS.ProcessEnv
 
   constructor(private d: Deps) {
@@ -256,6 +260,10 @@ export class AttentionService {
       if (this.now() - this.lastStaffCheck >= every) {
         this.lastStaffCheck = this.now()
         this.staffing()
+      }
+      if (this.now() - this.lastWorkCheck >= Math.max(0, Number(this.env.CROSSTALK_WORK_EVERY_MS ?? 60_000))) {
+        this.lastWorkCheck = this.now()
+        this.workBoard()
       }
     } catch (e) {
       this.d.log(`attention: ${(e as Error).message}`)
@@ -581,6 +589,57 @@ export class AttentionService {
       this.d.log(`attention: ${t.meta.value.name} is stuck (${s.why}); asked whether to add an agent`)
     }
     this.save()
+  }
+
+  // --- working the board (src/attention/worker.ts) ------------------------------------
+
+  /** While on: let go of finished agents, then start agents on open tasks up to the cap. */
+  workBoard() {
+    const p = W.read()
+    if (!p.on) return
+    const alive = this.d.agentAlive ?? (() => true)
+    const tasks: W.OpenTask[] = []
+    for (const t of this.d.threads.all()) {
+      if (!M.isLive(t) || t.meta.value.status === "done") continue
+      for (const n of M.notes(t, "task")) tasks.push({ id: n.id, text: n.text, thread: t.meta.value.name, threadId: t.id, at: n.at, claimedBy: n.claimedBy, state: n.state ?? "open" })
+    }
+    // Finished: the agent's session has ended. Not marked done: not picked again by itself.
+    const still: W.Running[] = []
+    for (const r of p.running) {
+      if (alive(r.agent)) still.push(r)
+      else {
+        const t = tasks.find((x) => x.id === r.taskId)
+        if (t && t.state !== "done") p.tried = [...(p.tried ?? []), r.taskId]
+        this.d.log(`worker: ${r.agent} ended (${t?.state === "done" ? "task done" : "task left open"})`)
+      }
+    }
+    p.running = still
+    while (p.running.length < p.max) {
+      const next = W.pick(tasks, { threads: p.threads, tried: p.tried ?? [], running: p.running })
+      if (!next) break
+      const t = this.d.threads.thread(next.threadId)
+      // A checkout of its repository: where a session of the thread works, else the repo's known root (as staffing does).
+      const sid = t ? this.d.threads.sessionsIn([t.id])[0] : undefined
+      const cwd = t ? (sid && this.d.sessions().get(sid)?.cwd) || this.d.threads.rootFor(t.meta.value.repo) : undefined
+      if (!t || !cwd) {
+        p.tried = [...(p.tried ?? []), next.id]
+        continue
+      }
+      const claim = this.d.threads.task(undefined, { op: "claim", id: next.id, thread: next.thread })
+      if (!claim.ok) {
+        p.tried = [...(p.tried ?? []), next.id]
+        continue
+      }
+      const r = this.d.spawn({ task: W.prompt(next), name: next.thread, cwd, background: true, thread: { id: t.id, name: next.thread, view: M.view(t) } })
+      if (!r.ok || !r.agents.length) {
+        p.tried = [...(p.tried ?? []), next.id]
+        this.d.log(`worker: could not start an agent on "${next.text}": ${r.text}`)
+        continue
+      }
+      p.running.push({ taskId: next.id, thread: next.thread, agent: r.agents[0].name, startedAt: this.now() })
+      this.d.log(`worker: ${r.agents[0].name} took "${next.text}" in ${next.thread}`)
+    }
+    W.write(p)
   }
 
   private active(sid: string): boolean {

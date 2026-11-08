@@ -47,5 +47,6 @@ export function createAttention(o: {
       return r
     },
     background: backgroundOf,
+    agentAlive: (name) => spawn.tmuxHas(name),
   })
 }

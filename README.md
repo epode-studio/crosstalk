@@ -100,14 +100,22 @@ you, it asks.
 - *"Show me all my agents."* A live list beside the chat: every session, what
   it is on, and which ones are waiting on you. The main session shows it by
   itself.
+- *"Show me the board."* Every thread on one page in your browser: what
+  waits on you, open tasks, decisions, features, pull requests and checks.
+- *"Work through the open tasks."* Agents take the threads' open tasks by
+  themselves, two at a time, in the background, investigations of failures
+  first. *"Stop working the board"* stops it.
 - *"Tidy up my sessions."* Closes the ones you are not using and folds
   duplicates into one. One question first; anything closed can come back.
 - *"Close billing."* · *"Resume the one where I fixed login."* · *"Call this
   one payments."*
 - *"Restore them."* After a restart or a crash, every session back in its
   tab, mid-conversation.
-- *"Make this the main session."* One place for the questions that are about
-  everything, so the others only ask about their own work.
+- *"Make this the main session."* Your inbox: every question, from crosstalk,
+  your teammates and your agents' own, comes here one at a time, the most
+  pressing first, with what you need to answer it. Answering closes it and the
+  next one comes up. Its pane shows the inbox, your agents, pull requests,
+  credit usage and what just happened.
 
 **More hands**
 - *"Put two more agents on auth."* Each gets its own copy of the code and
@@ -231,6 +239,10 @@ terminal app you already use and turns it into the workspace.
 - **Your tabs are the list of agents.** One per agent, opened, arranged and
   brought back by crosstalk: one window per repository, a thread's tabs side by
   side.
+- **Tabs that say what they are.** Each tab is named after its thread and
+  session, with the thread's colour in front: 🟣 auth · auth-1, 🟢 billing ·
+  billing-2. After a restart, "Only the recent 4" brings back just the work in
+  hand.
 - **Status at a glance.** Each tab shows whether its agent is working,
   finished, or waiting on you: a progress mark where the terminal draws one,
   tab colour in iTerm2 and kitty, a window option in tmux. Terminal.app has no
