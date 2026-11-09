@@ -1,8 +1,9 @@
 // Pull requests' checks (CI): what state they are in, how long until they
 // finish, and what changed since the last look.
 //
-//   state     from `gh pr view --json state,isDraft,statusCheckRollup`: running,
-//             passed, failed or none, and which failed
+//   state     from `gh pr view --json state,isDraft,statusCheckRollup,...`: running,
+//             passed, failed or none, and which failed; its review and whether
+//             it can be merged, for merging it when green (src/urls/merge.ts)
 //   eta       how long this repository's checks usually take (the median of the
 //             last runs crosstalk saw finish, ci-durations.json) minus how long
 //             these have run: "about 6 min left", so nobody has to ask
@@ -15,7 +16,21 @@ import path from "node:path"
 import { P } from "../config.ts"
 
 export type Checks = "running" | "passed" | "failed" | "none"
-export type PrView = { state: string; draft: boolean; checks: Checks; failed: string[]; startedAt?: number; /** Its author's GitHub login. */ author?: string }
+export type PrView = {
+  state: string
+  draft: boolean
+  checks: Checks
+  failed: string[]
+  startedAt?: number
+  /** Its author's GitHub login. */
+  author?: string
+  /** gh's reviewDecision: APPROVED, REVIEW_REQUIRED, CHANGES_REQUESTED, or empty when no review is required. */
+  review?: string
+  /** gh's mergeable: MERGEABLE, CONFLICTING or UNKNOWN. */
+  mergeable?: string
+  /** gh's mergeStateStatus: CLEAN, BLOCKED, BEHIND, DIRTY, DRAFT, UNSTABLE, HAS_HOOKS, UNKNOWN. */
+  mergeState?: string
+}
 
 const FAIL = new Set(["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"])
 const OK = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"])
@@ -41,6 +56,9 @@ export function summarize(j: any): PrView {
     state: String(j?.state ?? ""),
     draft: !!j?.isDraft,
     ...(typeof j?.author?.login === "string" ? { author: j.author.login } : {}),
+    ...(typeof j?.reviewDecision === "string" ? { review: j.reviewDecision.toUpperCase() } : {}),
+    ...(typeof j?.mergeable === "string" ? { mergeable: j.mergeable.toUpperCase() } : {}),
+    ...(typeof j?.mergeStateStatus === "string" ? { mergeState: j.mergeStateStatus.toUpperCase() } : {}),
     checks,
     failed: [...new Set(failed)].slice(0, 8),
     ...(starts.length ? { startedAt: Math.min(...starts) } : {}),
@@ -87,6 +105,22 @@ export function etaMs(repo: string | undefined, startedAt: number | undefined, n
   const m = median(history[repo] ?? [])
   if (!m) return undefined
   return Math.max(60_000, m - (now - startedAt))
+}
+
+/** How long a run usually takes past which it is "taking longer than usual". */
+export const SLOW_FACTOR = 1.5
+
+/**
+ * What a person reads for checks still running: `about 6 min left`, or
+ * `taking longer than usual` once a run has gone well past its usual length,
+ * rather than an ETA that has already passed. Empty with no history yet.
+ */
+export function etaLine(repo: string | undefined, startedAt: number | undefined, now: number, history: Record<string, number[]> = read()): string {
+  if (!repo || !startedAt) return ""
+  const m = median(history[repo] ?? [])
+  if (!m) return ""
+  if (now - startedAt > SLOW_FACTOR * m) return "taking longer than usual"
+  return etaText(etaMs(repo, startedAt, now, history))
 }
 
 /** `about 6 min left`, `about 1 h left`. */

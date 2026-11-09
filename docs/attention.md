@@ -69,6 +69,17 @@ question per stuck spell: "auth has been stuck for 2 hours. Add a second
 agent?" Yes starts one through `src/spawn.ts`, in the background, with the
 thread's brief as its first prompt. No budgets.
 
+## Merging green PRs
+
+When one of the person's own PRs turns green, is not a draft, is approved (or
+needs no review) and has no conflicts, one question goes to main: "auth · PR
+#12 is green and approved. Merge it?" (`src/urls/merge.ts`). Merge it runs
+`gh pr merge <url> --auto` with the method the repository allows, squash
+first. Not yet asks again on the next green run only. Always merge my green
+PRs merges them from then on without asking, with one quiet line in main;
+crosstalk_doctor action `auto_merge` with `on: false` goes back to asking.
+`CROSSTALK_NO_MERGE=1` turns it all off.
+
 ## Focus
 
 Which session the person is looking at, asked of each terminal the live

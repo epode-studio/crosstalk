@@ -2840,7 +2840,13 @@ control.listen(P.daemonSock, () => {
       live: () => [...sessions.values()].map((s) => ({ sessionId: s.sessionId, cwd: s.cwd })),
       // A PR's checks passed or failed, or it merged or closed (src/urls/ci.ts): the
       // sessions in its thread are told, and a failure is kept as a task to investigate.
-      onPr: (u, c) => {
+      onPr: (u, c, v) => {
+        // Green and nothing in the way: "Merge it?" in main, or merged when the person said always (src/urls/merge.ts).
+        try {
+          attention?.prChanged(u, c, v)
+        } catch (e) {
+          log(`ci: merge: ${(e as Error).message}`)
+        }
         try {
           const t = u.thread ? threads.find(undefined, u.thread) : undefined
           const to = [...new Set([...(u.sessionId ? [u.sessionId] : []), ...(t ? threads.sessionsIn([t.id]) : [])])].filter((sid) => sessions.has(sid))

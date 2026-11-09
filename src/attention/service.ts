@@ -22,6 +22,9 @@
 //                  push through the mod
 //   permissions    a background agent's PermissionRequest, held open until the
 //                  person answers it as a question (permission.ts)
+//   merging        one of the person's PRs turned green and nothing is in the
+//                  way: "Merge it?", or merged at once when they said always
+//                  (src/urls/merge.ts)
 //
 // Every question is a UiItem of kind "attention" (src/uistate.ts), id
 // `attn:<what>:<key>`, shown by crosstalk's mod in the session the person is
@@ -45,7 +48,8 @@ import * as D from "./dispose.ts"
 import * as St from "./staffing.ts"
 import * as W from "./worker.ts"
 import * as Usage from "../ui-extra/usage.ts"
-import { recordEvent } from "../urls/ci.ts"
+import { recordEvent, type Change, type PrView } from "../urls/ci.ts"
+import * as Mg from "../urls/merge.ts"
 import { dotFor, human } from "../ui-extra/pure.ts"
 import * as AC from "./autoclose.ts"
 import { lastReply } from "./openitems.ts"
@@ -91,6 +95,8 @@ export type Deps = {
   fetcher?: typeof fetch
   env?: NodeJS.ProcessEnv
   now?: () => number
+  /** Merge a PR (`gh pr merge --auto`); a test's stand-in. Default: src/urls/merge.ts ghMerge. */
+  merge?: Mg.Merger
 }
 
 type Note = { id: string; text: string }
@@ -128,7 +134,14 @@ type State = {
   /** How many times "Start fresh" was answered, for offering the rule. */
   disposeFresh?: number
   disposeRuleOffered?: boolean
+  /** "Always merge my green PRs": merged without asking from then on. */
+  mergeRule?: boolean
+  /** Merge questions waiting, by their key: which PR each is about. */
+  mergeAsk?: Record<string, MergePr & { at: number }>
 }
+
+/** A PR, as the merge question and the merge need it (a URL record from src/urls/store.ts). */
+export type MergePr = { id: string; url: string; label: string; thread?: string; sessionId?: string; worktree?: string }
 
 const empty = (now: number): State => ({
   v: 1,
@@ -153,12 +166,15 @@ export const START_FRESH = "Start fresh"
 export const COMPACT = "Compact as usual"
 export const ALWAYS_FRESH = "Always start fresh"
 export const NOT_NOW = "Not now"
+export const MERGE_IT = "Merge it"
+export const NOT_YET = "Not yet"
+export const ALWAYS_MERGE = "Always merge my green PRs"
 export const DISPOSE_RULE_QUESTION = "That is twice you started a session fresh. Start sessions fresh from their thread by themselves from now on, whenever their context is spent?"
 
-type What = "dispose" | "staff" | "perm" | "rule" | "circle"
+type What = "dispose" | "staff" | "perm" | "rule" | "circle" | "merge"
 export const itemId = (what: What, key: string) => `attn:${what}:${key}`
 const parseId = (id: string) => {
-  const m = /^attn:(dispose|staff|perm|rule|circle):(.+)$/.exec(id)
+  const m = /^attn:(dispose|staff|perm|rule|circle|merge):(.+)$/.exec(id)
   return m ? { what: m[1] as What, key: m[2] } : null
 }
 
@@ -678,6 +694,74 @@ export class AttentionService {
     this.save()
   }
 
+  // --- merging the person's green PRs (src/urls/merge.ts) ------------------------------
+
+  /**
+   * One of the person's PRs changed (src/urls/liveness.ts hands on only theirs):
+   * green and nothing in the way puts one question in main, or merges it at
+   * once when they said always. A new green run asks again; an older question
+   * about the same PR still waiting is put away first.
+   */
+  prChanged(pr: MergePr, change: Change, view: PrView): Mg.Decision {
+    const d = Mg.decide({ change, view, always: this.st.mergeRule === true, env: this.env })
+    if (d === "none") return d
+    if (d === "merge") {
+      void this.merge(pr, true)
+      return d
+    }
+    const to = this.target(pr.sessionId)
+    if (!to) return "none"
+    const asks = (this.st.mergeAsk ??= {})
+    for (const [k, a] of Object.entries(asks))
+      if (a.id === pr.id) {
+        delete asks[k]
+        ui.withStore((items, now) => ui.settle(items, itemId("merge", k), "muted", now))
+      }
+    const key = `${pr.id}@${this.now()}`
+    asks[key] = { id: pr.id, url: pr.url, label: pr.label, ...(pr.thread ? { thread: pr.thread } : {}), ...(pr.sessionId ? { sessionId: pr.sessionId } : {}), ...(pr.worktree ? { worktree: pr.worktree } : {}), at: this.now() }
+    this.save()
+    this.put({
+      id: itemId("merge", key),
+      sessionId: to,
+      from: pr.label,
+      ...(pr.thread ? { thread: pr.thread } : {}),
+      question: Mg.question(pr.label, view),
+      text: "Merging waits for anything else GitHub requires. Always: your green PRs merge without asking.",
+      options: [MERGE_IT, NOT_YET, ALWAYS_MERGE],
+    })
+    this.d.log(`attention: ${pr.label} is green; asked whether to merge it`)
+    return d
+  }
+
+  /** Merge one: the result in Lately, and a quiet line in main. */
+  private async merge(pr: MergePr, byRule: boolean): Promise<{ ok: boolean; text: string }> {
+    let r: { ok: boolean; text: string }
+    try {
+      r = await (this.d.merge ?? Mg.ghMerge)(pr.url, pr.worktree)
+    } catch (e) {
+      r = { ok: false, text: (e as Error).message }
+    }
+    const text = r.ok
+      ? `◢ crosstalk: merging ${pr.label}${byRule ? " (you said always merge green PRs)" : ""}. It merges once GitHub allows.`
+      : `◢ crosstalk: could not merge ${pr.label}: ${r.text}.`
+    recordEvent(r.ok ? `${pr.label}: merging${byRule ? " by itself" : ""}` : `${pr.label}: could not merge`)
+    this.d.log(`attention: merge ${pr.label}: ${r.ok ? `ok (${r.text})` : r.text}`)
+    if (byRule) {
+      const to = this.target(pr.sessionId)
+      if (to) this.note(to, { id: `merge:${pr.id}:${this.now()}`, text })
+    }
+    return { ok: r.ok, text }
+  }
+
+  /** "Always merge my green PRs", or back to asking. */
+  setMergeRule(on: boolean): string {
+    this.st.mergeRule = on
+    this.save()
+    return on
+      ? `◢ crosstalk: your green PRs merge by themselves from now on. Say "stop merging my PRs by itself" to be asked again.`
+      : "◢ crosstalk: you will be asked before a green PR is merged."
+  }
+
   // --- finished sessions close themselves (src/attention/autoclose.ts) --------------------
 
   /** A session's work shipped: it closes once idle. */
@@ -932,7 +1016,7 @@ export class AttentionService {
     if (!p) return { ok: false, error: `not an attention question: ${id}` }
     if (action === "raised" || action === "later") return ui.withStore((items, now) => ui.act(items, id, action as ui.UiAction, now))
     const v = (value ?? "").trim()
-    const answer = action === "mute" ? (p.what === "perm" ? Pm.DENY : p.what === "dispose" ? COMPACT : p.what === "rule" ? NOT_NOW : St.NOT_NOW) : v
+    const answer = action === "mute" ? (p.what === "perm" ? Pm.DENY : p.what === "dispose" ? COMPACT : p.what === "rule" ? NOT_NOW : p.what === "merge" ? NOT_YET : p.what === "circle" ? CIRCLE_LET : St.NOT_NOW) : v
     if (!answer) return { ok: false, error: "an attention question is answered with one of its options" }
     const item = ui.snapshot()[id]
     // One of its own options, word for word: "Deny for this session" is not "Allow for this session".
@@ -969,6 +1053,17 @@ export class AttentionService {
       return { ...r, item: claim.item }
     }
     if (p.what === "rule") return { ok: true, item: claim.item, text: this.setDisposeRule(answer === ALWAYS_FRESH) }
+    if (p.what === "merge") {
+      const pr = this.st.mergeAsk?.[p.key]
+      if (pr) {
+        delete this.st.mergeAsk![p.key]
+        this.save()
+      }
+      if (answer === NOT_YET || !pr) return { ok: true, item: claim.item, text: `◢ crosstalk: not merging ${claim.item.from ?? "it"}. You will be asked again when its checks next pass.` }
+      const rule = answer === ALWAYS_MERGE ? `${this.setMergeRule(true)}\n` : ""
+      const r = await this.merge(pr, false)
+      return { ok: r.ok, item: claim.item, text: rule + r.text }
+    }
     if (p.what === "circle") {
       if (answer !== CIRCLE_STOP || !this.d.closeSession) return { ok: true, item: claim.item, text: `◢ crosstalk: ${claim.item.from ?? "it"} keeps going.` }
       const r = await this.d.closeSession(p.key)
@@ -1042,6 +1137,8 @@ export class AttentionService {
         return { ok: true, focus: this.focused(), target: this.target(), away: this.away() }
       case "attn_dispose_rule":
         return { ok: true, text: this.setDisposeRule(req.on === true) }
+      case "attn_merge_rule":
+        return { ok: true, text: this.setMergeRule(req.on === true) }
       case "attn_dispose":
         return this.dispose(String(req.session ?? sid))
       case "attn_tick":
