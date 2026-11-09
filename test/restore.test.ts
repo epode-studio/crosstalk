@@ -171,24 +171,28 @@ describe("Terminal.app", () => {
   const mac = env({ platform: "darwin", current: { program: "Apple_Terminal" } })
   const at = (window: number, tab: number) => ({ program: "Apple_Terminal", apple: { window, tab } })
 
-  test("one window per old window, oldest first, tabs in their old order", () => {
+  test("one window for all of them, never a window per repository: grouped by repository, tabs in their old order", () => {
     const rs = [
       rec({ sessionId: "w9t1", cwd: "/w/fw", terminal: at(9, 1) }),
       rec({ sessionId: "w4t2", cwd: "/w/My App", terminal: at(4, 2) }),
       rec({ sessionId: "w4t1", cwd: "/w/api", terminal: at(4, 1) }),
     ]
     const { plans } = R.plan(rs, mac)
-    expect(plans.map((p) => p.sessions.map((r) => r.sessionId))).toEqual([["w4t1", "w4t2"], ["w9t1"]])
-    expect(plans.map((p) => p.needsAccessibility)).toEqual([true, false])
+    expect(plans.map((p) => p.sessions.map((r) => r.sessionId))).toEqual([["w4t1", "w4t2", "w9t1"]])
+    expect(plans.map((p) => p.needsAccessibility)).toEqual([true])
     expect(plans[0].steps[0].cmd).toBe("osascript")
     expect(plans[0].steps[0].args).toEqual(["-"])
+    // Asked from a Terminal window: into that one.
+    const { plans: into } = R.plan(rs, { ...mac, current: { program: "Apple_Terminal", apple: { window: 77, tab: 1 } } })
+    expect(into).toHaveLength(1)
+    expect(into[0].steps[0].input).toContain("exists window id 77")
   })
 
-  test("the script, exactly", () => {
+  test("the script, exactly: a tab that will not open stops the rest, never a window each", () => {
     expect(R.appleTerminalScript([`cd /w/api && claude --resume a`, `cd '/w/My "App"' && claude --resume b`], true)).toBe(
       [
         `set crosstalkFallback to ""`,
-        `set crosstalkSoft to ""`,
+        `set crosstalkOpened to 1`,
         `tell application "Terminal"`,
         `\tactivate`,
         `\tdo script "cd /w/api && claude --resume a"`,
@@ -196,36 +200,29 @@ describe("Terminal.app", () => {
         `if crosstalkFallback is "" then`,
         `\ttry`,
         ...R.appleNewTabLines(`cd '/w/My "App"' && claude --resume b`),
+        `\t\tset crosstalkOpened to crosstalkOpened + 1`,
         `\ton error errMsg number errNum`,
-        `\t\tif errNum is 1001 then`,
-        `\t\t\tset crosstalkSoft to "1001"`,
-        `\t\telse`,
-        `\t\t\tset crosstalkFallback to (errNum as text)`,
-        `\t\tend if`,
-        `\t\ttell application "Terminal" to do script "cd '/w/My \\"App\\"' && claude --resume b"`,
+        `\t\tset crosstalkFallback to (errNum as text)`,
         `\tend try`,
-        `else`,
-        `\ttell application "Terminal" to do script "cd '/w/My \\"App\\"' && claude --resume b"`,
         `end if`,
-        `if crosstalkFallback is "" then set crosstalkFallback to crosstalkSoft`,
-        `return "done " & crosstalkFallback`,
+        `return "done " & crosstalkFallback & " " & crosstalkOpened`,
       ].join("\n"),
     )
   })
 
-  test("without tabs, one window per session and no System Events", () => {
+  test("without tabs (asked for windows), one window per session and no System Events", () => {
     const s = R.appleTerminalScript(["cd /a && claude --resume a", "cd /b && claude --resume b"], false)
     expect(s).toBe(
       [
         `set crosstalkFallback to ""`,
-        `set crosstalkSoft to ""`,
+        `set crosstalkOpened to 1`,
         `tell application "Terminal"`,
         `\tactivate`,
         `\tdo script "cd /a && claude --resume a"`,
         `end tell`,
         `tell application "Terminal" to do script "cd /b && claude --resume b"`,
-        `if crosstalkFallback is "" then set crosstalkFallback to crosstalkSoft`,
-        `return "done " & crosstalkFallback`,
+        `set crosstalkOpened to crosstalkOpened + 1`,
+        `return "done " & crosstalkFallback & " " & crosstalkOpened`,
       ].join("\n"),
     )
     const { plans } = R.plan([rec({ terminal: at(1, 1) }), rec({ terminal: at(1, 2) })], { ...mac, tabs: false })
@@ -233,13 +230,14 @@ describe("Terminal.app", () => {
     expect(plans[0].steps[0].input).not.toContain("System Events")
   })
 
-  test("Terminal is brought to the front before Cmd-T, and one tab that misses costs only that tab", () => {
+  test("Terminal is brought to the front before Cmd-T, and the window it went into is not left for a new one", () => {
     const s = R.appleTerminalScript(["claude a", "claude b", "claude c"], true)
     const i = s.indexOf(`key code 17`)
     expect(s.slice(0, i)).toContain(`set frontmost of process "Terminal" to true`)
     expect(s.slice(0, i).indexOf("set frontmost")).toBeLessThan(s.slice(0, i).indexOf("if not frontmost then error"))
-    expect(s).toContain(`if errNum is 1001 then`)
-    expect(s.trim().split("\n").slice(-2)[0]).toBe(`if crosstalkFallback is "" then set crosstalkFallback to crosstalkSoft`)
+    expect(s.split("\n").filter((l) => l.includes("do script") && !l.includes("in selected tab")).length).toBe(1) // one window at most
+    const into = R.appleIntoWindowScript(["claude a", "claude b"], 5, true)
+    expect(into.split("\n").filter((l) => l.includes("do script") && !l.includes("in selected tab")).length).toBe(1) // only when window 5 is gone
   })
 
   test("the script that finds a session's window and tab", () => {

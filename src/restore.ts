@@ -587,39 +587,48 @@ export function byRepoThread<T extends { cwd: string; sessionId: string; thread?
  * places new ones. Falls back to a window each if System Events refuses.
  */
 export function appleIntoWindowScript(cmds: string[], window: number, tabs: boolean): string {
+  // That window gone: one new window, the rest tabs in it (appleTerminalScript).
   const L = [
     `set crosstalkFallback to ""`,
-    `set crosstalkSoft to ""`,
+    `set crosstalkOpened to 0`,
+    `set crosstalkNew to false`,
     `tell application "Terminal"`,
     `\tif not (exists window id ${window}) then`,
-    `\t\tset crosstalkFallback to "gone"`,
+    `\t\tset crosstalkNew to true`,
     `\telse`,
     `\t\tset index of window id ${window} to 1`,
     `\t\tactivate`,
     `\tend if`,
     `end tell`,
   ]
-  for (const c of cmds)
-    L.push(
-      `if crosstalkFallback is "" and ${tabs ? "true" : "false"} then`,
-      `\ttry`,
-      ...appleNewTabLines(c),
-      `\ton error errMsg number errNum`,
-      // 1001 (not in front, or the tab went elsewhere) costs this one tab;
-      // a permission error stops tabs for the rest.
-      `\t\tif errNum is 1001 then`,
-      `\t\t\tset crosstalkSoft to "1001"`,
-      `\t\telse`,
-      `\t\t\tset crosstalkFallback to (errNum as text)`,
-      `\t\tend if`,
-      `\t\ttell application "Terminal" to do script ${asq(c)}`,
-      `\tend try`,
-      `else`,
-      `\ttell application "Terminal" to do script ${asq(c)}`,
-      `end if`,
-    )
-  L.push(`if crosstalkFallback is "gone" then set crosstalkFallback to ""`, `if crosstalkFallback is "" then set crosstalkFallback to crosstalkSoft`, `return "done " & crosstalkFallback`)
+  cmds.forEach((c, i) => {
+    if (!tabs) {
+      L.push(`tell application "Terminal" to do script ${asq(c)}`, `set crosstalkOpened to crosstalkOpened + 1`)
+      return
+    }
+    if (i === 0) L.push(`if crosstalkNew then`, `\ttell application "Terminal"`, `\t\tactivate`, `\t\tdo script ${asq(c)}`, `\tend tell`, `\tset crosstalkOpened to 1`, `else`, ...tabTry(c), `end if`)
+    else L.push(...tabTry(c))
+  })
+  L.push(`return "done " & crosstalkFallback & " " & crosstalkOpened`)
   return L.join("\n")
+}
+
+/**
+ * One new tab, only while every one before it opened. A tab that cannot open
+ * (Terminal not in front, or no permission) stops the rest: they stay closed,
+ * to open as tabs next time, never a window each.
+ */
+function tabTry(c: string): string[] {
+  return [
+    `if crosstalkFallback is "" then`,
+    `\ttry`,
+    ...appleNewTabLines(c),
+    `\t\tset crosstalkOpened to crosstalkOpened + 1`,
+    `\ton error errMsg number errNum`,
+    `\t\tset crosstalkFallback to (errNum as text)`,
+    `\tend try`,
+    `end if`,
+  ]
 }
 
 /** iTerm2: tabs in the window showing that tty, else a new window. */
@@ -755,37 +764,17 @@ export function appleNewTabLines(c: string): string[] {
 /**
  * Terminal.app, one window. The first session opens the window; each next one
  * is a new tab (Cmd-T through System Events, the only way Terminal opens a tab
- * from a script) running its command. If System Events refuses, that and every
- * later session in the window gets a window of its own instead, and the script
- * returns the error number so the reason can say what permission is missing.
+ * from a script) running its command. If a tab cannot open, the rest stay
+ * closed (never a window each), and the script returns the error number and
+ * how many opened: `done <error> <opened>`.
  */
 export function appleTerminalScript(cmds: string[], tabs: boolean): string {
-  const L: string[] = [`set crosstalkFallback to ""`, `set crosstalkSoft to ""`, `tell application "Terminal"`, `\tactivate`, `\tdo script ${asq(cmds[0])}`, `end tell`]
+  const L: string[] = [`set crosstalkFallback to ""`, `set crosstalkOpened to 1`, `tell application "Terminal"`, `\tactivate`, `\tdo script ${asq(cmds[0])}`, `end tell`]
   for (const c of cmds.slice(1)) {
-    if (!tabs) {
-      L.push(`tell application "Terminal" to do script ${asq(c)}`)
-      continue
-    }
-    L.push(
-      `if crosstalkFallback is "" then`,
-      `\ttry`,
-      ...appleNewTabLines(c),
-      `\ton error errMsg number errNum`,
-      // 1001 (not in front, or the tab went elsewhere) costs this one tab;
-      // a permission error stops tabs for the rest.
-      `\t\tif errNum is 1001 then`,
-      `\t\t\tset crosstalkSoft to "1001"`,
-      `\t\telse`,
-      `\t\t\tset crosstalkFallback to (errNum as text)`,
-      `\t\tend if`,
-      `\t\ttell application "Terminal" to do script ${asq(c)}`,
-      `\tend try`,
-      `else`,
-      `\ttell application "Terminal" to do script ${asq(c)}`,
-      `end if`,
-    )
+    if (!tabs) L.push(`tell application "Terminal" to do script ${asq(c)}`, `set crosstalkOpened to crosstalkOpened + 1`)
+    else L.push(...tabTry(c))
   }
-  L.push(`if crosstalkFallback is "" then set crosstalkFallback to crosstalkSoft`, `return "done " & crosstalkFallback`)
+  L.push(`return "done " & crosstalkFallback & " " & crosstalkOpened`)
   return L.join("\n")
 }
 
@@ -882,39 +871,29 @@ export function plan(recs: Rec[], e: Env): { plans: Plan[]; skipped: Rec[] } {
         plans.push({ kind: "tmux", sessions: sorted, steps })
       }
     } else if (kind === "apple") {
-      for (const { recs, anchor } of byRepo(rs, (r) => String(r.terminal.apple?.window ?? "?"))) {
-        // Terminal.app cannot put a tab anywhere but last: a thread's tabs are only kept together.
-        const g = byRepoThread(
-          [...recs].sort(
-            (a, b) =>
-              (repoOf ? num(a.terminal.apple?.window) - num(b.terminal.apple?.window) : 0) ||
-              num(a.terminal.apple?.tab) - num(b.terminal.apple?.tab) ||
-              a.startedAt - b.startedAt,
-          ),
-        )
-        const into = anchor?.apple?.window
-        const tabs = e.tabs && (g.length > 1 || !!into)
-        plans.push({
-          kind: "apple",
-          sessions: g,
-          needsAccessibility: tabs,
-          steps: [{ cmd: "osascript", args: ["-"], input: into ? appleIntoWindowScript(g.map(typed), into, e.tabs) : appleTerminalScript(g.map(typed), tabs) }],
-        })
-      }
+      // One window for all of them, never a window per repository: the window
+      // already holding one of their repositories (else the one asking), tabs
+      // grouped by repository, then thread. Terminal.app only adds tabs at the end.
+      const groups = byRepo(rs, (r) => String(r.terminal.apple?.window ?? "?"))
+      const g = groups.flatMap(({ recs }) =>
+        byRepoThread([...recs].sort((a, b) => num(a.terminal.apple?.window) - num(b.terminal.apple?.window) || num(a.terminal.apple?.tab) - num(b.terminal.apple?.tab) || a.startedAt - b.startedAt)),
+      )
+      const into = groups.find((x) => x.anchor?.apple?.window)?.anchor?.apple?.window ?? e.current.apple?.window
+      const tabs = e.tabs && (g.length > 1 || !!into)
+      plans.push({
+        kind: "apple",
+        sessions: g,
+        needsAccessibility: tabs,
+        steps: [{ cmd: "osascript", args: ["-"], input: into ? appleIntoWindowScript(g.map(typed), into, e.tabs) : appleTerminalScript(g.map(typed), tabs) }],
+      })
     } else if (kind === "iterm") {
-      for (const { recs, anchor } of byRepo(rs, (r) => String(r.terminal.iterm?.window ?? "?"))) {
-        // Nor can iTerm2's `create tab`: kept together, at the end of the window.
-        const g = byRepoThread(
-          [...recs].sort(
-            (a, b) =>
-              (repoOf ? num(a.terminal.iterm?.window) - num(b.terminal.iterm?.window) : 0) ||
-              num(a.terminal.iterm?.tab) - num(b.terminal.iterm?.tab) ||
-              a.startedAt - b.startedAt,
-          ),
-        )
-        const input = anchor?.tty ? itermIntoWindowScript(g.map(typed), anchor.tty) : itermScript(g.map(typed))
-        plans.push({ kind: "iterm", sessions: g, steps: [{ cmd: "osascript", args: ["-"], input }] })
-      }
+      // iTerm2 too: one window, tabs at its end, grouped by repository then thread.
+      const groups = byRepo(rs, (r) => String(r.terminal.iterm?.window ?? "?"))
+      const g = groups.flatMap(({ recs }) =>
+        byRepoThread([...recs].sort((a, b) => num(a.terminal.iterm?.window) - num(b.terminal.iterm?.window) || num(a.terminal.iterm?.tab) - num(b.terminal.iterm?.tab) || a.startedAt - b.startedAt)),
+      )
+      const tty = groups.find((x) => x.anchor?.tty)?.anchor?.tty ?? e.current.tty
+      plans.push({ kind: "iterm", sessions: g, steps: [{ cmd: "osascript", args: ["-"], input: tty ? itermIntoWindowScript(g.map(typed), tty) : itermScript(g.map(typed)) }] })
     } else if (kind === "ghostty") {
       const g = byRepoThread(inRepoOrder(rs), repoOf)
       if (e.tabs) plans.push({ kind: "ghostty", sessions: g, needsAccessibility: true, steps: [{ cmd: "osascript", args: ["-"], input: ghosttyScript(g.map(typed)) }] })
@@ -1378,18 +1357,21 @@ export function restore(o: RunOpts, only?: Rec[]): Outcome {
         break
       }
     }
-    const fellBack = /done (-?\d+)/.exec(out)
-    if (ok && fellBack) {
-      // The script opened every session, but as separate windows from the
-      // point System Events refused.
-      if (fellBack[1] === "1001") notes.push(`Opened ${p.sessions.length} in ${app} partly as separate windows: ${app} could not be brought to the front, or a new tab did not open where expected, so nothing was typed into an existing tab. Window ▸ Merge All Windows makes them tabs.`)
+    // `done <error> <opened>`: a tab that would not open stopped the rest, which stay closed for next time.
+    const stopped = /done (-?\d+) (\d+)/.exec(out)
+    if (ok && stopped && Number(stopped[2]) < p.sessions.length) {
+      const opened = Math.min(p.sessions.length, Number(stopped[2]))
+      const left = p.sessions.slice(opened)
+      restored.push(...p.sessions.slice(0, opened))
+      for (const r of left) writeRec(r)
+      if (stopped[1] === "1001") notes.push(`Opened ${opened} of ${p.sessions.length}: ${app} was not in front when the next tab was due, so crosstalk stopped rather than open windows. ${left.length} wait: say "restore them" to open them as tabs.`)
       else {
-        missing = classifyOsaError(fellBack[1]) ?? "automation"
-        notes.push(
-          `Opened ${p.sessions.length} in ${app} as separate windows: ${app} ${missing === "accessibility" ? "may not type keys (Accessibility)" : "may not control System Events (Automation)"}.`,
-        )
+        missing = classifyOsaError(stopped[1]) ?? "automation"
+        notes.push(`Opened ${opened} of ${p.sessions.length}: ${app} ${missing === "accessibility" ? "may not type keys (Accessibility)" : "may not control System Events (Automation)"}, which tabs need. ${left.length} wait, to open as tabs once that is allowed.`)
       }
-    } else if (ok && p.needsAccessibility) saveState({ ...loadState(), tabsWorked: Date.now() })
+      continue
+    } else if (ok && stopped) missing ??= classifyOsaError(stopped[1])
+    else if (ok && p.needsAccessibility) saveState({ ...loadState(), tabsWorked: Date.now() })
     if (ok) restored.push(...p.sessions)
     else {
       missing ??= classifyOsaError(out)

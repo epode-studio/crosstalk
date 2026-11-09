@@ -403,7 +403,7 @@ describe("one window per repository", () => {
 describe("restore, grouped by repository", () => {
   const at = (window: number, tab: number) => ({ program: "Apple_Terminal", apple: { window, tab } })
   const repoOf = (cwd: string) => (cwd.startsWith("/api") ? "/api" : "/web")
-  test("one window per repository, repositories in the order first opened, tabs in their old order", () => {
+  test("one window for all, repositories in the order first opened, tabs in their old order", () => {
     const rs = [
       rec({ sessionId: "w2", cwd: "/web/b", startedAt: 4, terminal: at(1, 2) }),
       rec({ sessionId: "a1", cwd: "/api", startedAt: 2, terminal: at(1, 1) }),
@@ -411,10 +411,7 @@ describe("restore, grouped by repository", () => {
       rec({ sessionId: "a2", cwd: "/api/wt/x", startedAt: 3, terminal: at(2, 2) }),
     ]
     const { plans } = R.plan(rs, env({ platform: "darwin", repoOf }))
-    expect(plans.map((p) => p.sessions.map((s) => s.sessionId))).toEqual([
-      ["w2", "w1"],
-      ["a1", "a2"],
-    ])
+    expect(plans.map((p) => p.sessions.map((s) => s.sessionId))).toEqual([["w2", "w1", "a1", "a2"]])
     expect(plans.every((p) => p.kind === "apple" && p.steps.length === 1)).toBe(true)
   })
   test("a repository with a window open already: its sessions go back into it", () => {
@@ -425,7 +422,7 @@ describe("restore, grouped by repository", () => {
   })
   test("without repoOf, by old window as before", () => {
     const rs = [rec({ sessionId: "x", cwd: "/api", terminal: at(2, 1) }), rec({ sessionId: "y", cwd: "/api", terminal: at(1, 1) })]
-    expect(R.plan(rs, env({ platform: "darwin" })).plans.map((p) => p.sessions[0].sessionId)).toEqual(["y", "x"])
+    expect(R.plan(rs, env({ platform: "darwin" })).plans.map((p) => p.sessions.map((r) => r.sessionId))).toEqual([["y", "x"]])
   })
   test("an agent crosstalk ran in the background goes back to crosstalk's tmux", () => {
     const r = rec({ sessionId: "bg", cwd: "/api/wt/bg", terminal: { tmux: { pane: "%3", socket: "/tmp/tmux-501/crosstalk", session: "bg", window: 0 } } })
