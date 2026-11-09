@@ -16,7 +16,7 @@ import { rootOf } from "./index.ts"
 
 export type UrlsDaemon = { proxy: Proxy | null; stop: () => Promise<void>; tick: () => Promise<void> }
 
-export async function createUrls(o: { log: (...a: unknown[]) => void; live: () => { sessionId: string; cwd: string }[]; onPr?: (u: import("./store.ts").Url, c: import("./ci.ts").Change) => void }): Promise<UrlsDaemon> {
+export async function createUrls(o: { log: (...a: unknown[]) => void; live: () => { sessionId: string; cwd: string }[]; onPr?: (u: import("./store.ts").Url, c: import("./ci.ts").Change, v: import("./ci.ts").PrView) => void }): Promise<UrlsDaemon> {
   const store = urls()
   let proxy: Proxy | null = null
   if (!process.env.CROSSTALK_NO_PROXY) {

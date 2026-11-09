@@ -191,7 +191,7 @@ export function runningText(items: Running[], o: { thread?: string } = {}): stri
 
 /** A PR's checks, its state, and the ETA of checks still running (src/urls/ci.ts). */
 export function prFields(u: Url, now: number) {
-  const eta = u.checks === "running" ? CI.etaText(CI.etaMs(CI.repoOf(u.url), u.checksSince, now)) : ""
+  const eta = u.checks === "running" ? CI.etaLine(CI.repoOf(u.url), u.checksSince, now) : ""
   return {
     ...(u.state ? { state: u.state } : {}),
     ...(u.checks ? { checks: u.checks } : {}),

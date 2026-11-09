@@ -7,14 +7,15 @@
 //              a row mark it dead
 //   preview    the same, every five minutes
 //   pr         `gh pr view <url> --json state`, every ten minutes, where gh
-//              is installed: open is alive, merged or closed is dead
+//              is installed; run asynchronously, so a slow gh never holds
+//              the daemon up: open is alive, merged or closed is dead
 //   link       never: a link found in a command's output is not fetched, and
 //              neither is anything else a command printed unless it is local
 //
 // Any HTTP answer counts as answering (a 500 is a server that runs); the
 // status is kept for the builds that come after (self-healing).
 
-import { spawnSync } from "node:child_process"
+import { execFile } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import type { Url, UrlStore } from "./store.ts"
@@ -84,37 +85,57 @@ function gh(): string | null {
   return ghPath
 }
 
-export type PrState = (url: string, cwd?: string) => string | undefined
-export type PrViewOf = (url: string, cwd?: string) => CI.PrView | undefined
+/** A hook may answer at once or later; tick awaits either. */
+type Maybe<T> = T | Promise<T>
+export type PrState = (url: string, cwd?: string) => Maybe<string | undefined>
+export type PrViewOf = (url: string, cwd?: string) => Maybe<CI.PrView | undefined>
+
+/** gh, run without holding the daemon up: whether it exited 0, and its output. Killed after `timeoutMs`. */
+export function runGh(args: string[], o: { cwd?: string; timeoutMs?: number } = {}): Promise<{ ok: boolean; stdout: string }> {
+  const bin = gh()
+  if (!bin) return Promise.resolve({ ok: false, stdout: "" })
+  return new Promise((resolve) => {
+    try {
+      execFile(
+        bin,
+        args,
+        { encoding: "utf8", timeout: o.timeoutMs ?? 20_000, maxBuffer: 8 * 1024 * 1024, ...(o.cwd && fs.existsSync(o.cwd) ? { cwd: o.cwd } : {}) },
+        (err, stdout) => resolve({ ok: !err, stdout: String(stdout ?? "") }),
+      )
+    } catch {
+      resolve({ ok: false, stdout: "" })
+    }
+  })
+}
+
+/** The fields asked of gh for a PR: its state, checks, author, and whether it can be merged. */
+export const PR_FIELDS = "state,isDraft,statusCheckRollup,author,reviewDecision,mergeable,mergeStateStatus"
 
 /** The person's GitHub login, asked once (gh api user). */
 let login: string | null | undefined
-export function ghLogin(): string | undefined {
-  if (login !== undefined) return login ?? undefined
-  login = null
-  const bin = gh()
-  if (!bin) return undefined
-  const r = spawnSync(bin, ["api", "user", "--jq", ".login"], { encoding: "utf8", timeout: 10_000 })
-  if (r.status === 0 && r.stdout.trim()) login = r.stdout.trim()
-  return login ?? undefined
+let asking: Promise<string | undefined> | undefined
+export function ghLogin(): Promise<string | undefined> {
+  if (login !== undefined) return Promise.resolve(login ?? undefined)
+  if (!asking)
+    asking = runGh(["api", "user", "--jq", ".login"], { timeoutMs: 10_000 }).then((r) => {
+      login = r.ok && r.stdout.trim() ? r.stdout.trim() : null
+      return login ?? undefined
+    })
+  return asking
 }
 
-const ghView: PrViewOf = (url, cwd) => {
-  const bin = gh()
-  if (!bin) return undefined
-  const r = spawnSync(bin, ["pr", "view", url, "--json", "state,isDraft,statusCheckRollup,author"], { encoding: "utf8", timeout: 20_000, ...(cwd && fs.existsSync(cwd) ? { cwd } : {}) })
-  if (r.status !== 0) return undefined
+const ghView: PrViewOf = async (url, cwd) => {
+  const r = await runGh(["pr", "view", url, "--json", PR_FIELDS], { cwd })
+  if (!r.ok) return undefined
   try {
     return CI.summarize(JSON.parse(r.stdout))
   } catch {
     return undefined
   }
 }
-const ghState: PrState = (url, cwd) => {
-  const bin = gh()
-  if (!bin) return undefined
-  const r = spawnSync(bin, ["pr", "view", url, "--json", "state"], { encoding: "utf8", timeout: 20_000, ...(cwd && fs.existsSync(cwd) ? { cwd } : {}) })
-  if (r.status !== 0) return undefined
+export const ghState: PrState = async (url, cwd) => {
+  const r = await runGh(["pr", "view", url, "--json", "state"], { cwd })
+  if (!r.ok) return undefined
   try {
     return String(JSON.parse(r.stdout).state ?? "") || undefined
   } catch {
@@ -128,7 +149,7 @@ const ghState: PrState = (url, cwd) => {
  */
 export async function tick(
   store: UrlStore,
-  o: { liveRoots: Set<string>; liveSessions?: Set<string>; now?: number; probe?: (url: string) => Promise<Probe>; prState?: PrState; prView?: PrViewOf; onPr?: (u: Url, c: CI.Change) => void; me?: () => string | undefined; max?: number } = { liveRoots: new Set() },
+  o: { liveRoots: Set<string>; liveSessions?: Set<string>; now?: number; probe?: (url: string) => Promise<Probe>; prState?: PrState; prView?: PrViewOf; onPr?: (u: Url, c: CI.Change, v: CI.PrView) => void; me?: () => Maybe<string | undefined>; max?: number } = { liveRoots: new Set() },
 ): Promise<Url[]> {
   const now = o.now ?? Date.now()
   const p = o.probe ?? ((u: string) => probe(u))
@@ -143,8 +164,15 @@ export async function tick(
     due.map(async (u) => {
       if (u.kind === "pr") {
         // A state alone (a caller's prState) keeps the checks as they were.
-        const st = o.prState && !o.prView ? o.prState(u.url, u.worktree) : undefined
-        const v: CI.PrView | undefined = o.prState && !o.prView ? (st ? { state: st, draft: !!u.draft, checks: u.checks ?? "none", failed: u.failed ?? [] } : undefined) : (o.prView ?? ghView)(u.url, u.worktree)
+        let v: CI.PrView | undefined
+        try {
+          if (o.prState && !o.prView) {
+            const st = await o.prState(u.url, u.worktree)
+            v = st ? { state: st, draft: !!u.draft, checks: u.checks ?? "none", failed: u.failed ?? [] } : undefined
+          } else v = await (o.prView ?? ghView)(u.url, u.worktree)
+        } catch {
+          v = undefined
+        }
         if (!v) {
           store.update(u.id, { lastCheck: now })
           return
@@ -158,10 +186,11 @@ export async function tick(
         if (after) out.push(after)
         // Only the person's own PRs, or ones crosstalk's shipping opened: a teammate's or an upstream PR an
         // agent merely looked at is never investigated on their credits.
-        const mine = u.source === "pr" || (!!v.author && !!(o.me ?? ghLogin)() && v.author.toLowerCase() === (o.me ?? ghLogin)()!.toLowerCase())
+        const me = !v.author ? undefined : o.me ? await o.me() : await ghLogin()
+        const mine = u.source === "pr" || (!!v.author && !!me && v.author.toLowerCase() === me.toLowerCase())
         if (ch && after && mine)
           try {
-            o.onPr?.(after, ch)
+            o.onPr?.(after, ch, v)
           } catch {}
         return
       }

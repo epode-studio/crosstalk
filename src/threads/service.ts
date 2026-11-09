@@ -290,12 +290,22 @@ export class ThreadService {
   /** Who a message from this session with no named recipient goes to: the people in its threads. */
   recipients(sessionId: string): { threads: string[]; labels: string[] } {
     const threads = this.idsFor(sessionId)
-    const fps = new Set(threads.flatMap((id) => M.ids(this.st.threads[id], "people")))
+    return { threads, labels: this.teammates(threads) }
+  }
+
+  /** The other people in these threads, by the label this machine knows them by: none when a thread is only local. */
+  teammates(threadIds: string[]): string[] {
+    const fps = new Set(
+      threadIds.flatMap((id) => {
+        const t = this.st.threads[this.resolve(id)]
+        return t ? M.ids(t, "people") : []
+      }),
+    )
     fps.delete(this.me)
     const labels = Object.values(this.d.peers())
       .filter((p) => fps.has(p.fingerprint))
       .map((p) => p.label)
-    return { threads, labels: [...new Set(labels)] }
+    return [...new Set(labels)]
   }
 
   /** What the hook and the mod show for one session. Consuming takes the banner and notices once. */

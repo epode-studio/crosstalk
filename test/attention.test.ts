@@ -374,7 +374,8 @@ describe("no tmux, and OSC 7501", () => {
 
 // --- the service ------------------------------------------------------------------------------
 
-function world(o: { env?: NodeJS.ProcessEnv; rule?: string; recs?: Rec[]; focus?: string; background?: string[] } = {}) {
+function world(o: { env?: NodeJS.ProcessEnv; rule?: string; recs?: Rec[]; focus?: string; background?: string[]; mergeFails?: boolean } = {}) {
+  const merged: string[] = []
   const id = newIdentity("ana")
   let tiebreak: InstanceType<typeof S.AttentionService>["tiebreak"] | undefined
   let flushed: ((ids: string[]) => void) | undefined
@@ -420,6 +421,7 @@ function world(o: { env?: NodeJS.ProcessEnv; rule?: string; recs?: Rec[]; focus?
     desktop: (d) => void desktop.push(d),
     fetcher: (async (_u: string, init: any) => (pushed.push(init.body), new Response("ok"))) as unknown as typeof fetch,
     env: { CROSSTALK_STAFF_EVERY_MS: "0", CROSSTALK_NO_NOTIFY: "0", ...o.env },
+    merge: async (url) => (merged.push(url), o.mergeFails ? { ok: false, text: "gh could not merge it" } : { ok: true, text: "squash" }),
   })
   if (o.rule === S.START_FRESH) svc.setDisposeRule(true)
   tiebreak = svc.tiebreak.bind(svc)
@@ -428,7 +430,7 @@ function world(o: { env?: NodeJS.ProcessEnv; rule?: string; recs?: Rec[]; focus?
     sessions.set(sid, { sessionId: sid, name: sid, cwd: `/w/${sid}`, seenAt: Date.now(), ...extra })
     threads.observe({ sessionId: sid, name: sid, cwd: `/w/${sid}`, repo: "github.com/acme/api", branch: "main", paths })
   }
-  return { svc, threads, sessions, add, log, spawned, answered, restarted, pushed, desktop }
+  return { svc, threads, sessions, add, log, spawned, answered, restarted, pushed, desktop, merged }
 }
 
 describe("the service", () => {
@@ -553,6 +555,85 @@ describe("the service", () => {
     w.threads.edit("s-auth", { question: { text: "keep?", blocking: true } })
     await new Promise((r) => setTimeout(r, 20))
     expect(w.pushed).toEqual([])
+  })
+
+  test("a green PR: one question; Merge it merges; Not yet waits for the next green run; Always merges without asking", async () => {
+    const w = world()
+    w.add("s-auth", ["src/auth/a.ts", "src/auth/b.ts", "src/auth/c.ts"])
+    const url = "https://github.com/acme/api/pull/12"
+    const pr = { id: `pr:${url}`, url, label: "auth · PR #12", thread: "auth", sessionId: "s-auth", worktree: "/w/s-auth" }
+    const green = { state: "OPEN", draft: false, checks: "passed" as const, failed: [], review: "APPROVED", mergeable: "MERGEABLE" }
+    const open = () => Object.values(ui.snapshot()).filter((i) => i.id.startsWith(`attn:merge:pr:${url}@`) && i.state === "pending")
+    const tick = () => new Promise((r) => setTimeout(r, 3))
+    // Not green, or something in the way: nothing asked.
+    expect(w.svc.prChanged(pr, { kind: "failed" }, { ...green, checks: "failed" })).toBe("none")
+    expect(w.svc.prChanged(pr, { kind: "passed" }, { ...green, review: "REVIEW_REQUIRED" })).toBe("none")
+    expect(open().length).toBe(0)
+    // Green: one question, in the session it can be seen in.
+    expect(w.svc.prChanged(pr, { kind: "passed" }, green)).toBe("ask")
+    let q = open()
+    expect(q.length).toBe(1)
+    expect(q[0].question).toBe("auth · PR #12 is green and approved. Merge it?")
+    expect(q[0].options).toEqual([S.MERGE_IT, S.NOT_YET, S.ALWAYS_MERGE])
+    expect(q[0].sessionId).toBe("s-auth")
+    // Not yet: nothing merged; asked again only on the next green run, which replaces any older question.
+    let r = await w.svc.act("s-auth", q[0].id, "answer", S.NOT_YET)
+    expect(r.ok).toBe(true)
+    expect(String(r.text)).toContain("asked again when its checks next pass")
+    expect(w.merged).toEqual([])
+    expect(open().length).toBe(0)
+    await tick()
+    w.svc.prChanged(pr, { kind: "passed" }, green)
+    await tick()
+    w.svc.prChanged(pr, { kind: "passed" }, green)
+    q = open()
+    expect(q.length).toBe(1)
+    // Merge it: merged, once; answering again does nothing.
+    r = await w.svc.act("s-auth", q[0].id, "answer", S.MERGE_IT)
+    expect(r.ok).toBe(true)
+    expect(String(r.text)).toContain("merging auth · PR #12")
+    expect(w.merged).toEqual([url])
+    expect((await w.svc.act("s-auth", q[0].id, "answer", S.MERGE_IT)).ok).toBe(false)
+    expect(w.merged.length).toBe(1)
+    // Always: merged, and from then on without asking, with one quiet line.
+    await tick()
+    w.svc.prChanged(pr, { kind: "passed" }, green)
+    r = await w.svc.act("s-auth", open()[0].id, "answer", S.ALWAYS_MERGE)
+    expect(String(r.text)).toContain("merge by themselves from now on")
+    expect(w.merged.length).toBe(2)
+    w.svc.takeNotes("s-auth")
+    await tick()
+    expect(w.svc.prChanged(pr, { kind: "passed" }, green)).toBe("merge")
+    await tick()
+    expect(open().length).toBe(0)
+    expect(w.merged.length).toBe(3)
+    expect(w.svc.takeNotes("s-auth").map((n) => n.text)).toEqual(["◢ crosstalk: merging auth · PR #12 (you said always merge green PRs). It merges once GitHub allows."])
+    // The way back: asked again.
+    expect(await w.svc.handle({ op: "attn_merge_rule", on: false }, undefined)).toEqual({ ok: true, text: "◢ crosstalk: you will be asked before a green PR is merged." })
+    await tick()
+    expect(w.svc.prChanged(pr, { kind: "passed" }, green)).toBe("ask")
+    // Muted: the same as not yet.
+    r = await w.svc.act("s-auth", open()[0].id, "mute", undefined)
+    expect(r.ok).toBe(true)
+    expect(w.merged.length).toBe(3)
+  })
+
+  test("merging: CROSSTALK_NO_MERGE=1 turns it all off; a failed merge says so", async () => {
+    const url = "https://github.com/acme/api/pull/13"
+    const pr = { id: `pr:${url}`, url, label: "auth · PR #13", sessionId: "s-off" }
+    const green = { state: "OPEN", draft: false, checks: "passed" as const, failed: [], review: "" }
+    const off = world({ env: { CROSSTALK_NO_MERGE: "1" } })
+    off.add("s-off", [])
+    off.svc.setMergeRule(true)
+    expect(off.svc.prChanged(pr, { kind: "passed" }, green)).toBe("none")
+    expect(off.merged).toEqual([])
+    const bad = world({ mergeFails: true })
+    bad.add("s-off", [])
+    expect(bad.svc.prChanged(pr, { kind: "passed" }, green)).toBe("ask")
+    const q = Object.values(ui.snapshot()).find((i) => i.id.startsWith(`attn:merge:pr:${url}@`) && i.state === "pending")!
+    expect(q.question).toBe("auth · PR #13 is green. Merge it?")
+    const r = await bad.svc.act("s-off", q.id, "answer", S.MERGE_IT)
+    expect(r).toMatchObject({ ok: false, text: "◢ crosstalk: could not merge auth · PR #13: gh could not merge it." })
   })
 
   test("questions go to main, else the session in front, never a background agent", () => {

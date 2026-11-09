@@ -428,6 +428,13 @@ describe("service", () => {
     // Talking is per thread.
     expect(ana.svc.recipients("a-feat")).toEqual({ threads: [ta], labels: ["ben"] })
     expect(ana.svc.sessionsIn([ta])).toEqual(["a-feat"])
+    // A thread's teammates (who hears its PR merge or fail): ben here; nobody in a thread only ana has.
+    expect(ana.svc.teammates([ta])).toEqual(["ben"])
+    ana.svc.observe(sess("a-solo", "billing-retry", ["src/billing/retry.ts"]))
+    expect(ana.svc.idsFor("a-solo")).toHaveLength(1)
+    expect(ana.svc.idsFor("a-solo")[0]).not.toBe(ta)
+    expect(ana.svc.teammates(ana.svc.idsFor("a-solo"))).toEqual([])
+    expect(ana.svc.teammates(["no-such-thread"])).toEqual([])
   })
 
   test("a decision made on one side is there on the other at once", () => {

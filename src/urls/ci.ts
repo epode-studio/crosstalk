@@ -1,21 +1,37 @@
 // Pull requests' checks (CI): what state they are in, how long until they
 // finish, and what changed since the last look.
 //
-//   state     from `gh pr view --json state,isDraft,statusCheckRollup`: running,
-//             passed, failed or none, and which failed
+//   state     from `gh pr view --json state,isDraft,statusCheckRollup,...`: running,
+//             passed, failed or none, and which failed; its review and whether
+//             it can be merged, for merging it when green (src/urls/merge.ts)
 //   eta       how long this repository's checks usually take (the median of the
 //             last runs crosstalk saw finish, ci-durations.json) minus how long
 //             these have run: "about 6 min left", so nobody has to ask
 //   changes   passed, failed, merged, closed: what liveness.ts hands the daemon,
 //             which tells the PR's session and, on a failure, keeps a task to
-//             investigate it in the thread
+//             investigate it in the thread; teammates in the thread hear a merge
+//             or a failure once (tellTeam)
 
 import fs from "node:fs"
 import path from "node:path"
 import { P } from "../config.ts"
 
 export type Checks = "running" | "passed" | "failed" | "none"
-export type PrView = { state: string; draft: boolean; checks: Checks; failed: string[]; startedAt?: number; /** Its author's GitHub login. */ author?: string }
+export type PrView = {
+  state: string
+  draft: boolean
+  checks: Checks
+  failed: string[]
+  startedAt?: number
+  /** Its author's GitHub login. */
+  author?: string
+  /** gh's reviewDecision: APPROVED, REVIEW_REQUIRED, CHANGES_REQUESTED, or empty when no review is required. */
+  review?: string
+  /** gh's mergeable: MERGEABLE, CONFLICTING or UNKNOWN. */
+  mergeable?: string
+  /** gh's mergeStateStatus: CLEAN, BLOCKED, BEHIND, DIRTY, DRAFT, UNSTABLE, HAS_HOOKS, UNKNOWN. */
+  mergeState?: string
+}
 
 const FAIL = new Set(["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"])
 const OK = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"])
@@ -41,6 +57,9 @@ export function summarize(j: any): PrView {
     state: String(j?.state ?? ""),
     draft: !!j?.isDraft,
     ...(typeof j?.author?.login === "string" ? { author: j.author.login } : {}),
+    ...(typeof j?.reviewDecision === "string" ? { review: j.reviewDecision.toUpperCase() } : {}),
+    ...(typeof j?.mergeable === "string" ? { mergeable: j.mergeable.toUpperCase() } : {}),
+    ...(typeof j?.mergeStateStatus === "string" ? { mergeState: j.mergeStateStatus.toUpperCase() } : {}),
     checks,
     failed: [...new Set(failed)].slice(0, 8),
     ...(starts.length ? { startedAt: Math.min(...starts) } : {}),
@@ -89,6 +108,22 @@ export function etaMs(repo: string | undefined, startedAt: number | undefined, n
   return Math.max(60_000, m - (now - startedAt))
 }
 
+/** How long a run usually takes past which it is "taking longer than usual". */
+export const SLOW_FACTOR = 1.5
+
+/**
+ * What a person reads for checks still running: `about 6 min left`, or
+ * `taking longer than usual` once a run has gone well past its usual length,
+ * rather than an ETA that has already passed. Empty with no history yet.
+ */
+export function etaLine(repo: string | undefined, startedAt: number | undefined, now: number, history: Record<string, number[]> = read()): string {
+  if (!repo || !startedAt) return ""
+  const m = median(history[repo] ?? [])
+  if (!m) return ""
+  if (now - startedAt > SLOW_FACTOR * m) return "taking longer than usual"
+  return etaText(etaMs(repo, startedAt, now, history))
+}
+
 /** `about 6 min left`, `about 1 h left`. */
 export function etaText(ms: number | undefined): string {
   if (ms === undefined) return ""
@@ -117,6 +152,56 @@ export function changeText(label: string, url: string, c: Change): string {
   if (c.kind === "closed") return `${label} was closed without merging (${url}).`
   if (c.kind === "passed") return `${label}: checks passed (${url}).`
   return `${label}: checks failed${c.failed?.length ? `: ${c.failed.join(", ")}` : ""} (${url}). A task to investigate it is in the thread.`
+}
+
+// --- telling teammates ------------------------------------------------------------------
+
+/** The line teammates in the thread hear: `auth · PR #12 merged (paul)`. Only a merge or a failure is news to them. */
+export function teamText(label: string, c: Change, me: string): string | undefined {
+  if (c.kind === "merged") return `${label} merged (${me})`
+  if (c.kind === "failed") return `${label}: checks failed (${me})`
+  return undefined
+}
+
+const told = () => path.join(P.root, "ci-told.json")
+
+/**
+ * Whether teammates have not yet heard this (PR, kind): true once, then false,
+ * kept across restarts. A week's worth, two hundred at most.
+ */
+export function firstTime(key: string, now = Date.now()): boolean {
+  let all: Record<string, number> = {}
+  try {
+    all = JSON.parse(fs.readFileSync(told(), "utf8")) ?? {}
+  } catch {}
+  if (all[key]) return false
+  all[key] = now
+  const kept = Object.entries(all)
+    .filter(([, at]) => now - at < 7 * 86_400_000)
+    .sort((a, b) => a[1] - b[1])
+    .slice(-200)
+  try {
+    fs.mkdirSync(P.root, { recursive: true, mode: 0o700 })
+    const tmp = `${told()}.${process.pid}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify(Object.fromEntries(kept)), { mode: 0o600 })
+    fs.renameSync(tmp, told())
+  } catch {}
+  return true
+}
+
+/**
+ * A PR in a thread merged, or its checks failed: the other people in that
+ * thread hear it once, over the same path a message to them takes (`send`).
+ * Nothing when the thread is only this person's. Returns who was told.
+ */
+export function tellTeam(o: { u: { id: string; label: string }; c: Change; threadId?: string; me: string; teammates: (threadIds: string[]) => string[]; send: (label: string, text: string) => void; once?: (key: string) => boolean }): string[] {
+  const text = teamText(o.u.label, o.c, o.me)
+  if (!text || !o.threadId) return []
+  const labels = o.teammates([o.threadId])
+  if (!labels.length) return []
+  if (!(o.once ?? firstTime)(`${o.u.id}:${o.c.kind}`)) return []
+  for (const l of labels) o.send(l, text)
+  return labels
 }
 
 /** The investigation a failure becomes, kept as a task in the thread. */

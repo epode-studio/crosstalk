@@ -110,6 +110,7 @@ const PARTS: [old: string, tool: string, args: Record<string, unknown>, handed: 
   ["crosstalk_room", "crosstalk_people", { action: "room", op: "join", words: "3644 cherry horn cataract redwing", label: "ben" }, { action: "join", words: "3644 cherry horn cataract redwing", label: "ben" }],
   ["crosstalk_rooms", "crosstalk_people", { action: "room", op: "members" }, {}],
   ["crosstalk_route", "crosstalk_answer", { action: "route" }, {}],
+  ["crosstalk_auto_merge", "crosstalk_doctor", { action: "auto_merge", on: false }, { on: false }],
 ]
 
 const at = (tool: string, args: Record<string, unknown>) => resolve(tool, args)

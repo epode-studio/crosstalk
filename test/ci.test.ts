@@ -12,6 +12,7 @@ const CI = await import("../src/urls/ci.ts")
 const L = await import("../src/urls/liveness.ts")
 const { UrlStore } = await import("../src/urls/store.ts")
 const pure = await import("../src/ui-extra/pure.ts")
+const Mg = await import("../src/urls/merge.ts")
 
 const NOW = 1_800_000_000_000
 const MIN = 60_000
@@ -44,6 +45,21 @@ describe("checks", () => {
     expect(CI.etaMs("acme/other", NOW - 5 * MIN, NOW, history)).toBe(undefined) // no history yet: no guess
     expect(CI.repoOf("https://github.com/Acme/App/pull/12")).toBe("acme/app")
   })
+  test("a run well past its usual length says so, instead of an ETA that has passed", () => {
+    const history = { "acme/app": [10 * MIN, 12 * MIN, 11 * MIN] }
+    expect(CI.etaLine("acme/app", NOW - 5 * MIN, NOW, history)).toBe("about 6 min left")
+    expect(CI.etaLine("acme/app", NOW - 15 * MIN, NOW, history)).toBe("about 1 min left") // late, but not clearly
+    expect(CI.etaLine("acme/app", NOW - 17 * MIN, NOW, history)).toBe("taking longer than usual") // > 1.5 × 11 min
+    expect(CI.etaLine("acme/other", NOW - 50 * MIN, NOW, history)).toBe("") // no history: no guess
+    expect(CI.etaLine("acme/app", undefined, NOW, history)).toBe("")
+  })
+  test("review and mergeability from gh, when it says", () => {
+    const v = CI.summarize({ state: "OPEN", statusCheckRollup: [{ name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }], reviewDecision: "APPROVED", mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" })
+    expect([v.review, v.mergeable, v.mergeState]).toEqual(["APPROVED", "MERGEABLE", "CLEAN"])
+    expect(CI.summarize({ state: "OPEN", reviewDecision: "" }).review).toBe("") // no review required
+    expect("review" in CI.summarize({ state: "OPEN" })).toBe(false)
+    expect(L.PR_FIELDS.split(",")).toEqual(expect.arrayContaining(["reviewDecision", "mergeable", "mergeStateStatus"]))
+  })
   test("a failure becomes an investigation", () => {
     expect(CI.investigation("auth · PR #12", "https://github.com/a/b/pull/12", ["e2e"])).toBe(
       "Investigate why e2e failed on auth · PR #12 (https://github.com/a/b/pull/12): read the logs, find the cause, fix it or say what blocks it",
@@ -72,5 +88,90 @@ describe("watching a PR", () => {
     expect(pure.prState({ alive: true, state: "OPEN", checks: "failed", failed: ["e2e"] })).toBe(" · checks failed: e2e")
     expect(pure.prState({ alive: true, state: "OPEN", checks: "running", eta: "about 6 min left", draft: true })).toBe(" · draft · checks running · about 6 min left")
     expect(pure.prState({ alive: false, state: "MERGED" })).toBe(" · merged")
+  })
+
+  test("gh answers later, never holding the daemon up: hooks may return a promise, and the view is handed on", async () => {
+    const store = new UrlStore({ file: path.join(process.env.CROSSTALK_HOME!, "ci-async.json") })
+    const url = "https://github.com/acme/app/pull/8"
+    store.add({ id: `pr:${url}`, url, kind: "pr", source: "manual", label: "auth · PR #8", thread: "auth" })
+    let view: import("../src/urls/ci.ts").PrView = { state: "OPEN", draft: false, checks: "running", failed: [], author: "Ana" }
+    const seen: [string, string | undefined][] = []
+    const slow = <T>(x: T) => new Promise<T>((r) => setTimeout(() => r(x), 5))
+    const opts = (now: number, me: string) => ({ liveRoots: new Set<string>(), now, prView: () => slow(view), me: () => slow(me), onPr: (_u: any, c: any, v: any) => seen.push([c.kind, v?.review]) })
+    await L.tick(store, opts(NOW, "ana"))
+    view = { ...view, checks: "passed", review: "APPROVED" }
+    await L.tick(store, opts(NOW + 2 * MIN, "ana"))
+    expect(seen).toEqual([["passed", "APPROVED"]])
+    // Someone else's PR: never handed on.
+    view = { ...view, checks: "running" }
+    await L.tick(store, opts(NOW + 4 * MIN, "ben"))
+    view = { ...view, checks: "failed", failed: ["e2e"] }
+    await L.tick(store, opts(NOW + 6 * MIN, "ben"))
+    expect(seen.length).toBe(1)
+    // A state alone, answered later, and a hook that throws: the record is just looked at again later.
+    const s2 = new UrlStore({ file: path.join(process.env.CROSSTALK_HOME!, "ci-async2.json") })
+    s2.add({ id: "pr:x", url: "https://github.com/a/b/pull/1", kind: "pr", source: "pr", label: "x" })
+    await L.tick(s2, { liveRoots: new Set(), now: NOW, prState: () => slow("MERGED") })
+    expect(s2.get("pr:x")!.state).toBe("MERGED")
+    const s3 = new UrlStore({ file: path.join(process.env.CROSSTALK_HOME!, "ci-async3.json") })
+    s3.add({ id: "pr:y", url: "https://github.com/a/b/pull/2", kind: "pr", source: "pr", label: "y" })
+    await L.tick(s3, { liveRoots: new Set(), now: NOW, prView: async () => Promise.reject(new Error("gh died")) })
+    expect(s3.get("pr:y")!.lastCheck).toBe(NOW)
+  })
+})
+
+describe("telling teammates", () => {
+  test("a merge or a failure, once per PR and kind, only to a thread's other people", () => {
+    const u = { id: "pr:https://github.com/acme/app/pull/12", label: "auth · PR #12" }
+    const sent: [string, string][] = []
+    const send = (l: string, t: string) => void sent.push([l, t])
+    const team = (ids: string[]) => (ids[0] === "t-auth" ? ["ben", "marie"] : [])
+    const tell = (c: import("../src/urls/ci.ts").Change, threadId?: string) => CI.tellTeam({ u, c, threadId, me: "paul", teammates: team, send })
+    // A pass is not news to them; a thread only here, or none, tells nobody.
+    expect(tell({ kind: "passed" }, "t-auth")).toEqual([])
+    expect(tell({ kind: "merged" }, "t-solo")).toEqual([])
+    expect(tell({ kind: "merged" })).toEqual([])
+    expect(sent).toEqual([])
+    expect(tell({ kind: "failed", failed: ["e2e"] }, "t-auth")).toEqual(["ben", "marie"])
+    expect(tell({ kind: "failed", failed: ["e2e"] }, "t-auth")).toEqual([]) // once
+    expect(tell({ kind: "merged" }, "t-auth")).toEqual(["ben", "marie"])
+    expect(tell({ kind: "merged" }, "t-auth")).toEqual([])
+    expect(sent).toEqual([
+      ["ben", "auth · PR #12: checks failed (paul)"],
+      ["marie", "auth · PR #12: checks failed (paul)"],
+      ["ben", "auth · PR #12 merged (paul)"],
+      ["marie", "auth · PR #12 merged (paul)"],
+    ])
+    // Kept across restarts.
+    expect(CI.firstTime(`${u.id}:merged`)).toBe(false)
+    expect(CI.firstTime("pr:other:merged")).toBe(true)
+  })
+})
+
+describe("merging green PRs", () => {
+  const green = (o: Partial<import("../src/urls/ci.ts").PrView> = {}): import("../src/urls/ci.ts").PrView => ({ state: "OPEN", draft: false, checks: "passed", failed: [], review: "APPROVED", mergeable: "MERGEABLE", mergeState: "CLEAN", ...o })
+  test("asked only when it just turned green and nothing is in the way", () => {
+    const passed = { kind: "passed" as const }
+    expect(Mg.decide({ change: passed, view: green(), env: {} })).toBe("ask")
+    expect(Mg.decide({ change: passed, view: green({ review: "" }), env: {} })).toBe("ask") // no review required
+    expect(Mg.decide({ change: passed, view: green({ mergeable: "UNKNOWN", mergeState: "UNKNOWN" }), env: {} })).toBe("ask") // --auto waits for GitHub
+    expect(Mg.decide({ change: passed, view: green(), always: true, env: {} })).toBe("merge")
+    expect(Mg.decide({ change: { kind: "failed" }, view: green(), env: {} })).toBe("none")
+    expect(Mg.decide({ change: { kind: "merged" }, view: green(), always: true, env: {} })).toBe("none")
+    expect(Mg.decide({ change: passed, view: green({ draft: true }), env: {} })).toBe("none")
+    expect(Mg.decide({ change: passed, view: green({ review: "REVIEW_REQUIRED" }), env: {} })).toBe("none")
+    expect(Mg.decide({ change: passed, view: green({ review: "CHANGES_REQUESTED" }), env: {} })).toBe("none")
+    expect(Mg.decide({ change: passed, view: green({ mergeable: "CONFLICTING" }), env: {} })).toBe("none")
+    expect(Mg.decide({ change: passed, view: green({ mergeState: "DIRTY" }), env: {} })).toBe("none")
+    expect(Mg.decide({ change: passed, view: green(), mine: false, env: {} })).toBe("none")
+    expect(Mg.decide({ change: passed, view: green(), always: true, env: { CROSSTALK_NO_MERGE: "1" } })).toBe("none")
+  })
+  test("the question, and the method the repository allows, squash first", () => {
+    expect(Mg.question("auth · PR #12", { review: "APPROVED" })).toBe("auth · PR #12 is green and approved. Merge it?")
+    expect(Mg.question("auth · PR #12", { review: "" })).toBe("auth · PR #12 is green. Merge it?")
+    expect(Mg.methodFlag({ squashMergeAllowed: true, mergeCommitAllowed: true })).toBe("--squash")
+    expect(Mg.methodFlag({ squashMergeAllowed: false, mergeCommitAllowed: true, rebaseMergeAllowed: true })).toBe("--merge")
+    expect(Mg.methodFlag({ rebaseMergeAllowed: true })).toBe("--rebase")
+    expect(Mg.methodFlag(undefined)).toBe(undefined)
   })
 })

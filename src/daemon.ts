@@ -2848,7 +2848,13 @@ control.listen(P.daemonSock, () => {
       live: () => [...sessions.values()].map((s) => ({ sessionId: s.sessionId, cwd: s.cwd })),
       // A PR's checks passed or failed, or it merged or closed (src/urls/ci.ts): the
       // sessions in its thread are told, and a failure is kept as a task to investigate.
-      onPr: (u, c) => {
+      onPr: (u, c, v) => {
+        // Green and nothing in the way: "Merge it?" in main, or merged when the person said always (src/urls/merge.ts).
+        try {
+          attention?.prChanged(u, c, v)
+        } catch (e) {
+          log(`ci: merge: ${(e as Error).message}`)
+        }
         try {
           const t = u.thread ? threads.find(undefined, u.thread) : undefined
           const to = [...new Set([...(u.sessionId ? [u.sessionId] : []), ...(t ? threads.sessionsIn([t.id]) : [])])].filter((sid) => sessions.has(sid))
@@ -2866,6 +2872,17 @@ control.listen(P.daemonSock, () => {
             ui.withStore((items, now) =>
               ui.upsert(items, { id: `ci:${u.id}:${c.kind}:${u.lastCheck}`, kind: "message", sessionId: sid, from: "crosstalk", ...(t ? { thread: t.meta.value.name } : {}), text, auto: true, ts: now }, now),
             )
+          // Teammates in the thread hear a merge or a failure once, as a message from this person (never for a thread only here).
+          const told = ciMod.tellTeam({
+            u,
+            c,
+            threadId: t?.id,
+            me: identity!.label,
+            teammates: (ids) => threads.teammates(ids),
+            send: (label, text) =>
+              void Promise.resolve(handle({ op: "send", to: label, ...(u.sessionId && sessions.has(u.sessionId) ? { sessionId: u.sessionId } : {}), threadIds: [t!.id], thread: t!.meta.value.name, intent: "fyi", text })).catch(() => {}),
+          })
+          if (told.length) log(`ci: told ${told.join(", ")} in ${t!.meta.value.name}`)
           ciMod.recordEvent(c.kind === "failed" ? `${u.label}: checks failed${c.failed?.length ? `: ${c.failed.join(", ")}` : ""}` : c.kind === "passed" ? `${u.label}: checks passed` : `${u.label} ${c.kind}`)
           log(`ci: ${text}${to.length ? ` (told ${to.length} session${to.length === 1 ? "" : "s"})` : ""}`)
         } catch (e) {
