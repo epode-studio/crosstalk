@@ -2,8 +2,8 @@
 // @bun
 
 // src/hook.ts
-import path55 from "path";
-import fs47 from "fs";
+import path54 from "path";
+import fs46 from "fs";
 
 // src/client.ts
 import net from "node:net";
@@ -6550,14 +6550,23 @@ function writePrefs(p) {
   fs38.renameSync(tmp, file10());
 }
 var setAlways = (on) => writePrefs({ ...readPrefs(), always: on });
-var DONE = "Done";
-var LATER = "Later";
-function tacklePrompt(items, ids = []) {
+function tacklePrompt(items, ids = [], persons = []) {
   return [
-    `Tackle the open items you listed:`,
-    ...items.map((x, i) => `${i + 1}. ${x}${ids[i] ? ` (task ${ids[i]})` : ""}`),
+    ...items.length ? [
+      `Tackle the open items you listed:`,
+      ...items.map((x, i) => `${i + 1}. ${x}${ids[i] ? ` (task ${ids[i]})` : ""}`),
+      ``,
+      `Do each one you can do yourself${ids.length ? `, and mark it done with crosstalk_thread action "task", op "done" and its task id` : ""}. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). For any that needs a decision only the person can make, ask them (one question for all of those, at the end) instead of guessing.`
+    ] : [],
+    ...persons.length ? [
+      ...items.length ? [``] : [],
+      `You left these for the person:`,
+      ...persons.map((x, i) => `${i + 1}. ${x}`),
+      ``,
+      `They want you to do these, not to be handed them: they often cannot find this session. Do whatever your tools can (gh, a browser, a script, a command). Where it needs their yes or a choice only they can make (approving, merging, deploying, spending, choosing between options), ask with AskUserQuestion, one question for all of them: name each exact action with its link, and offer options such as "Yes, do it" and "Not now", none marked recommended (so nothing is decided for them while they are away). It reaches them wherever they are. Then do what they chose. Ask them to act themselves only when it is beyond you (a device, a login only on their machine), and then say exactly where, with the link.`
+    ] : [],
     ``,
-    `Do each one you can do yourself${ids.length ? `, and mark it done with crosstalk_thread action "task", op "done" and its task id` : ""}. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). For any that needs a decision or an action only the person can take, ask them (one question for all of those, at the end) instead of guessing. When you finish, list only what is still open; if nothing is, say so and leave out the Open list.`
+    `When you finish, list only what is still open; if nothing is, say so and leave out the Open list.`
   ].join(`
 `);
 }
@@ -6594,7 +6603,7 @@ function atStop(o) {
   const kept = [...(p.seenItems?.[o.sessionId] ?? []).filter((x) => now - x.at < 3 * 86400000), ...[...items, ...newPersons].map((t) => ({ t, at: now }))].slice(-200);
   const on = p.always !== false;
   const rounds = p.chain?.[o.sessionId] ?? 0;
-  const auto = on && !o.continuing && items.length > 0 && rounds < CHAIN_MAX;
+  const auto = on && !o.continuing && (items.length > 0 || newPersons.length > 0) && rounds < CHAIN_MAX;
   writePrefs({ ...p, seenItems: { ...p.seenItems ?? {}, [o.sessionId]: kept }, ...auto ? { chain: { ...p.chain ?? {}, [o.sessionId]: rounds + 1 } } : {}, ...waiting.length ? { waitingOn: { ...p.waitingOn ?? {}, [o.sessionId]: { items: waiting, at: now } } } : {} });
   return { items, waiting, persons: newPersons, id, fresh: !o.continuing, auto };
 }
@@ -6787,34 +6796,6 @@ function morning(now) {
   return `${short(s, now, "Since you were last here").replace(/ Say "what happened while I was away" for the details\.$/, "")} Say "plan my day" to pick today's work, or "pick up where I left off".${parked.length ? ` Parked: ${parked.join(", ")}.` : ""}`;
 }
 
-// src/main.ts
-import fs44 from "node:fs";
-import path52 from "node:path";
-var file14 = () => path52.join(P.root, "main.json");
-function readMain() {
-  try {
-    const r = JSON.parse(fs44.readFileSync(file14(), "utf8"));
-    if (r && typeof r.sessionId === "string" && r.sessionId)
-      return r;
-  } catch {}
-  return null;
-}
-var pidAlive3 = (pid) => {
-  if (!pid || pid <= 1)
-    return true;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return e.code === "EPERM";
-  }
-};
-function currentMain2(alive = (r) => pidAlive3(r.pid)) {
-  const m = readMain();
-  return m && alive(m) ? m : null;
-}
-var CROSS_CUTTING2 = new Set(["route", "team", "gather", "cleanup"]);
-
 // src/attention/summary.ts
 var one2 = (s, n = 140) => {
   const t = s.replace(/\s+/g, " ").trim();
@@ -6855,48 +6836,48 @@ function short2(s, now = Date.now(), what = "While you were away") {
 }
 
 // src/attention/worker.ts
-import fs45 from "node:fs";
-import path53 from "node:path";
-var file15 = () => path53.join(P.root, "worker.json");
+import fs44 from "node:fs";
+import path52 from "node:path";
+var file14 = () => path52.join(P.root, "worker.json");
 var DEFAULT_MAX = 2;
 function read7() {
   try {
-    const p = JSON.parse(fs45.readFileSync(file15(), "utf8"));
+    const p = JSON.parse(fs44.readFileSync(file14(), "utf8"));
     return { on: !!p.on, max: Math.max(1, Math.min(4, Number(p.max) || DEFAULT_MAX)), ...Array.isArray(p.threads) ? { threads: p.threads.map(String) } : {}, running: Array.isArray(p.running) ? p.running : [], tried: Array.isArray(p.tried) ? p.tried.slice(-200) : [] };
   } catch {
     return { on: false, max: DEFAULT_MAX, running: [], tried: [] };
   }
 }
 function write5(p) {
-  fs45.mkdirSync(P.root, { recursive: true, mode: 448 });
-  const tmp = `${file15()}.${process.pid}.tmp`;
-  fs45.writeFileSync(tmp, JSON.stringify(p), { mode: 384 });
-  fs45.renameSync(tmp, file15());
+  fs44.mkdirSync(P.root, { recursive: true, mode: 448 });
+  const tmp = `${file14()}.${process.pid}.tmp`;
+  fs44.writeFileSync(tmp, JSON.stringify(p), { mode: 384 });
+  fs44.renameSync(tmp, file14());
 }
 
 // src/spawn.ts
-import fs46 from "node:fs";
-import path54 from "node:path";
-var dir9 = () => path54.join(P.root, "spawned");
+import fs45 from "node:fs";
+import path53 from "node:path";
+var dir9 = () => path53.join(P.root, "spawned");
 function readSpawned2() {
   let names;
   try {
-    names = fs46.readdirSync(dir9()).filter((f) => f.endsWith(".json"));
+    names = fs45.readdirSync(dir9()).filter((f) => f.endsWith(".json"));
   } catch {
     return [];
   }
   const out = [];
   for (const f of names)
     try {
-      const r = JSON.parse(fs46.readFileSync(path54.join(dir9(), f), "utf8"));
+      const r = JSON.parse(fs45.readFileSync(path53.join(dir9(), f), "utf8"));
       if (r?.id && r.worktree)
         out.push(r);
     } catch {}
   return out.sort((a, b) => a.createdAt - b.createdAt);
 }
 function spawnedAt2(cwd, recs = readSpawned2()) {
-  const c = path54.resolve(cwd);
-  return recs.find((r) => !r.removedAt && (c === path54.resolve(r.worktree) || c.startsWith(path54.resolve(r.worktree) + path54.sep))) ?? null;
+  const c = path53.resolve(cwd);
+  return recs.find((r) => !r.removedAt && (c === path53.resolve(r.worktree) || c.startsWith(path53.resolve(r.worktree) + path53.sep))) ?? null;
 }
 var STOP3 = new Set("a an the on to for and of in with at by from into onto this that it its be is are please can could would you start put get run spin up fire one two three four five six seven eight more another new agent agents session sessions claude someone somebody work working".split(" "));
 var TMUX_CONF2 = [
@@ -6951,8 +6932,8 @@ function agyCwd() {
   if (Array.isArray(ws) && typeof ws[0] === "string" && ws[0])
     return ws[0];
   const here = process.cwd();
-  if (AGENT_DIRS.has(path55.basename(here)))
-    return path55.dirname(here);
+  if (AGENT_DIRS.has(path54.basename(here)))
+    return path54.dirname(here);
   return here;
 }
 var cwd = hook.cwd ?? hook.working_dir ?? hook.workspace_roots?.[0] ?? (isAgy ? agyCwd() : process.cwd());
@@ -7134,16 +7115,14 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
             if (t?.ok && t.id)
               ids.push(String(t.id));
           } catch {}
-      for (const text of r.persons)
-        withStore((items, now) => upsert(items, { id: `you:${sessionId}:${hashOf([text])}`, kind: "attention", sessionId: currentMain2()?.sessionId ?? sessionId, from: thread ?? undefined, ...thread ? { thread } : {}, question: text, options: [DONE, LATER], ts: now }, now));
       const away = isAway() && update((s) => takeRound(s, sessionId));
       if ((r.auto || away && r.items.length) && modActive(sessionId)) {
-        withStore((items, now) => upsert(items, { id: `tackle:${sessionId}:${r.id}`, kind: "attention", sessionId, text: tacklePrompt(r.items, ids), auto: true, ts: now }, now));
+        withStore((items, now) => upsert(items, { id: `tackle:${sessionId}:${r.id}`, kind: "attention", sessionId, text: tacklePrompt(r.items, ids, r.persons), auto: true, ts: now }, now));
       } else if (r.auto || away && r.items.length) {
-        process.stdout.write(JSON.stringify({ decision: "block", reason: tacklePrompt(r.items, ids) }));
+        process.stdout.write(JSON.stringify({ decision: "block", reason: tacklePrompt(r.items, ids, r.persons) }));
         process.exit(0);
-      } else if (r.items.length) {
-        const n = r.items.length;
+      } else if (r.items.length || r.persons.length) {
+        const n = r.items.length + r.persons.length;
         const m = `\u25E2 crosstalk: ${n} open item${n === 1 ? "" : "s"}${thread ? ` kept as tasks in ${thread}` : ""}. Say "tackle them" to go on.`;
         systemMessage = systemMessage ? `${systemMessage}
 ${m}` : m;
@@ -7185,10 +7164,10 @@ async function registerSession() {
   if (socket) {
     try {
       const dir = sessionsDir();
-      for (const f of fs47.readdirSync(dir)) {
+      for (const f of fs46.readdirSync(dir)) {
         if (!f.endsWith(".json"))
           continue;
-        const e = JSON.parse(fs47.readFileSync(path55.join(dir, f), "utf8"));
+        const e = JSON.parse(fs46.readFileSync(path54.join(dir, f), "utf8"));
         if (e.sessionId === sessionId) {
           name = e.name ?? name;
           break;
@@ -7196,7 +7175,7 @@ async function registerSession() {
       }
     } catch {}
   } else {
-    name = hook.thread_name ?? (path55.basename(cwd) || name);
+    name = hook.thread_name ?? (path54.basename(cwd) || name);
   }
   const registered = await request({
     op: "register",

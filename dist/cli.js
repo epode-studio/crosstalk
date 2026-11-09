@@ -10227,16 +10227,28 @@ function writePrefs(p) {
   fs26.renameSync(tmp, file6());
 }
 var setAlways = (on) => writePrefs({ ...readPrefs(), always: on });
-var DONE = "Done";
+var DONE = "I've done it";
+var NOT_MINE = "Not for me";
 var TACKLE = "Tackle them";
 var ALWAYS = "Always";
 var NOT_NOW = "Not now";
-function tacklePrompt(items, ids = []) {
+function tacklePrompt(items, ids = [], persons = []) {
   return [
-    `Tackle the open items you listed:`,
-    ...items.map((x, i) => `${i + 1}. ${x}${ids[i] ? ` (task ${ids[i]})` : ""}`),
+    ...items.length ? [
+      `Tackle the open items you listed:`,
+      ...items.map((x, i) => `${i + 1}. ${x}${ids[i] ? ` (task ${ids[i]})` : ""}`),
+      ``,
+      `Do each one you can do yourself${ids.length ? `, and mark it done with crosstalk_thread action "task", op "done" and its task id` : ""}. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). For any that needs a decision only the person can make, ask them (one question for all of those, at the end) instead of guessing.`
+    ] : [],
+    ...persons.length ? [
+      ...items.length ? [``] : [],
+      `You left these for the person:`,
+      ...persons.map((x, i) => `${i + 1}. ${x}`),
+      ``,
+      `They want you to do these, not to be handed them: they often cannot find this session. Do whatever your tools can (gh, a browser, a script, a command). Where it needs their yes or a choice only they can make (approving, merging, deploying, spending, choosing between options), ask with AskUserQuestion, one question for all of them: name each exact action with its link, and offer options such as "Yes, do it" and "Not now", none marked recommended (so nothing is decided for them while they are away). It reaches them wherever they are. Then do what they chose. Ask them to act themselves only when it is beyond you (a device, a login only on their machine), and then say exactly where, with the link.`
+    ] : [],
     ``,
-    `Do each one you can do yourself${ids.length ? `, and mark it done with crosstalk_thread action "task", op "done" and its task id` : ""}. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). For any that needs a decision or an action only the person can take, ask them (one question for all of those, at the end) instead of guessing. When you finish, list only what is still open; if nothing is, say so and leave out the Open list.`
+    `When you finish, list only what is still open; if nothing is, say so and leave out the Open list.`
   ].join(`
 `);
 }
@@ -10279,6 +10291,7 @@ function summarize(j) {
     ...typeof j?.reviewDecision === "string" ? { review: j.reviewDecision.toUpperCase() } : {},
     ...typeof j?.mergeable === "string" ? { mergeable: j.mergeable.toUpperCase() } : {},
     ...typeof j?.mergeStateStatus === "string" ? { mergeState: j.mergeStateStatus.toUpperCase() } : {},
+    ...j?.autoMergeRequest ? { autoMerge: true } : {},
     checks,
     failed: [...new Set(failed)].slice(0, 8),
     ...starts.length ? { startedAt: Math.min(...starts) } : {}
@@ -10600,6 +10613,8 @@ function prState(r) {
     parts.push(`checks failed${r.failed?.length ? `: ${r.failed.join(", ")}` : ""}`);
   else if (r.checks === "passed")
     parts.push("checks passed");
+  if (r.queued)
+    parts.push("in the merge queue");
   return parts.filter(Boolean).map((x) => ` \u00b7 ${x}`).join("");
 }
 function inboxScore(it, now) {
@@ -12569,6 +12584,7 @@ function prFields(u, now) {
     ...u.checks ? { checks: u.checks } : {},
     ...u.failed?.length ? { failed: u.failed } : {},
     ...u.draft ? { draft: true } : {},
+    ...u.queued ? { queued: true } : {},
     ...eta ? { eta } : {}
   };
 }
@@ -12757,7 +12773,7 @@ function agentsPane(sessionId, list = agents(sessionId)) {
   let prs = [];
   let events = [];
   try {
-    prs = allPrs().filter((r) => r.alive && r.state !== "MERGED" && r.state !== "CLOSED" && (r.checks === "running" || r.checks === "failed"));
+    prs = allPrs().filter((r) => r.alive && r.state !== "MERGED" && r.state !== "CLOSED" && (r.checks === "running" || r.checks === "failed" || r.queued));
     events = recentEvents(4);
   } catch {}
   let usage = null;
@@ -14290,6 +14306,8 @@ async function uiCmd(argv, root) {
         if (action === "raised" || action === "later")
           return print(withStore((items, now) => act(items, id, action, now)));
         const v = (value ?? "").trim();
+        if (v === NOT_MINE)
+          return print(withStore((items, now) => act(items, id, "mute", now)));
         if (v !== DONE)
           return print(withStore((items, now) => act(items, id, "later", now)));
         const claim = withStore((items, now) => act(items, id, "answer", now, v));
@@ -14573,6 +14591,78 @@ async function incidentCmd(argv) {
 // src/urls/cli.ts
 init_urls();
 
+// src/urls/queue.ts
+var disabled = (env = process.env) => env.CROSSTALK_NO_QUEUE === "1";
+var QUERY = `query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){isInMergeQueue mergeQueueEntry{position estimatedTimeToMerge enqueuedAt} timelineItems(last:3,itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT]){nodes{... on RemovedFromMergeQueueEvent{createdAt reason}}}}}}`;
+function parse(j) {
+  const pr = j?.data?.repository?.pullRequest;
+  if (!pr)
+    return;
+  const e = pr.mergeQueueEntry;
+  const nodes = Array.isArray(pr.timelineItems?.nodes) ? pr.timelineItems.nodes : [];
+  const last = nodes.filter((n) => n && n.createdAt).at(-1);
+  const at = last ? Date.parse(last.createdAt) : NaN;
+  const enq = e?.enqueuedAt ? Date.parse(e.enqueuedAt) : NaN;
+  return {
+    queued: !!pr.isInMergeQueue,
+    ...typeof e?.position === "number" ? { position: e.position } : {},
+    ...typeof e?.estimatedTimeToMerge === "number" ? { eta: e.estimatedTimeToMerge } : {},
+    ...Number.isFinite(enq) ? { enqueuedAt: enq } : {},
+    ...Number.isFinite(at) ? { removed: { at, reason: String(last.reason ?? "") } } : {}
+  };
+}
+var ghQueue = async (url, cwd) => {
+  const m = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(url);
+  if (!m)
+    return;
+  const r = await runGh(["api", "graphql", "-f", `query=${QUERY}`, "-F", `o=${m[1]}`, "-F", `r=${m[2]}`, "-F", `n=${m[3]}`], { cwd, timeoutMs: 20000 });
+  if (!r.ok)
+    return;
+  try {
+    return parse(JSON.parse(r.stdout));
+  } catch {
+    return;
+  }
+};
+function why2(reason) {
+  const r = reason.toLowerCase();
+  if (/conflict|behind|out of date|not up to date/.test(r))
+    return "conflict";
+  if (/fail|check|status|timed? ?out|ci\b|build/.test(r))
+    return "failed";
+  if (/manual|removed by|dequeued by|by a user|user/.test(r))
+    return "manual";
+  return "other";
+}
+var stuckAfter = (eta) => Math.max(60 * 60000, (eta ?? 0) * 2000);
+function step2(before, v, now) {
+  const keep = { ...before, queued: v.queued };
+  if (v.queued) {
+    if (!before.queued) {
+      keep.queuedAt = v.enqueuedAt ?? now;
+      keep.queueStuckTold = undefined;
+      return { step: { kind: "queued", ...v.position !== undefined ? { position: v.position } : {}, ...v.eta !== undefined ? { eta: v.eta } : {} }, keep };
+    }
+    const since = before.queuedAt ?? v.enqueuedAt ?? now;
+    if ((v.position ?? 1) <= 1 && !before.queueStuckTold && now - since > stuckAfter(v.eta)) {
+      keep.queueStuckTold = now;
+      return { step: { kind: "stuck", minutes: Math.round((now - since) / 60000) }, keep };
+    }
+    return { step: null, keep };
+  }
+  if (!before.queued || !v.removed || before.queueSeenRemoval && v.removed.at <= before.queueSeenRemoval)
+    return { step: null, keep };
+  keep.queueSeenRemoval = v.removed.at;
+  const w = why2(v.removed.reason);
+  const retries = before.queueRetries ?? 0;
+  const action = w === "manual" ? "leave" : w === "conflict" ? "fix" : retries < 1 ? "requeue" : "fix";
+  if (action === "requeue")
+    keep.queueRetries = retries + 1;
+  if (action === "fix")
+    keep.queueRetries = 0;
+  return { step: { kind: "dequeued", why: w, reason: v.removed.reason, action }, keep };
+}
+
 // src/urls/liveness.ts
 init_extract();
 import { execFile as execFile2 } from "node:child_process";
@@ -14615,7 +14705,7 @@ function nextDue(u, live) {
     return 0;
   if (u.fails && u.alive)
     return u.lastCheck + RETRY_MS();
-  const every = u.kind === "pr" ? u.checks === "running" ? PR_RUNNING_MS() : PR_MS : u.kind === "preview" ? PREVIEW_MS : live ? liveEvery() : IDLE_MS;
+  const every = u.kind === "pr" ? u.checks === "running" || u.queued ? PR_RUNNING_MS() : PR_MS : u.kind === "preview" ? PREVIEW_MS : live ? liveEvery() : IDLE_MS;
   return u.lastCheck + every;
 }
 var ghPath;
@@ -14645,7 +14735,7 @@ function runGh(args, o = {}) {
     }
   });
 }
-var PR_FIELDS = "state,isDraft,statusCheckRollup,author,reviewDecision,mergeable,mergeStateStatus";
+var PR_FIELDS = "state,isDraft,statusCheckRollup,author,reviewDecision,mergeable,mergeStateStatus,autoMergeRequest";
 var login;
 var asking;
 function ghLogin() {
@@ -14703,6 +14793,18 @@ async function tick2(store, o = { liveRoots: new Set }) {
         try {
           o.onPr?.(after, ch, v);
         } catch {}
+      if (after && mine && v.state === "OPEN" && (v.autoMerge || u.queued) && !disabled() && (o.onQueue || o.queueOf))
+        try {
+          const qv = await (o.queueOf ?? ghQueue)(u.url, u.worktree);
+          if (qv) {
+            const r = step2({ queued: u.queued, queuedAt: u.queuedAt, queueRetries: u.queueRetries, queueStuckTold: u.queueStuckTold, queueSeenRemoval: u.queueSeenRemoval }, qv, now);
+            const kept = store.update(u.id, r.keep) ?? after;
+            if (r.step)
+              o.onQueue?.(kept, r.step);
+          }
+        } catch {}
+      else if (u.queued && v.state !== "OPEN")
+        store.update(u.id, { queued: false });
       return;
     }
     const r = await p(u.url);

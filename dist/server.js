@@ -11809,6 +11809,8 @@ function prState(r) {
     parts.push(`checks failed${r.failed?.length ? `: ${r.failed.join(", ")}` : ""}`);
   else if (r.checks === "passed")
     parts.push("checks passed");
+  if (r.queued)
+    parts.push("in the merge queue");
   return parts.filter(Boolean).map((x) => ` \u00b7 ${x}`).join("");
 }
 function inboxScore(it, now) {
@@ -12792,6 +12794,7 @@ function prFields(u, now) {
     ...u.checks ? { checks: u.checks } : {},
     ...u.failed?.length ? { failed: u.failed } : {},
     ...u.draft ? { draft: true } : {},
+    ...u.queued ? { queued: true } : {},
     ...eta ? { eta } : {}
   };
 }
@@ -25246,7 +25249,7 @@ function agentsPane(sessionId, list = agents(sessionId)) {
   let prs = [];
   let events = [];
   try {
-    prs = allPrs().filter((r) => r.alive && r.state !== "MERGED" && r.state !== "CLOSED" && (r.checks === "running" || r.checks === "failed"));
+    prs = allPrs().filter((r) => r.alive && r.state !== "MERGED" && r.state !== "CLOSED" && (r.checks === "running" || r.checks === "failed" || r.queued));
     events = recentEvents(4);
   } catch {}
   let usage = null;

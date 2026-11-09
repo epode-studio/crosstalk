@@ -15093,6 +15093,8 @@ function prState(r) {
     parts.push(`checks failed${r.failed?.length ? `: ${r.failed.join(", ")}` : ""}`);
   else if (r.checks === "passed")
     parts.push("checks passed");
+  if (r.queued)
+    parts.push("in the merge queue");
   return parts.filter(Boolean).map((x) => ` \u00b7 ${x}`).join("");
 }
 var DOTS = ["\uD83D\uDFE0", "\uD83D\uDFE1", "\uD83D\uDFE2", "\uD83D\uDD35", "\uD83D\uDFE3", "\uD83D\uDFE4", "\u26aa"];
@@ -17188,6 +17190,7 @@ function summarize2(j) {
     ...typeof j?.reviewDecision === "string" ? { review: j.reviewDecision.toUpperCase() } : {},
     ...typeof j?.mergeable === "string" ? { mergeable: j.mergeable.toUpperCase() } : {},
     ...typeof j?.mergeStateStatus === "string" ? { mergeState: j.mergeStateStatus.toUpperCase() } : {},
+    ...j?.autoMergeRequest ? { autoMerge: true } : {},
     checks,
     failed: [...new Set(failed)].slice(0, 8),
     ...starts.length ? { startedAt: Math.min(...starts) } : {}
@@ -17305,6 +17308,78 @@ function latest(reports = all3()) {
   return best;
 }
 
+// src/urls/queue.ts
+var disabled = (env = process.env) => env.CROSSTALK_NO_QUEUE === "1";
+var QUERY = `query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){isInMergeQueue mergeQueueEntry{position estimatedTimeToMerge enqueuedAt} timelineItems(last:3,itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT]){nodes{... on RemovedFromMergeQueueEvent{createdAt reason}}}}}}`;
+function parse3(j) {
+  const pr = j?.data?.repository?.pullRequest;
+  if (!pr)
+    return;
+  const e = pr.mergeQueueEntry;
+  const nodes = Array.isArray(pr.timelineItems?.nodes) ? pr.timelineItems.nodes : [];
+  const last = nodes.filter((n) => n && n.createdAt).at(-1);
+  const at = last ? Date.parse(last.createdAt) : NaN;
+  const enq = e?.enqueuedAt ? Date.parse(e.enqueuedAt) : NaN;
+  return {
+    queued: !!pr.isInMergeQueue,
+    ...typeof e?.position === "number" ? { position: e.position } : {},
+    ...typeof e?.estimatedTimeToMerge === "number" ? { eta: e.estimatedTimeToMerge } : {},
+    ...Number.isFinite(enq) ? { enqueuedAt: enq } : {},
+    ...Number.isFinite(at) ? { removed: { at, reason: String(last.reason ?? "") } } : {}
+  };
+}
+var ghQueue = async (url, cwd) => {
+  const m = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(url);
+  if (!m)
+    return;
+  const r = await runGh(["api", "graphql", "-f", `query=${QUERY}`, "-F", `o=${m[1]}`, "-F", `r=${m[2]}`, "-F", `n=${m[3]}`], { cwd, timeoutMs: 20000 });
+  if (!r.ok)
+    return;
+  try {
+    return parse3(JSON.parse(r.stdout));
+  } catch {
+    return;
+  }
+};
+function why2(reason) {
+  const r = reason.toLowerCase();
+  if (/conflict|behind|out of date|not up to date/.test(r))
+    return "conflict";
+  if (/fail|check|status|timed? ?out|ci\b|build/.test(r))
+    return "failed";
+  if (/manual|removed by|dequeued by|by a user|user/.test(r))
+    return "manual";
+  return "other";
+}
+var stuckAfter = (eta) => Math.max(60 * 60000, (eta ?? 0) * 2000);
+function step(before, v, now) {
+  const keep = { ...before, queued: v.queued };
+  if (v.queued) {
+    if (!before.queued) {
+      keep.queuedAt = v.enqueuedAt ?? now;
+      keep.queueStuckTold = undefined;
+      return { step: { kind: "queued", ...v.position !== undefined ? { position: v.position } : {}, ...v.eta !== undefined ? { eta: v.eta } : {} }, keep };
+    }
+    const since = before.queuedAt ?? v.enqueuedAt ?? now;
+    if ((v.position ?? 1) <= 1 && !before.queueStuckTold && now - since > stuckAfter(v.eta)) {
+      keep.queueStuckTold = now;
+      return { step: { kind: "stuck", minutes: Math.round((now - since) / 60000) }, keep };
+    }
+    return { step: null, keep };
+  }
+  if (!before.queued || !v.removed || before.queueSeenRemoval && v.removed.at <= before.queueSeenRemoval)
+    return { step: null, keep };
+  keep.queueSeenRemoval = v.removed.at;
+  const w = why2(v.removed.reason);
+  const retries = before.queueRetries ?? 0;
+  const action = w === "manual" ? "leave" : w === "conflict" ? "fix" : retries < 1 ? "requeue" : "fix";
+  if (action === "requeue")
+    keep.queueRetries = retries + 1;
+  if (action === "fix")
+    keep.queueRetries = 0;
+  return { step: { kind: "dequeued", why: w, reason: v.removed.reason, action }, keep };
+}
+
 // src/urls/liveness.ts
 import { execFile as execFile3 } from "node:child_process";
 import fs74 from "node:fs";
@@ -17346,7 +17421,7 @@ function nextDue(u, live) {
     return 0;
   if (u.fails && u.alive)
     return u.lastCheck + RETRY_MS();
-  const every = u.kind === "pr" ? u.checks === "running" ? PR_RUNNING_MS() : PR_MS : u.kind === "preview" ? PREVIEW_MS : live ? liveEvery() : IDLE_MS;
+  const every = u.kind === "pr" ? u.checks === "running" || u.queued ? PR_RUNNING_MS() : PR_MS : u.kind === "preview" ? PREVIEW_MS : live ? liveEvery() : IDLE_MS;
   return u.lastCheck + every;
 }
 var ghPath;
@@ -17376,7 +17451,7 @@ function runGh(args, o = {}) {
     }
   });
 }
-var PR_FIELDS = "state,isDraft,statusCheckRollup,author,reviewDecision,mergeable,mergeStateStatus";
+var PR_FIELDS = "state,isDraft,statusCheckRollup,author,reviewDecision,mergeable,mergeStateStatus,autoMergeRequest";
 var login;
 var asking;
 function ghLogin() {
@@ -17434,6 +17509,18 @@ async function tick2(store, o = { liveRoots: new Set }) {
         try {
           o.onPr?.(after, ch, v);
         } catch {}
+      if (after && mine && v.state === "OPEN" && (v.autoMerge || u.queued) && !disabled() && (o.onQueue || o.queueOf))
+        try {
+          const qv = await (o.queueOf ?? ghQueue)(u.url, u.worktree);
+          if (qv) {
+            const r = step({ queued: u.queued, queuedAt: u.queuedAt, queueRetries: u.queueRetries, queueStuckTold: u.queueStuckTold, queueSeenRemoval: u.queueSeenRemoval }, qv, now);
+            const kept = store.update(u.id, r.keep) ?? after;
+            if (r.step)
+              o.onQueue?.(kept, r.step);
+          }
+        } catch {}
+      else if (u.queued && v.state !== "OPEN")
+        store.update(u.id, { queued: false });
       return;
     }
     const r = await p(u.url);
@@ -17445,7 +17532,7 @@ async function tick2(store, o = { liveRoots: new Set }) {
 }
 
 // src/urls/merge.ts
-var disabled = (env = process.env) => env.CROSSTALK_NO_MERGE === "1";
+var disabled2 = (env = process.env) => env.CROSSTALK_NO_MERGE === "1";
 function blocker(v) {
   if (v.state !== "OPEN")
     return "not open";
@@ -17462,7 +17549,7 @@ function blocker(v) {
   return;
 }
 function decide3(o) {
-  if (disabled(o.env))
+  if (disabled2(o.env))
     return "none";
   if (o.mine === false)
     return "none";
@@ -17507,7 +17594,7 @@ import { spawnSync as spawnSync22 } from "node:child_process";
 import fs75 from "node:fs";
 var SHIPPED_IDLE_MS = () => Number(process.env.CROSSTALK_CLOSE_SHIPPED_MS ?? 10 * 60000);
 var IDLE_MS2 = () => Number(process.env.CROSSTALK_CLOSE_IDLE_MS ?? 3 * 3600000);
-function why2(c, now) {
+function why3(c, now) {
   if (c.isMain || c.inFront || c.waiting > 0 || c.running || c.dirty)
     return null;
   if (c.status && c.status.toLowerCase() !== "idle")
@@ -18190,7 +18277,7 @@ class AttentionService {
           running: this.d.running?.(s.sessionId) ?? false,
           dirty: false
         };
-        const reason = why2(c, now);
+        const reason = why3(c, now);
         if (!reason)
           continue;
         if (dirty(s.cwd))
@@ -18633,7 +18720,13 @@ function createAttention(o) {
 // src/spawn.ts
 import fs77 from "node:fs";
 import path87 from "node:path";
+import { spawnSync as spawnSync24 } from "node:child_process";
+var DEP_DIRS2 = ["node_modules", ".venv", "venv"];
+var MAX_AGENTS2 = 8;
+var BRANCH_PREFIX2 = "crosstalk/";
+var TMUX_SOCKET2 = "crosstalk";
 var dir7 = () => path87.join(P2.root, "spawned");
+var fileOf4 = (id) => path87.join(dir7(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
 function readSpawned2() {
   let names;
   try {
@@ -18650,11 +18743,74 @@ function readSpawned2() {
     } catch {}
   return out.sort((a, b) => a.createdAt - b.createdAt);
 }
+function writeSpawned2(r) {
+  fs77.mkdirSync(dir7(), { recursive: true, mode: 448 });
+  const tmp = `${fileOf4(r.id)}.${process.pid}.tmp`;
+  fs77.writeFileSync(tmp, JSON.stringify(r, null, 2), { mode: 384 });
+  fs77.renameSync(tmp, fileOf4(r.id));
+}
 function spawnedAt(cwd, recs = readSpawned2()) {
   const c = path87.resolve(cwd);
   return recs.find((r) => !r.removedAt && (c === path87.resolve(r.worktree) || c.startsWith(path87.resolve(r.worktree) + path87.sep))) ?? null;
 }
 var STOP3 = new Set("a an the on to for and of in with at by from into onto this that it its be is are please can could would you start put get run spin up fire one two three four five six seven eight more another new agent agents session sessions claude someone somebody work working".split(" "));
+function nameFromTask2(task) {
+  const words = task.toLowerCase().replace(/[^a-z0-9\s-]/g, " ").split(/\s+/).filter((w) => w && !STOP3.has(w));
+  return slug2(words.slice(0, 2).join("-"), 24) || "agent";
+}
+function namesFor2(o) {
+  const base = slug2(o.name ?? "", 24) || nameFromTask2(o.task);
+  const out = [];
+  const free = (n) => !o.taken(n) && !out.includes(n);
+  if (o.count === 1) {
+    for (let i = 1;out.length < 1; i++) {
+      const n = i === 1 ? base : `${base}-${i}`;
+      if (free(n))
+        out.push(n);
+    }
+    return out;
+  }
+  for (let i = 1;out.length < o.count; i++)
+    if (free(`${base}-${i}`))
+      out.push(`${base}-${i}`);
+  return out;
+}
+function worktreeHome2(o) {
+  const counts = new Map;
+  for (const w of o.worktrees.slice(1)) {
+    if (w.bare || !w.path)
+      continue;
+    const d = path87.dirname(w.path);
+    if (d === path87.dirname(o.main) && !/worktree/i.test(path87.basename(w.path)))
+      continue;
+    counts.set(d, (counts.get(d) ?? 0) + 1);
+  }
+  let best = null;
+  for (const [d, n] of counts)
+    if (!best || n > counts.get(best))
+      best = d;
+  return best ?? path87.join(o.home, "worktrees", repoName(o.main));
+}
+function planSpawn2(o) {
+  const main = o.worktrees[0]?.path ?? o.top;
+  const where = worktreeHome2({ main, worktrees: o.worktrees, home: o.home });
+  const rel = path87.relative(o.top, o.cwd);
+  const sub = rel && !rel.startsWith("..") && !path87.isAbsolute(rel) ? rel : "";
+  const count = Math.max(1, Math.min(MAX_AGENTS2, Math.floor(o.count || 1)));
+  const names = namesFor2({
+    count,
+    name: o.name,
+    task: o.task,
+    taken: (n) => o.exists(path87.join(where, n)) || o.branchExists(BRANCH_PREFIX2 + n)
+  });
+  return names.map((name) => {
+    const worktree = path87.join(where, name);
+    const cwd = sub ? path87.join(worktree, sub) : worktree;
+    const links = DEP_DIRS2.filter((d) => o.exists(path87.join(main, d))).map((d) => [path87.join(main, d), path87.join(worktree, d)]);
+    return { name, branch: BRANCH_PREFIX2 + name, worktree, cwd, links, tab: { cwd, argv: [o.claude, o.prompt ?? o.task], name, ...o.thread ? { thread: o.thread } : {} } };
+  });
+}
+var tmuxConf2 = () => path87.join(P2.root, "tmux.conf");
 var TMUX_CONF2 = [
   `# crosstalk's own tmux server (tmux -L crosstalk), for agents it runs in the background.`,
   `set -g status-left '#[bold]\u25e2 crosstalk#[default] #S  '`,
@@ -18667,6 +18823,289 @@ var TMUX_CONF2 = [
   ``
 ].join(`
 `);
+function ensureConf2() {
+  fs77.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  try {
+    if (fs77.readFileSync(tmuxConf2(), "utf8") === TMUX_CONF2)
+      return;
+  } catch {}
+  fs77.writeFileSync(tmuxConf2(), TMUX_CONF2, { mode: 384 });
+}
+function cleanEnv2(env) {
+  const e = { ...env };
+  delete e.TMUX;
+  delete e.TMUX_PANE;
+  return e;
+}
+var backgroundSteps2 = (p) => [
+  { cmd: "tmux", args: ["-L", TMUX_SOCKET2, "-f", tmuxConf2(), "new-session", "-d", "-s", p.name, "-c", p.cwd, tmuxArgv(p.tab.argv, p.name).map(shq).join(" ")] }
+];
+function tmuxHas3(name, env = process.env) {
+  return spawnSync24("tmux", ["-L", TMUX_SOCKET2, "has-session", "-t", `=${name}`], { stdio: "ignore", timeout: 3000, env: cleanEnv2(env) }).status === 0;
+}
+function run6(s, env) {
+  const r = spawnSync24(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 60000, env });
+  return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() };
+}
+function which6(bin, env) {
+  for (const d of (env.PATH ?? "").split(path87.delimiter)) {
+    if (!d)
+      continue;
+    const p = path87.join(d, bin);
+    try {
+      fs77.accessSync(p, fs77.constants.X_OK);
+      return p;
+    } catch {}
+  }
+  return;
+}
+function excludeLinks2(commonDir, names) {
+  if (!names.length)
+    return;
+  const f = path87.join(commonDir, "info", "exclude");
+  let text = "";
+  try {
+    text = fs77.readFileSync(f, "utf8");
+  } catch {}
+  const have = new Set(text.split(`
+`).map((l) => l.trim()));
+  const add = names.map((n) => `/${n}`).filter((l) => !have.has(l));
+  if (!add.length)
+    return;
+  fs77.mkdirSync(path87.dirname(f), { recursive: true });
+  fs77.writeFileSync(f, `${text}${text && !text.endsWith(`
+`) ? `
+` : ""}# crosstalk: dependency folders shared from the main checkout
+${add.join(`
+`)}
+`);
+}
+var plural3 = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+function spawnAgents2(o) {
+  const bot = refuseBot(o.peer, "start an agent on this machine");
+  if (bot)
+    return { ok: false, text: `\u25e2 crosstalk: ${bot}`, agents: [] };
+  const g = o.git ?? git4;
+  const env = o.env ?? process.env;
+  const task = (o.task ?? "").trim();
+  if (!task)
+    return { ok: false, text: "\u25e2 crosstalk: say what the new agent should do.", agents: [] };
+  if (isFlagLike(task))
+    return { ok: false, text: `\u25e2 crosstalk: a task cannot start with "-" (claude would read it as an option). Start it with a word.`, agents: [] };
+  const top = g(o.cwd, ["rev-parse", "--show-toplevel"]);
+  if (!top.ok || !top.out)
+    return { ok: false, text: `\u25e2 crosstalk: ${o.cwd} is not in a git repository, and each new agent needs its own copy of the code.`, agents: [] };
+  const base = g(o.cwd, ["rev-parse", "HEAD"]);
+  if (!base.ok)
+    return { ok: false, text: "\u25e2 crosstalk: this repository has no commit yet to start an agent from.", agents: [] };
+  const wts = worktrees(o.cwd, g);
+  const main = wts[0]?.path ?? top.out;
+  const common = g(o.cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  const claudeBin = which6("claude", env) ?? "claude";
+  if (o.background === undefined && currentMain())
+    o = { ...o, background: true };
+  const claudeBg = !!o.background && !which6("tmux", env) && claudeBackground(claudeBin, env).bg;
+  if (o.background && !which6("tmux", env) && !claudeBg)
+    return { ok: false, text: "\u25e2 crosstalk: background agents run in tmux, which is not installed here. Install tmux, or start the agent in a tab instead.", agents: [] };
+  if (o.background && !o.noQueue) {
+    const working = readSpawned2().filter((r) => r.background && !r.removedAt && !!r.tmux && tmuxHas3(r.tmux, env)).map((r) => r.name);
+    const max = wipMax(env);
+    if (working.length + Math.max(1, o.count ?? 1) > max) {
+      let n = 0;
+      for (let i = 0;i < Math.max(1, Math.min(o.count ?? 1, 8)); i++)
+        n = enqueue({ task, name: o.name, cwd: o.cwd, by: o.by, thread: o.thread });
+      return {
+        ok: true,
+        text: `\u25e2 crosstalk: ${working.length} agents are already working (${working.join(", ")}), and ${max} at once is the most. This one waits its turn (${n} waiting) and starts by itself when one finishes.`,
+        agents: []
+      };
+    }
+  }
+  const prompt = o.thread?.view ? threadBrief(o.thread.view, task, { from: o.thread.from }) : task;
+  const plans = planSpawn2({
+    count: o.count ?? 1,
+    task,
+    name: o.name,
+    cwd: o.cwd,
+    top: top.out,
+    worktrees: wts,
+    home: P2.root,
+    claude: which6("claude", env) ?? "claude",
+    exists: (p) => fs77.existsSync(p),
+    branchExists: (b) => g(main, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]).ok,
+    prompt,
+    thread: o.thread?.name
+  });
+  const made = [];
+  const notes = [];
+  const envCopied = new Set;
+  let envOffer;
+  for (const p of plans) {
+    fs77.mkdirSync(path87.dirname(p.worktree), { recursive: true });
+    const add = g(main, ["worktree", "add", "--quiet", "-b", p.branch, p.worktree, base.out]);
+    if (!add.ok) {
+      notes.push(`could not make a copy for ${p.name}: ${add.out.split(`
+`).pop()}`);
+      continue;
+    }
+    try {
+      blockFor(fs77.realpathSync(p.worktree));
+    } catch {}
+    const linked = [];
+    for (const [from, to] of p.links) {
+      try {
+        if (fs77.existsSync(to))
+          continue;
+        fs77.symlinkSync(from, to, "dir");
+        linked.push(path87.basename(to));
+      } catch {}
+    }
+    if (common.ok)
+      excludeLinks2(common.out, linked);
+    try {
+      const e = prepare({ main, worktree: p.worktree, sessionId: o.by, cwd: o.cwd });
+      for (const f of e.copied)
+        envCopied.add(f);
+      envOffer ??= e.offer;
+    } catch {}
+    fs77.mkdirSync(p.cwd, { recursive: true });
+    const rec = {
+      id: `${repoName(main)}--${p.name}`,
+      name: p.name,
+      task,
+      repo: main,
+      worktree: p.worktree,
+      cwd: p.cwd,
+      branch: p.branch,
+      base: base.out,
+      createdAt: Date.now(),
+      background: !!o.background,
+      ...o.background ? claudeBg ? { claudeBg: true } : { tmux: p.name } : {},
+      by: o.by,
+      ...o.thread ? { thread: o.thread.name, threadId: o.thread.id, ...o.thread.from ? { byName: o.thread.from } : {} } : {},
+      links: linked
+    };
+    writeSpawned2(rec);
+    made.push(rec);
+  }
+  if (!made.length)
+    return { ok: false, text: `\u25e2 crosstalk: started no agent. ${notes.join("; ")}`, agents: [] };
+  const started = plans.filter((p) => made.some((m) => m.name === p.name));
+  let where = "";
+  let ok = true;
+  if (o.background && claudeBg) {
+    const failed = [];
+    for (const p of started) {
+      const st = bgStep({ claude: claudeBin, name: p.name, task: prompt, cwd: p.cwd });
+      const r = spawnSync24(st.cmd, st.args, { cwd: st.cwd, encoding: "utf8", timeout: 60000, env: { ...env, ...st.env } });
+      if (r.status !== 0)
+        failed.push(`${p.name} (${`${r.stderr ?? ""}${r.error ?? ""}`.trim().split(`
+`).pop()})`);
+    }
+    if (failed.length) {
+      ok = false;
+      notes.push(`could not start in the background: ${failed.join(", ")}`);
+    }
+    where = `in the background as Claude Code's own background session${started.length === 1 ? "" : "s"}. Say "show me ${started[0].name}" to watch ${started.length === 1 ? "it" : "one"}`;
+  } else if (o.background) {
+    ensureConf2();
+    const failed = [];
+    for (const p of started) {
+      const r = run6(backgroundSteps2(p)[0], cleanEnv2(env));
+      if (!r.ok)
+        failed.push(`${p.name} (${r.out.split(`
+`).pop()})`);
+    }
+    if (failed.length) {
+      ok = false;
+      notes.push(`could not start in the background: ${failed.join(", ")}`);
+    }
+    where = `in the background, where ${started.length === 1 ? "it keeps" : "they keep"} running when windows close. Say "show me ${started[0].name}" to watch ${started.length === 1 ? "it" : "one"}`;
+  } else {
+    const r = openForRepo(started.map((p) => p.tab), { cwd: o.cwd, envVars: env, git: g, by: o.by, thread: o.thread?.name, byInThread: !!o.thread?.asking });
+    if (r.opened.kind === "manual" || !r.ok) {
+      ok = r.opened.kind === "manual";
+      fs77.mkdirSync(P2.root, { recursive: true, mode: 448 });
+      const file = path87.join(P2.root, "spawn-commands.sh");
+      fs77.writeFileSync(file, `#!/bin/sh
+# New agents crosstalk could not open a tab for. Each line is one tab.
+${r.opened.typed.join(`
+`)}
+`, { mode: 448 });
+      where = `but this terminal cannot open tabs from outside. Paste each line into its own tab (also in ${file}):
+${r.opened.typed.map((l) => `  ${l}`).join(`
+`)}`;
+      if (r.out)
+        notes.push(r.out.split(`
+`).pop());
+    } else
+      where = `in new tabs in ${r.opened.where}`;
+  }
+  const names2 = made.map((m) => m.name).join(", ");
+  const head = `\u25e2 crosstalk: started ${plural3(made.length, "agent")} (${names2}), each in its own copy of the code, ${where}.${o.thread ? ` ${made.length === 1 ? "It is" : "They are"} in the thread ${o.thread.name}${o.thread.view ? ", starting from its brief" : ""}.` : ""}`;
+  const deps = made[0].links.length ? ` ${made[0].links.join(" and ")} ${made[0].links.length === 1 ? "is" : "are"} shared with the main checkout, not copied.` : "";
+  let envNote = envCopied.size ? ` ${names([...envCopied])} ${envCopied.size === 1 ? "was" : "were"} copied in from the main checkout (gitignored; they stay on this machine).` : "";
+  if (envOffer) {
+    const s = surface(envOffer, o.by);
+    envNote += s.picker ? ` crosstalk is asking the user whether to copy ${envOffer.files[0]}${envOffer.files.length > 1 ? " and the other local files" : ""} into new worktrees (in its picker).` : `
+  ${s.systemMessage}`;
+  }
+  return { ok, text: head + deps + envNote + (notes.length ? `
+  ${notes.join(`
+  `)}` : ""), agents: made };
+}
+
+// src/urls/queue.ts
+var ord = (n) => `${n}${n % 10 === 1 && n % 100 !== 11 ? "st" : n % 10 === 2 && n % 100 !== 12 ? "nd" : n % 10 === 3 && n % 100 !== 13 ? "rd" : "th"}`;
+function text(label, s) {
+  if (s.kind === "queued")
+    return `${label} is in the merge queue${s.position ? `, ${ord(s.position)} in line` : ""}${s.eta ? `, merging in about ${Math.max(1, Math.round(s.eta / 60))} min` : ""}.`;
+  if (s.kind === "stuck")
+    return `${label} has been first in the merge queue for ${s.minutes} min, far longer than usual. The queue's own checks may be hung; worth a look in GitHub.`;
+  const r = s.reason ? ` (${s.reason.replace(/_/g, " ").toLowerCase()})` : "";
+  if (s.action === "leave")
+    return `${label} was taken out of the merge queue by hand${r}. Left alone.`;
+  if (s.action === "requeue")
+    return `${label} left the merge queue${r}. Put back once, in case it was a flaky check.`;
+  return `${label} left the merge queue${r}. Being fixed, then it goes back in by itself.`;
+}
+function fixPrompt(label, url, s) {
+  const what = s.why === "conflict" ? `It conflicts with, or is behind, its base branch. Bring the base branch in (merge or rebase, whichever this repository does), resolve the conflicts keeping both sides' intent, run the checks that cover what you touched, and push.` : `Its checks failed in the merge queue${s.reason ? ` (${s.reason})` : ""}, more than once. Find which checks failed in the merge group (gh pr checks ${url}, or the queue's run in GitHub Actions), fix the cause rather than skipping or disabling a test, run those checks locally, and push.`;
+  return [
+    `${label} (${url}) was taken out of the merge queue, and crosstalk asks you to unblock it.`,
+    what,
+    `Then put it back in the queue with: gh pr merge ${url} --auto (the same method it used before). If it cannot be fixed without a decision only the person can make, ask them with AskUserQuestion, with no option marked recommended.`
+  ].join(`
+`);
+}
+
+// src/urls/merge.ts
+function methodFlag2(m) {
+  if (!m)
+    return;
+  if (m.squashMergeAllowed)
+    return "--squash";
+  if (m.mergeCommitAllowed)
+    return "--merge";
+  if (m.rebaseMergeAllowed)
+    return "--rebase";
+  return;
+}
+var repoArg2 = (url) => /github\.com\/([^/]+\/[^/]+)\/pull\//.exec(url)?.[1];
+var ghMerge2 = async (url, cwd) => {
+  const repo = repoArg2(url);
+  let methods;
+  if (repo) {
+    const r = await runGh(["repo", "view", repo, "--json", "squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed"], { cwd, timeoutMs: 15000 });
+    try {
+      if (r.ok)
+        methods = JSON.parse(r.stdout);
+    } catch {}
+  }
+  const flag = methodFlag2(methods) ?? "--squash";
+  const r = await runGh(["pr", "merge", url, "--auto", flag], { cwd, timeoutMs: 30000 });
+  return r.ok ? { ok: true, text: flag.slice(2) } : { ok: false, text: "gh could not merge it" };
+};
 
 // src/sessions/remote.ts
 import crypto29 from "node:crypto";
@@ -18960,10 +19399,10 @@ function createSessionOps(d) {
 // src/services/service.ts
 import fs79 from "node:fs";
 import path89 from "node:path";
-import { spawn as spawn10, spawnSync as spawnSync24 } from "node:child_process";
+import { spawn as spawn10, spawnSync as spawnSync25 } from "node:child_process";
 var TMUX_SESSION2 = "crosstalk-services";
 var dir8 = () => path89.join(P2.root, "services");
-var fileOf4 = (id) => path89.join(dir8(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+var fileOf5 = (id) => path89.join(dir8(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
 var statusFile2 = (id) => path89.join(dir8(), `${id.replace(/[^A-Za-z0-9._-]/g, "_")}.exit`);
 function readAll3() {
   let names;
@@ -18983,13 +19422,13 @@ function readAll3() {
 }
 function write6(s) {
   fs79.mkdirSync(dir8(), { recursive: true, mode: 448 });
-  const tmp = `${fileOf4(s.id)}.${process.pid}.tmp`;
+  const tmp = `${fileOf5(s.id)}.${process.pid}.tmp`;
   fs79.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 384 });
-  fs79.renameSync(tmp, fileOf4(s.id));
+  fs79.renameSync(tmp, fileOf5(s.id));
 }
 var tmux2 = (args) => {
   try {
-    const r = spawnSync24("tmux", ["-L", TMUX_SOCKET, ...args], { encoding: "utf8", timeout: 1e4, env: cleanEnv(process.env) });
+    const r = spawnSync25("tmux", ["-L", TMUX_SOCKET, ...args], { encoding: "utf8", timeout: 1e4, env: cleanEnv(process.env) });
     return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.status === 0 ? "" : r.stderr ?? ""}`.trim() };
   } catch (e) {
     return { ok: false, out: String(e) };
@@ -19011,7 +19450,7 @@ function tmuxWindows2(t = tmux2) {
 function aliveProc2(pid, start) {
   if (!pidAlive(pid, start))
     return false;
-  const r = spawnSync24("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
+  const r = spawnSync25("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 });
   if (r.status !== 0)
     return r.error ? true : false;
   return !r.stdout.trim().startsWith("Z");
@@ -19286,7 +19725,7 @@ async function createUrls(o) {
           if (s.cwd)
             liveRoots.add(rootOf2(s.cwd));
         } catch {}
-      await tick2(store, { liveRoots, liveSessions: new Set(live.map((s) => s.sessionId)), ...o.onPr ? { onPr: o.onPr } : {} });
+      await tick2(store, { liveRoots, liveSessions: new Set(live.map((s) => s.sessionId)), ...o.onPr ? { onPr: o.onPr } : {}, ...o.onQueue ? { onQueue: o.onQueue } : {} });
       if (now - lastPrune > 60 * 60000) {
         lastPrune = now;
         store.prune();
@@ -21082,7 +21521,7 @@ import path97 from "node:path";
 // src/terminal/status.ts
 import fs85 from "node:fs";
 import path96 from "node:path";
-import { spawn as spawn13, spawnSync as spawnSync25 } from "node:child_process";
+import { spawn as spawn13, spawnSync as spawnSync26 } from "node:child_process";
 
 // src/attention/osc7501.ts
 var enabled2 = (env = process.env) => env.CROSSTALK_OSC7501 === "1";
@@ -21177,24 +21616,24 @@ function appleTint(original, state, amount = 0.25) {
 }
 var dir9 = () => path96.join(P2.root, "tabs");
 var safe5 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
-var fileOf5 = (id) => path96.join(dir9(), `${safe5(id)}.json`);
+var fileOf6 = (id) => path96.join(dir9(), `${safe5(id)}.json`);
 function readTab(id) {
   try {
-    return JSON.parse(fs85.readFileSync(fileOf5(id), "utf8"));
+    return JSON.parse(fs85.readFileSync(fileOf6(id), "utf8"));
   } catch {
     return null;
   }
 }
 function writeTab(f) {
   fs85.mkdirSync(dir9(), { recursive: true, mode: 448 });
-  const tmp = `${fileOf5(f.sessionId)}.${process.pid}.tmp`;
+  const tmp = `${fileOf6(f.sessionId)}.${process.pid}.tmp`;
   fs85.writeFileSync(tmp, JSON.stringify(f), { mode: 384 });
-  fs85.renameSync(tmp, fileOf5(f.sessionId));
+  fs85.renameSync(tmp, fileOf6(f.sessionId));
 }
 var sleepSync8 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 function withFile(id, fn) {
   fs85.mkdirSync(dir9(), { recursive: true, mode: 448 });
-  const lock = `${fileOf5(id)}.lock`;
+  const lock = `${fileOf6(id)}.lock`;
   let held = false;
   for (let i = 0;i < 50 && !held; i++) {
     try {
@@ -21260,7 +21699,7 @@ function startApplier(id, root) {
 var liveSys3 = () => ({
   platform: process.platform,
   run: (s) => {
-    const r = spawnSync25(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 5000 });
+    const r = spawnSync26(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 5000 });
     return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}`.trim() };
   },
   writeTty: (p, data) => {
@@ -21368,7 +21807,7 @@ var appleProfileBgAllScript = [
 ].join(`
 `);
 async function applyLoop(id, sys = liveSys3(), sleep = (ms) => new Promise((r) => setTimeout(r, ms))) {
-  const lock = `${fileOf5(id)}.applier`;
+  const lock = `${fileOf6(id)}.applier`;
   const take = () => {
     try {
       fs85.mkdirSync(dir9(), { recursive: true, mode: 448 });
@@ -21409,7 +21848,7 @@ async function applyLoop(id, sys = liveSys3(), sleep = (ms) => new Promise((r) =
             return;
           if (state === "off" && cur.want === "off") {
             try {
-              fs85.unlinkSync(fileOf5(id));
+              fs85.unlinkSync(fileOf6(id));
             } catch {}
             return;
           }
@@ -21449,7 +21888,7 @@ var cfg = () => ({
 });
 var HOUR5 = 3600000;
 var backoff = (restartsInHour, c = cfg()) => Math.min(60000, c.backoffMs * 2 ** restartsInHour);
-function step(prev, s, now, c = cfg()) {
+function step2(prev, s, now, c = cfg()) {
   const actions = [];
   const wasBroken = prev?.brokenAt !== undefined;
   if (s.state === "stopped") {
@@ -21664,7 +22103,7 @@ function createHealth(d) {
           ...s.exit !== undefined ? { exit: s.exit } : {},
           ...u ? { urlAlive: u.alive, ...u.lastOk ? { urlOk: u.lastOk } : {} } : {}
         };
-        const r = step(all[s.id], seen, t);
+        const r = step2(all[s.id], seen, t);
         for (const a of r.actions) {
           try {
             act(s, r.next ?? all[s.id] ?? { restarts: [] }, a, u);
@@ -21805,27 +22244,27 @@ function startHistory(o) {
 // src/terminal/status.ts
 import fs88 from "node:fs";
 import path99 from "node:path";
-import { spawn as spawn14, spawnSync as spawnSync26 } from "node:child_process";
+import { spawn as spawn14, spawnSync as spawnSync27 } from "node:child_process";
 var dir10 = () => path99.join(P2.root, "tabs");
 var safe6 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
-var fileOf6 = (id) => path99.join(dir10(), `${safe6(id)}.json`);
+var fileOf7 = (id) => path99.join(dir10(), `${safe6(id)}.json`);
 function readTab2(id) {
   try {
-    return JSON.parse(fs88.readFileSync(fileOf6(id), "utf8"));
+    return JSON.parse(fs88.readFileSync(fileOf7(id), "utf8"));
   } catch {
     return null;
   }
 }
 function writeTab2(f) {
   fs88.mkdirSync(dir10(), { recursive: true, mode: 448 });
-  const tmp = `${fileOf6(f.sessionId)}.${process.pid}.tmp`;
+  const tmp = `${fileOf7(f.sessionId)}.${process.pid}.tmp`;
   fs88.writeFileSync(tmp, JSON.stringify(f), { mode: 384 });
-  fs88.renameSync(tmp, fileOf6(f.sessionId));
+  fs88.renameSync(tmp, fileOf7(f.sessionId));
 }
 var sleepSync9 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 function withFile2(id, fn) {
   fs88.mkdirSync(dir10(), { recursive: true, mode: 448 });
-  const lock = `${fileOf6(id)}.lock`;
+  const lock = `${fileOf7(id)}.lock`;
   let held = false;
   for (let i = 0;i < 50 && !held; i++) {
     try {
@@ -21851,7 +22290,7 @@ function withFile2(id, fn) {
 var liveSys4 = () => ({
   platform: process.platform,
   run: (s) => {
-    const r = spawnSync26(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 5000 });
+    const r = spawnSync27(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 5000 });
     return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}`.trim() };
   },
   writeTty: (p, data) => {
@@ -22058,6 +22497,7 @@ function prFields(u, now) {
     ...u.checks ? { checks: u.checks } : {},
     ...u.failed?.length ? { failed: u.failed } : {},
     ...u.draft ? { draft: true } : {},
+    ...u.queued ? { queued: true } : {},
     ...eta ? { eta } : {}
   };
 }
@@ -24476,6 +24916,47 @@ control.listen(P.daemonSock, () => {
     createUrls({
       log,
       live: () => [...sessions.values()].map((s) => ({ sessionId: s.sessionId, cwd: s.cwd })),
+      onQueue: (u, s) => {
+        try {
+          const t = u.thread ? threads2.find(undefined, u.thread) : undefined;
+          const name = t?.meta.value.name;
+          const line = text(u.label, s);
+          recordEvent2(line);
+          const main = coord.mainId();
+          const tell = (text) => {
+            if (main)
+              withStore((items, now) => upsert(items, { id: `queue:${u.id}:${s.kind}:${Date.now()}`, kind: "message", sessionId: main, from: "crosstalk", ...name ? { thread: name } : {}, text, auto: true, ts: now }, now));
+          };
+          if (s.kind === "stuck")
+            tell(`\u25E2 ${line}`);
+          if (s.kind !== "dequeued")
+            return log(`queue: ${line}`);
+          if (s.action === "leave")
+            return tell(`\u25E2 ${line}`);
+          if (s.action === "requeue") {
+            ghMerge2(u.url, u.worktree).then((r) => {
+              const m = r.ok ? `\u25E2 ${line}` : `\u25E2 ${u.label} left the merge queue and could not be put back (${r.text}). It needs a look.`;
+              tell(m);
+              log(`queue: ${m}`);
+            });
+            return;
+          }
+          const prompt = fixPrompt(u.label, u.url, s);
+          const live = [...new Set([...u.sessionId ? [u.sessionId] : [], ...t ? threads2.sessionsIn([t.id]) : []])].filter((sid) => sessions.has(sid) && sid !== main);
+          if (live.length && !isParked2(name)) {
+            const sid = live[0];
+            withStore((items, now) => upsert(items, { id: `tackle:${sid}:queue-${u.id}-${u.queueSeenRemoval ?? Date.now()}`, kind: "attention", sessionId: sid, text: prompt, auto: true, ts: now }, now));
+            tell(`\u25E2 ${line}`);
+          } else if (u.worktree && !isParked2(name)) {
+            const r = spawnAgents2({ task: prompt, name: name ?? "unblock", cwd: u.worktree, background: true, by: "crosstalk" });
+            tell(r.ok ? `\u25E2 ${line} An agent is on it in the background.` : `\u25E2 ${u.label} left the merge queue and needs fixing; crosstalk could not start an agent (${r.text.replace(/^\u25E2 crosstalk: /, "")}).`);
+          } else
+            tell(`\u25E2 ${u.label} left the merge queue and needs fixing${name && isParked2(name) ? ` (${name} is parked, so nothing was started)` : ""}.`);
+          log(`queue: ${line}`);
+        } catch (e) {
+          log(`queue: ${e.message}`);
+        }
+      },
       onPr: (u, c, v) => {
         try {
           attention?.prChanged(u, c, v);
