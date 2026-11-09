@@ -113,7 +113,7 @@ export const isAway = (now = Date.now()) => mode(read(), now) === "away"
 
 /** What stops an agent or was just asked for: never held. */
 export function urgent(it: { id: string; kind: string }): boolean {
-  return it.kind === "session" || it.kind === "restore" || it.kind === "ask" || it.id.startsWith("relay:") || it.id.startsWith("attn:perm:") || it.id.startsWith("attn:circle:") || it.id.startsWith("sess:")
+  return it.kind === "session" || it.kind === "steer" || it.kind === "restore" || it.kind === "ask" || it.id.startsWith("relay:") || it.id.startsWith("attn:perm:") || it.id.startsWith("attn:circle:") || it.id.startsWith("sess:")
 }
 
 /**

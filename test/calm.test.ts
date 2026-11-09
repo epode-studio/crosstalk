@@ -21,6 +21,7 @@ describe("what may interrupt", () => {
     expect(C.urgent({ id: "relay:s:1", kind: "attention" })).toBe(true)
     expect(C.urgent({ id: "attn:perm:x", kind: "attention" })).toBe(true)
     expect(C.urgent({ id: "sess:1", kind: "session" })).toBe(true)
+    expect(C.urgent({ id: "steer:abc", kind: "steer" })).toBe(true) // asked for in this session: never held for a decision window
     expect(C.urgent({ id: "m1", kind: "message" })).toBe(false)
     expect(C.windowOpen({}, 1, NOW)).toBe(true) // the first ever
     expect(C.windowOpen({ windowAt: NOW - 60_000 }, 1, NOW)).toBe(true) // a window stays open two minutes

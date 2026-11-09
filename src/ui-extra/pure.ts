@@ -374,8 +374,12 @@ export type InboxItem = { id: string; kind: string; createdAt: number; from?: st
  * up to half an hour's worth, so nothing old sinks for ever.
  */
 export function inboxScore(it: InboxItem, now: number): number {
+  // What the person just asked for in this session (a tidy, a close, a steer's "Tell it?") outranks
+  // everything, wait bonus included: the person is looking at the session that asked. At 120 an
+  // hour-old agent question (100 + 30) came first, and a steer at 55 came after every one of them.
+  if (it.kind === "session" || it.kind === "steer") return 1000 + Math.min(30, Math.max(0, (now - it.createdAt) / 60_000) / 2)
   const base =
-    it.kind === "session" || it.kind === "restore"
+    it.kind === "restore"
       ? 120
       : it.id.startsWith("relay:") || it.id.startsWith("attn:perm:") || it.id.startsWith("attn:circle:")
         ? 100
@@ -385,7 +389,7 @@ export function inboxScore(it: InboxItem, now: number): number {
             ? 80
             : it.id.startsWith("attn:staff:")
               ? 60
-              : it.kind === "route" || it.kind === "team" || it.kind === "steer"
+              : it.kind === "route" || it.kind === "team"
                 ? 55
                 : it.id.startsWith("open:")
                   ? 40

@@ -312,6 +312,14 @@ describe("the inbox", () => {
       NOW,
     ).map((i) => i.id)
     expect(order).toEqual(["sess:1", "relay:s:1", "m1", "attn:staff:t:1", "open:s:1"]) // the ten-hour-old card has risen past staffing
+    // What you just asked for stays first however long others have waited: an hour-old question
+    // (100 + the full wait bonus) once outranked a tidy confirm made a second ago, and a steer's
+    // "Tell it?" sat at 55, behind every agent question, so neither picker ever came up.
+    const asked = pure.inboxOrder(
+      [it("relay:s:2", "attention", 60), it("attn:perm:x", "attention", 45), it("steer:abc", "steer", 0), it("sess:2", "session", 0)],
+      NOW,
+    ).map((i) => i.id)
+    expect(asked.slice(0, 2).sort()).toEqual(["sess:2", "steer:abc"])
     expect(pure.inboxLine({ id: "relay:s:1", kind: "attention", createdAt: NOW - 12 * MIN, question: "organic-case-81 asks: Keep the Pi flat?", from: "organic-case-81" }, NOW)).toBe("Organic case 81 — Keep the Pi flat? · 12m") // plain words: the work's name, the question, how long
   })
 })
