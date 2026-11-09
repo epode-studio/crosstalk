@@ -336,7 +336,7 @@ describe("one window per repository", () => {
     const s = o.steps[0].input!
     expect(s).toContain(`\tif not (exists window id 42) then`)
     expect(s).toContain(`\t\tset index of window id 42 to 1`)
-    expect(s).toContain(`\t\ttell application "System Events" to keystroke "t" using command down`)
+    expect(s).toContain(`\t\ttell application "System Events" to key code 17 using command down`)
     expect(s).toContain(`\t\t\tdo script "cd /r/wt/auth-1 && claude 'fix the '\\\\''auth'\\\\'' bug'" in selected tab of front window`)
   })
   test("Terminal.app with no window for the repo: a new window, the rest as its tabs", () => {

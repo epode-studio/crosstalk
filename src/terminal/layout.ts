@@ -131,7 +131,7 @@ export function openTabs(tabs: Tab[], o: { anchor: Term | null; current: Term; e
     case "ghostty": {
       const L = R.ghosttyScript(typed)
       // With a Ghostty window already holding the repo, every one is a tab (Cmd-T) in the front window.
-      const input = anchor ? L.replace(`keystroke "n" using command down`, `keystroke "t" using command down`) : L
+      const input = anchor ? L.replace(`key code 45 using command down`, `key code 17 using command down`) : L
       return { kind, steps: [{ cmd: "osascript", args: ["-"], input }], needsAccessibility: true, where: anchor ? "the front Ghostty window" : "a new Ghostty window", typed }
     }
     case "kitty": {

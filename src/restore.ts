@@ -743,7 +743,7 @@ export function appleNewTabLines(c: string): string[] {
     `\t\t\tset crosstalkTabs to count of tabs of front window`,
     `\t\t\tset crosstalkTty to tty of selected tab of front window`,
     `\t\tend tell`,
-    `\t\ttell application "System Events" to keystroke "t" using command down`,
+    `\t\ttell application "System Events" to key code 17 using command down`,
     `\t\tdelay 0.6`,
     `\t\ttell application "Terminal"`,
     `\t\t\tif (id of front window) is not crosstalkWin or (count of tabs of front window) is not (crosstalkTabs + 1) or (tty of selected tab of front window) is crosstalkTty then error "the new tab did not open where expected" number 1001`,
@@ -813,7 +813,7 @@ export function ghosttyScript(cmds: string[]): string {
     ]
     L.push(
       ...front,
-      `\ttell application "System Events" to keystroke ${i === 0 ? `"n"` : `"t"`} using command down`,
+      `\ttell application "System Events" to key code ${i === 0 ? 45 : 17} using command down`,
       `\tdelay 0.8`,
       ...front,
       `\ttell application "System Events"`,

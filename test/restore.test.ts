@@ -235,7 +235,7 @@ describe("Terminal.app", () => {
 
   test("Terminal is brought to the front before Cmd-T, and one tab that misses costs only that tab", () => {
     const s = R.appleTerminalScript(["claude a", "claude b", "claude c"], true)
-    const i = s.indexOf(`keystroke "t"`)
+    const i = s.indexOf(`key code 17`)
     expect(s.slice(0, i)).toContain(`set frontmost of process "Terminal" to true`)
     expect(s.slice(0, i).indexOf("set frontmost")).toBeLessThan(s.slice(0, i).indexOf("if not frontmost then error"))
     expect(s).toContain(`if errNum is 1001 then`)

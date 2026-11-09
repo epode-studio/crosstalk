@@ -309,7 +309,7 @@ describe("8. unattended restores never type keys into whatever is in front", () 
 
   test("Cmd-T in Terminal.app is checked before anything is typed in the selected tab", () => {
     const s = R.appleTerminalScript(["claude a", "claude b"], true)
-    const i = s.indexOf(`keystroke "t"`)
+    const i = s.indexOf(`key code 17`)
     expect(s.slice(0, i)).toContain("if not frontmost then error")
     const after = s.slice(i)
     const check = after.indexOf("count of tabs of front window) is not (crosstalkTabs + 1)")
