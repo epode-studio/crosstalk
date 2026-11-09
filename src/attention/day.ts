@@ -12,6 +12,7 @@
 // Everything here is read from what crosstalk keeps, and handed to the agent
 // as data to show, never as instructions.
 
+import * as Park from "./park.ts"
 import fs from "node:fs"
 import path from "node:path"
 import { P } from "../config.ts"
@@ -53,7 +54,8 @@ export function morning(now: number): string | null {
   if (!d.lastSeen || now - d.lastSeen < QUIET_MS() || (d.morningAt && d.morningAt > d.lastSeen)) return null
   write({ ...d, morningAt: now })
   const s = Summary.gather(d.lastSeen, { now })
-  return `${Summary.short(s, now, "Since you were last here").replace(/ Say "what happened while I was away" for the details\.$/, "")} Say "plan my day" to pick today's work, or "pick up where I left off".`
+  const parked = Park.names()
+  return `${Summary.short(s, now, "Since you were last here").replace(/ Say "what happened while I was away" for the details\.$/, "")} Say "plan my day" to pick today's work, or "pick up where I left off".${parked.length ? ` Parked: ${parked.join(", ")}.` : ""}`
 }
 
 type ThreadView = { name: string; waiting: number; open: string[]; sessions: number; recap: string }
@@ -71,7 +73,8 @@ function threads(): ThreadView[] {
         .map((n) => n.text.replace(/\s+/g, " ").slice(0, 100))
       return { name, waiting, open, sessions: M.live(t, "sessions").length, recap: M.recap(t).replace(/\s+/g, " ").slice(0, 160) }
     })
-    .filter((t) => t.waiting || t.open.length || t.sessions)
+    // Parked threads (src/attention/park.ts) stay out of the day's plan until they are back.
+    .filter((t) => (t.waiting || t.open.length || t.sessions) && !Park.isParked(t.name))
     .sort((a, b) => b.waiting - a.waiting || b.open.length - a.open.length)
 }
 
