@@ -6,6 +6,7 @@ import { P } from "../config.ts"
 import type { ThreadService } from "../threads/service.ts"
 import type { Coordinator } from "../coordinator.ts"
 import * as spawn from "../spawn.ts"
+import * as Park from "./park.ts"
 import * as Ctl from "../sessions/control.ts"
 import * as G from "../gather.ts"
 import { AttentionService, type Reg } from "./service.ts"
@@ -43,12 +44,19 @@ export function createAttention(o: {
     // person's own sessions, so it is theirs, kept in the service's own state,
     // never the repo's shared RULES.md.
     spawn: (x) => {
-      const r = spawn.spawnAgents({ task: x.task, name: x.name, cwd: x.cwd, by: x.by, background: x.background, thread: x.thread })
+      const r = spawn.spawnAgents({ task: x.task, name: x.name, cwd: x.cwd, by: x.by, background: x.background, thread: x.thread, noQueue: true })
       // No way to run it out of sight here: a tab of the person's terminal instead.
       if (!r.ok && x.background && !x.noTab && !r.agents.length && /background/i.test(r.text)) return spawn.spawnAgents({ task: x.task, name: x.name, cwd: x.cwd, by: x.by, background: false, thread: x.thread })
       return r
     },
     background: backgroundOf,
+    drainQueue: () => {
+      const working = spawn.readSpawned().filter((r) => r.background && !r.removedAt && !!r.tmux && spawn.tmuxHas(r.tmux)).length
+      const started = Park.drain(working, (x) => spawn.spawnAgents({ task: x.task, name: x.name, cwd: x.cwd, by: x.by, background: true, thread: x.thread as any, noQueue: true }).agents.length > 0, {
+        threadOf: (x) => (x.thread as { name?: string } | undefined)?.name,
+      })
+      return started.map((x) => x.name ?? x.task.slice(0, 40))
+    },
     agentAlive: (name) => spawn.tmuxHas(name),
     // Closing on crosstalk's own judgment: the same close a person's "close billing" makes (archived, resumable).
     closeSession: async (sid) => {

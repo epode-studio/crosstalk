@@ -554,7 +554,7 @@ async function registerSession() {
     systemMessage = [systemMessage, String(registered.systemMessage)].filter(Boolean).join("\n")
   // Updated while this session ran: said once, so a missing feature is not a mystery.
   if (eventName === "UserPromptSubmit" && restoreClient === "claude") {
-    const m = staleNotice(sessionId, pluginVersion(root))
+    const m = staleNotice(sessionId ?? "", pluginVersion(root))
     if (m) systemMessage = [systemMessage, m].filter(Boolean).join("\n")
   }
 }

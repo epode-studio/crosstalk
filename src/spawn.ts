@@ -28,6 +28,7 @@ import { git as liveGit, repoName, slug, worktrees, type Git, type Worktree } fr
 import { openForRepo, type Tab } from "./terminal/layout.ts"
 import { refuseBot } from "./ui-extra/bots.ts"
 import * as bgx from "./attention/background.ts"
+import * as Park from "./attention/park.ts"
 import { focusSession } from "./attention/show.ts"
 import * as St from "./attention/staffing.ts"
 import type { View } from "./attention/dispose.ts"
@@ -359,6 +360,8 @@ export function spawnAgents(o: {
    * Without a view the task is the whole prompt (staffing writes its own brief).
    */
   thread?: ThreadCtx
+  /** Past the cap on agents working at once (src/attention/park.ts), start anyway: the queue itself, and crosstalk's own board. */
+  noQueue?: boolean
 }): SpawnOutcome {
   const bot = refuseBot(o.peer, "start an agent on this machine")
   if (bot) return { ok: false, text: `◢ crosstalk: ${bot}`, agents: [] }
@@ -384,6 +387,20 @@ export function spawnAgents(o: {
   const claudeBg = !!o.background && !which("tmux", env) && bgx.claudeBackground(claudeBin, env).bg
   if (o.background && !which("tmux", env) && !claudeBg)
     return { ok: false, text: "◢ crosstalk: background agents run in tmux, which is not installed here. Install tmux, or start the agent in a tab instead.", agents: [] }
+  // At most N agents at once: past it, a background agent waits its turn and starts by itself when one ends.
+  if (o.background && !o.noQueue) {
+    const working = readSpawned().filter((r) => r.background && !r.removedAt && !!r.tmux && tmuxHas(r.tmux, env)).map((r) => r.name)
+    const max = Park.wipMax(env)
+    if (working.length + Math.max(1, o.count ?? 1) > max) {
+      let n = 0
+      for (let i = 0; i < Math.max(1, Math.min(o.count ?? 1, 8)); i++) n = Park.enqueue({ task, name: o.name, cwd: o.cwd, by: o.by, thread: o.thread })
+      return {
+        ok: true,
+        text: `◢ crosstalk: ${working.length} agents are already working (${working.join(", ")}), and ${max} at once is the most. This one waits its turn (${n} waiting) and starts by itself when one finishes.`,
+        agents: [],
+      }
+    }
+  }
 
   const prompt = o.thread?.view ? St.threadBrief(o.thread.view, task, { from: o.thread.from }) : task
   const plans = planSpawn({

@@ -53,6 +53,7 @@ import * as Pm from "./permission.ts"
 import { BG_ENV } from "./background.ts"
 import * as PP from "../services/postpone.ts"
 import * as Relay from "./relay.ts"
+import * as Park from "./park.ts"
 
 export type Reg = { sessionId: string; name: string; cwd: string; transcript?: string; pid?: number; seenAt?: number }
 
@@ -69,6 +70,8 @@ export type Deps = {
   /** Repo-relative path → when this session last touched it. */
   touched: (sessionId: string) => Record<string, number> | undefined
   repoOf: (sessionId: string) => string | undefined
+  /** Start the agents that waited their turn, while there is room; their names. */
+  drainQueue?: () => string[]
   spawn: (o: { task: string; name: string; cwd: string; by?: string; background: boolean; noTab?: boolean; thread?: { id: string; name: string; view?: ReturnType<typeof M.view> } }) => { ok: boolean; text: string; agents: { name: string }[] }
   /** Whether a background agent is still running (crosstalk's tmux has its session). */
   agentAlive?: (name: string) => boolean
@@ -309,6 +312,10 @@ export class AttentionService {
       if (this.now() - this.lastWorkCheck >= Math.max(0, Number(this.env.CROSSTALK_WORK_EVERY_MS ?? 60_000))) {
         this.lastWorkCheck = this.now()
         this.workBoard()
+        // Agents that waited their turn (src/attention/park.ts): started while there is room.
+        try {
+          for (const n of this.d.drainQueue?.() ?? []) this.d.log(`attention: ${n} had waited its turn and has started`)
+        } catch {}
       }
     } catch (e) {
       this.d.log(`attention: ${(e as Error).message}`)
@@ -778,7 +785,8 @@ export class AttentionService {
         .map((t) => t.id),
     )
     while (p.running.length < p.max) {
-      const next = W.pick(tasks, { threads: p.threads, tried: p.tried ?? [], running: p.running, me: this.d.threads.label, busyThreads })
+      const parked = Park.read()
+      const next = W.pick(tasks.filter((x) => !Park.isParked(x.thread, parked)), { threads: p.threads, tried: p.tried ?? [], running: p.running, me: this.d.threads.label, busyThreads })
       if (!next) break
       const t = this.d.threads.thread(next.threadId)
       // A checkout of its repository: where a session of the thread works, else the repo's known root (as staffing does).

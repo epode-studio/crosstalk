@@ -13,6 +13,7 @@
 // calls back into them through Deps, so daemon.ts keeps a few call sites and
 // nothing else.
 
+import * as Park from "./attention/park.ts"
 import crypto from "node:crypto"
 import path from "node:path"
 import type { Identity, Peer, Held } from "./config.ts"
@@ -129,7 +130,9 @@ export class Coordinator {
 
   /** What one session's mod shows, out of every open item (main.ts itemsFor). */
   itemsFor(items: Record<string, ui.UiItem>, sid: string): ui.UiItem[] {
-    const open = Object.values(items).filter((i) => !ui.FINAL.has(i.state))
+    // A parked thread's items wait out of sight (src/attention/park.ts), kept for when it is back.
+    const parked = Park.read()
+    const open = Object.values(items).filter((i) => !ui.FINAL.has(i.state) && !Park.held(i, parked))
     return mainS.itemsFor(open, sid, this.mainId())
   }
 
