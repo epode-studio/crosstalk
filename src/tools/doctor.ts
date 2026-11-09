@@ -5,7 +5,7 @@ import { bool, def, num, only, type Tool } from "./kit.ts"
 
 const ACTIONS = ["report", "stats", "intro", "open_items", "auto_merge"] as const
 
-const description = `What is wrong with crosstalk and how to fix it. Actions: report (identity, daemon, relay, this session's inbox, sessions to restore, macOS permissions, each with its fix: show it, then help with whatever is marked ✗; for "is crosstalk OK?", "why aren't messages arriving?"); stats (local measurements, never sent anywhere: time to merge, human minutes, questions answered by rules, tokens to first edit; relay the text); intro ("what can crosstalk do?", "how do I use this?": things to say, to show as they are); open_items (on: false when the user says to stop tackling a reply's Open list by itself, true to start); auto_merge (on: false to stop merging green PRs by itself, true to start).`
+const description = `What is wrong with crosstalk and how to fix it. Actions: report (identity, daemon, relay, this session's inbox, sessions to restore, macOS permissions, each with its fix: show it, then help with whatever is marked ✗; for "is crosstalk OK?", "why aren't messages arriving?"); stats (local measurements, never sent anywhere: time to merge, human minutes, questions answered by rules, tokens to first edit; relay the text); intro ("what can crosstalk do?", "how do I use this?": things to say, to show as they are); open_items, auto_merge (on: false to stop tackling Open lists, or merging green PRs, by itself; true to start).`
 
 export const doctor: Tool = {
   actions: ACTIONS,

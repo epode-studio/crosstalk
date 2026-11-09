@@ -169,6 +169,11 @@ you, it asks.
 - An agent that keeps spending without changing anything (five dollars in
   half an hour, no edits) gets one question in main: stop it, or let it run.
 - Questions from a session that has since ended are put away by themselves.
+- Your pull request turns green and is approved: one question in main, merge
+  it? Pick *Always* and green PRs merge by themselves, one quiet line each.
+  *"Stop merging by itself"* goes back to asking.
+- When a pull request in a shared thread merges or its checks fail, your
+  teammates in that thread hear it once, in a line.
 
 **Less to carry**
 - *"I'm focusing for an hour."* Only what stops an agent interrupts you; the
