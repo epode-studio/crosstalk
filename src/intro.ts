@@ -21,6 +21,7 @@ export const THINGS: Group[] = [
       `"show me the board" — every thread on one page in your browser: what waits on you, tasks, decisions, PRs`,
       `"work through the open tasks" — agents take the open tasks by themselves, two at a time ("stop working the board" to stop)`,
       `"close billing" · "resume the one where I fixed login" · "call this one payments"`,
+      `"park billing" — out of sight until you need it; "unpark billing" brings it back`,
       `"restore them" — after a restart, every session back in its tab`,
       `"make this the main session" — your inbox: questions come there, one at a time`,
       `"plan my day" — the open work, to pick today's few threads; agents take those`,
@@ -32,7 +33,7 @@ export const THINGS: Group[] = [
   {
     title: "More hands",
     lines: [
-      `"put two more agents on auth" — each in its own copy of the code`,
+      `"put two more agents on auth" — each in its own copy of the code; four at once at most, the rest wait their turn`,
       `"run the dev server" — it keeps running when the session ends, at auth.localhost`,
       `"show me the auth page before and after"`,
     ],

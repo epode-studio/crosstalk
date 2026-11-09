@@ -48,6 +48,11 @@ claude plugin marketplace add epode-studio/crosstalk
 claude plugin install crosstalk@epode
 ```
 
+Updates: tell the person that, in any Claude session, `/plugin` →
+**Marketplaces** → **epode** → **Enable auto-update** installs each release by
+itself from then on. Turning it on is theirs to do; do not edit their settings
+for it.
+
 **Codex**
 
 ```

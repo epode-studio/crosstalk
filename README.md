@@ -109,6 +109,9 @@ you, it asks.
   duplicates into one. One question first; anything closed can come back.
 - *"Close billing."* · *"Resume the one where I fixed login."* · *"Call this
   one payments."*
+- *"Park billing."* Out of sight until you need it: nothing new starts in it
+  and its questions wait, kept, not lost. *"Unpark billing"* brings it all
+  back. Only an agent stuck on a permission still reaches you.
 - *"Restore them."* After a restart or a crash, every session back in its
   tab, mid-conversation.
 - *"Make this the main session."* Your inbox: every question, from crosstalk,
@@ -119,7 +122,9 @@ you, it asks.
 
 **More hands**
 - *"Put two more agents on auth."* Each gets its own copy of the code and
-  already knows what the work is about.
+  already knows what the work is about. Four agents work at once at most;
+  past that a new one waits its turn and starts by itself when one finishes
+  (`CROSSTALK_WIP` changes the number).
 - *"Run the dev server."* It keeps running after the session ends, at a name
   like `auth.localhost` instead of a port number.
 - *"Show me the auth page before and after."*
@@ -137,9 +142,11 @@ you, it asks.
 - *"Ship it."* Another agent reviews it first, and anything risky goes out
   behind a switch you turn on step by step.
 - No more *"tackle all open"*. When a reply ends with an Open list, crosstalk
-  keeps each item as a task in the thread and asks once: tackle them? Pick
-  *Always* and the agent just carries on with them from then on. *"Stop
-  tackling open items by itself"* turns that off.
+  keeps each item as a task in the thread and the agent carries on with the
+  new ones by itself, three rounds at most before it waits for you. What only
+  you can do comes to main as a short to-do; what only waits (CI, a review)
+  is left alone, and picked up by itself once it moves. *"Stop tackling open
+  items by itself"* turns that off.
 
 **Your day**
 - The first session of the day says what happened since you were last
@@ -159,6 +166,9 @@ you, it asks.
   tab, at a natural break. *"Stop starting fresh by itself"* compacts as usual.
 - New agents work out of sight while a main session is open; their questions
   come to main.
+- An agent that keeps spending without changing anything (five dollars in
+  half an hour, no edits) gets one question in main: stop it, or let it run.
+- Questions from a session that has since ended are put away by themselves.
 
 **Less to carry**
 - *"I'm focusing for an hour."* Only what stops an agent interrupts you; the
@@ -485,8 +495,10 @@ claude plugin update crosstalk@epode
 ```
 
 Sessions you start afterwards run the new version, and the first of them
-replaces crosstalk's background process if it is older. Sessions already open
-keep the old version until you restart them.
+replaces crosstalk's background process if it is older (if the new one will
+not start, the old one comes back and that version is left alone for an
+hour). Sessions already open keep the old version until you restart them,
+and each says so once, so nothing new is a mystery.
 
 If `claude plugin marketplace list` shows `epode` as a **Folder** rather than
 GitHub, it was added from a local copy and never sees a release. Switch it once;
