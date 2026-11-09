@@ -224,6 +224,82 @@ describe("the throttle", () => {
   })
 })
 
+describe("titles off macOS: OSC 2 to the tty, never osascript", () => {
+  const sysFor = (platform: NodeJS.Platform, term: Term) => {
+    const ran: string[] = []
+    const wrote: string[] = []
+    const sys: import("../src/terminal/status.ts").Sys = {
+      platform,
+      run: (s) => (ran.push(s.cmd), { ok: true, out: "done" }),
+      writeTty: (_p, d) => (wrote.push(d), true),
+      term: () => term,
+    }
+    return { sys, ran, wrote }
+  }
+  const named = { sessionId: "t", want: "waiting" as const, wantAt: 0, title: "🟣 auth · auth-1" }
+  const titles = (w: string[]) => w.filter((d) => d.startsWith(`${ESC}]2;`))
+
+  test("the sign goes into the title by OSC 2, in GNOME Terminal, Konsole, Alacritty, kitty", () => {
+    for (const term of [{ gnome: {}, tty: "/dev/pts/3" }, { konsole: {}, tty: "/dev/pts/3" }, { alacritty: {}, tty: "/dev/pts/3" }, { kitty: { window: "1", listenOn: "unix:/k" }, tty: "/dev/pts/3" }] as Term[]) {
+      const { sys, ran, wrote } = sysFor("linux", term)
+      S.applyOnce("t", "waiting", named, sys)
+      expect(titles(wrote)).toEqual([`${ESC}]2;${S.signed("🟣 auth · auth-1", "waiting")}\x07`])
+      expect(ran).not.toContain("osascript")
+    }
+    // Ended: the title given back to the terminal.
+    const { sys, wrote } = sysFor("linux", { gnome: {}, tty: "/dev/pts/3" })
+    S.applyOnce("t", "off", named, sys)
+    expect(titles(wrote)).toEqual([`${ESC}]2;\x07`])
+  })
+  test("not inside tmux, not on Windows, not for a tab crosstalk did not name, not on macOS but Terminal.app", () => {
+    const cases: [NodeJS.Platform, Term, typeof named | null][] = [
+      ["linux", { tmux: { pane: "%1" }, tty: "/dev/pts/3" }, named],
+      ["win32", { wt: { session: "x" }, tty: "/dev/pty0" }, named],
+      ["linux", { gnome: {}, tty: "/dev/pts/3" }, null],
+      ["darwin", { program: "iTerm.app", iterm: { id: "w0t0p0:x" }, tty: "/dev/ttys3" }, named],
+    ]
+    for (const [platform, term, f] of cases) {
+      const { sys, ran, wrote } = sysFor(platform, term)
+      S.applyOnce("t", "working", f, sys)
+      expect(titles(wrote)).toEqual([])
+      if (platform !== "darwin") expect(ran).not.toContain("osascript")
+    }
+  })
+  test("a Terminal.app record seen on Linux or Windows never reaches osascript", () => {
+    for (const platform of ["linux", "win32"] as const) {
+      const { sys, ran } = sysFor(platform, { program: "Apple_Terminal", tty: "/dev/ttys3", apple: { window: 1, tab: 1 } })
+      process.env.CROSSTALK_TAB_COLOUR = "1"
+      for (const st of ["working", "waiting", "done", "off"] as const) S.applyOnce("t", st, { ...named, appleOriginal: "1,2,3" }, sys)
+      delete process.env.CROSSTALK_TAB_COLOUR
+      expect(ran).toEqual([])
+    }
+  })
+  test("nameTab: OSC 2 off macOS, osascript only on macOS for Terminal.app, nothing on Windows", () => {
+    const put = (id: string, terminal: Term) => R.writeRec({ sessionId: id, cwd: "/w", client: "claude", pid: 1, startedAt: 1, seenAt: 1, terminal })
+    put("nl", { gnome: {}, tty: "/dev/pts/7" })
+    const wrote: [string, string][] = []
+    const spawned: string[] = []
+    const o = (platform: NodeJS.Platform) => ({ platform, writeTty: (p: string, d: string) => (wrote.push([p, d]), true), spawnIt: (i: string) => void spawned.push(i) })
+    expect(S.nameTab("nl", "auth · auth-1", o("linux"))).toBe(true)
+    expect(wrote).toEqual([["/dev/pts/7", `${ESC}]2;auth · auth-1\x07`]])
+    expect(S.nameTab("nl", "auth · auth-1", o("linux"))).toBe(false) // unchanged: nothing written
+    put("nw", { wt: { session: "x" }, tty: "/dev/pty1" })
+    expect(S.nameTab("nw", "auth", o("win32"))).toBe(false)
+    put("na", { program: "Apple_Terminal", tty: "/dev/ttys2" })
+    expect(S.nameTab("na", "auth", o("darwin"))).toBe(true)
+    expect(spawned).toHaveLength(1)
+    expect(spawned[0]).toContain(`set custom title of t to "auth"`)
+    expect(wrote).toHaveLength(1)
+    // Off macOS even a Terminal.app record goes by OSC 2, never osascript.
+    expect(S.nameTab("na", "auth 2", o("linux"))).toBe(true)
+    expect(spawned).toHaveLength(1)
+    expect(wrote.at(-1)).toEqual(["/dev/ttys2", `${ESC}]2;auth 2\x07`])
+  })
+  test("nothing in a title can end the sequence early", () => {
+    expect(S.oscTitle("a\x07b\x1b]0;evil\x1b\\c")).toBe(`${ESC}]2;a b ]0;evil \\c\x07`)
+  })
+})
+
 // --- layout ------------------------------------------------------------------------
 
 const env = (o: Partial<Env> = {}): Env => ({
@@ -280,6 +356,30 @@ describe("one window per repository", () => {
       "cli", "spawn", "--pane-id", "5", "--cwd", "/r/wt/auth-1", "--", "claude", "fix the 'auth' bug",
     ])
     expect(L.openTabs([tab], { anchor: null, current: { wezterm: { pane: "5" } }, env: env(), repo: "/r" }).steps[0].args.slice(0, 3)).toEqual(["cli", "spawn", "--new-window"])
+  })
+  test("GNOME Terminal, Konsole and Windows Terminal: a tab in the window in front", () => {
+    const two = [tab, { ...tab, cwd: "/r/wt/auth-2" }]
+    const g = L.openTabs(two, { anchor: { gnome: { screen: "/s" } }, current: {}, env: env(), repo: "/r" })
+    expect(g.kind).toBe("gnome")
+    expect(g.steps).toEqual([
+      { cmd: "gnome-terminal", args: ["--tab", "--working-directory=/r/wt/auth-1", "--", "claude", "fix the 'auth' bug"] },
+      { cmd: "gnome-terminal", args: ["--tab", "--working-directory=/r/wt/auth-2", "--", "claude", "fix the 'auth' bug"] },
+    ])
+    const k = L.openTabs([tab], { anchor: null, current: { konsole: { session: "/Sessions/1" } }, env: env(), repo: "/r" })
+    expect(k.steps).toEqual([{ cmd: "konsole", args: ["--new-tab", "--workdir", "/r/wt/auth-1", "-e", "claude", "fix the 'auth' bug"], detach: true }])
+    const w = L.openTabs([{ cwd: "C:\\r\\a;b", argv: ["claude", "x; y"] }], { anchor: null, current: { wt: { session: "s" } }, env: env({ platform: "win32" }), repo: "/r" })
+    expect(w.steps).toEqual([{ cmd: "wt.exe", args: ["-w", "0", "new-tab", "-d", "C:\\r\\a\\;b", "claude", "x\\; y"] }])
+    // kitty without kitten: `kitty @`
+    expect(L.openTabs([tab], { anchor: { kitty: { window: "9", listenOn: "unix:/k" } }, current: {}, env: env({ has: (b) => b === "kitty" }), repo: "/r" }).steps[0].cmd).toBe("kitty")
+  })
+  test("off macOS, a tab is never opened through osascript, and inside tmux it is a tmux window", () => {
+    for (const platform of ["linux", "win32"] as const)
+      for (const current of [{ program: "Apple_Terminal" }, { program: "ghostty" }, { program: "iTerm.app", iterm: { id: "w0t0p0:x" } }, { gnome: {} }, { alacritty: {} }] as Term[]) {
+        const o = L.openTabs([tab], { anchor: null, current, env: env({ platform }), repo: "/r" })
+        expect(o.steps.some((s) => s.cmd === "osascript")).toBe(false)
+      }
+    const o = L.openTabs([tab], { anchor: null, current: { tmux: { pane: "%1" }, alacritty: {} }, env: env(), repo: "/r", tmuxSession: () => false })
+    expect(o.kind).toBe("tmux")
   })
   test("a terminal nothing can drive: the commands to paste", () => {
     const o = L.openTabs([tab], { anchor: null, current: { program: "xterm" }, env: env(), repo: "/r" })

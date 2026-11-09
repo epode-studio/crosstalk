@@ -12,8 +12,12 @@
 //              in Terminal.app the tab whose tty a crosstalk session ended on
 //              in the last day, which runs nothing now and shows Claude Code's
 //              banner, closed with Cmd-W (appleCloseIdleTabScript); in tmux
-//              the pane, when what runs in it is a bare shell. A tab running
-//              anything is never closed. Other terminals keep their tabs.
+//              the pane, when what runs in it is a bare shell; in kitty
+//              (with remote control) and WezTerm the window or pane, when
+//              only a shell is in the foreground of its tty. A tab running
+//              anything is never closed. Other terminals (GNOME Terminal,
+//              Konsole, Windows Terminal, …) keep their tabs, and the person
+//              is told.
 //   windows    with `merge`, Terminal.app's Window > Merge All Windows, so
 //              every window becomes a tab of one (System Events, which
 //              restore already needs).
@@ -28,7 +32,7 @@ import * as ui from "../uistate.ts"
 
 export const IDLE_MIN = () => Math.max(1, Number(process.env.CROSSTALK_TIDY_IDLE_MIN ?? 20))
 
-const SHELLS = new Set(["zsh", "-zsh", "bash", "-bash", "fish", "-fish", "sh", "-sh", "login", "nu", "pwsh"])
+const SHELLS = new Set(["zsh", "-zsh", "bash", "-bash", "fish", "-fish", "sh", "-sh", "login", "nu", "pwsh", "dash", "-dash", "ksh", "-ksh"])
 
 export type Offer = { id: string; name: string; idleMin: number; why: string }
 
@@ -140,7 +144,8 @@ export function appleCloseIdleTabScript(tty: string, mark = "claude"): string {
     `\tif (tty of selected tab of front window) is not ${q} then return "not-front"`,
     `\tif busy of selected tab of front window then return "busy"`,
     `end tell`,
-    `tell application "System Events" to keystroke "w" using command down`,
+    // Key code 13 is the W key wherever it sits: keystroke "w" types whatever key makes a "w" on AZERTY or Dvorak.
+    `tell application "System Events" to key code 13 using command down`,
     `delay 0.3`,
     `return "closed"`,
   ].join("\n")
@@ -161,6 +166,18 @@ export const appleMergeScript = [
 
 const tmuxBase = (t: NonNullable<Term["tmux"]>) => (t.socket ? ["-S", t.socket] : [])
 
+/** What runs on a tty, with its state: `+` marks the foreground process group. */
+export const ttyProbe = (tty: string): Step => ({ cmd: "ps", args: ["-o", "stat=,comm=", "-t", tty.replace(/^\/dev\//, "")] })
+
+/** From ttyProbe's answer: the foreground of the tty is a shell and nothing else. */
+export function onlyShell(out: string): boolean {
+  const fg = out
+    .split("\n")
+    .map((l) => l.trim().split(/\s+/))
+    .filter(([stat, comm]) => stat?.includes("+") && comm)
+  return fg.length > 0 && fg.every(([, ...comm]) => SHELLS.has(comm.join(" ").split("/").pop()!))
+}
+
 /** The steps that close a tab left with only its shell, per terminal. Empty: this terminal keeps its tab. */
 /**
  * `mark`: text the tab must show to be closed. A session that just ended is
@@ -180,10 +197,38 @@ export function closeTabSteps(t: Term, platform: NodeJS.Platform = process.platf
       },
     ]
   }
-  if (R.kindOf(t) === "apple" && t.tty && platform === "darwin")
+  const k = R.kindOf(t)
+  if (k === "apple" && t.tty && platform === "darwin")
     return [{ close: { cmd: "osascript", args: ["-"], input: appleCloseIdleTabScript(t.tty, mark) }, closesIf: () => true }]
+  // kitty and WezTerm close by their own CLI, after `ps` says only a shell is
+  // left in front on the tty. kitty closes the window, not the whole tab, so
+  // a split beside it is never taken along; a tab with one window goes with it.
+  if (k === "kitty" && t.kitty?.window && t.kitty.listenOn && t.tty && platform !== "win32") {
+    const to = ["@", "--to", t.kitty.listenOn]
+    const id = `id:${t.kitty.window}`
+    return [
+      {
+        probe: ttyProbe(t.tty),
+        ...(mark !== "claude" ? { mark: { cmd: "kitten", args: [...to, "get-text", "--match", id, "--extent", "all"] } } : {}),
+        close: { cmd: "kitten", args: [...to, "close-window", "--match", id] },
+        closesIf: onlyShell,
+      },
+    ]
+  }
+  if (k === "wezterm" && t.wezterm?.pane && t.tty && platform !== "win32")
+    return [
+      {
+        probe: ttyProbe(t.tty),
+        ...(mark !== "claude" ? { mark: { cmd: "wezterm", args: ["cli", "get-text", "--pane-id", t.wezterm.pane, "--start-line", "-400"] } } : {}),
+        close: { cmd: "wezterm", args: ["cli", "kill-pane", "--pane-id", t.wezterm.pane] },
+        closesIf: onlyShell,
+      },
+    ]
   return []
 }
+
+/** Whether crosstalk can close this tab at all, here. */
+export const closable = (t: Term, platform: NodeJS.Platform = process.platform) => closeTabSteps(t, platform).length > 0
 
 /** Close a tab left with only its shell. True when it was closed. */
 export function closeTab(t: Term, run: (s: Step) => { ok: boolean; out: string }, platform: NodeJS.Platform = process.platform): boolean {
@@ -197,7 +242,7 @@ export const WHY_OPEN: Record<string, string> = {
   "not-front": "Terminal could not be brought to the front",
   gone: "it was already closed",
   "no-shell": "something other than a shell runs in it",
-  unsupported: "this terminal's tabs are left as they are",
+  unsupported: "this terminal cannot close a tab for crosstalk, so close it by hand",
 }
 
 export function closeTabWhy(t: Term, run: (s: Step) => { ok: boolean; out: string }, platform: NodeJS.Platform = process.platform, mark = "claude"): string {
@@ -226,13 +271,13 @@ export function closeTabWhy(t: Term, run: (s: Step) => { ok: boolean; out: strin
  * Tabs a crosstalk session ended in, in the last day, that may be left with
  * only their shell: the ended records, newest first, one per tab.
  */
-export function leftoverTabs(recs: Rec[], liveTtys: Set<string>): Rec[] {
+export function leftoverTabs(recs: Rec[], liveTtys: Set<string>, platform: NodeJS.Platform = process.platform): Rec[] {
   const seen = new Set<string>()
   const out: Rec[] = []
   for (const r of [...recs].filter((r) => r.endedAt).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0))) {
     const key = r.terminal.tmux?.pane ? `tmux:${r.terminal.tmux.socket ?? ""}:${r.terminal.tmux.pane}` : r.terminal.tty
     if (!key || seen.has(key) || (r.terminal.tty && liveTtys.has(r.terminal.tty))) continue
-    if (!r.terminal.tmux?.pane && R.kindOf(r.terminal) !== "apple") continue
+    if (!r.terminal.tmux?.pane && R.kindOf(r.terminal) !== "apple" && !closable(r.terminal, platform)) continue
     seen.add(key)
     out.push(r)
   }

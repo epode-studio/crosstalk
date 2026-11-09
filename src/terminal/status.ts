@@ -31,7 +31,18 @@
 //   WezTerm           a user var, `crosstalk_state`, written to the tty, for a
 //                     `format-tab-title` handler (docs/terminal.md)
 //
-// The title is never set: Claude Code owns it. Names go through sessionTitle.
+// Names go through sessionTitle, which Claude Code writes as the title itself,
+// on every terminal. The state's sign in the title (❓ ⏳ ✅ ❗, signed()) only
+// goes on a tab crosstalk named (nameTab):
+//
+//   Terminal.app      its tab's custom title, through AppleScript (macOS only)
+//   off macOS         OSC 2 written to the session's tty (oscTitle), in any
+//                     terminal but inside tmux; Claude Code may set the title
+//                     again on its own, and the sign is written again at the
+//                     next change of state. Windows has no tty to write to
+//                     from outside, so there the title is Claude Code's alone.
+//
+// osascript is never run anywhere but macOS.
 // Nothing here queries the terminal: an answer would land in the prompt.
 
 import fs from "node:fs"
@@ -422,10 +433,13 @@ export function applyOnce(id: string, state: TabState, f: TabFile | null, sys: S
   let ok = true
   let restored = false
   let appleOriginal = f?.appleOriginal
-  // Terminal.app: the tab's title carries the state too (❓ ⏳ ✅ ❗), next to its thread's colour.
-  if (R.kindOf(t) === "apple" && t.tty && sys.platform === "darwin" && f?.title && !process.env.CROSSTALK_NO_TITLE_SIGN)
-    // Ended ("off"): the title is given back, so the shell left in the tab no longer looks like a live session.
-    ok = sys.run({ cmd: "osascript", args: ["-"], input: state === "off" ? appleUntitleScript(t.tty) : appleTitleScript(t.tty, signed(f.title, state)) }).ok && ok
+  // The tab's title carries the state too (❓ ⏳ ✅ ❗), next to its thread's colour.
+  // Ended ("off"): the title is given back, so the shell left in the tab no longer looks like a live session.
+  if (t.tty && f?.title && !process.env.CROSSTALK_NO_TITLE_SIGN) {
+    if (appleTitles(t, sys.platform))
+      ok = sys.run({ cmd: "osascript", args: ["-"], input: state === "off" ? appleUntitleScript(t.tty) : appleTitleScript(t.tty, signed(f.title, state)) }).ok && ok
+    else if (escapeTitles(t, sys.platform)) ok = sys.writeTty(t.tty, oscTitle(state === "off" ? "" : signed(f.title, state))) && ok
+  }
   // The bell, when it needs the person: Terminal puts its bell on that tab
   // (and can bounce the Dock), other terminals mark the tab or window. Only
   // when it turns to needing them, never again while it stays so.
@@ -489,18 +503,47 @@ export function signed(title: string, state: TabState): string {
 /** Terminal.app: the tab's title given back to Terminal (the session in it has ended). */
 export const appleUntitleScript = (tty: string) => appleTab(tty, [`set custom title of t to ""`, `set title displays custom title of t to false`, `return "done"`])
 
+/** OSC 2, the title, with nothing in it that could end the sequence early. Empty gives the title back to the terminal. */
+export const oscTitle = (title: string) => `\x1b]2;${title.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 120)}\x07`
+
+/** Terminal.app on macOS: titles through AppleScript. */
+export const appleTitles = (t: Term, platform: NodeJS.Platform) => R.kindOf(t) === "apple" && platform === "darwin" && !t.tmux?.pane
+
 /**
- * Name the session's Terminal.app tab, when the title changed since last
- * time: one detached osascript, so the hook never waits on Terminal.
+ * Off macOS, titles by OSC 2 to the tty, in any terminal (GNOME Terminal,
+ * Konsole, kitty, WezTerm, Alacritty, xterm…). Not inside tmux, where the
+ * title is the pane's and the outer tab is the tmux client's. On macOS the
+ * other terminals' titles stay Claude Code's, as they always were.
  */
-export function nameTab(sessionId: string, title: string, o: { platform?: NodeJS.Platform; spawnIt?: (input: string) => void } = {}): boolean {
-  if ((o.platform ?? process.platform) !== "darwin" || process.env.CROSSTALK_NO_TERM) return false
+export const escapeTitles = (t: Term, platform: NodeJS.Platform) => !!t.tty && !t.tmux?.pane && platform !== "darwin" && platform !== "win32"
+
+/**
+ * Name the session's tab, when the title changed since last time. Terminal.app:
+ * one detached osascript, so the hook never waits on Terminal. Off macOS: OSC 2
+ * written straight to the tty, one non-blocking write.
+ */
+export function nameTab(
+  sessionId: string,
+  title: string,
+  o: { platform?: NodeJS.Platform; spawnIt?: (input: string) => void; writeTty?: (p: string, data: string) => boolean } = {},
+): boolean {
+  const platform = o.platform ?? process.platform
+  if (process.env.CROSSTALK_NO_TERM) return false
   const t = R.readOne(sessionId)?.terminal
-  if (!t?.tty || R.kindOf(t) !== "apple") return false
+  if (!t?.tty) return false
+  const apple = appleTitles(t, platform)
+  if (!apple && !escapeTitles(t, platform)) return false
   const f = readTab(sessionId)
   if (f?.title === title) return false
   withFile(sessionId, (cur) => writeTab({ ...(cur ?? { sessionId, want: "off", wantAt: Date.now() }), title }))
-  const input = appleTitleScript(t.tty, signed(title, f?.base ?? f?.want ?? "off"))
+  const shown = process.env.CROSSTALK_NO_TITLE_SIGN ? title : signed(title, f?.base ?? f?.want ?? "off")
+  if (!apple) {
+    try {
+      ;(o.writeTty ?? liveSys().writeTty)(t.tty, oscTitle(shown))
+    } catch {}
+    return true
+  }
+  const input = appleTitleScript(t.tty, shown)
   try {
     ;(o.spawnIt ?? ((inp: string) => {
       const c = spawn("osascript", ["-"], { detached: true, stdio: ["pipe", "ignore", "ignore"] })

@@ -85,7 +85,9 @@ describe("tabs", () => {
     const s = TD.appleCloseIdleTabScript("/dev/ttys004")
     expect(s.startsWith(`if application "Terminal" is not running then return ""`)).toBe(true)
     expect(s).toContain(`if (tty of t) is "/dev/ttys004" then`)
-    const key = s.indexOf(`keystroke "w" using command down`)
+    const key = s.indexOf(`key code 13 using command down`) // the W key on any layout
+    expect(key).toBeGreaterThan(0)
+    expect(s).not.toContain(`keystroke "w"`)
     expect(s.indexOf(`if busy of t then return "busy"`)).toBeLessThan(key)
     expect(s.indexOf(`does not contain "claude" then return "not-claude"`)).toBeLessThan(key) // full-screen Claude leaves no banner
     expect(s.indexOf(`if not frontmost then return "not-front"`)).toBeLessThan(key)
@@ -110,8 +112,55 @@ describe("tabs", () => {
     expect(TD.closeTabWhy({ kitty: { window: "1" } }, () => ({ ok: true, out: "" }), "darwin")).toBe("unsupported")
   })
   test("other terminals keep their tabs", () => {
-    expect(TD.closeTabSteps({ kitty: { window: "3" } }, "darwin")).toEqual([])
+    expect(TD.closeTabSteps({ kitty: { window: "3" } }, "darwin")).toEqual([]) // no remote control
     expect(TD.closeTabSteps({ program: "Apple_Terminal", tty: "/dev/ttys1" }, "linux")).toEqual([])
+    // GNOME Terminal, Konsole and Windows Terminal have no command to close one tab from outside.
+    for (const t of [{ gnome: {}, tty: "/dev/pts/1" }, { konsole: { session: "/Sessions/1" }, tty: "/dev/pts/2" }, { wt: { session: "x" } }, { alacritty: {}, tty: "/dev/pts/3" }]) {
+      expect(TD.closeTabSteps(t, "linux")).toEqual([])
+      expect(TD.closeTabWhy(t, () => ({ ok: true, out: "" }), "linux")).toBe("unsupported")
+    }
+    expect(TD.closeTabSteps({ kitty: { window: "3", listenOn: "unix:/k" }, tty: "/dev/pts/4" }, "win32")).toEqual([])
+    expect(TD.WHY_OPEN.unsupported).toContain("close it by hand")
+  })
+  test("kitty: its window closed by remote control, only once ps says a bare shell is in front", () => {
+    const t = { kitty: { window: "7", listenOn: "unix:/tmp/kitty-1" }, tty: "/dev/pts/4" }
+    const [s] = TD.closeTabSteps(t, "linux")
+    expect(s.probe).toEqual({ cmd: "ps", args: ["-o", "stat=,comm=", "-t", "pts/4"] })
+    expect(s.mark).toBeUndefined() // the session just ended in it: its own tab
+    expect(s.close).toEqual({ cmd: "kitten", args: ["@", "--to", "unix:/tmp/kitty-1", "close-window", "--match", "id:7"] })
+    expect(TD.closeTabSteps(t, "linux", "sess-1")[0].mark).toEqual({ cmd: "kitten", args: ["@", "--to", "unix:/tmp/kitty-1", "get-text", "--match", "id:7", "--extent", "all"] })
+    const ran: string[] = []
+    const run = (ps: string) => (st: { cmd: string; args: string[] }) => (ran.push([st.cmd, ...st.args].join(" ")), { ok: true, out: st.cmd === "ps" ? ps : "" })
+    expect(TD.closeTabWhy(t, run("Ss+  bash\n"), "linux")).toBe("closed")
+    expect(ran.at(-1)).toBe("kitten @ --to unix:/tmp/kitty-1 close-window --match id:7")
+    ran.length = 0
+    expect(TD.closeTabWhy(t, run("Ss   bash\nS+   vim\n"), "linux")).toBe("no-shell")
+    expect(ran.some((r) => r.includes("close-window"))).toBe(false)
+    expect(TD.closeTabWhy(t, () => ({ ok: false, out: "" }), "linux")).toBe("gone")
+  })
+  test("WezTerm: the pane killed by its CLI, after the same check, and a tab left earlier must show that session's id", () => {
+    const t = { wezterm: { pane: "12" }, tty: "/dev/pts/5" }
+    const [s] = TD.closeTabSteps(t, "linux", "abc-123")
+    expect(s.close).toEqual({ cmd: "wezterm", args: ["cli", "kill-pane", "--pane-id", "12"] })
+    expect(s.mark).toEqual({ cmd: "wezterm", args: ["cli", "get-text", "--pane-id", "12", "--start-line", "-400"] })
+    const run = (text: string) => (st: { cmd: string; args: string[] }) => ({ ok: true, out: st.cmd === "ps" ? "Ss+ -zsh" : text })
+    expect(TD.closeTabWhy(t, run("claude --resume abc-123"), "linux", "abc-123")).toBe("closed")
+    expect(TD.closeTabWhy(t, run("someone else's shell"), "linux", "abc-123")).toBe("not-claude")
+  })
+  test("which processes count as only a shell", () => {
+    expect(TD.onlyShell("Ss+  /bin/zsh")).toBe(true)
+    expect(TD.onlyShell("Ss   bash\nR+   claude")).toBe(false)
+    expect(TD.onlyShell("Ss   bash")).toBe(false) // nothing in front: cannot tell
+    expect(TD.onlyShell("")).toBe(false)
+  })
+  test("tabs left in kitty and WezTerm are offered too; GNOME Terminal's are not", () => {
+    const rec = (id: string, terminal: object) => ({ sessionId: id, cwd: "/w", client: "claude", pid: 1, startedAt: 0, seenAt: 0, endedAt: 5, terminal })
+    const out = TD.leftoverTabs(
+      [rec("k", { kitty: { window: "1", listenOn: "unix:/k" }, tty: "/dev/pts/1" }), rec("w", { wezterm: { pane: "2" }, tty: "/dev/pts/2" }), rec("g", { gnome: {}, tty: "/dev/pts/3" })],
+      new Set(),
+      "linux",
+    )
+    expect(out.map((r) => r.sessionId).sort()).toEqual(["k", "w"])
   })
   test("tabs left by ended sessions: newest first, one per tab, none a live session is in", () => {
     const rec = (id: string, tty: string, endedAt?: number) => ({ sessionId: id, cwd: "/w", client: "claude", pid: 1, startedAt: 0, seenAt: 0, terminal: { program: "Apple_Terminal", tty }, ...(endedAt ? { endedAt } : {}) })

@@ -34,8 +34,14 @@ last state asked for always shows.
 | kitty | `kitten @ set-tab-color` and a user variable (needs `allow_remote_control` and `listen_on`) |
 | WezTerm | a user variable, `crosstalk_state`, for your `format-tab-title` handler (below) |
 
-crosstalk never sets a tab's title. Claude Code owns the title. A spawned agent gets its name
-through Claude Code's `sessionTitle`, which has the same effect as `/rename`.
+Claude Code owns the title. A spawned agent gets its name through Claude Code's `sessionTitle`,
+which has the same effect as `/rename`, in every terminal. On a tab crosstalk named, the
+state's sign goes in front of the name: in Terminal.app through AppleScript, and off macOS
+(GNOME Terminal, Konsole, kitty, WezTerm, Alacritty…, but not inside tmux) as an OSC 2 title
+written to the session's tty. Claude Code may set the title again by itself; the sign comes
+back with the next change of state. On Windows there is no tty to write to, so the title is
+Claude Code's alone. `CROSSTALK_NO_TITLE_SIGN=1` leaves the sign out. osascript is never run
+anywhere but macOS.
 
 ### Your own tmux
 
@@ -205,7 +211,17 @@ each repository was first opened, and keeps each tab's old position within it.
 | kitty | `launch --type=tab --match window_id:<a window in it>` |
 | WezTerm | `wezterm cli spawn --pane-id <a pane in it>` |
 | Ghostty | Cmd-T in the front window. Ghostty cannot target a window from a script |
-| Windows Terminal | a new tab in the current window |
+| Windows Terminal | `wt.exe -w 0 new-tab -d <folder> …`: a new tab in the current window |
+| GNOME Terminal | `gnome-terminal --tab --working-directory=<folder> -- …`: a tab in its front window |
+| Konsole | `konsole --new-tab --workdir <folder> -e …`, started detached: a tab in the running Konsole |
+| anything else (Alacritty, xterm, a VTE terminal other than GNOME Terminal) | tmux windows when inside tmux, otherwise the commands to paste |
+
+Closing the tab a session leaves (closing a session, tidying up): Terminal.app with Cmd-W
+(the W key by key code, so any keyboard layout, and only once Terminal is in front with that
+tab selected), tmux `kill-pane`, kitty `kitten @ close-window --match id:<window>` and WezTerm
+`wezterm cli kill-pane --pane-id <pane>`, each only when `ps` shows nothing but a shell in
+front on the tab's tty. GNOME Terminal, Konsole, Windows Terminal, iTerm2 and Ghostty keep
+the tab, and crosstalk says it stayed open.
 
 ### A tab per thread, grouped
 
@@ -220,7 +236,7 @@ window, where the terminal can place a tab at all. Several at once land in order
 | kitty | `launch --type=tab --location=after --match window_id:<the thread's tab>` |
 | WezTerm | `spawn --pane-id <the thread's pane>`, so it opens in that window, at the end. `wezterm cli` has no command to move a tab |
 | Terminal.app, iTerm2 | at the end of the window. Neither can put a new tab anywhere else, or reorder tabs, from a script |
-| Ghostty, Windows Terminal | at the end, as before |
+| Ghostty, Windows Terminal, GNOME Terminal, Konsole | at the end, as before |
 
 A restore opens tabs by repository, then by thread (each thread where its first tab was), then
 in their old order. So even where a tab cannot be placed, a thread's restored tabs sit together.

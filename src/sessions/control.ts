@@ -443,8 +443,11 @@ export async function close(l: Live, o: { by?: string; services?: "keep" | "stop
       tabWhy = TD.closeTabWhy(l.terminal, d.run)
       tabGone = tabWhy === "closed"
     } catch {}
+  // A terminal crosstalk cannot close a tab in (GNOME Terminal, Konsole, Windows
+  // Terminal, …) is said, when the session is known to have had a tab there.
+  const tabKnown = !!(R.kindOf(l.terminal) || l.terminal.tty)
   const tabLine =
-    tabGone || !tabWhy || tabWhy === "gone" || tabWhy === "unsupported"
+    tabGone || !tabWhy || tabWhy === "gone" || (tabWhy === "unsupported" && !tabKnown)
       ? ""
       : tabWhy === "accessibility"
         ? " Its tab stayed open: Terminal may not press keys for crosstalk (System Settings ▸ Privacy & Security ▸ Accessibility)."

@@ -17,7 +17,11 @@
 //   kitty      `launch --type=tab --match window_id:<a window in it>`
 //   WezTerm    `spawn --pane-id <a pane in it>`: the same window
 //   Ghostty    Cmd-T in the front window (no way to name a window)
-//   Windows    `wt -w 0 nt`
+//   Windows    `wt.exe -w 0 new-tab -d <cwd>`
+//   GNOME      `gnome-terminal --tab --working-directory=<cwd> -- …`, the front window
+//   Konsole    `konsole --new-tab --workdir <cwd> -e …`, the front window
+//   anything else (Alacritty, xterm…): tmux windows when inside tmux, else
+//              the commands to paste
 //
 // Within that window, a tab per thread, grouped: a new tab of a thread with a
 // live tab in the window goes right after the thread's last tab, where the
@@ -60,24 +64,7 @@ export const threadAnchorFor = R.threadAnchorFor
 export const appleIntoWindowScript = R.appleIntoWindowScript
 export const itermIntoWindowScript = R.itermIntoWindowScript
 
-const wtArg = (s: string) => s.replace(/;/g, "\\;")
-
-function usable(k: Kind, e: Env, t: Term | undefined): boolean {
-  switch (k) {
-    case "tmux":
-      return e.has("tmux")
-    case "apple":
-    case "iterm":
-    case "ghostty":
-      return e.platform === "darwin" && e.has("osascript")
-    case "kitty":
-      return e.has("kitten") && !!(t?.kitty?.listenOn ?? e.current.kitty?.listenOn)
-    case "wezterm":
-      return e.has("wezterm")
-    case "wt":
-      return e.platform === "win32" && e.has("wt")
-  }
-}
+const usable = R.canDrive
 
 /**
  * How to open these tabs, all in one repository's window. `anchor` is a tab
@@ -153,9 +140,9 @@ export function openTabs(tabs: Tab[], o: { anchor: Term | null; current: Term; e
       const match = anchor?.kitty?.window ? ["--match", `window_id:${anchor.kitty.window}`] : []
       // Right after the thread's last tab, the last one first so they land in order.
       const steps = after
-        ? [...tabs].reverse().map((t) => ({ cmd: "kitten", args: ["@", "--to", to, "launch", "--type=tab", "--location=after", "--match", `window_id:${after}`, "--cwd", t.cwd, ...t.argv] }))
+        ? [...tabs].reverse().map((t) => ({ cmd: R.kittyBin(e), args: ["@", "--to", to, "launch", "--type=tab", "--location=after", "--match", `window_id:${after}`, "--cwd", t.cwd, ...t.argv] }))
         : tabs.map((t, i) => ({
-            cmd: "kitten",
+            cmd: R.kittyBin(e),
             args: ["@", "--to", to, "launch", ...(anchor || i > 0 ? ["--type=tab"] : ["--type=os-window"]), ...match, "--cwd", t.cwd, ...t.argv],
           }))
       return { kind, steps, where: anchor ? `the kitty window with ${name}` : "a new kitty window", typed }
@@ -172,7 +159,12 @@ export function openTabs(tabs: Tab[], o: { anchor: Term | null; current: Term; e
       return { kind, steps, where: pane ? `the WezTerm window with ${name}` : "a new WezTerm window", typed }
     }
     case "wt":
-      return { kind, steps: tabs.map((t) => ({ cmd: "wt", args: ["-w", "0", "nt", "-d", wtArg(t.cwd), ...t.argv.map(wtArg)] })), where: "Windows Terminal", typed }
+      return { kind, steps: tabs.map((t) => R.wtTabStep(t.cwd, t.argv)), where: "Windows Terminal", typed }
+    // Neither can be told which window: a tab in the one in front.
+    case "gnome":
+      return { kind, steps: tabs.map((t) => R.gnomeTabStep(t.cwd, t.argv)), where: "GNOME Terminal", typed }
+    case "konsole":
+      return { kind, steps: tabs.map((t) => R.konsoleTabStep(t.cwd, t.argv)), where: "Konsole", typed }
   }
 }
 
@@ -234,6 +226,7 @@ export function openForRepo(
 }
 
 function runStep(s: Step, env?: NodeJS.ProcessEnv): { ok: boolean; out: string } {
+  if (s.detach) return R.startDetached(s, env)
   const r = spawnSync(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 60_000, env: env ?? process.env })
   return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() }
 }
