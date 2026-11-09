@@ -453,6 +453,20 @@ bin/crosstalk install hermes
 
 You need `bun` or `node` on PATH. Nothing is fetched or built at install time.
 
+**Works with** these terminals, for opening agents and restored sessions as
+tabs, the state on each tab, and closing the tab a session leaves:
+
+- **macOS:** Terminal.app (first), iTerm2, Ghostty, kitty, WezTerm.
+- **Linux:** kitty (with remote control, `listen_on` set), WezTerm, GNOME
+  Terminal, Konsole. GNOME Terminal and Konsole cannot close a tab from
+  outside, so those stay open and crosstalk says so.
+- **Windows:** Windows Terminal (`wt.exe`). Tabs are opened, never closed.
+- **tmux**, anywhere: windows instead of tabs.
+
+Anything else (Alacritty, xterm, …): inside tmux, tmux windows; otherwise
+crosstalk prints the commands to paste. Details per terminal:
+[docs/terminal.md](docs/terminal.md).
+
 **There is nothing to pay for.** No account, no tier, no server of your own
 unless you want one. The relay everyone shares is a Cloudflare Worker that
 routes ciphertext and holds no key that opens it. It keeps what it could not

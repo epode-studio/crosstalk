@@ -305,8 +305,10 @@ describe("other terminals", () => {
   test("Windows Terminal escapes its own separator", () => {
     const r = rec({ sessionId: "t", cwd: "C:\\w\\a;b", terminal: { wt: { session: "g" } } })
     expect(R.plan([r], env({ platform: "win32" })).plans[0].steps).toEqual([
-      { cmd: "wt", args: ["-w", "0", "nt", "-d", "C:\\w\\a\\;b", "claude", "--resume", "t"] },
+      { cmd: "wt.exe", args: ["-w", "0", "new-tab", "-d", "C:\\w\\a\\;b", "claude", "--resume", "t"] },
     ])
+    // Not on Windows (WSL hands WT_SESSION through): the commands to paste.
+    expect(R.plan([r], env({ platform: "linux" })).plans[0].kind).toBe("manual")
   })
 
   test("unknown terminal and unknown here: handed over to paste", () => {
@@ -326,6 +328,96 @@ describe("other terminals", () => {
     )
     expect(plans[0].steps[0].args.slice(-3)).toEqual(["codex", "resume", "c"])
     expect(skipped.map((r) => r.sessionId)).toEqual(["g"])
+  })
+})
+
+describe("Linux and Windows terminals", () => {
+  // Every command is built here and checked as data: none of these terminals runs in the tests.
+  const onPath = (...bins: string[]) => (b: string) => bins.includes(b)
+
+  test("which terminal, from the environment a session ran in", () => {
+    const at = (env: NodeJS.ProcessEnv) => R.kindOf(R.captureTerminal(env, 0, false))
+    expect(at({ KITTY_WINDOW_ID: "3", KITTY_LISTEN_ON: "unix:/tmp/k" })).toBe("kitty")
+    expect(at({ TERM_PROGRAM: "WezTerm", WEZTERM_PANE: "4" })).toBe("wezterm")
+    expect(at({ GNOME_TERMINAL_SCREEN: "/org/gnome/Terminal/screen/ab_cd", VTE_VERSION: "7600" })).toBe("gnome")
+    expect(at({ KONSOLE_DBUS_SESSION: "/Sessions/1", KONSOLE_DBUS_SERVICE: ":1.42", KONSOLE_VERSION: "230804" })).toBe("konsole")
+    expect(at({ WT_SESSION: "8f1c-…" })).toBe("wt")
+    // inside tmux, whatever shows it, the tabs are tmux's windows
+    expect(at({ TMUX: "/tmp/tmux-1000/default,1,0", TMUX_PANE: "%2", GNOME_TERMINAL_SCREEN: "/x" })).toBe("tmux")
+    // Alacritty has no tabs, and VTE alone does not say which app (Tilix, xfce4-terminal…)
+    expect(at({ ALACRITTY_WINDOW_ID: "1" })).toBeNull()
+    expect(at({ VTE_VERSION: "7600" })).toBeNull()
+    const t = R.captureTerminal({ KONSOLE_DBUS_SESSION: "/Sessions/1", KONSOLE_DBUS_SERVICE: ":1.42", VTE_VERSION: "7600", ALACRITTY_WINDOW_ID: "9" }, 0, false)
+    expect(t.konsole).toEqual({ service: ":1.42", session: "/Sessions/1" })
+    expect(t.vte).toBe("7600")
+    expect(t.alacritty).toEqual({ window: "9" })
+  })
+
+  test("kitty: `kitty @` where kitten is not installed; without remote control, nothing to drive", () => {
+    const r = rec({ sessionId: "k", cwd: "/w/a", terminal: { kitty: { window: "1", listenOn: "unix:/tmp/kitty-1" } } })
+    expect(R.plan([r], env({ has: onPath("kitty") })).plans[0].steps).toEqual([
+      { cmd: "kitty", args: ["@", "--to", "unix:/tmp/kitty-1", "launch", "--type=tab", "--cwd", "/w/a", "claude", "--resume", "k"] },
+    ])
+    expect(R.plan([r], env({ has: onPath("tmux") })).plans[0].kind).toBe("manual")
+  })
+
+  test("GNOME Terminal: a tab each, in its folder, the command after --", () => {
+    const a = rec({ sessionId: "g1", cwd: "/w/my api", terminal: { gnome: { screen: "/s/1" } }, startedAt: 1 })
+    const b = rec({ sessionId: "g2", cwd: "/w/it's", terminal: { gnome: { screen: "/s/2" } }, startedAt: 2 })
+    const { plans } = R.plan([b, a], env({ has: onPath("gnome-terminal"), which: (x) => `/usr/bin/${x}` }))
+    expect(plans).toHaveLength(1)
+    expect(plans[0].kind).toBe("gnome")
+    expect(plans[0].steps).toEqual([
+      { cmd: "gnome-terminal", args: ["--tab", "--working-directory=/w/my api", "--", "/usr/bin/claude", "--resume", "g1"] },
+      { cmd: "gnome-terminal", args: ["--tab", "--working-directory=/w/it's", "--", "/usr/bin/claude", "--resume", "g2"] },
+    ])
+    expect(plans[0].steps.some((s) => s.cmd === "osascript" || s.input)).toBe(false)
+  })
+
+  test("Konsole: --new-tab, -e last, started detached so a new Konsole window never blocks the restore", () => {
+    const r = rec({ sessionId: "q", cwd: "/w/x", client: "codex", terminal: { konsole: { session: "/Sessions/2" } } })
+    expect(R.plan([r], env({ has: onPath("konsole") })).plans[0].steps).toEqual([
+      { cmd: "konsole", args: ["--new-tab", "--workdir", "/w/x", "-e", "codex", "resume", "q"], detach: true },
+    ])
+  })
+
+  test("not installed, or not this platform: inside tmux, tmux windows; else the commands to paste", () => {
+    const r = rec({ sessionId: "n", terminal: { gnome: {} } })
+    expect(R.plan([r], env({ has: onPath() })).plans[0].kind).toBe("manual")
+    expect(R.plan([r], env({ platform: "darwin", has: () => true })).plans[0].kind).toBe("manual")
+    const inTmux = env({ has: onPath("tmux"), current: { tmux: { pane: "%1", session: "work" } } })
+    expect(R.plan([r], inTmux).plans[0].kind).toBe("tmux")
+    expect(R.plan([rec({ terminal: { alacritty: {} } })], inTmux).plans[0].kind).toBe("tmux")
+    expect(R.plan([rec({ terminal: { alacritty: {} } })], env({ has: onPath("tmux") })).plans[0].kind).toBe("manual")
+  })
+
+  test("off macOS nothing is ever handed to osascript, whatever the session was in", () => {
+    const terms = [
+      { program: "Apple_Terminal", tty: "/dev/ttys1", apple: { window: 1, tab: 1 } },
+      { program: "iTerm.app", iterm: { id: "w0t0p0:x" } },
+      { program: "ghostty" },
+      { gnome: {} },
+      { konsole: {} },
+      { wt: { session: "x" } },
+      { kitty: { window: "1", listenOn: "unix:/k" } },
+      { wezterm: { pane: "1" } },
+    ]
+    for (const platform of ["linux", "win32", "freebsd"] as const) {
+      const { plans } = R.plan(terms.map((terminal, i) => rec({ sessionId: `o${i}`, terminal })), env({ platform }))
+      for (const p of plans) {
+        expect(p.steps.some((s) => s.cmd === "osascript")).toBe(false)
+        expect(p.needsAccessibility).toBeFalsy()
+      }
+    }
+  })
+
+  test("Windows: binaries by PATHEXT, never npm's extensionless sh script", () => {
+    const files = new Set(["C:\\npm\\claude", "C:\\npm\\claude.cmd", "C:\\apps\\wt.exe"])
+    const env = { PATH: "C:\\npm;C:\\apps", PATHEXT: ".COM;.EXE;.BAT;.CMD" }
+    expect(R.which("claude", env, "win32", (p) => files.has(p))).toBe("C:\\npm\\claude.cmd")
+    expect(R.which("wt", env, "win32", (p) => files.has(p))).toBe("C:\\apps\\wt.exe")
+    expect(R.which("wt.exe", env, "win32", (p) => files.has(p))).toBe("C:\\apps\\wt.exe")
+    expect(R.which("claude", { PATH: "/usr/bin:/opt/bin" }, "linux", (p) => p === "/opt/bin/claude")).toBe("/opt/bin/claude")
   })
 })
 

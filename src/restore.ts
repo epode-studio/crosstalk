@@ -43,6 +43,17 @@ export type Term = {
   /** Terminal.app. `window` is the window's AppleScript id, `tab` its 1-based tab index. */
   apple?: { sessionId?: string; window?: number; tab?: number }
   wt?: { session: string }
+  /** GNOME Terminal: GNOME_TERMINAL_SCREEN, its D-Bus path for this tab. */
+  gnome?: { screen?: string }
+  /** Konsole: KONSOLE_DBUS_SERVICE and KONSOLE_DBUS_SESSION. */
+  konsole?: { service?: string; session?: string }
+  /**
+   * VTE_VERSION: a VTE terminal (GNOME Terminal, Tilix, xfce4-terminal,
+   * Terminator…). Recorded, but not enough alone to know which app to ask.
+   */
+  vte?: string
+  /** Alacritty (ALACRITTY_WINDOW_ID): it has no tabs, so only tmux or the commands to paste. */
+  alacritty?: { window?: string }
 }
 
 export type Rec = {
@@ -342,6 +353,11 @@ export function captureTerminal(env: NodeJS.ProcessEnv, pid: number, probe: bool
     t.iterm = { id: env.ITERM_SESSION_ID, ...(m ? { window: Number(m[1]), tab: Number(m[2]) } : {}) }
   }
   if (env.WT_SESSION) t.wt = { session: env.WT_SESSION }
+  if (env.GNOME_TERMINAL_SCREEN || env.GNOME_TERMINAL_SERVICE) t.gnome = { ...(env.GNOME_TERMINAL_SCREEN ? { screen: env.GNOME_TERMINAL_SCREEN } : {}) }
+  if (env.KONSOLE_DBUS_SESSION || env.KONSOLE_VERSION)
+    t.konsole = { ...(env.KONSOLE_DBUS_SERVICE ? { service: env.KONSOLE_DBUS_SERVICE } : {}), ...(env.KONSOLE_DBUS_SESSION ? { session: env.KONSOLE_DBUS_SESSION } : {}) }
+  if (env.VTE_VERSION) t.vte = env.VTE_VERSION
+  if (env.ALACRITTY_WINDOW_ID || env.ALACRITTY_SOCKET || env.ALACRITTY_LOG) t.alacritty = { ...(env.ALACRITTY_WINDOW_ID ? { window: env.ALACRITTY_WINDOW_ID } : {}) }
   if (env.TERM_PROGRAM === "Apple_Terminal" || (env.TERM_SESSION_ID && !t.iterm)) {
     t.apple = { sessionId: env.TERM_SESSION_ID }
     if (probe && t.tty && process.platform === "darwin" && env.TERM_PROGRAM === "Apple_Terminal") {
@@ -371,8 +387,14 @@ export function resumeArgv(r: Rec, bin?: string): string[] | null {
 /** What a person would type: go to the folder, resume. */
 export const typed = (r: Rec) => `cd ${shq(r.cwd)} && ${resumeArgv(r)!.map(shq).join(" ")}`
 
-export type Kind = "tmux" | "apple" | "iterm" | "ghostty" | "kitty" | "wezterm" | "wt"
+export type Kind = "tmux" | "apple" | "iterm" | "ghostty" | "kitty" | "wezterm" | "wt" | "gnome" | "konsole"
 
+/**
+ * Which terminal a tab is in, from what its environment said. tmux first:
+ * inside tmux the tabs are tmux's windows, whatever terminal shows them.
+ * Alacritty, xterm and VTE terminals other than GNOME Terminal have no tab a
+ * script can open: null, so the commands to paste (or tmux, when inside it).
+ */
 export function kindOf(t: Term | undefined): Kind | null {
   if (!t) return null
   if (t.tmux) return "tmux"
@@ -382,6 +404,8 @@ export function kindOf(t: Term | undefined): Kind | null {
   if (t.kitty) return "kitty"
   if (t.wezterm || t.program === "WezTerm") return "wezterm"
   if (t.wt) return "wt"
+  if (t.gnome) return "gnome"
+  if (t.konsole) return "konsole"
   if (t.apple) return "apple"
   return null
 }
@@ -404,7 +428,12 @@ export function appName(t: Term | undefined): string {
   }
 }
 
-export type Step = { cmd: string; args: string[]; input?: string }
+/**
+ * One command to run. `detach`: started and left running, not waited for:
+ * `konsole --new-tab` stays in the foreground for as long as its window is
+ * open when no Konsole was running to take the tab.
+ */
+export type Step = { cmd: string; args: string[]; input?: string; detach?: boolean }
 export type Plan = {
   kind: Kind | "manual"
   sessions: Rec[]
@@ -622,7 +651,14 @@ export function itermIntoWindowScript(cmds: string[], tty: string | undefined): 
   return L.join("\n")
 }
 
-function usable(k: Kind, e: Env, t: Term | undefined): boolean {
+const unixLike = (p: NodeJS.Platform) => p !== "darwin" && p !== "win32"
+
+/**
+ * Whether crosstalk can open a tab in this terminal from here. The macOS
+ * terminals go through osascript, so never anywhere else; kitty only with
+ * remote control listening on a socket (KITTY_LISTEN_ON).
+ */
+export function canDrive(k: Kind, e: Env, t: Term | undefined): boolean {
   switch (k) {
     case "tmux":
       return e.has("tmux")
@@ -631,13 +667,36 @@ function usable(k: Kind, e: Env, t: Term | undefined): boolean {
     case "ghostty":
       return e.platform === "darwin" && e.has("osascript")
     case "kitty":
-      return e.has("kitten") && !!(e.current.kitty?.listenOn ?? t?.kitty?.listenOn)
+      return (e.has("kitten") || e.has("kitty")) && !!(t?.kitty?.listenOn ?? e.current.kitty?.listenOn)
     case "wezterm":
       return e.has("wezterm")
     case "wt":
       return e.platform === "win32" && e.has("wt")
+    case "gnome":
+      return unixLike(e.platform) && e.has("gnome-terminal")
+    case "konsole":
+      return unixLike(e.platform) && e.has("konsole")
   }
 }
+
+// --- new tabs on Linux and Windows: one command each, built here so they can be checked as data ---
+
+/** kitty's remote-control client: `kitten`, or `kitty` itself where kitten is not installed. */
+export const kittyBin = (e: Pick<Env, "has">) => (e.has("kitten") ? "kitten" : "kitty")
+
+/** Windows Terminal reads `;` as its own command separator. */
+const wtArg = (s: string) => s.replace(/;/g, "\\;")
+
+/** Windows Terminal: a new tab in the current window (`-w 0`), in `cwd`. */
+export const wtTabStep = (cwd: string, argv: string[]): Step => ({ cmd: "wt.exe", args: ["-w", "0", "new-tab", "-d", wtArg(cwd), ...argv.map(wtArg)] })
+
+/** GNOME Terminal: a tab in its most recent window; the client returns once the server has opened it. */
+export const gnomeTabStep = (cwd: string, argv: string[]): Step => ({ cmd: "gnome-terminal", args: ["--tab", `--working-directory=${cwd}`, "--", ...argv] })
+
+/** Konsole: a tab in the running Konsole; `-e` takes the rest as the command. Detached, see Step. */
+export const konsoleTabStep = (cwd: string, argv: string[]): Step => ({ cmd: "konsole", args: ["--new-tab", "--workdir", cwd, "-e", ...argv], detach: true })
+
+const usable = canDrive
 
 /** Which adapter a session goes to: its own terminal, else the asking one's, else none. */
 export function adapterFor(r: Rec, e: Env): Kind | "manual" {
@@ -767,9 +826,6 @@ export function ghosttyScript(cmds: string[]): string {
   return L.join("\n")
 }
 
-/** Windows Terminal reads `;` as its own command separator. */
-const wtArg = (s: string) => s.replace(/;/g, "\\;")
-
 export function plan(recs: Rec[], e: Env): { plans: Plan[]; skipped: Rec[] } {
   const skipped = recs.filter((r) => !resumeArgv(r))
   const ok = order(recs.filter((r) => resumeArgv(r)))
@@ -875,7 +931,7 @@ export function plan(recs: Rec[], e: Env): { plans: Plan[]; skipped: Rec[] } {
           kind: "kitty",
           sessions: recs,
           steps: lastFirst(items, (x) => x.after).map(({ r, after: w }) => ({
-            cmd: "kitten",
+            cmd: kittyBin(e),
             args: ["@", "--to", to, "launch", "--type=tab", ...(w ? ["--location=after", "--match", `window_id:${w}`] : match), "--cwd", r.cwd, ...exec(r)],
           })),
         })
@@ -894,12 +950,11 @@ export function plan(recs: Rec[], e: Env): { plans: Plan[]; skipped: Rec[] } {
           steps: recs.map((r) => ({ cmd: "wezterm", args: ["cli", "spawn", ...at(r), "--cwd", r.cwd, "--", ...exec(r)] })),
         })
       }
-    } else if (kind === "wt") {
-      plans.push({
-        kind: "wt",
-        sessions: rs,
-        steps: rs.map((r) => ({ cmd: "wt", args: ["-w", "0", "nt", "-d", wtArg(r.cwd), ...exec(r).map(wtArg)] })),
-      })
+    } else if (kind === "wt" || kind === "gnome" || kind === "konsole") {
+      // No window to aim at: each a tab of the window in front, by repository, then thread.
+      const step = kind === "wt" ? wtTabStep : kind === "gnome" ? gnomeTabStep : konsoleTabStep
+      const g = byRepoThread(inRepoOrder(rs), repoOf)
+      plans.push({ kind, sessions: g, steps: g.map((r) => step(r.cwd, exec(r))) })
     } else {
       plans.push({ kind: "manual", sessions: rs, steps: [] })
     }
@@ -991,16 +1046,32 @@ function notify(text: string) {
 
 // --- doing it --------------------------------------------------------------------
 
-function which(bin: string): string | undefined {
-  for (const d of (process.env.PATH ?? "").split(path.delimiter)) {
+/**
+ * A binary on PATH. On Windows by PATHEXT (`wt` is wt.exe, `claude` is
+ * claude.exe or npm's claude.cmd): the bare name there is npm's sh script,
+ * which nothing on Windows can run.
+ */
+export function which(bin: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform, exists: (p: string) => boolean = executable): string | undefined {
+  const win = platform === "win32"
+  const exts = win && !path.extname(bin) ? (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean) : [""]
+  const join = win ? path.win32.join : path.posix.join
+  for (const d of (env.PATH ?? env.Path ?? "").split(win ? ";" : ":")) {
     if (!d) continue
-    const p = path.join(d, bin)
-    try {
-      fs.accessSync(p, fs.constants.X_OK)
-      return p
-    } catch {}
+    for (const x of exts) {
+      const p = join(d, bin + x.toLowerCase())
+      if (exists(p)) return p
+    }
   }
   return undefined
+}
+
+function executable(p: string): boolean {
+  try {
+    fs.accessSync(p, fs.constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
 }
 
 export function liveEnv(env: NodeJS.ProcessEnv, tabs: boolean): Env {
@@ -1008,7 +1079,7 @@ export function liveEnv(env: NodeJS.ProcessEnv, tabs: boolean): Env {
     platform: process.platform,
     current: captureTerminal(env, process.pid, true),
     has: (b) => !!which(b),
-    which,
+    which: (b) => which(b),
     tmuxHasSession: (name, socket) =>
       spawnSync("tmux", [...(socket ? ["-L", socket] : []), "has-session", "-t", `=${name}`], { stdio: "ignore", timeout: 2000, env: socket ? { ...env, TMUX: "" } : env }).status === 0,
     tabs,
@@ -1208,7 +1279,20 @@ export type RunOpts = {
 /** Tabs only when a person just asked: an unattended restore opens a window per session. */
 export const tabsFor = (o: Pick<RunOpts, "tabs" | "userAction" | "asked">): boolean => (o.userAction || o.asked ? (o.tabs ?? true) : false)
 
+/** Start a detached Step and leave it: ok unless it could not be started at all. */
+export function startDetached(s: Step, env?: NodeJS.ProcessEnv): { ok: boolean; out: string } {
+  try {
+    const c = spawn(s.cmd, s.args, { detached: true, stdio: "ignore", ...(env ? { env } : {}) })
+    c.on("error", () => {})
+    c.unref()
+    return { ok: !!c.pid, out: c.pid ? "" : `${s.cmd} could not be started` }
+  } catch (e) {
+    return { ok: false, out: String(e) }
+  }
+}
+
 function runStep(s: Step): { ok: boolean; out: string } {
+  if (s.detach) return startDetached(s)
   const r = spawnSync(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 60_000 })
   return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`.trim() }
 }
