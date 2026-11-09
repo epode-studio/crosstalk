@@ -185,18 +185,6 @@ export const DONE = "I've done it"
 export const LATER = "Remind me later"
 export const NOT_MINE = "Not for me"
 
-/**
- * A to-do for the person, from an agent's Open list, readable on its own in
- * main: who it is from and where, what it is, and what each answer does.
- */
-export function forYou(text: string, o: { who: string; repo?: string }): { question: string; text: string } {
-  const item = text.replace(/\s+/g, " ").trim()
-  const where = o.repo && o.repo.toLowerCase() !== o.who.toLowerCase() ? ` (in ${o.repo})` : ""
-  return {
-    question: `${o.who}${where} left this for you: ${item}`,
-    text: `It cannot do this itself, so it is waiting on you. "${DONE}" tells it you did; "${NOT_MINE}" drops it.`,
-  }
-}
 export const TACKLE = "Tackle them"
 export const ALWAYS = "Always"
 export const NOT_NOW = "Not now"
@@ -208,12 +196,27 @@ export const context = (todo: string[], waiting: string[], persons: string[] = [
   [...todo.map((x) => `· ${x}`), ...(persons.length ? [`For you (left to you): ${persons.join("; ")}`] : []), ...(waiting.length ? [`Waiting on (left alone): ${waiting.join("; ")}`] : [])].join("\n")
 
 /** The turn that tackles them, in crosstalk's words (the person picked it, or said Always). */
-export function tacklePrompt(items: string[], ids: string[] = []): string {
+export function tacklePrompt(items: string[], ids: string[] = [], persons: string[] = []): string {
   return [
-    `Tackle the open items you listed:`,
-    ...items.map((x, i) => `${i + 1}. ${x}${ids[i] ? ` (task ${ids[i]})` : ""}`),
+    ...(items.length
+      ? [
+          `Tackle the open items you listed:`,
+          ...items.map((x, i) => `${i + 1}. ${x}${ids[i] ? ` (task ${ids[i]})` : ""}`),
+          ``,
+          `Do each one you can do yourself${ids.length ? `, and mark it done with crosstalk_thread action "task", op "done" and its task id` : ""}. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). For any that needs a decision only the person can make, ask them (one question for all of those, at the end) instead of guessing.`,
+        ]
+      : []),
+    ...(persons.length
+      ? [
+          ...(items.length ? [``] : []),
+          `You left these for the person:`,
+          ...persons.map((x, i) => `${i + 1}. ${x}`),
+          ``,
+          `They want you to do these, not to be handed them: they often cannot find this session. Do whatever your tools can (gh, a browser, a script, a command). Where it needs their yes or a choice only they can make (approving, merging, deploying, spending, choosing between options), ask with AskUserQuestion, one question for all of them: name each exact action with its link, and offer options such as "Yes, do it" and "Not now", none marked recommended (so nothing is decided for them while they are away). It reaches them wherever they are. Then do what they chose. Ask them to act themselves only when it is beyond you (a device, a login only on their machine), and then say exactly where, with the link.`,
+        ]
+      : []),
     ``,
-    `Do each one you can do yourself${ids.length ? `, and mark it done with crosstalk_thread action "task", op "done" and its task id` : ""}. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). For any that needs a decision or an action only the person can take, ask them (one question for all of those, at the end) instead of guessing. When you finish, list only what is still open; if nothing is, say so and leave out the Open list.`,
+    `When you finish, list only what is still open; if nothing is, say so and leave out the Open list.`,
   ].join("\n")
 }
 
@@ -280,7 +283,8 @@ export function atStop(o: { reply: string; sessionId: string; continuing: boolea
   // with, at most CHAIN_MAX rounds in a row before the person types again.
   const on = p.always !== false
   const rounds = p.chain?.[o.sessionId] ?? 0
-  const auto = on && !o.continuing && items.length > 0 && rounds < CHAIN_MAX
+  // What was left for the person is carried on with too: the agent does it, or asks them in main and then does it.
+  const auto = on && !o.continuing && (items.length > 0 || newPersons.length > 0) && rounds < CHAIN_MAX
   writePrefs({ ...p, seenItems: { ...(p.seenItems ?? {}), [o.sessionId]: kept }, ...(auto ? { chain: { ...(p.chain ?? {}), [o.sessionId]: rounds + 1 } } : {}), ...(waiting.length ? { waitingOn: { ...(p.waitingOn ?? {}), [o.sessionId]: { items: waiting, at: now } } } : {}) })
   return { items, waiting, persons: newPersons, id, fresh: !o.continuing, auto }
 }

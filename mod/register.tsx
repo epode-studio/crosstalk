@@ -389,7 +389,7 @@ async function maybeRaise($: EngineInterface) {
     // The inbox, one at a time: the most pressing first (pure.ts inboxOrder).
     const now0 = await $.clock.now()
     // Open lists never take the keyboard any more (a quiet line instead); any left from before are not raised.
-    const candidates = all.filter(i => raisable(i) && !i.id.startsWith('open:'))
+    const candidates = all.filter(i => raisable(i) && !i.id.startsWith('open:') && !i.id.startsWith('you:'))
     // Calm (src/attention/calm.ts): what stops an agent comes at once; the rest waits for a
     // decision window, and not at all in focus or away. A nudge or focus's end is said once.
     const later = candidates.filter(i => !urgent(i))

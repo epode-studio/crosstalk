@@ -88,7 +88,7 @@ describe("at the end of a turn", () => {
     expect(O.atStop({ reply: REPLY.trimEnd() + "\n- Rename the feature flag in config.\n", sessionId: "s1", continuing: false })!.auto).toBe(false)
     O.setAlways(true)
   })
-  test("what is the person's goes to them as a short to-do, never to an agent", () => {
+  test("what was left for the person goes back to the agent: it does it, or asks them in main and then does it", () => {
     const reply = `All of this is waiting on you: what your console printed, then the four prompts.
 
 **Open**
@@ -98,8 +98,12 @@ describe("at the end of a turn", () => {
 `
     const r = O.atStop({ reply, sessionId: "s2", continuing: false })!
     expect(r.items).toEqual([])
-    expect(r.auto).toBe(false)
+    expect(r.auto).toBe(true)
     expect(r.persons).toHaveLength(3)
+    const p = O.tacklePrompt(r.items, [], r.persons)
+    expect(p).toContain("They want you to do these, not to be handed them")
+    expect(p).toContain("AskUserQuestion")
+    expect(p).toContain("none marked recommended")
     expect(O.atStop({ reply, sessionId: "s2", continuing: false })!.persons).toEqual([]) // once
     for (const p of ["Should I merge PR #12?", "Decide whether to keep the old API (your call)", "Deploy to production", "Marie needs to approve the design", "Run the four prompts in your browser"])
       expect([p, O.isPersons(p)]).toEqual([p, true])
@@ -154,14 +158,5 @@ describe("chasing what waits", () => {
     expect(p).toContain("1. CI is still running on #12.")
     expect(O.chase("c1", "again")).toBe(null) // once
     expect(O.chase("nobody", "x")).toBe(null)
-  })
-})
-
-describe("a to-do for the person, in main", () => {
-  test("says who left it, where, and what each answer does", () => {
-    const f = O.forYou("#2902 needs your approval and #2757 has no owner.", { who: "auth", repo: "lovable" })
-    expect(f.question).toBe("auth (in lovable) left this for you: #2902 needs your approval and #2757 has no owner.")
-    expect(f.text).toContain(`"${O.DONE}" tells it you did`)
-    expect(O.forYou("x", { who: "lovable", repo: "lovable" }).question).toBe("lovable left this for you: x")
   })
 })

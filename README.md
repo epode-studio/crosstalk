@@ -143,8 +143,10 @@ you, it asks.
   behind a switch you turn on step by step.
 - No more *"tackle all open"*. When a reply ends with an Open list, crosstalk
   keeps each item as a task in the thread and the agent carries on with the
-  new ones by itself, three rounds at most before it waits for you. What only
-  you can do comes to main as a short to-do; what only waits (CI, a review)
+  new ones by itself, three rounds at most before it waits for you. What it
+  would have left to you, it does too; where it needs your yes (approving,
+  merging, a choice), it asks once in main, with the link, then does it.
+  What only waits (CI, a review)
   is left alone, and picked up by itself once it moves. *"Stop tackling open
   items by itself"* turns that off.
 
