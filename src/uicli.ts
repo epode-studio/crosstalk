@@ -273,6 +273,7 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
       if (id.startsWith("you:")) {
         if (action === "raised" || action === "later") return print(ui.withStore((items, now) => ui.act(items, id, action, now)))
         const v = (value ?? "").trim()
+        if (v === openItems.NOT_MINE) return print(ui.withStore((items, now) => ui.act(items, id, "mute", now)))
         if (v !== openItems.DONE) return print(ui.withStore((items, now) => ui.act(items, id, "later", now)))
         const claim = ui.withStore((items, now) => ui.act(items, id, "answer", now, v))
         if (!claim.ok) return print({ ok: false, error: claim.error })

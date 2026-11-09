@@ -14,6 +14,7 @@
 // pushed to, a session without one pulls here instead. Neither does both.
 
 import path from "node:path"
+import { spawnSync } from "node:child_process"
 import os from "node:os"
 import fs from "node:fs"
 import { ensureDaemon, pluginVersion, request, staleNotice } from "./client.ts"
@@ -450,10 +451,19 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
             if (t?.ok && t.id) ids.push(String(t.id))
           } catch {}
       // What only the person can do: a short to-do in main's inbox (Done tells the agent).
+      // Who it is from, so it reads on its own in main: the thread, else the session's name, else its folder.
+      let repo = ""
+      try {
+        repo = path.basename(spawnSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], { encoding: "utf8", timeout: 2000 }).stdout.trim())
+      } catch {}
+      const who = thread ?? restore.readOne(sessionId)?.thread ?? (repo || path.basename(cwd) || "An agent")
       for (const text of r.persons)
-        ui.withStore((items, now) =>
-          ui.upsert(items, { id: `you:${sessionId}:${openItems.hashOf([text])}`, kind: "attention", sessionId: mainS.currentMain()?.sessionId ?? sessionId, from: thread ?? undefined, ...(thread ? { thread } : {}), question: text, options: [openItems.DONE, openItems.LATER], ts: now }, now),
-        )
+        ui.withStore((items, now) => {
+          // The same to-do from another session (or reworded) is one to-do.
+          if (Object.values(items).some((i) => i.id.startsWith("you:") && (i.state === "pending" || i.state === "later") && openItems.same(String(i.question ?? "").replace(/^.*? left this for you: /, ""), text))) return
+          const f = openItems.forYou(text, { who, repo })
+          ui.upsert(items, { id: `you:${sessionId}:${openItems.hashOf([text])}`, kind: "attention", sessionId: mainS.currentMain()?.sessionId ?? sessionId, from: who, ...(thread ? { thread } : {}), question: f.question, text: f.text, options: [openItems.DONE, openItems.LATER, openItems.NOT_MINE], ts: now }, now)
+        })
       // Away: open lists are tackled by themselves, a few rounds per session.
       const away = calmMod.isAway() && calmMod.update((s) => calmMod.takeRound(s, sessionId))
       if ((r.auto || (away && r.items.length)) && ui.modActive(sessionId)) {

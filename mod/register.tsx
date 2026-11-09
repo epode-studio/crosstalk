@@ -127,6 +127,8 @@ async function cli($: EngineInterface, args: string[]): Promise<any> {
 function raisable(it: Item): boolean {
   if (FINAL.has(it.state)) return false
   if (it.raisedAt === undefined) return it.state === 'pending'
+  // A to-do put off ("Remind me later") comes back after two hours, not at the next pause.
+  if (it.id.startsWith('you:') && it.state === 'later') return lastTurnEnd > it.raisedAt + 2 * 3_600_000
   return lastTurnEnd > it.raisedAt
 }
 
@@ -140,10 +142,11 @@ const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim()
  * a peer's words: those are cards, drawn above).
  */
 function withContext(it: Item, q: string): string {
-  const more = inboxLeft > 0 ? `${inboxLeft} more after this` : ''
-  const elsewhere = [it.thread && ((it.sessionId && it.sessionId !== session) || it.id.startsWith('relay:')) ? `${dotFor(it.thread)} ${it.thread}` : '', more].filter(Boolean).join(' · ')
+  // How many wait after this one: last, and in brackets, so it never reads as the question.
+  const more = inboxLeft > 0 ? `(${inboxLeft} more waiting after this one)` : ''
+  const elsewhere = it.thread && ((it.sessionId && it.sessionId !== session) || it.id.startsWith('relay:')) ? `${dotFor(it.thread)} ${it.thread}` : ''
   const ctx = typeof it.text === 'string' ? it.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '').trim().slice(0, 700) : ''
-  return [elsewhere, ctx, q].filter(Boolean).join('\n')
+  return [elsewhere, q, ctx, more].filter(Boolean).join('\n')
 }
 
 function header(it: Item): string {

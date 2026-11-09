@@ -181,8 +181,22 @@ export const setAlways = (on: boolean) => writePrefs({ ...readPrefs(), always: o
 
 // --- words ----------------------------------------------------------------------------
 
-export const DONE = "Done"
-export const LATER = "Later"
+export const DONE = "I've done it"
+export const LATER = "Remind me later"
+export const NOT_MINE = "Not for me"
+
+/**
+ * A to-do for the person, from an agent's Open list, readable on its own in
+ * main: who it is from and where, what it is, and what each answer does.
+ */
+export function forYou(text: string, o: { who: string; repo?: string }): { question: string; text: string } {
+  const item = text.replace(/\s+/g, " ").trim()
+  const where = o.repo && o.repo.toLowerCase() !== o.who.toLowerCase() ? ` (in ${o.repo})` : ""
+  return {
+    question: `${o.who}${where} left this for you: ${item}`,
+    text: `It cannot do this itself, so it is waiting on you. "${DONE}" tells it you did; "${NOT_MINE}" drops it.`,
+  }
+}
 export const TACKLE = "Tackle them"
 export const ALWAYS = "Always"
 export const NOT_NOW = "Not now"

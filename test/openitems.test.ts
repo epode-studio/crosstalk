@@ -156,3 +156,12 @@ describe("chasing what waits", () => {
     expect(O.chase("nobody", "x")).toBe(null)
   })
 })
+
+describe("a to-do for the person, in main", () => {
+  test("says who left it, where, and what each answer does", () => {
+    const f = O.forYou("#2902 needs your approval and #2757 has no owner.", { who: "auth", repo: "lovable" })
+    expect(f.question).toBe("auth (in lovable) left this for you: #2902 needs your approval and #2757 has no owner.")
+    expect(f.text).toContain(`"${O.DONE}" tells it you did`)
+    expect(O.forYou("x", { who: "lovable", repo: "lovable" }).question).toBe("lovable left this for you: x")
+  })
+})
