@@ -515,6 +515,16 @@ function endedNormally(r, all, boot) {
   const burst = all.some((o) => o.sessionId !== r.sessionId && o.endReason === "other" && !!o.endedAt && Math.abs(o.endedAt - r.endedAt) <= BURST_MS);
   return !burst;
 }
+function openAtDown(boot) {
+  try {
+    const o = JSON.parse(fs4.readFileSync(openFile(), "utf8"));
+    if (typeof o.at !== "number" || !Array.isArray(o.ids) || o.at >= boot || boot - o.at > WINDOW_MS)
+      return;
+    return new Set(o.ids.map(String));
+  } catch {
+    return;
+  }
+}
 function isLost(r, c) {
   if (r.interactive === false)
     return false;
@@ -523,6 +533,8 @@ function isLost(r, c) {
   const before = r.seenAt < c.boot;
   const ref = before ? c.boot : c.now;
   if (ref - r.seenAt > WINDOW_MS)
+    return false;
+  if (before && c.openAtDown && !c.openAtDown.has(r.sessionId))
     return false;
   if (!before && r.client !== "claude")
     return false;
@@ -748,21 +760,42 @@ function byRepoThread(rs, repoOf) {
 function appleIntoWindowScript(cmds, window, tabs) {
   const L = [
     `set crosstalkFallback to ""`,
-    `set crosstalkSoft to ""`,
+    `set crosstalkOpened to 0`,
+    `set crosstalkNew to false`,
     `tell application "Terminal"`,
     `	if not (exists window id ${window}) then`,
-    `		set crosstalkFallback to "gone"`,
+    `		set crosstalkNew to true`,
     `	else`,
     `		set index of window id ${window} to 1`,
     `		activate`,
     `	end if`,
     `end tell`
   ];
-  for (const c of cmds)
-    L.push(`if crosstalkFallback is "" and ${tabs ? "true" : "false"} then`, `	try`, ...appleNewTabLines(c), `	on error errMsg number errNum`, `		if errNum is 1001 then`, `			set crosstalkSoft to "1001"`, `		else`, `			set crosstalkFallback to (errNum as text)`, `		end if`, `		tell application "Terminal" to do script ${asq(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq(c)}`, `end if`);
-  L.push(`if crosstalkFallback is "gone" then set crosstalkFallback to ""`, `if crosstalkFallback is "" then set crosstalkFallback to crosstalkSoft`, `return "done " & crosstalkFallback`);
+  cmds.forEach((c, i) => {
+    if (!tabs) {
+      L.push(`tell application "Terminal" to do script ${asq(c)}`, `set crosstalkOpened to crosstalkOpened + 1`);
+      return;
+    }
+    if (i === 0)
+      L.push(`if crosstalkNew then`, `	tell application "Terminal"`, `		activate`, `		do script ${asq(c)}`, `	end tell`, `	set crosstalkOpened to 1`, `else`, ...tabTry(c), `end if`);
+    else
+      L.push(...tabTry(c));
+  });
+  L.push(`return "done " & crosstalkFallback & " " & crosstalkOpened`);
   return L.join(`
 `);
+}
+function tabTry(c) {
+  return [
+    `if crosstalkFallback is "" then`,
+    `	try`,
+    ...appleNewTabLines(c),
+    `		set crosstalkOpened to crosstalkOpened + 1`,
+    `	on error errMsg number errNum`,
+    `		set crosstalkFallback to (errNum as text)`,
+    `	end try`,
+    `end if`
+  ];
 }
 function itermIntoWindowScript(cmds, tty) {
   const L = [`tell application "iTerm2"`, `	set w to missing value`];
@@ -832,15 +865,14 @@ function appleNewTabLines(c) {
   ];
 }
 function appleTerminalScript(cmds, tabs) {
-  const L = [`set crosstalkFallback to ""`, `set crosstalkSoft to ""`, `tell application "Terminal"`, `	activate`, `	do script ${asq(cmds[0])}`, `end tell`];
+  const L = [`set crosstalkFallback to ""`, `set crosstalkOpened to 1`, `tell application "Terminal"`, `	activate`, `	do script ${asq(cmds[0])}`, `end tell`];
   for (const c of cmds.slice(1)) {
-    if (!tabs) {
-      L.push(`tell application "Terminal" to do script ${asq(c)}`);
-      continue;
-    }
-    L.push(`if crosstalkFallback is "" then`, `	try`, ...appleNewTabLines(c), `	on error errMsg number errNum`, `		if errNum is 1001 then`, `			set crosstalkSoft to "1001"`, `		else`, `			set crosstalkFallback to (errNum as text)`, `		end if`, `		tell application "Terminal" to do script ${asq(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq(c)}`, `end if`);
+    if (!tabs)
+      L.push(`tell application "Terminal" to do script ${asq(c)}`, `set crosstalkOpened to crosstalkOpened + 1`);
+    else
+      L.push(...tabTry(c));
   }
-  L.push(`if crosstalkFallback is "" then set crosstalkFallback to crosstalkSoft`, `return "done " & crosstalkFallback`);
+  L.push(`return "done " & crosstalkFallback & " " & crosstalkOpened`);
   return L.join(`
 `);
 }
@@ -917,23 +949,21 @@ function plan(recs, e) {
         plans.push({ kind: "tmux", sessions: sorted, steps });
       }
     } else if (kind === "apple") {
-      for (const { recs, anchor } of byRepo(rs, (r) => String(r.terminal.apple?.window ?? "?"))) {
-        const g = byRepoThread([...recs].sort((a, b) => (repoOf ? num(a.terminal.apple?.window) - num(b.terminal.apple?.window) : 0) || num(a.terminal.apple?.tab) - num(b.terminal.apple?.tab) || a.startedAt - b.startedAt));
-        const into = anchor?.apple?.window;
-        const tabs = e.tabs && (g.length > 1 || !!into);
-        plans.push({
-          kind: "apple",
-          sessions: g,
-          needsAccessibility: tabs,
-          steps: [{ cmd: "osascript", args: ["-"], input: into ? appleIntoWindowScript(g.map(typed), into, e.tabs) : appleTerminalScript(g.map(typed), tabs) }]
-        });
-      }
+      const groups = byRepo(rs, (r) => String(r.terminal.apple?.window ?? "?"));
+      const g = groups.flatMap(({ recs }) => byRepoThread([...recs].sort((a, b) => num(a.terminal.apple?.window) - num(b.terminal.apple?.window) || num(a.terminal.apple?.tab) - num(b.terminal.apple?.tab) || a.startedAt - b.startedAt)));
+      const into = groups.find((x) => x.anchor?.apple?.window)?.anchor?.apple?.window ?? e.current.apple?.window;
+      const tabs = e.tabs && (g.length > 1 || !!into);
+      plans.push({
+        kind: "apple",
+        sessions: g,
+        needsAccessibility: tabs,
+        steps: [{ cmd: "osascript", args: ["-"], input: into ? appleIntoWindowScript(g.map(typed), into, e.tabs) : appleTerminalScript(g.map(typed), tabs) }]
+      });
     } else if (kind === "iterm") {
-      for (const { recs, anchor } of byRepo(rs, (r) => String(r.terminal.iterm?.window ?? "?"))) {
-        const g = byRepoThread([...recs].sort((a, b) => (repoOf ? num(a.terminal.iterm?.window) - num(b.terminal.iterm?.window) : 0) || num(a.terminal.iterm?.tab) - num(b.terminal.iterm?.tab) || a.startedAt - b.startedAt));
-        const input = anchor?.tty ? itermIntoWindowScript(g.map(typed), anchor.tty) : itermScript(g.map(typed));
-        plans.push({ kind: "iterm", sessions: g, steps: [{ cmd: "osascript", args: ["-"], input }] });
-      }
+      const groups = byRepo(rs, (r) => String(r.terminal.iterm?.window ?? "?"));
+      const g = groups.flatMap(({ recs }) => byRepoThread([...recs].sort((a, b) => num(a.terminal.iterm?.window) - num(b.terminal.iterm?.window) || num(a.terminal.iterm?.tab) - num(b.terminal.iterm?.tab) || a.startedAt - b.startedAt)));
+      const tty = groups.find((x) => x.anchor?.tty)?.anchor?.tty ?? e.current.tty;
+      plans.push({ kind: "iterm", sessions: g, steps: [{ cmd: "osascript", args: ["-"], input: tty ? itermIntoWindowScript(g.map(typed), tty) : itermScript(g.map(typed)) }] });
     } else if (kind === "ghostty") {
       const g = byRepoThread(inRepoOrder(rs), repoOf);
       if (e.tabs)
@@ -1068,7 +1098,9 @@ function withWindowId(t, env = process.env) {
 }
 function ctxNow() {
   const now = Date.now();
-  return { now, boot: bootTime(process.env, now), all: readAll(), alive: recAlive };
+  const boot = bootTime(process.env, now);
+  const down = openAtDown(boot);
+  return { now, boot, all: readAll(), alive: recAlive, ...down ? { openAtDown: down } : {} };
 }
 function recentOf(lost, ms = RECENT_MS()) {
   if (!lost.length)
@@ -1184,15 +1216,23 @@ function restore(o, only) {
         break;
       }
     }
-    const fellBack = /done (-?\d+)/.exec(out);
-    if (ok && fellBack) {
-      if (fellBack[1] === "1001")
-        notes.push(`Opened ${p.sessions.length} in ${app} partly as separate windows: ${app} could not be brought to the front, or a new tab did not open where expected, so nothing was typed into an existing tab. Window \u25b8 Merge All Windows makes them tabs.`);
+    const stopped = /done (-?\d+) (\d+)/.exec(out);
+    if (ok && stopped && Number(stopped[2]) < p.sessions.length) {
+      const opened = Math.min(p.sessions.length, Number(stopped[2]));
+      const left = p.sessions.slice(opened);
+      restored.push(...p.sessions.slice(0, opened));
+      for (const r of left)
+        writeRec(r);
+      if (stopped[1] === "1001")
+        notes.push(`Opened ${opened} of ${p.sessions.length}: ${app} was not in front when the next tab was due, so crosstalk stopped rather than open windows. ${left.length} wait: say "restore them" to open them as tabs.`);
       else {
-        missing = classifyOsaError(fellBack[1]) ?? "automation";
-        notes.push(`Opened ${p.sessions.length} in ${app} as separate windows: ${app} ${missing === "accessibility" ? "may not type keys (Accessibility)" : "may not control System Events (Automation)"}.`);
+        missing = classifyOsaError(stopped[1]) ?? "automation";
+        notes.push(`Opened ${opened} of ${p.sessions.length}: ${app} ${missing === "accessibility" ? "may not type keys (Accessibility)" : "may not control System Events (Automation)"}, which tabs need. ${left.length} wait, to open as tabs once that is allowed.`);
       }
-    } else if (ok && p.needsAccessibility)
+      continue;
+    } else if (ok && stopped)
+      missing ??= classifyOsaError(stopped[1]);
+    else if (ok && p.needsAccessibility)
       saveState({ ...loadState(), tabsWorked: Date.now() });
     if (ok)
       restored.push(...p.sessions);
@@ -1245,7 +1285,7 @@ function startWaiter(root) {
     child.unref();
   } catch {}
 }
-var dir = () => path7.join(P.root, "open"), safe = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_"), fileOf = (id) => path7.join(dir(), `${safe(id)}.json`), stateFile = () => path7.join(P.root, "restore-state.json"), DAY, WINDOW_MS, SHUTDOWN_MS, BURST_MS, order = (rs) => [...rs].sort((a, b) => a.startedAt - b.startedAt), recAlive = (r) => pidAlive2(r.pid, r.pidStart), SHELL, appleLocateScript = (tty) => [
+var dir = () => path7.join(P.root, "open"), safe = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_"), fileOf = (id) => path7.join(dir(), `${safe(id)}.json`), stateFile = () => path7.join(P.root, "restore-state.json"), DAY, WINDOW_MS, SHUTDOWN_MS, BURST_MS, openFile = () => path7.join(P.root, "open-now.json"), order = (rs) => [...rs].sort((a, b) => a.startedAt - b.startedAt), recAlive = (r) => pidAlive2(r.pid, r.pidStart), SHELL, appleLocateScript = (tty) => [
   `tell application "Terminal"`,
   `	repeat with w in windows`,
   `		set n to 0`,
@@ -8645,6 +8685,17 @@ function endedNormally2(r, all, boot) {
   const burst = all.some((o) => o.sessionId !== r.sessionId && o.endReason === "other" && !!o.endedAt && Math.abs(o.endedAt - r.endedAt) <= BURST_MS2);
   return !burst;
 }
+var openFile2 = () => path28.join(P.root, "open-now.json");
+function openAtDown2(boot) {
+  try {
+    const o = JSON.parse(fs23.readFileSync(openFile2(), "utf8"));
+    if (typeof o.at !== "number" || !Array.isArray(o.ids) || o.at >= boot || boot - o.at > WINDOW_MS2)
+      return;
+    return new Set(o.ids.map(String));
+  } catch {
+    return;
+  }
+}
 function isLost2(r, c) {
   if (r.interactive === false)
     return false;
@@ -8653,6 +8704,8 @@ function isLost2(r, c) {
   const before = r.seenAt < c.boot;
   const ref = before ? c.boot : c.now;
   if (ref - r.seenAt > WINDOW_MS2)
+    return false;
+  if (before && c.openAtDown && !c.openAtDown.has(r.sessionId))
     return false;
   if (!before && r.client !== "claude")
     return false;
@@ -8884,21 +8937,42 @@ function byRepoThread2(rs, repoOf) {
 function appleIntoWindowScript3(cmds, window, tabs) {
   const L = [
     `set crosstalkFallback to ""`,
-    `set crosstalkSoft to ""`,
+    `set crosstalkOpened to 0`,
+    `set crosstalkNew to false`,
     `tell application "Terminal"`,
     `	if not (exists window id ${window}) then`,
-    `		set crosstalkFallback to "gone"`,
+    `		set crosstalkNew to true`,
     `	else`,
     `		set index of window id ${window} to 1`,
     `		activate`,
     `	end if`,
     `end tell`
   ];
-  for (const c of cmds)
-    L.push(`if crosstalkFallback is "" and ${tabs ? "true" : "false"} then`, `	try`, ...appleNewTabLines2(c), `	on error errMsg number errNum`, `		if errNum is 1001 then`, `			set crosstalkSoft to "1001"`, `		else`, `			set crosstalkFallback to (errNum as text)`, `		end if`, `		tell application "Terminal" to do script ${asq2(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq2(c)}`, `end if`);
-  L.push(`if crosstalkFallback is "gone" then set crosstalkFallback to ""`, `if crosstalkFallback is "" then set crosstalkFallback to crosstalkSoft`, `return "done " & crosstalkFallback`);
+  cmds.forEach((c, i) => {
+    if (!tabs) {
+      L.push(`tell application "Terminal" to do script ${asq2(c)}`, `set crosstalkOpened to crosstalkOpened + 1`);
+      return;
+    }
+    if (i === 0)
+      L.push(`if crosstalkNew then`, `	tell application "Terminal"`, `		activate`, `		do script ${asq2(c)}`, `	end tell`, `	set crosstalkOpened to 1`, `else`, ...tabTry2(c), `end if`);
+    else
+      L.push(...tabTry2(c));
+  });
+  L.push(`return "done " & crosstalkFallback & " " & crosstalkOpened`);
   return L.join(`
 `);
+}
+function tabTry2(c) {
+  return [
+    `if crosstalkFallback is "" then`,
+    `	try`,
+    ...appleNewTabLines2(c),
+    `		set crosstalkOpened to crosstalkOpened + 1`,
+    `	on error errMsg number errNum`,
+    `		set crosstalkFallback to (errNum as text)`,
+    `	end try`,
+    `end if`
+  ];
 }
 function itermIntoWindowScript3(cmds, tty) {
   const L = [`tell application "iTerm2"`, `	set w to missing value`];
@@ -8982,15 +9056,14 @@ function appleNewTabLines2(c) {
   ];
 }
 function appleTerminalScript2(cmds, tabs) {
-  const L = [`set crosstalkFallback to ""`, `set crosstalkSoft to ""`, `tell application "Terminal"`, `	activate`, `	do script ${asq2(cmds[0])}`, `end tell`];
+  const L = [`set crosstalkFallback to ""`, `set crosstalkOpened to 1`, `tell application "Terminal"`, `	activate`, `	do script ${asq2(cmds[0])}`, `end tell`];
   for (const c of cmds.slice(1)) {
-    if (!tabs) {
-      L.push(`tell application "Terminal" to do script ${asq2(c)}`);
-      continue;
-    }
-    L.push(`if crosstalkFallback is "" then`, `	try`, ...appleNewTabLines2(c), `	on error errMsg number errNum`, `		if errNum is 1001 then`, `			set crosstalkSoft to "1001"`, `		else`, `			set crosstalkFallback to (errNum as text)`, `		end if`, `		tell application "Terminal" to do script ${asq2(c)}`, `	end try`, `else`, `	tell application "Terminal" to do script ${asq2(c)}`, `end if`);
+    if (!tabs)
+      L.push(`tell application "Terminal" to do script ${asq2(c)}`, `set crosstalkOpened to crosstalkOpened + 1`);
+    else
+      L.push(...tabTry2(c));
   }
-  L.push(`if crosstalkFallback is "" then set crosstalkFallback to crosstalkSoft`, `return "done " & crosstalkFallback`);
+  L.push(`return "done " & crosstalkFallback & " " & crosstalkOpened`);
   return L.join(`
 `);
 }
@@ -9067,23 +9140,21 @@ function plan2(recs, e) {
         plans.push({ kind: "tmux", sessions: sorted, steps });
       }
     } else if (kind === "apple") {
-      for (const { recs, anchor } of byRepo(rs, (r) => String(r.terminal.apple?.window ?? "?"))) {
-        const g = byRepoThread2([...recs].sort((a, b) => (repoOf ? num2(a.terminal.apple?.window) - num2(b.terminal.apple?.window) : 0) || num2(a.terminal.apple?.tab) - num2(b.terminal.apple?.tab) || a.startedAt - b.startedAt));
-        const into = anchor?.apple?.window;
-        const tabs = e.tabs && (g.length > 1 || !!into);
-        plans.push({
-          kind: "apple",
-          sessions: g,
-          needsAccessibility: tabs,
-          steps: [{ cmd: "osascript", args: ["-"], input: into ? appleIntoWindowScript3(g.map(typed2), into, e.tabs) : appleTerminalScript2(g.map(typed2), tabs) }]
-        });
-      }
+      const groups = byRepo(rs, (r) => String(r.terminal.apple?.window ?? "?"));
+      const g = groups.flatMap(({ recs }) => byRepoThread2([...recs].sort((a, b) => num2(a.terminal.apple?.window) - num2(b.terminal.apple?.window) || num2(a.terminal.apple?.tab) - num2(b.terminal.apple?.tab) || a.startedAt - b.startedAt)));
+      const into = groups.find((x) => x.anchor?.apple?.window)?.anchor?.apple?.window ?? e.current.apple?.window;
+      const tabs = e.tabs && (g.length > 1 || !!into);
+      plans.push({
+        kind: "apple",
+        sessions: g,
+        needsAccessibility: tabs,
+        steps: [{ cmd: "osascript", args: ["-"], input: into ? appleIntoWindowScript3(g.map(typed2), into, e.tabs) : appleTerminalScript2(g.map(typed2), tabs) }]
+      });
     } else if (kind === "iterm") {
-      for (const { recs, anchor } of byRepo(rs, (r) => String(r.terminal.iterm?.window ?? "?"))) {
-        const g = byRepoThread2([...recs].sort((a, b) => (repoOf ? num2(a.terminal.iterm?.window) - num2(b.terminal.iterm?.window) : 0) || num2(a.terminal.iterm?.tab) - num2(b.terminal.iterm?.tab) || a.startedAt - b.startedAt));
-        const input = anchor?.tty ? itermIntoWindowScript3(g.map(typed2), anchor.tty) : itermScript2(g.map(typed2));
-        plans.push({ kind: "iterm", sessions: g, steps: [{ cmd: "osascript", args: ["-"], input }] });
-      }
+      const groups = byRepo(rs, (r) => String(r.terminal.iterm?.window ?? "?"));
+      const g = groups.flatMap(({ recs }) => byRepoThread2([...recs].sort((a, b) => num2(a.terminal.iterm?.window) - num2(b.terminal.iterm?.window) || num2(a.terminal.iterm?.tab) - num2(b.terminal.iterm?.tab) || a.startedAt - b.startedAt)));
+      const tty = groups.find((x) => x.anchor?.tty)?.anchor?.tty ?? e.current.tty;
+      plans.push({ kind: "iterm", sessions: g, steps: [{ cmd: "osascript", args: ["-"], input: tty ? itermIntoWindowScript3(g.map(typed2), tty) : itermScript2(g.map(typed2)) }] });
     } else if (kind === "ghostty") {
       const g = byRepoThread2(inRepoOrder(rs), repoOf);
       if (e.tabs)
@@ -9251,7 +9322,9 @@ var names4 = (rs, max = 4) => rs.slice(0, max).map(label3).join(", ") + (rs.leng
 var commandsFile2 = () => path28.join(P.root, "restore-commands.sh");
 function ctxNow2() {
   const now = Date.now();
-  return { now, boot: bootTime2(process.env, now), all: readAll3(), alive: recAlive2 };
+  const boot = bootTime2(process.env, now);
+  const down = openAtDown2(boot);
+  return { now, boot, all: readAll3(), alive: recAlive2, ...down ? { openAtDown: down } : {} };
 }
 var RECENT_MS2 = () => Number(process.env.CROSSTALK_RESTORE_RECENT_MS ?? 4 * 3600000);
 function recentOf2(lost, ms = RECENT_MS2()) {
@@ -9395,15 +9468,23 @@ function restore2(o, only) {
         break;
       }
     }
-    const fellBack = /done (-?\d+)/.exec(out);
-    if (ok && fellBack) {
-      if (fellBack[1] === "1001")
-        notes.push(`Opened ${p.sessions.length} in ${app} partly as separate windows: ${app} could not be brought to the front, or a new tab did not open where expected, so nothing was typed into an existing tab. Window \u25b8 Merge All Windows makes them tabs.`);
+    const stopped = /done (-?\d+) (\d+)/.exec(out);
+    if (ok && stopped && Number(stopped[2]) < p.sessions.length) {
+      const opened = Math.min(p.sessions.length, Number(stopped[2]));
+      const left = p.sessions.slice(opened);
+      restored.push(...p.sessions.slice(0, opened));
+      for (const r of left)
+        writeRec2(r);
+      if (stopped[1] === "1001")
+        notes.push(`Opened ${opened} of ${p.sessions.length}: ${app} was not in front when the next tab was due, so crosstalk stopped rather than open windows. ${left.length} wait: say "restore them" to open them as tabs.`);
       else {
-        missing = classifyOsaError2(fellBack[1]) ?? "automation";
-        notes.push(`Opened ${p.sessions.length} in ${app} as separate windows: ${app} ${missing === "accessibility" ? "may not type keys (Accessibility)" : "may not control System Events (Automation)"}.`);
+        missing = classifyOsaError2(stopped[1]) ?? "automation";
+        notes.push(`Opened ${opened} of ${p.sessions.length}: ${app} ${missing === "accessibility" ? "may not type keys (Accessibility)" : "may not control System Events (Automation)"}, which tabs need. ${left.length} wait, to open as tabs once that is allowed.`);
       }
-    } else if (ok && p.needsAccessibility)
+      continue;
+    } else if (ok && stopped)
+      missing ??= classifyOsaError2(stopped[1]);
+    else if (ok && p.needsAccessibility)
       saveState3({ ...loadState3(), tabsWorked: Date.now() });
     if (ok)
       restored.push(...p.sessions);
@@ -12400,7 +12481,7 @@ function pickPairs(all, name) {
   const hay = (p) => `${p.label} ${p.url} ${p.path ?? ""} ${p.thread}`.toLowerCase();
   return all.filter((p) => words.every((w) => hay(p).includes(w)));
 }
-var openFile = (file) => {
+var openFile3 = (file) => {
   if (!path47.isAbsolute(file) || /[\u0000-\u001f]/.test(file) || !fs40.existsSync(file))
     return false;
   const cmd = process.env.CROSSTALK_OPEN_FILE_CMD ?? (process.platform === "darwin" ? "open" : "xdg-open");
@@ -12438,7 +12519,7 @@ function openPair(o) {
   const files = [p.before?.file, p.after.file].filter((f) => !!f);
   if (process.env.CROSSTALK_NO_OPEN)
     return { ok: true, text: `\u25e2 crosstalk: would open ${files.join(" and ")} (opening is off here).`, opened: [] };
-  const opener = o.opener ?? openFile;
+  const opener = o.opener ?? openFile3;
   const opened = files.filter((f) => opener(f));
   return opened.length ? { ok: true, text: `\u25e2 crosstalk: opened ${clean4(p.label)}${p.path ? ` ${clean4(p.path)}` : ""}: ${p.before ? `before (${when(p.before.at)}) and after (${when(p.after.at)})` : `after (${when(p.after.at)}); there is no before yet`}.`, opened } : { ok: false, text: `\u25e2 crosstalk: could not open ${files.join(", ")}.` };
 }
