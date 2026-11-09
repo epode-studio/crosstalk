@@ -434,7 +434,7 @@ async function maybeRaise($: EngineInterface) {
 
 /** What stops an agent, or was just asked for: never held for a decision window (src/attention/calm.ts urgent). */
 function urgent(it: Item): boolean {
-  return it.kind === 'session' || it.kind === 'restore' || it.kind === 'ask' || it.id.startsWith('relay:') || it.id.startsWith('attn:perm:') || it.id.startsWith('attn:circle:') || it.id.startsWith('sess:')
+  return it.kind === 'session' || it.kind === 'steer' || it.kind === 'restore' || it.kind === 'ask' || it.id.startsWith('relay:') || it.id.startsWith('attn:perm:') || it.id.startsWith('attn:circle:') || it.id.startsWith('sess:')
 }
 
 /** How many more are waiting after the one being asked, for its header. */

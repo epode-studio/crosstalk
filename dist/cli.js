@@ -10618,7 +10618,9 @@ function prState(r) {
   return parts.filter(Boolean).map((x) => ` \u00b7 ${x}`).join("");
 }
 function inboxScore(it, now) {
-  const base = it.kind === "session" || it.kind === "restore" ? 120 : it.id.startsWith("relay:") || it.id.startsWith("attn:perm:") || it.id.startsWith("attn:circle:") ? 100 : it.kind === "ask" ? 90 : it.kind === "ship" || it.kind === "conflict" ? 80 : it.id.startsWith("attn:staff:") ? 60 : it.kind === "route" || it.kind === "team" || it.kind === "steer" ? 55 : it.id.startsWith("open:") ? 40 : it.kind === "message" ? 35 : 30;
+  if (it.kind === "session" || it.kind === "steer")
+    return 1000 + Math.min(30, Math.max(0, (now - it.createdAt) / 60000) / 2);
+  const base = it.kind === "restore" ? 120 : it.id.startsWith("relay:") || it.id.startsWith("attn:perm:") || it.id.startsWith("attn:circle:") ? 100 : it.kind === "ask" ? 90 : it.kind === "ship" || it.kind === "conflict" ? 80 : it.id.startsWith("attn:staff:") ? 60 : it.kind === "route" || it.kind === "team" ? 55 : it.id.startsWith("open:") ? 40 : it.kind === "message" ? 35 : 30;
   const waitedMin = Math.max(0, (now - it.createdAt) / 60000);
   return base + Math.min(30, waitedMin / 2);
 }
