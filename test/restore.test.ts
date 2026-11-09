@@ -86,6 +86,24 @@ describe("detection", () => {
     expect(R.isLost(s, { now, boot: BOOT, all: [s], alive: () => false })).toBe(true)
   })
 
+  test("across a restart, only what was open when it went down: not every session of the day before", () => {
+    const open = rec({ sessionId: "open" })
+    const closedEarlier = rec({ sessionId: "closed" }) // its window closed by hand hours before, a burst that looked like a crash
+    const c = { ...ctx([open, closedEarlier]), openAtDown: new Set(["open"]) }
+    expect([R.isLost(open, c), R.isLost(closedEarlier, c)]).toEqual([true, false])
+    expect(R.isLost(closedEarlier, ctx([open, closedEarlier]))).toBe(true) // without the note: as before
+    // Within this boot (a crashed terminal) the note does not apply.
+    const crashed = rec({ sessionId: "crashed", seenAt: NOW - 60_000 })
+    expect(R.isLost(crashed, { ...ctx([crashed]), openAtDown: new Set(["open"]) })).toBe(true)
+  })
+
+  test("the daemon's note is used only when taken before this boot, within a day of it", () => {
+    R.noteOpen(["a", "b"], BOOT - 60_000)
+    expect([...(R.openAtDown(BOOT) ?? [])]).toEqual(["a", "b"])
+    expect(R.openAtDown(BOOT - 120_000)).toBe(undefined) // taken after that boot
+    expect(R.openAtDown(BOOT + 2 * 24 * H)).toBe(undefined) // too old
+  })
+
   test("claude -p has no tab to come back to", () => {
     expect(lost(rec({ interactive: false }))).toBe(false)
   })

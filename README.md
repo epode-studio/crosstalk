@@ -297,8 +297,10 @@ terminal inside it, learn its window. crosstalk has none. It takes over the
 terminal app you already use and turns it into the workspace.
 
 - **Your tabs are the list of agents.** One per agent, opened, arranged and
-  brought back by crosstalk: one window per repository, a thread's tabs side by
-  side.
+  brought back by crosstalk: one window, tabs grouped by repository, a
+  thread's tabs side by side. After a restart, exactly what was open comes
+  back; if a tab cannot open, crosstalk stops rather than open windows, and
+  "restore them" opens the rest.
 - **Tabs that say what they are.** Each tab is named after its thread and
   session, with the thread's colour in front: 🟣 auth · auth-1, 🟢 billing ·
   billing-2. After a restart, "Only the recent 4" brings back just the work in

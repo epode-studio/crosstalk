@@ -14,8 +14,7 @@ is Claude Code's own picker instead, as soon as your prompt is empty and nothing
  ☐ Restore
 Restore 3 sessions from before the restart? (firmware, docs, web)
 ❯ 1. Restore
-  2. Open as windows
-  3. Not now
+  2. Not now
 ```
 
 Exactly one of the two shows: the mod tells the hook it is there before the hook runs. "Not
@@ -52,9 +51,9 @@ session goes to the terminal you are asking from:
 
 | Terminal | How | Layout |
 |---|---|---|
-| **Terminal.app** | AppleScript (`do script`), new tabs by Cmd-T through System Events | one window per repository, in the order each was first opened, tabs in their old order; into the window already holding that repository if one is open |
+| **Terminal.app** | AppleScript (`do script`), new tabs by Cmd-T through System Events | one window for all of them (the one already holding one of their repositories, else the one you asked from), tabs grouped by repository in the order each was first opened; a tab that will not open stops the rest, kept for "restore them", never a window each |
 | tmux | `tmux new-window -d -t <session>: -c <folder>`, and the tmux session is recreated if it is gone | windows in their old index order; agents crosstalk ran in the background go back to `tmux -L crosstalk` |
-| iTerm2 | AppleScript, `create tab` | one window per repository, tabs in order; into the window already holding it if one is open |
+| iTerm2 | AppleScript, `create tab` | one window for all of them, tabs grouped by repository |
 | Ghostty | AppleScript keystrokes (Cmd-N, Cmd-T, typing the command) | tabs in one window |
 | kitty | `kitten @ launch --type=tab` (needs `allow_remote_control`) | tabs, beside the repository's open window if any |
 | WezTerm | `wezterm cli spawn` | tabs, in the repository's open window if any |

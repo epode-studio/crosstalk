@@ -449,7 +449,7 @@ function storeRestore(sessionId: string, offer: { count: number; names: string[]
         count: n,
         names: offer.names,
         question: `Restore ${n} session${n === 1 ? "" : "s"} ${when}? (${offer.names.join(", ")})`,
-        options: offer.recent && offer.recent < n ? ["Restore", recentLabel(offer.recent), "Open as windows", "Not now"] : ["Restore", "Open as windows", "Not now"],
+        options: offer.recent && offer.recent < n ? ["Restore", recentLabel(offer.recent), "Not now"] : ["Restore", "Not now"],
       },
       now,
     ),

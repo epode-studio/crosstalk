@@ -60,6 +60,7 @@ import { createAttention } from "./attention/daemon.ts"
 import type { AttentionService } from "./attention/service.ts"
 import { spawnAgents, spawnedAt } from "./spawn.ts"
 import * as queueMod from "./urls/queue.ts"
+import * as restoreMod from "./restore.ts"
 import * as mergeMod from "./urls/merge.ts"
 import { createSessionOps } from "./sessions/daemon.ts"
 // Registers crosstalk services with the session manager (setServices), for close here.
@@ -2951,6 +2952,20 @@ control.listen(P.daemonSock, () => {
   // Every link, preview and screenshot a thread had, kept in it (src/urls/history/).
   if (!process.env.CROSSTALK_NO_URLS) startHistory({ threads, log })
 })
+
+// Which sessions are open, every minute: after a restart, exactly those are offered back (src/restore.ts openAtDown).
+setInterval(() => {
+  try {
+    const now = Date.now()
+    restoreMod.noteOpen(
+      restoreMod
+        .readAll()
+        .filter((r) => !r.endedAt && !r.archived && now - r.seenAt < 86_400_000 && restoreMod.recAlive(r))
+        .map((r) => r.sessionId),
+      now,
+    )
+  } catch {}
+}, 60_000).unref?.()
 
 setInterval(() => {
   try {

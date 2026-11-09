@@ -203,7 +203,7 @@ describe("exactly one restore surface", () => {
     const it = U.snapshot()[U.restoreId("with-mod")]!
     expect(it.kind).toBe("restore")
     expect(it.question).toBe("Restore 6 sessions from before the restart? (api, web, docs, fw, …)")
-    expect(it.options).toEqual(["Restore", "Open as windows", "Not now"])
+    expect(it.options).toEqual(["Restore", "Not now"])
   })
 
   test("nothing claimed: neither", () => {

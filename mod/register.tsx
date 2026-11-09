@@ -20,7 +20,7 @@
 //                  thread is waiting on, `@<person> <text>` replies, `@main`,
 //                  `@main off`, `@restore [no|windows]`; taken before they are a prompt
 //   a route        "which session gets ben's message?": the sessions, and Hold it
-//   restore        "Restore 6 sessions?": Restore / Open as windows / Not now
+//   restore        "Restore 6 sessions?": Restore / Not now
 //   gather         "4 Claude sessions started before crosstalk. Bring them in?":
 //                  Bring them in / Not now, and a toast once they are in
 //   cleanup        "2 agent worktrees are done with. Remove them?":
@@ -445,7 +445,7 @@ async function raise($: EngineInterface, it: Item) {
   let answer: string
   try {
     if (it.kind === 'restore')
-      answer = await $.ui.ask(it.question ?? 'Restore your sessions?', { options: it.options ?? ['Restore', 'Open as windows', 'Not now'], header: header(it) })
+      answer = await $.ui.ask(it.question ?? 'Restore your sessions?', { options: it.options ?? ['Restore', 'Not now'], header: header(it) })
     else if (it.kind === 'gather')
       answer = await $.ui.ask(it.question ?? 'Bring your other Claude sessions into crosstalk?', { options: it.options ?? ['Bring them in', 'Not now'], header: header(it) })
     else if (it.kind === 'cleanup')

@@ -203,7 +203,37 @@ export function endedNormally(r: Rec, all: Rec[], boot: number): boolean {
   return !burst
 }
 
-export type Ctx = { now: number; boot: number; all: Rec[]; alive: (r: Rec) => boolean }
+export type Ctx = {
+  now: number
+  boot: number
+  all: Rec[]
+  alive: (r: Rec) => boolean
+  /** The sessions open when the machine went down, from the daemon's last note before the boot (noteOpen). */
+  openAtDown?: Set<string>
+}
+
+const openFile = () => path.join(P.root, "open-now.json")
+
+/** The daemon notes, every minute, which sessions are open: after a restart, exactly those come back. */
+export function noteOpen(ids: string[], now = Date.now()) {
+  try {
+    fs.mkdirSync(P.root, { recursive: true, mode: 0o700 })
+    const tmp = `${openFile()}.${process.pid}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify({ at: now, ids }), { mode: 0o600 })
+    fs.renameSync(tmp, openFile())
+  } catch {}
+}
+
+/** What was open when the machine went down: the last note before this boot, if it was taken within a day of it. */
+export function openAtDown(boot: number): Set<string> | undefined {
+  try {
+    const o = JSON.parse(fs.readFileSync(openFile(), "utf8"))
+    if (typeof o.at !== "number" || !Array.isArray(o.ids) || o.at >= boot || boot - o.at > WINDOW_MS) return undefined
+    return new Set(o.ids.map(String))
+  } catch {
+    return undefined
+  }
+}
 
 /**
  * Lost: not ended on purpose, its process gone, and seen recently.
@@ -220,6 +250,8 @@ export function isLost(r: Rec, c: Ctx): boolean {
   const before = r.seenAt < c.boot
   const ref = before ? c.boot : c.now
   if (ref - r.seenAt > WINDOW_MS) return false
+  // Across a restart: only what was open when it went down, not every session of the day before.
+  if (before && c.openAtDown && !c.openAtDown.has(r.sessionId)) return false
   if (!before && r.client !== "claude") return false
   return !c.alive(r)
 }
@@ -1103,7 +1135,9 @@ export const commandsFile = () => path.join(P.root, "restore-commands.sh")
 
 export function ctxNow(): Ctx {
   const now = Date.now()
-  return { now, boot: bootTime(process.env, now), all: readAll(), alive: recAlive }
+  const boot = bootTime(process.env, now)
+  const down = openAtDown(boot)
+  return { now, boot, all: readAll(), alive: recAlive, ...(down ? { openAtDown: down } : {}) }
 }
 
 /** The question, for the first session opened. Null when there is nothing to ask. */
