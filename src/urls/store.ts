@@ -67,6 +67,12 @@ export type Url = {
   /** Since when its checks have been running, for the ETA. */
   checksSince?: number
   draft?: boolean
+  /** In its repository's merge queue, as last seen, and what crosstalk keeps about it (src/urls/queue.ts). */
+  queued?: boolean
+  queuedAt?: number
+  queueRetries?: number
+  queueStuckTold?: number
+  queueSeenRemoval?: number
   /**
    * A public https link to this local server while one is open (src/share/,
    * `public: true` only): what a phone's QR code encodes. Never set for a share

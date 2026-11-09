@@ -100,7 +100,7 @@ export function agentsPane(sessionId?: string, list = allAgents(sessionId)): Pan
   let events: { text: string; at: number }[] = []
   try {
     // Only pull requests still moving or needing a look; merged ones show under Lately.
-    prs = allPrs().filter((r) => r.alive && r.state !== "MERGED" && r.state !== "CLOSED" && (r.checks === "running" || r.checks === "failed"))
+    prs = allPrs().filter((r) => r.alive && r.state !== "MERGED" && r.state !== "CLOSED" && (r.checks === "running" || r.checks === "failed" || r.queued))
     events = recentEvents(4)
   } catch {}
   let usage: { text: string; hot: boolean } | null = null

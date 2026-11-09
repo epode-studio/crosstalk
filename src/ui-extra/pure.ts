@@ -178,6 +178,8 @@ export type PaneRunning = {
   failed?: string[]
   eta?: string
   draft?: boolean
+  /** In its repository's merge queue (src/urls/queue.ts). */
+  queued?: boolean
   /** OPEN, MERGED, CLOSED. */
   state?: string
   /** Who a share of yours is open to. */
@@ -347,7 +349,7 @@ export const agentAsks = (a: PaneAgent): string | null => (a.asks ? `   asks: ${
 
 
 /** A pull request's state in words: ` · draft · checks running · about 6 min left`, ` · checks failed: e2e`, ` · merged`. */
-export function prState(r: Pick<PaneRunning, "state" | "draft" | "checks" | "failed" | "eta" | "alive">): string {
+export function prState(r: Pick<PaneRunning, "state" | "draft" | "checks" | "failed" | "eta" | "alive" | "queued">): string {
   if (r.state === "MERGED") return " · merged"
   if (r.state === "CLOSED") return " · closed"
   if (!r.alive) return " · dead"
@@ -355,6 +357,7 @@ export function prState(r: Pick<PaneRunning, "state" | "draft" | "checks" | "fai
   if (r.checks === "running") parts.push("checks running", r.eta ?? "")
   else if (r.checks === "failed") parts.push(`checks failed${r.failed?.length ? `: ${r.failed.join(", ")}` : ""}`)
   else if (r.checks === "passed") parts.push("checks passed")
+  if (r.queued) parts.push("in the merge queue")
   return parts.filter(Boolean).map((x) => ` · ${x}`).join("")
 }
 

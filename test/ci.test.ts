@@ -175,3 +175,70 @@ describe("merging green PRs", () => {
     expect(Mg.methodFlag(undefined)).toBe(undefined)
   })
 })
+
+const Q = await import("../src/urls/queue.ts")
+describe("the merge queue", () => {
+  test("GitHub's answer is read: in line, where, about when, and why it last left", () => {
+    const j = { data: { repository: { pullRequest: { isInMergeQueue: true, mergeQueueEntry: { position: 2, estimatedTimeToMerge: 600, enqueuedAt: "2027-01-15T08:00:00Z" }, timelineItems: { nodes: [{ createdAt: "2027-01-15T07:00:00Z", reason: "FAILED_CHECKS" }] } } } } }
+    expect(Q.parse(j)).toEqual({ queued: true, position: 2, eta: 600, enqueuedAt: Date.parse("2027-01-15T08:00:00Z"), removed: { at: Date.parse("2027-01-15T07:00:00Z"), reason: "FAILED_CHECKS" } })
+    expect(Q.parse({})).toBe(undefined)
+  })
+  test("why it left, in GitHub's words", () => {
+    expect(Q.why("MERGE_CONFLICT")).toBe("conflict")
+    expect(Q.why("Failed checks")).toBe("failed")
+    expect(Q.why("MANUAL")).toBe("manual")
+    expect(Q.why("QUEUE_CLEARED")).toBe("other")
+  })
+  test("in line; out on a flaky check: back once; out again: fixed; a conflict: fixed; by hand: left alone; each removal once", () => {
+    let k: import("../src/urls/queue.ts").Kept = {}
+    let r = Q.step(k, { queued: true, position: 3, eta: 900 }, NOW)
+    expect(r.step).toEqual({ kind: "queued", position: 3, eta: 900 })
+    expect(Q.text("auth · PR #7", r.step!)).toBe("auth · PR #7 is in the merge queue, 3rd in line, merging in about 15 min.")
+    k = r.keep
+    expect(Q.step(k, { queued: true, position: 2 }, NOW + MIN).step).toBe(null)
+    r = Q.step(k, { queued: false, removed: { at: NOW + 2 * MIN, reason: "FAILED_CHECKS" } }, NOW + 2 * MIN)
+    expect(r.step).toMatchObject({ kind: "dequeued", why: "failed", action: "requeue" })
+    k = r.keep
+    expect(Q.step(k, { queued: false, removed: { at: NOW + 2 * MIN, reason: "FAILED_CHECKS" } }, NOW + 3 * MIN).step).toBe(null) // the same removal, once
+    k = Q.step(k, { queued: true }, NOW + 4 * MIN).keep
+    r = Q.step(k, { queued: false, removed: { at: NOW + 5 * MIN, reason: "FAILED_CHECKS" } }, NOW + 5 * MIN)
+    expect(r.step).toMatchObject({ kind: "dequeued", action: "fix" }) // twice: not a flake
+    k = Q.step(r.keep, { queued: true }, NOW + 6 * MIN).keep
+    r = Q.step(k, { queued: false, removed: { at: NOW + 7 * MIN, reason: "MERGE_CONFLICT" } }, NOW + 7 * MIN)
+    expect(r.step).toMatchObject({ kind: "dequeued", why: "conflict", action: "fix" })
+    k = Q.step(r.keep, { queued: true }, NOW + 8 * MIN).keep
+    r = Q.step(k, { queued: false, removed: { at: NOW + 9 * MIN, reason: "MANUAL" } }, NOW + 9 * MIN)
+    expect(r.step).toMatchObject({ action: "leave" })
+    expect(Q.text("auth · PR #7", r.step!)).toContain("taken out of the merge queue by hand")
+  })
+  test("first in line far longer than usual is said once", () => {
+    const k = Q.step({}, { queued: true, position: 1, enqueuedAt: NOW }, NOW).keep
+    expect(Q.step(k, { queued: true, position: 1 }, NOW + 30 * MIN).step).toBe(null)
+    const r = Q.step(k, { queued: true, position: 1 }, NOW + 61 * MIN)
+    expect(r.step).toEqual({ kind: "stuck", minutes: 61 })
+    expect(Q.step(r.keep, { queued: true, position: 1 }, NOW + 90 * MIN).step).toBe(null)
+  })
+  test("the agent that unblocks it fixes the cause, never skips a test, and puts it back", () => {
+    const p = Q.fixPrompt("auth · PR #7", "https://github.com/acme/app/pull/7", { kind: "dequeued", why: "failed", reason: "FAILED_CHECKS", action: "fix" })
+    expect(p).toContain("rather than skipping or disabling a test")
+    expect(p).toContain("gh pr merge https://github.com/acme/app/pull/7 --auto")
+  })
+  test("watched while set to merge by itself; looked at every minute while in line; shown in the pane", async () => {
+    const store = new UrlStore({ file: path.join(process.env.CROSSTALK_HOME!, "ci-queue.json") })
+    const url = "https://github.com/acme/app/pull/9"
+    store.add({ id: `pr:${url}`, url, kind: "pr", source: "pr", label: "auth · PR #9", thread: "auth" })
+    const view = { state: "OPEN", draft: false, checks: "passed" as const, failed: [], autoMerge: true }
+    let q: import("../src/urls/queue.ts").QueueView = { queued: true, position: 1 }
+    const steps: string[] = []
+    const opts = (now: number) => ({ liveRoots: new Set<string>(), now, prView: () => view, queueOf: () => q, onQueue: (_u: any, s: any) => steps.push(s.kind + (s.action ? `:${s.action}` : "")) })
+    await L.tick(store, opts(NOW))
+    expect(steps).toEqual(["queued"])
+    const u = store.read()[0]
+    expect(u.queued).toBe(true)
+    expect(L.nextDue(u, false) - u.lastCheck).toBe(L.PR_RUNNING_MS())
+    expect(pure.prState({ alive: true, state: "OPEN", checks: "passed", queued: true })).toBe(" · checks passed · in the merge queue")
+    q = { queued: false, removed: { at: NOW + MIN, reason: "MERGE_CONFLICT" } }
+    await L.tick(store, opts(NOW + 2 * MIN))
+    expect(steps).toEqual(["queued", "dequeued:fix"])
+  })
+})

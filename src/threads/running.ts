@@ -197,6 +197,7 @@ export function prFields(u: Url, now: number) {
     ...(u.checks ? { checks: u.checks } : {}),
     ...(u.failed?.length ? { failed: u.failed } : {}),
     ...(u.draft ? { draft: true } : {}),
+    ...(u.queued ? { queued: true } : {}),
     ...(eta ? { eta } : {}),
   }
 }

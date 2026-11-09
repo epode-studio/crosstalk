@@ -58,7 +58,9 @@ import { isBot } from "./ui-extra/bots.ts"
 import { threadMuted } from "./ui-extra/mute.ts"
 import { createAttention } from "./attention/daemon.ts"
 import type { AttentionService } from "./attention/service.ts"
-import { spawnedAt } from "./spawn.ts"
+import { spawnAgents, spawnedAt } from "./spawn.ts"
+import * as queueMod from "./urls/queue.ts"
+import * as mergeMod from "./urls/merge.ts"
 import { createSessionOps } from "./sessions/daemon.ts"
 // Registers crosstalk services with the session manager (setServices), for close here.
 import "./services/service.ts"
@@ -2848,6 +2850,44 @@ control.listen(P.daemonSock, () => {
       live: () => [...sessions.values()].map((s) => ({ sessionId: s.sessionId, cwd: s.cwd })),
       // A PR's checks passed or failed, or it merged or closed (src/urls/ci.ts): the
       // sessions in its thread are told, and a failure is kept as a task to investigate.
+      // The merge queue (src/urls/queue.ts): where in line, and unblocked when it falls out.
+      onQueue: (u, s) => {
+        try {
+          const t = u.thread ? threads.find(undefined, u.thread) : undefined
+          const name = t?.meta.value.name
+          const line = queueMod.text(u.label, s)
+          ciMod.recordEvent(line)
+          const main = coord.mainId()
+          const tell = (text: string) => {
+            if (main) ui.withStore((items, now) => ui.upsert(items, { id: `queue:${u.id}:${s.kind}:${Date.now()}`, kind: "message", sessionId: main, from: "crosstalk", ...(name ? { thread: name } : {}), text, auto: true, ts: now }, now))
+          }
+          if (s.kind === "stuck") tell(`◢ ${line}`)
+          if (s.kind !== "dequeued") return log(`queue: ${line}`)
+          if (s.action === "leave") return tell(`◢ ${line}`)
+          if (s.action === "requeue") {
+            void mergeMod.ghMerge(u.url, u.worktree).then((r) => {
+              const m = r.ok ? `◢ ${line}` : `◢ ${u.label} left the merge queue and could not be put back (${r.text}). It needs a look.`
+              tell(m)
+              log(`queue: ${m}`)
+            })
+            return
+          }
+          // Fixed by the session working on it, sent by its mod once idle; or, with none open, a background agent.
+          const prompt = queueMod.fixPrompt(u.label, u.url, s)
+          const live = [...new Set([...(u.sessionId ? [u.sessionId] : []), ...(t ? threads.sessionsIn([t.id]) : [])])].filter((sid) => sessions.has(sid) && sid !== main)
+          if (live.length && !parkMod.isParked(name)) {
+            const sid = live[0]!
+            ui.withStore((items, now) => ui.upsert(items, { id: `tackle:${sid}:queue-${u.id}-${u.queueSeenRemoval ?? Date.now()}`, kind: "attention", sessionId: sid, text: prompt, auto: true, ts: now }, now))
+            tell(`◢ ${line}`)
+          } else if (u.worktree && !parkMod.isParked(name)) {
+            const r = spawnAgents({ task: prompt, name: name ?? "unblock", cwd: u.worktree, background: true, by: "crosstalk" })
+            tell(r.ok ? `◢ ${line} An agent is on it in the background.` : `◢ ${u.label} left the merge queue and needs fixing; crosstalk could not start an agent (${r.text.replace(/^◢ crosstalk: /, "")}).`)
+          } else tell(`◢ ${u.label} left the merge queue and needs fixing${name && parkMod.isParked(name) ? ` (${name} is parked, so nothing was started)` : ""}.`)
+          log(`queue: ${line}`)
+        } catch (e) {
+          log(`queue: ${(e as Error).message}`)
+        }
+      },
       onPr: (u, c, v) => {
         // Green and nothing in the way: "Merge it?" in main, or merged when the person said always (src/urls/merge.ts).
         try {

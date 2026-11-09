@@ -15,6 +15,7 @@
 // Any HTTP answer counts as answering (a 500 is a server that runs); the
 // status is kept for the builds that come after (self-healing).
 
+import * as Q from "./queue.ts"
 import { execFile } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
@@ -66,7 +67,7 @@ export function nextDue(u: Url, live: boolean): number {
   if (!u.lastCheck) return 0
   if (u.fails && u.alive) return u.lastCheck + RETRY_MS()
   // Checks running: looked at every minute, so a pass or a failure is heard about in time.
-  const every = u.kind === "pr" ? (u.checks === "running" ? PR_RUNNING_MS() : PR_MS) : u.kind === "preview" ? PREVIEW_MS : live ? liveEvery() : IDLE_MS
+  const every = u.kind === "pr" ? (u.checks === "running" || u.queued ? PR_RUNNING_MS() : PR_MS) : u.kind === "preview" ? PREVIEW_MS : live ? liveEvery() : IDLE_MS
   return u.lastCheck + every
 }
 
@@ -109,7 +110,7 @@ export function runGh(args: string[], o: { cwd?: string; timeoutMs?: number } = 
 }
 
 /** The fields asked of gh for a PR: its state, checks, author, and whether it can be merged. */
-export const PR_FIELDS = "state,isDraft,statusCheckRollup,author,reviewDecision,mergeable,mergeStateStatus"
+export const PR_FIELDS = "state,isDraft,statusCheckRollup,author,reviewDecision,mergeable,mergeStateStatus,autoMergeRequest"
 
 /** The person's GitHub login, asked once (gh api user). */
 let login: string | null | undefined
@@ -149,7 +150,7 @@ export const ghState: PrState = async (url, cwd) => {
  */
 export async function tick(
   store: UrlStore,
-  o: { liveRoots: Set<string>; liveSessions?: Set<string>; now?: number; probe?: (url: string) => Promise<Probe>; prState?: PrState; prView?: PrViewOf; onPr?: (u: Url, c: CI.Change, v: CI.PrView) => void; me?: () => Maybe<string | undefined>; max?: number } = { liveRoots: new Set() },
+  o: { liveRoots: Set<string>; liveSessions?: Set<string>; now?: number; probe?: (url: string) => Promise<Probe>; prState?: PrState; prView?: PrViewOf; onPr?: (u: Url, c: CI.Change, v: CI.PrView) => void; queueOf?: Q.QueueOf; onQueue?: (u: Url, s: Q.Step) => void; me?: () => Maybe<string | undefined>; max?: number } = { liveRoots: new Set() },
 ): Promise<Url[]> {
   const now = o.now ?? Date.now()
   const p = o.probe ?? ((u: string) => probe(u))
@@ -192,6 +193,17 @@ export async function tick(
           try {
             o.onPr?.(after, ch, v)
           } catch {}
+        // The merge queue (src/urls/queue.ts): watched while it is set to merge by itself or is in line.
+        if (after && mine && v.state === "OPEN" && (v.autoMerge || u.queued) && !Q.disabled() && (o.onQueue || o.queueOf))
+          try {
+            const qv = await (o.queueOf ?? Q.ghQueue)(u.url, u.worktree)
+            if (qv) {
+              const r = Q.step({ queued: u.queued, queuedAt: u.queuedAt, queueRetries: u.queueRetries, queueStuckTold: u.queueStuckTold, queueSeenRemoval: u.queueSeenRemoval }, qv, now)
+              const kept = store.update(u.id, r.keep) ?? after
+              if (r.step) o.onQueue?.(kept, r.step)
+            }
+          } catch {}
+        else if (u.queued && v.state !== "OPEN") store.update(u.id, { queued: false })
         return
       }
       const r = await p(u.url)

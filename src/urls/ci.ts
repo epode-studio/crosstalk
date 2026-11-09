@@ -31,6 +31,8 @@ export type PrView = {
   mergeable?: string
   /** gh's mergeStateStatus: CLEAN, BLOCKED, BEHIND, DIRTY, DRAFT, UNSTABLE, HAS_HOOKS, UNKNOWN. */
   mergeState?: string
+  /** Set to merge by itself (auto-merge, or waiting for its merge queue). */
+  autoMerge?: boolean
 }
 
 const FAIL = new Set(["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"])
@@ -60,6 +62,7 @@ export function summarize(j: any): PrView {
     ...(typeof j?.reviewDecision === "string" ? { review: j.reviewDecision.toUpperCase() } : {}),
     ...(typeof j?.mergeable === "string" ? { mergeable: j.mergeable.toUpperCase() } : {}),
     ...(typeof j?.mergeStateStatus === "string" ? { mergeState: j.mergeStateStatus.toUpperCase() } : {}),
+    ...(j?.autoMergeRequest ? { autoMerge: true } : {}),
     checks,
     failed: [...new Set(failed)].slice(0, 8),
     ...(starts.length ? { startedAt: Math.min(...starts) } : {}),

@@ -176,6 +176,12 @@ you, it asks.
   *"Stop merging by itself"* goes back to asking.
 - When a pull request in a shared thread merges or its checks fail, your
   teammates in that thread hear it once, in a line.
+- Merge queues are watched: where your PR is in line and about when it
+  merges. If it falls out on a failed check, it goes back in once (queue
+  checks are often flaky); if it fails again or conflicts, the session working
+  on it (or a new background agent) fixes it and puts it back. Taken out by
+  hand, it is left alone. A queue stuck far longer than usual is said once.
+  `CROSSTALK_NO_QUEUE=1` turns this off.
 
 **Less to carry**
 - *"I'm focusing for an hour."* Only what stops an agent interrupts you; the
