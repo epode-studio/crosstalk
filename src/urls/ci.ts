@@ -9,7 +9,8 @@
 //             these have run: "about 6 min left", so nobody has to ask
 //   changes   passed, failed, merged, closed: what liveness.ts hands the daemon,
 //             which tells the PR's session and, on a failure, keeps a task to
-//             investigate it in the thread
+//             investigate it in the thread; teammates in the thread hear a merge
+//             or a failure once (tellTeam)
 
 import fs from "node:fs"
 import path from "node:path"
@@ -151,6 +152,56 @@ export function changeText(label: string, url: string, c: Change): string {
   if (c.kind === "closed") return `${label} was closed without merging (${url}).`
   if (c.kind === "passed") return `${label}: checks passed (${url}).`
   return `${label}: checks failed${c.failed?.length ? `: ${c.failed.join(", ")}` : ""} (${url}). A task to investigate it is in the thread.`
+}
+
+// --- telling teammates ------------------------------------------------------------------
+
+/** The line teammates in the thread hear: `auth · PR #12 merged (paul)`. Only a merge or a failure is news to them. */
+export function teamText(label: string, c: Change, me: string): string | undefined {
+  if (c.kind === "merged") return `${label} merged (${me})`
+  if (c.kind === "failed") return `${label}: checks failed (${me})`
+  return undefined
+}
+
+const told = () => path.join(P.root, "ci-told.json")
+
+/**
+ * Whether teammates have not yet heard this (PR, kind): true once, then false,
+ * kept across restarts. A week's worth, two hundred at most.
+ */
+export function firstTime(key: string, now = Date.now()): boolean {
+  let all: Record<string, number> = {}
+  try {
+    all = JSON.parse(fs.readFileSync(told(), "utf8")) ?? {}
+  } catch {}
+  if (all[key]) return false
+  all[key] = now
+  const kept = Object.entries(all)
+    .filter(([, at]) => now - at < 7 * 86_400_000)
+    .sort((a, b) => a[1] - b[1])
+    .slice(-200)
+  try {
+    fs.mkdirSync(P.root, { recursive: true, mode: 0o700 })
+    const tmp = `${told()}.${process.pid}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify(Object.fromEntries(kept)), { mode: 0o600 })
+    fs.renameSync(tmp, told())
+  } catch {}
+  return true
+}
+
+/**
+ * A PR in a thread merged, or its checks failed: the other people in that
+ * thread hear it once, over the same path a message to them takes (`send`).
+ * Nothing when the thread is only this person's. Returns who was told.
+ */
+export function tellTeam(o: { u: { id: string; label: string }; c: Change; threadId?: string; me: string; teammates: (threadIds: string[]) => string[]; send: (label: string, text: string) => void; once?: (key: string) => boolean }): string[] {
+  const text = teamText(o.u.label, o.c, o.me)
+  if (!text || !o.threadId) return []
+  const labels = o.teammates([o.threadId])
+  if (!labels.length) return []
+  if (!(o.once ?? firstTime)(`${o.u.id}:${o.c.kind}`)) return []
+  for (const l of labels) o.send(l, text)
+  return labels
 }
 
 /** The investigation a failure becomes, kept as a task in the thread. */

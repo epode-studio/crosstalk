@@ -120,6 +120,34 @@ describe("watching a PR", () => {
   })
 })
 
+describe("telling teammates", () => {
+  test("a merge or a failure, once per PR and kind, only to a thread's other people", () => {
+    const u = { id: "pr:https://github.com/acme/app/pull/12", label: "auth · PR #12" }
+    const sent: [string, string][] = []
+    const send = (l: string, t: string) => void sent.push([l, t])
+    const team = (ids: string[]) => (ids[0] === "t-auth" ? ["ben", "marie"] : [])
+    const tell = (c: import("../src/urls/ci.ts").Change, threadId?: string) => CI.tellTeam({ u, c, threadId, me: "paul", teammates: team, send })
+    // A pass is not news to them; a thread only here, or none, tells nobody.
+    expect(tell({ kind: "passed" }, "t-auth")).toEqual([])
+    expect(tell({ kind: "merged" }, "t-solo")).toEqual([])
+    expect(tell({ kind: "merged" })).toEqual([])
+    expect(sent).toEqual([])
+    expect(tell({ kind: "failed", failed: ["e2e"] }, "t-auth")).toEqual(["ben", "marie"])
+    expect(tell({ kind: "failed", failed: ["e2e"] }, "t-auth")).toEqual([]) // once
+    expect(tell({ kind: "merged" }, "t-auth")).toEqual(["ben", "marie"])
+    expect(tell({ kind: "merged" }, "t-auth")).toEqual([])
+    expect(sent).toEqual([
+      ["ben", "auth · PR #12: checks failed (paul)"],
+      ["marie", "auth · PR #12: checks failed (paul)"],
+      ["ben", "auth · PR #12 merged (paul)"],
+      ["marie", "auth · PR #12 merged (paul)"],
+    ])
+    // Kept across restarts.
+    expect(CI.firstTime(`${u.id}:merged`)).toBe(false)
+    expect(CI.firstTime("pr:other:merged")).toBe(true)
+  })
+})
+
 describe("merging green PRs", () => {
   const green = (o: Partial<import("../src/urls/ci.ts").PrView> = {}): import("../src/urls/ci.ts").PrView => ({ state: "OPEN", draft: false, checks: "passed", failed: [], review: "APPROVED", mergeable: "MERGEABLE", mergeState: "CLEAN", ...o })
   test("asked only when it just turned green and nothing is in the way", () => {
