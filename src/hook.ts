@@ -253,7 +253,16 @@ if (restoreClient && sessionId && !process.env.CROSSTALK_NO_RESTORE) {
       try {
         pastSessions.sweep()
       } catch {}
-    if (isSessionStart && restoreClient === "claude" && !/^(clear|compact)$/.test(String(hook.source ?? "")))
+    // Never to a session crosstalk started (a background agent, a new agent's tab): nobody there to answer,
+    // and the offer it took would be gone for the person.
+    const ownAgent = !!process.env[BG_ENV] || (() => {
+      try {
+        return !!spawnMod.spawnedAt(cwd)
+      } catch {
+        return false
+      }
+    })()
+    if (isSessionStart && restoreClient === "claude" && !ownAgent && !/^(clear|compact)$/.test(String(hook.source ?? "")))
       systemMessage = ui.restoreSurface(
         sessionId,
         restore.askOnceOffer(sessionId, restore.captureTerminal(process.env, process.pid, false)),

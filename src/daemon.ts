@@ -186,6 +186,15 @@ let shares: ReturnType<typeof createShares> | undefined
 
 const threads = new ThreadService({
   tiebreak: (sid, cands, mode) => attention?.tiebreak(sid, cands, mode),
+  // A message carried by a thread's sync, for someone the relay could not reach: in as if the relay brought it.
+  onMail: (from, env) => {
+    if (!loadPeers()[from]) return log(`dropped mail from ${from}, who is not paired here`)
+    try {
+      onEnvelope(from, env as Envelope)
+    } catch (e) {
+      log(`mail from ${from}: ${(e as Error).message}`)
+    }
+  },
   extra: { file: RULES_FILE, read: (repo, text) => coord?.readRules(repo, text), render: (repo) => coord?.renderRules(repo) },
   onFlush: (ids) => {
     coord?.onThreadsFlush(ids)
@@ -844,6 +853,18 @@ function sendEnvelope(
     for (const sib of repotrust.siblings(peerLabel)) {
       const p = loadPeers()[sib]
       if (p) relayQueue({ t: "send", to: p.fingerprint, id: `${env.id}.${p.fingerprint}`, body: seal(channelKey(identity!, p), JSON.stringify(env)) }, sib)
+    }
+  // Not on the relay (offline, or their crosstalk cannot reach it): also through a thread both are in,
+  // which their crosstalk syncs on its own. Whichever arrives first is kept; the other is a replay.
+  if (FAN_OUT.has(env.kind) && !online.has(peer.fingerprint))
+    try {
+      const via = threads.mail({ label: peerLabel, fingerprint: peer.fingerprint }, env)
+      if (via) {
+        log(`${peerLabel} is not on the relay: ${env.kind} ${env.id} also sent through the thread ${via}`)
+        return { ok: true, queued: true, note: `${peerLabel} is not connected to crosstalk's relay right now, so it also went through your shared thread ${via}: it arrives when their crosstalk next syncs (within about 5 minutes of it running).` }
+      }
+    } catch (e) {
+      log(`mail to ${peerLabel}: ${(e as Error).message}`)
     }
   return now
     ? { ok: true }

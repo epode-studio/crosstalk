@@ -625,6 +625,40 @@ describe("service", () => {
 })
 
 describe("service and the ref", () => {
+  test("mail: a message for someone off the relay goes through a thread both are in, and is delivered once on their sync", async () => {
+    const bare = path.join(TMP, "mail-remote.git")
+    const ra = path.join(TMP, "mail-a")
+    const rb = path.join(TMP, "mail-b")
+    spawnSync("git", ["init", "-q", "--bare", "-b", "main", bare])
+    spawnSync("git", ["clone", "-q", bare, ra])
+    git(ra, "commit", "-q", "--allow-empty", "-m", "init")
+    git(ra, "push", "-q", "origin", "main")
+    spawnSync("git", ["clone", "-q", bare, rb])
+    const repo = bare.toLowerCase().replace(/\.git$/, "")
+    const [ana, ben] = pair()
+    for (const w of [ana, ben]) (w.svc as any).d.network = true
+    const got: [string, any][] = []
+    ;(ben.svc as any).d.onMail = (from: string, env: any) => got.push([from, env])
+    const sa: LocalSession = { sessionId: "a", name: "a", cwd: ra, root: ra, repo, branch: "token-v2", paths: ["src/t.ts"] }
+    const sb: LocalSession = { sessionId: "b", name: "b", cwd: rb, root: rb, repo, branch: "token-v2", paths: [] }
+    ana.svc.observe(sa)
+    ben.svc.observe(sb)
+    ana.svc.peerPresence("ben", [presence(ben, sb)])
+    ben.svc.peerPresence("ana", [presence(ana, sa)])
+    settle(ana, ben)
+    const via = ana.svc.mail({ label: "ben", fingerprint: ben.svc.me }, { id: "env-1", kind: "message", text: "the briefing" } as any)
+    expect(via).toBe("token-v2")
+    expect(ana.svc.mail({ label: "jo", fingerprint: "nobody" }, { id: "x" } as any)).toBe(null) // no shared thread
+    await ana.svc.sync(repo, true)
+    await ben.svc.sync(repo, false)
+    expect(got).toEqual([[ana.svc.label, { id: "env-1", kind: "message", text: "the briefing" }]])
+    await ben.svc.sync(repo, false)
+    expect(got).toHaveLength(1) // once
+    // Not a question anyone is asked.
+    const t = ben.svc.find(undefined, "token-v2")!
+    expect(M.live(t, "questions").filter((q) => !q.answer)).toEqual([])
+  })
+
   test("a sealed thread is committed, pushed, and read back from a fetch by a fresh replica", async () => {
     const bare = path.join(TMP, "svc-remote.git")
     const ra = path.join(TMP, "svc-a")

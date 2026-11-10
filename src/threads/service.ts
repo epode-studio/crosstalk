@@ -88,6 +88,8 @@ export type Deps = {
    * no thread covers), the thread its recap points at (src/attention).
    */
   tiebreak?: (sessionId: string, candidates: string[], mode: "ask" | "create") => { id: string; why: string } | undefined
+  /** A message that came by a thread's sync (mail): handed to the daemon as if the relay had brought it. */
+  onMail?: (fromLabel: string, env: unknown) => void
 }
 
 /** Where a local session was placed. `name` is how its thread entry is keyed, the same way a peer sees it in presence. */
@@ -119,6 +121,8 @@ type State = {
   notes: Record<string, Note[]>
   questions: Record<string, { candidates: string[]; why: string; at: number }>
   noticed: string[]
+  /** Mail delivered here already, by item id. */
+  mailSeen?: string[]
   opaque: Record<string, Record<string, string>>
   roots: Record<string, string>
   publicStatus: Record<string, Record<string, string>>
@@ -1446,6 +1450,39 @@ export class ThreadService {
    * file that does not open with our key opens only through a wrap from
    * someone in the thread here, for this thread, at an epoch we may adopt.
    */
+  /**
+   * A message for someone the relay cannot reach just now, kept in a thread both are in: sealed to its
+   * people like the rest of it, pushed now, and delivered when their crosstalk next syncs. The thread's
+   * name, or null when none is shared. Mail older than two days is cleared as more is sent.
+   */
+  mail(to: { label: string; fingerprint: string }, env: { id: string }): string | null {
+    const shared = Object.values(this.st.threads).find((t) => M.isLive(t) && M.people(t).includes(to.fingerprint) && M.people(t).includes(this.me))
+    if (!shared) return null
+    const now = this.now()
+    for (const q of M.live(shared, "questions")) if (q.mail && q.who === this.label && now - q.at > 2 * 86_400_000) M.remove(shared, "questions", q.id, this.me, now)
+    M.put(shared, "questions", M.newItemId("m"), { text: "(mail)", who: this.label, at: now, answer: "(mail)", mail: { to: to.fingerprint, env: JSON.stringify(env) } }, this.me, now)
+    this.touched.add(shared.id)
+    this.flush()
+    const repo = shared.meta.value.repo
+    if (repo && this.st.roots[repo]) void this.sync(repo, true).catch(() => {})
+    return shared.meta.value.name
+  }
+
+  /** Mail for this machine in a thread just merged: delivered once each. */
+  private deliverMail(t: M.Thread) {
+    const seen = (this.st.mailSeen ??= [])
+    for (const q of M.live(t, "questions")) {
+      if (!q.mail || q.mail.to !== this.me || seen.includes(q.id)) continue
+      seen.push(q.id)
+      try {
+        this.d.onMail?.(q.who, JSON.parse(q.mail.env))
+      } catch (e) {
+        this.d.log(`mail in ${t.meta.value.name} could not be read: ${(e as Error).message}`)
+      }
+    }
+    if (seen.length > 500) this.st.mailSeen = seen.slice(-500)
+  }
+
   private mergeRef(root: string, repo: string, ref: string) {
     const { files } = S.readRef(root, ref)
     const peers = Object.values(this.d.peers())
@@ -1497,6 +1534,7 @@ export class ThreadService {
         this.st.threads[t.id] = merged
         this.touched.add(t.id)
       }
+      this.deliverMail(merged)
       if (!known && merged.meta.value.combinedInto && !this.st.noticed.includes(t.id)) this.st.noticed.push(t.id)
     }
   }

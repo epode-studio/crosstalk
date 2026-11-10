@@ -561,7 +561,7 @@ export class ShipEngine {
           recap: M.recap(t),
           decisions: M.notes(t, "decision").map((x) => x.text).slice(-20),
           facts: M.notes(t, "fact").map((x) => x.text).filter((x) => !/^Review \(/.test(x)).slice(-20),
-          questions: M.live(t, "questions").filter((q) => q.answer).map((q) => `${q.text} → ${q.answer}`).slice(-10),
+          questions: M.live(t, "questions").filter((q) => q.answer && !q.mail).map((q) => `${q.text} → ${q.answer}`).slice(-10),
         },
         feature: { name: f.name, risk: f.risk, why: f.ship?.why, flag: f.flag },
         base: d,

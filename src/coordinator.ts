@@ -138,6 +138,11 @@ export class Coordinator {
 
   /** What one session's mod shows, out of every open item (main.ts itemsFor). */
   itemsFor(items: Record<string, ui.UiItem>, sid: string): ui.UiItem[] {
+    // Asking is not a permission. An agent on an older crosstalk can still put "wants to use
+    // AskUserQuestion" up as one: allowed here, never shown, so its question reaches the person as a question.
+    for (const i of Object.values(items))
+      if (i.id.startsWith("attn:perm:") && i.state === "pending" && /wants to use AskUserQuestion\b/.test(String(i.question ?? "")))
+        ui.act(items, i.id, "answer", Date.now(), "Allow")
     // A parked thread's items wait out of sight (src/attention/park.ts), kept for when it is back.
     const parked = Park.read()
     // "For you" to-dos (you:) are gone since 0.2.10: an agent does those itself, or asks. Sessions started

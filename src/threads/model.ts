@@ -76,6 +76,12 @@ export type Question = {
   at: number
   answer?: string
   answeredBy?: string
+  /**
+   * Mail: a message for one person who is not on the relay, carried by the thread's own sync
+   * (ThreadService.mail). `to` is their fingerprint, `env` the message. Stored answered, so
+   * nothing that lists a thread's questions takes it for one.
+   */
+  mail?: { to: string; env: string }
   /** A shipping question (src/shipping/remote.ts): what a person on another machine needs to answer it. */
   ship?: { kind: string; feature: string; options: string[]; asker: string; stage?: string }
   /** A person's answer to a shipping question from another machine, signed with their key. */
