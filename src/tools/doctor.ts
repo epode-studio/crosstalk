@@ -3,9 +3,9 @@
 
 import { bool, def, num, only, type Tool } from "./kit.ts"
 
-const ACTIONS = ["report", "stats", "intro", "open_items", "auto_merge"] as const
+const ACTIONS = ["report", "stats", "intro", "open_items", "auto_merge", "merge_queue"] as const
 
-const description = `What is wrong with crosstalk and how to fix it. Actions: report (identity, daemon, relay, this session's inbox, sessions to restore, macOS permissions, each with its fix: show it, then help with whatever is marked ✗; for "is crosstalk OK?", "why aren't messages arriving?"); stats (local measurements, never sent anywhere: time to merge, human minutes, questions answered by rules, tokens to first edit; relay the text); intro ("what can crosstalk do?", "how do I use this?": things to say, to show as they are); open_items, auto_merge (on: false to stop tackling Open lists, or merging green PRs, by itself; true to start).`
+const description = `What is wrong with crosstalk and how to fix it. Actions: report (identity, daemon, relay, this session's inbox, sessions to restore, macOS permissions, each with its fix: show it, then help with whatever is marked ✗; for "is crosstalk OK?", "why aren't messages arriving?"); stats (local measurements, never sent anywhere; relay the text); intro ("what can crosstalk do?", "how do I use this?": things to say, to show as they are); open_items, auto_merge, merge_queue (on: false stops tackling Open lists, merging green PRs, or unblocking merge queues by itself; true starts).`
 
 export const doctor: Tool = {
   actions: ACTIONS,
@@ -22,6 +22,8 @@ export const doctor: Tool = {
         return { name: "crosstalk_open_items", args: only(a, "on") }
       case "auto_merge":
         return { name: "crosstalk_auto_merge", args: only(a, "on") }
+      case "merge_queue":
+        return { name: "crosstalk_merge_queue", args: only(a, "on") }
     }
     return { error: `crosstalk_doctor has no action "${a.action}"` }
   },

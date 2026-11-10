@@ -205,7 +205,7 @@ describe("the merge queue", () => {
     expect(r.step).toMatchObject({ kind: "dequeued", action: "fix" }) // twice: not a flake
     k = Q.step(r.keep, { queued: true }, NOW + 6 * MIN).keep
     r = Q.step(k, { queued: false, removed: { at: NOW + 7 * MIN, reason: "MERGE_CONFLICT" } }, NOW + 7 * MIN)
-    expect(r.step).toMatchObject({ kind: "dequeued", why: "conflict", action: "fix" })
+    expect(r.step).toMatchObject({ kind: "dequeued", why: "conflict", action: "leave", again: true }) // fixed once today already
     k = Q.step(r.keep, { queued: true }, NOW + 8 * MIN).keep
     r = Q.step(k, { queued: false, removed: { at: NOW + 9 * MIN, reason: "MANUAL" } }, NOW + 9 * MIN)
     expect(r.step).toMatchObject({ action: "leave" })
@@ -240,5 +240,23 @@ describe("the merge queue", () => {
     q = { queued: false, removed: { at: NOW + MIN, reason: "MERGE_CONFLICT" } }
     await L.tick(store, opts(NOW + 2 * MIN))
     expect(steps).toEqual(["queued", "dequeued:fix"])
+  })
+})
+
+describe("the merge queue, kept in bounds", () => {
+  test("out again after a fix the same day: left to the person, not fixed again", () => {
+    let k = Q.step({}, { queued: true }, NOW).keep
+    let r = Q.step(k, { queued: false, removed: { at: NOW + MIN, reason: "MERGE_CONFLICT" } }, NOW + MIN)
+    expect(r.step).toMatchObject({ action: "fix" })
+    k = Q.step(r.keep, { queued: true }, NOW + 30 * MIN).keep
+    r = Q.step(k, { queued: false, removed: { at: NOW + 60 * MIN, reason: "MERGE_CONFLICT" } }, NOW + 60 * MIN)
+    expect(r.step).toMatchObject({ action: "leave", again: true })
+    expect(Q.text("auth · PR #7", r.step!)).toContain("needs your look")
+  })
+  test("watching can be turned off in words", () => {
+    Q.setQueueOff(true)
+    expect(Q.disabled({})).toBe(true)
+    Q.setQueueOff(false)
+    expect(Q.disabled({})).toBe(false)
   })
 })

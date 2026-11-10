@@ -15,6 +15,12 @@ export async function callTool(name: string, a: any, o: { sessionId: string; cwd
     const r = await request({ op: "attn_merge_rule", sessionId: o.sessionId, cwd: o.cwd, on: a.on }, 10_000)
     return r?.ok ? ok(r.text) : err(r?.error ?? "the daemon did not answer")
   }
+  if (name === "crosstalk_merge_queue") {
+    if (typeof a.on !== "boolean") return err("pass on: true or false")
+    const Q = await import("../urls/queue.ts")
+    Q.setQueueOff(!a.on)
+    return ok(a.on ? "◢ crosstalk: watching merge queues again: a PR that falls out is put back, or fixed and put back." : "◢ crosstalk: no longer watching merge queues. A PR that falls out stays out until you look.")
+  }
   if (name !== "crosstalk_attention") return null
   const r = await request({ op: "attn_act", sessionId: o.sessionId, cwd: o.cwd, id: String(a.id ?? ""), action: "answer", value: String(a.answer ?? "") }, 120_000)
   return r?.ok ? ok(r.text ?? "Answered.") : err(r?.error ?? r?.text ?? "no answer")

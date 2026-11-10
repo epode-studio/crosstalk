@@ -19,6 +19,9 @@
 // queued it), redone with the same `gh pr merge --auto`. CROSSTALK_NO_QUEUE=1
 // turns all of it off.
 
+import fs from "node:fs"
+import path from "node:path"
+import { P } from "../config.ts"
 import * as L from "./liveness.ts"
 
 export type QueueView = {
@@ -31,7 +34,24 @@ export type QueueView = {
   removed?: { at: number; reason: string }
 }
 
-export const disabled = (env: NodeJS.ProcessEnv = process.env) => env.CROSSTALK_NO_QUEUE === "1"
+/** Off: CROSSTALK_NO_QUEUE=1, or the person's "stop merging by itself" (src/attention/service.ts, its merge rule off). */
+export const disabled = (env: NodeJS.ProcessEnv = process.env) => env.CROSSTALK_NO_QUEUE === "1" || queueOff()
+
+const offFile = () => path.join(P.root, "queue-off")
+/** Whether the person said to stop watching merge queues. */
+export function queueOff(): boolean {
+  try {
+    return fs.existsSync(offFile())
+  } catch {
+    return false
+  }
+}
+export function setQueueOff(off: boolean) {
+  try {
+    if (off) fs.writeFileSync(offFile(), String(Date.now()), { mode: 0o600 })
+    else fs.rmSync(offFile(), { force: true })
+  } catch {}
+}
 
 const QUERY = `query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){isInMergeQueue mergeQueueEntry{position estimatedTimeToMerge enqueuedAt} timelineItems(last:3,itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT]){nodes{... on RemovedFromMergeQueueEvent{createdAt reason}}}}}}`
 
@@ -80,11 +100,11 @@ export function why(reason: string): Why {
 }
 
 /** What crosstalk keeps on the PR between looks. */
-export type Kept = { queued?: boolean; queuedAt?: number; queueRetries?: number; queueStuckTold?: number; queueSeenRemoval?: number }
+export type Kept = { queued?: boolean; queuedAt?: number; queueRetries?: number; queueStuckTold?: number; queueSeenRemoval?: number; /** When crosstalk last set an agent to fix it: once a day at most. */ queueFixAt?: number }
 
 export type Step =
   | { kind: "queued"; position?: number; eta?: number }
-  | { kind: "dequeued"; why: Why; reason: string; action: "requeue" | "fix" | "leave" }
+  | { kind: "dequeued"; why: Why; reason: string; action: "requeue" | "fix" | "leave"; again?: boolean }
   | { kind: "stuck"; minutes: number }
 
 /** Usually long enough for a queue: an hour, or twice GitHub's estimate when it gives one. */
@@ -114,9 +134,16 @@ export function step(before: Kept, v: QueueView, now: number): { step: Step | nu
   keep.queueSeenRemoval = v.removed.at
   const w = why(v.removed.reason)
   const retries = before.queueRetries ?? 0
-  const action = w === "manual" ? "leave" : w === "conflict" ? "fix" : retries < 1 ? "requeue" : "fix"
+  let action: "requeue" | "fix" | "leave" = w === "manual" ? "leave" : w === "conflict" ? "fix" : retries < 1 ? "requeue" : "fix"
+  // Fixed once today and out again: the person looks, crosstalk does not start agent after agent.
+  const again = action === "fix" && !!before.queueFixAt && now - before.queueFixAt < 86_400_000
+  if (again) action = "leave"
   if (action === "requeue") keep.queueRetries = retries + 1
-  if (action === "fix") keep.queueRetries = 0
+  if (action === "fix") {
+    keep.queueRetries = 0
+    keep.queueFixAt = now
+  }
+  if (again) return { step: { kind: "dequeued", why: w, reason: v.removed.reason, action, again: true }, keep }
   return { step: { kind: "dequeued", why: w, reason: v.removed.reason, action }, keep }
 }
 
@@ -127,6 +154,7 @@ export function text(label: string, s: Step): string {
   if (s.kind === "queued") return `${label} is in the merge queue${s.position ? `, ${ord(s.position)} in line` : ""}${s.eta ? `, merging in about ${Math.max(1, Math.round(s.eta / 60))} min` : ""}.`
   if (s.kind === "stuck") return `${label} has been first in the merge queue for ${s.minutes} min, far longer than usual. The queue's own checks may be hung; worth a look in GitHub.`
   const r = s.reason ? ` (${s.reason.replace(/_/g, " ").toLowerCase()})` : ""
+  if (s.action === "leave" && s.again) return `${label} left the merge queue again${r}, after a fix today. It needs your look; crosstalk leaves it to you.`
   if (s.action === "leave") return `${label} was taken out of the merge queue by hand${r}. Left alone.`
   if (s.action === "requeue") return `${label} left the merge queue${r}. Put back once, in case it was a flaky check.`
   return `${label} left the merge queue${r}. Being fixed, then it goes back in by itself.`

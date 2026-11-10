@@ -2915,8 +2915,10 @@ control.listen(P.daemonSock, () => {
           const line = queueMod.text(u.label, s)
           ciMod.recordEvent(line)
           const main = coord.mainId()
+          // Main, else the PR's own session: what crosstalk did is said somewhere, never only in a log.
+          const where = main ?? (u.sessionId && sessions.has(u.sessionId) ? u.sessionId : undefined)
           const tell = (text: string) => {
-            if (main) ui.withStore((items, now) => ui.upsert(items, { id: `queue:${u.id}:${s.kind}:${Date.now()}`, kind: "message", sessionId: main, from: "crosstalk", ...(name ? { thread: name } : {}), text, auto: true, ts: now }, now))
+            if (where) ui.withStore((items, now) => ui.upsert(items, { id: `queue:${u.id}:${s.kind}:${Date.now()}`, kind: "message", sessionId: where, from: "crosstalk", ...(name ? { thread: name } : {}), text, auto: true, ts: now }, now))
           }
           if (s.kind === "stuck") tell(`◢ ${line}`)
           if (s.kind !== "dequeued") return log(`queue: ${line}`)
