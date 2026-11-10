@@ -141,6 +141,23 @@ has "$(field "$TH" 'r.banner.join(";")')" "token-v2 (new branch token-v2)" "the 
 check "$(field "$TH" 'r.title')" "token-v2 · a-feat" "the session title leads with the thread"
 has "$(field "$TH" 'r.notes.join(";")')" "ben joined token-v2" "ana is told ben can now read it"
 
+# --- 1b. a thread's task, finished from a session not in that thread ----------------------------
+# The Stop hook keeps an Open list's items in the thread of the session's folder, which
+# need not be a thread the session that later finishes them is in.
+echo
+echo "a thread's task finished from outside it"
+TA=$(rpc "$A" "{\"op\":\"tasks\",\"sessionId\":\"a-feat\",\"cwd\":\"$R/ana-feat\",\"write\":\"add\",\"text\":\"wire the retry\"}")
+has "$TA" '"thread":"token-v2"' "a task added in token-v2"
+TK=$(field "$TA" 'r.id')
+TC=$(rpc "$A" "{\"op\":\"tasks\",\"sessionId\":\"a-main\",\"cwd\":\"$R/ana-main\",\"write\":\"claim\",\"id\":\"$TK\"}")
+has "$TC" '"ok":true' "a session in no thread can claim it"
+TD=$(rpc "$A" "{\"op\":\"tasks\",\"sessionId\":\"a-main\",\"cwd\":\"$R/ana-main\",\"write\":\"done\",\"id\":\"$TK\",\"note\":\"landed\"}")
+has "$TD" '"ok":true' "and mark it done"
+has "$TD" '"thread":"token-v2"' "in the thread that holds it"
+check "$(field "$(rpc "$A" '{"op":"thread_read","sessionId":"a-feat"}')" "r.threads[0].notes.find(n => n.id === '$TK')?.state")" "done" "the thread shows it done"
+NONE=$(rpc "$A" "{\"op\":\"tasks\",\"sessionId\":\"a-main\",\"cwd\":\"$R/ana-main\",\"write\":\"done\",\"id\":\"t_0000000000\"}")
+has "$NONE" "no open task t_0000000000" "an unknown id says so, rather than nothing"
+
 # --- 2. talking per thread ----------------------------------------------------------------
 echo
 echo "a message with no recipient"

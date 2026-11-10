@@ -1696,14 +1696,25 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       // task id the thread holds is claimed and finished there.
       const self = req.sessionId ? resolveSession(req) : undefined
       const mine = self ? threads.idsFor(self.sessionId) : []
-      if (req.write && (req.thread || (mine.length && !req.room))) {
-        const inThread =
-          req.write === "add" || mine.some((id) => threadModel.noteOf(threads.thread(id), String(req.id), "task")) || req.thread
-        if (inThread && (req.write === "add" || req.write === "claim" || req.write === "done")) {
-          const owner = req.thread ?? mine.find((id) => threadModel.noteOf(threads.thread(id), String(req.id), "task"))
-          const r = threads.task(self?.sessionId, { op: req.write, text: req.text, id: req.id, note: req.note, thread: owner })
+      if (req.write === "add" && (req.thread || (mine.length && !req.room))) {
+        const r = threads.task(self?.sessionId, { op: "add", text: req.text, thread: req.thread })
+        return r.ok ? { ok: true, thread: r.thread, op: req.write, id: r.id } : r
+      }
+      // A task id a thread holds is claimed and finished in that thread, whichever
+      // session asks. This session's own threads are looked in first, then every
+      // thread this machine holds: the Stop hook keeps an Open list's items in the
+      // thread of the session's folder (resolveSession goes by cwd), which need not
+      // be one the asking session is in, and the room store would only say no.
+      if ((req.write === "claim" || req.write === "done") && (req.thread || !req.room)) {
+        const id = String(req.id ?? "")
+        const owner =
+          threads.holding(self?.sessionId, id, "task", req.thread) ??
+          (req.thread ? undefined : threads.all().find((t) => threadModel.noteOf(t, id, "task")))
+        if (owner) {
+          const r = threads.task(self?.sessionId, { op: req.write, id, note: req.note, thread: owner.id })
           return r.ok ? { ok: true, thread: r.thread, op: req.write, id: r.id } : r
         }
+        if (req.thread) return { ok: false, error: `no task ${id} in ${req.thread}` }
       }
       const store = tasks.load()
       const roomNames = [
@@ -1748,6 +1759,9 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
             error:
               "somebody else has that one. Pick a different task rather than doing it twice.",
           }
+        // Say why: otherwise the tool can only print "not marked done".
+        if (!changed && req.write === "done")
+          return { ok: false, error: `no open task ${req.id} in any thread here, nor in ${room}` }
         return { ok: changed, room, op: req.write, id: (op as any).task?.id ?? req.id }
       }
       return {
