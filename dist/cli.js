@@ -321,9 +321,34 @@ function readMain() {
   } catch {}
   return null;
 }
+function writeMain(rec) {
+  fs3.mkdirSync(P.root, { recursive: true, mode: 448 });
+  if (!rec) {
+    try {
+      fs3.unlinkSync(file());
+    } catch {}
+    return;
+  }
+  const tmp = `${file()}.${process.pid}.tmp`;
+  fs3.writeFileSync(tmp, JSON.stringify(rec), { mode: 384 });
+  fs3.renameSync(tmp, file());
+}
 function currentMain(alive = (r) => pidAlive(r.pid)) {
   const m = readMain();
   return m && alive(m) ? m : null;
+}
+function setMain(on, s, now = Date.now()) {
+  const before = readMain();
+  if (on) {
+    if (before?.sessionId === s.sessionId)
+      return { changed: false };
+    writeMain({ sessionId: s.sessionId, name: s.name, pid: s.pid, at: now });
+    return { previous: before ?? undefined, changed: true };
+  }
+  if (before?.sessionId !== s.sessionId)
+    return { changed: false };
+  writeMain(null);
+  return { changed: true };
 }
 function itemsFor(open, sessionId, mainId) {
   const own = open.filter((i) => i.sessionId === sessionId).sort((a, b) => a.createdAt - b.createdAt);
@@ -438,11 +463,160 @@ var init_bots = __esm(() => {
   init_config();
 });
 
+// src/ui-extra/pure.ts
+function parseAt(prompt) {
+  const m = /^@([A-Za-z0-9_][\w.-]*)(?:\s+([\s\S]*))?$/.exec(prompt.trim());
+  if (!m)
+    return null;
+  const word = m[1].toLowerCase();
+  const rest = (m[2] ?? "").trim();
+  if (word === "main") {
+    if (!rest || /^(on|yes|y)$/i.test(rest))
+      return { kind: "main", on: true };
+    if (/^(off|no|n|stop)$/i.test(rest))
+      return { kind: "main", on: false };
+    return null;
+  }
+  if (word === "restore") {
+    const w = rest.toLowerCase();
+    if (!w || w === "yes" || w === "y")
+      return { kind: "restore", want: "yes" };
+    if (w === "no" || w === "n" || w === "not now")
+      return { kind: "restore", want: "no" };
+    if (w === "windows")
+      return { kind: "restore", want: "windows" };
+    return null;
+  }
+  if (!rest)
+    return null;
+  return { kind: "name", name: word, text: rest };
+}
+function matchOption(typed, options) {
+  const t = typed.trim().toLowerCase();
+  if (!t || !options.length)
+    return;
+  const exact = options.find((o) => o.toLowerCase() === t);
+  if (exact)
+    return exact;
+  if (t === "y" || t === "yes")
+    return options[0];
+  if (t === "n" || t === "no")
+    return options.find((o) => /^(no|not|don't|dont|hold|cancel)\b/i.test(o)) ?? options[options.length - 1];
+  const starts = options.filter((o) => o.toLowerCase().startsWith(t));
+  return starts.length === 1 ? starts[0] : undefined;
+}
+function runningLine(r, now) {
+  const mark = r.alive ? "\u25cf" : "\u25cb";
+  if (r.kind === "screenshot")
+    return `${r.label}${r.path ? ` ${r.path}` : ""} \u00b7 ${r.before ? `before ${ago(r.before.at, now)}` : "no before yet"} \u00b7 after ${ago(r.after?.at, now)}`;
+  if (r.broken)
+    return `${mark} ${r.label} \u00b7 broken: ${r.broken}`;
+  if (r.kind === "server" && !r.url && !r.ports?.length)
+    return `${mark} ${r.label} \u00b7 starting`;
+  const who = r.kind === "share" ? r.owner === "you" ? r.with?.length ? ` \u00b7 with ${r.with.join(", ")}` : "" : ` \u00b7 from ${r.owner}` : "";
+  const left = r.kind === "share" && r.alive && r.until ? ` \u00b7 ${until(r.until, now)} left` : "";
+  if (r.kind === "pr") {
+    const sign = r.state === "MERGED" ? SIGN.done : r.checks === "failed" ? SIGN.broken : r.checks === "running" ? SIGN.working : r.checks === "passed" ? SIGN.done : mark;
+    return `${sign} ${r.label}${prState(r)}`;
+  }
+  const dead = r.alive ? "" : r.kind === "share" ? " \u00b7 ended" : " \u00b7 dead";
+  return `${mark} ${r.label}${who}${left}${dead}`;
+}
+function until(ts, now) {
+  const s = Math.max(0, Math.round((ts - now) / 1000));
+  if (s < 3600)
+    return `${Math.max(1, Math.round(s / 60))}m`;
+  if (s < 86400)
+    return `${Math.round(s / 3600)}h`;
+  return `${Math.round(s / 86400)}d`;
+}
+function runningSummary(items) {
+  const up = items.filter((r) => r.alive && r.kind !== "screenshot" && r.owner === "you");
+  const servers = up.filter((r) => r.kind === "server");
+  return servers.length === 1 ? runningWhere(servers[0]).replace(/^https?:\/\//, "") : up.length ? `${up.length} running` : "";
+}
+function ago(ts, now) {
+  if (!ts)
+    return "";
+  const s = Math.max(0, Math.round((now - ts) / 1000));
+  if (s < 60)
+    return "now";
+  if (s < 3600)
+    return `${Math.round(s / 60)}m`;
+  if (s < 86400)
+    return `${Math.round(s / 3600)}h`;
+  return `${Math.round(s / 86400)}d`;
+}
+function prState(r) {
+  if (r.state === "MERGED")
+    return " \u00b7 merged";
+  if (r.state === "CLOSED")
+    return " \u00b7 closed";
+  if (!r.alive)
+    return " \u00b7 dead";
+  const parts = [r.draft ? "draft" : ""];
+  if (r.checks === "running")
+    parts.push("checks running", r.eta ?? "");
+  else if (r.checks === "failed")
+    parts.push(`checks failed${r.failed?.length ? `: ${r.failed.join(", ")}` : ""}`);
+  else if (r.checks === "passed")
+    parts.push("checks passed");
+  if (r.queued)
+    parts.push("in the merge queue");
+  return parts.filter(Boolean).map((x) => ` \u00b7 ${x}`).join("");
+}
+function inboxScore(it, now) {
+  if (it.kind === "session" || it.kind === "steer")
+    return 1000 + Math.min(30, Math.max(0, (now - it.createdAt) / 60000) / 2);
+  const base = it.kind === "restore" ? 120 : it.id.startsWith("relay:") || it.id.startsWith("attn:perm:") || it.id.startsWith("attn:circle:") ? 100 : it.kind === "ask" ? 90 : it.kind === "ship" || it.kind === "conflict" ? 80 : it.id.startsWith("attn:staff:") ? 60 : it.kind === "route" || it.kind === "team" ? 55 : it.id.startsWith("open:") ? 40 : it.kind === "message" ? 35 : 30;
+  const waitedMin = Math.max(0, (now - it.createdAt) / 60000);
+  return base + Math.min(30, waitedMin / 2);
+}
+function inboxOrder(items, now) {
+  return [...items].sort((a, b) => inboxScore(b, now) - inboxScore(a, now) || a.createdAt - b.createdAt);
+}
+function inboxLine(it, now) {
+  const what = shortQuestion(it.question ?? it.text ?? it.id);
+  const where = it.thread ? human(it.thread, 24) : it.from ? human(it.from, 24) : "";
+  return `${it.thread ? dotFor(it.thread) + " " : ""}${where ? `${where} \u2014 ` : ""}${what} \u00b7 ${ago(it.createdAt, now) || "now"}`;
+}
+function dotFor(thread) {
+  let h = 2166136261;
+  for (const c of thread.toLowerCase())
+    h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return DOTS[(h >>> 0) % DOTS.length] ?? "\u26aa";
+}
+function human(name, max = 32) {
+  const words = name.replace(/[_-]+/g, " ").trim().split(/\s+/).map((w) => ACRONYMS.has(w.toLowerCase()) ? w.toUpperCase() : w);
+  if (!words.length || !words[0])
+    return name;
+  words[0] = words[0][0].toUpperCase() + words[0].slice(1);
+  let out = "";
+  for (const w of words) {
+    if ((out ? out.length + 1 : 0) + w.length > max)
+      return out ? `${out}\u2026` : `${w.slice(0, max - 1)}\u2026`;
+    out = out ? `${out} ${w}` : w;
+  }
+  return out;
+}
+function shortQuestion(q, max = 72) {
+  const t = q.replace(/^\s*\S+ asks:\s*/i, "").replace(/\s+/g, " ").trim();
+  return t.length > max ? t.slice(0, max - 1) + "\u2026" : t;
+}
+var runningWhere = (r) => r.url ?? (r.ports?.length ? `localhost:${r.ports[0]}` : ""), DOTS, SIGN, LEGEND, ACRONYMS;
+var init_pure = __esm(() => {
+  DOTS = ["\uD83D\uDFE0", "\uD83D\uDFE1", "\uD83D\uDFE2", "\uD83D\uDD35", "\uD83D\uDFE3", "\uD83D\uDFE4", "\u26aa"];
+  SIGN = { waiting: "\u2753", working: "\u23f3", done: "\u2705", broken: "\u2757", idle: "\uD83D\uDCA4" };
+  LEGEND = `${SIGN.waiting} needs you \u00b7 ${SIGN.working} working \u00b7 ${SIGN.done} done \u00b7 ${SIGN.broken} something broke \u00b7 ${SIGN.idle} idle \u00b7 a coloured dot per thread`;
+  ACRONYMS = new Set(["mcp", "ai", "pr", "ci", "api", "ui", "ux", "led", "pal", "esp32", "sdk", "cli", "id", "ids", "url", "db", "css", "html", "ios", "qr", "llm", "cbmc", "scd30"]);
+});
+
 // src/registry.ts
 import os2 from "node:os";
 import path6 from "node:path";
 var claudeConfigDir = (env = process.env) => env.CLAUDE_CONFIG_DIR || path6.join(os2.homedir(), ".claude"), sessionsDir = (env = process.env) => path6.join(claudeConfigDir(env), "sessions"), SESSIONS;
 var init_registry = __esm(() => {
+  init_pure();
   SESSIONS = sessionsDir();
 });
 
@@ -582,6 +756,31 @@ function pidState(pid, pidStart) {
     return "unknown";
   const now = ps(pid, "lstart");
   return now === null ? "unknown" : now === pidStart ? "same" : "gone";
+}
+function sessionPid(sessionId) {
+  try {
+    const reg = sessionsDir();
+    for (const f of fs4.readdirSync(reg)) {
+      if (!f.endsWith(".json"))
+        continue;
+      try {
+        const e = JSON.parse(fs4.readFileSync(path7.join(reg, f), "utf8"));
+        if (e.sessionId === sessionId && Number(e.pid) > 0)
+          return Number(e.pid);
+      } catch {}
+    }
+  } catch {}
+  let pid = process.ppid;
+  for (let i = 0;i < 4; i++) {
+    const comm = ps(pid, "comm");
+    if (!comm || !SHELL.test(path7.basename(comm)))
+      break;
+    const up = Number(ps(pid, "ppid"));
+    if (!up || up <= 1)
+      break;
+    pid = up;
+  }
+  return pid;
 }
 function captureTerminal(env, pid, probe) {
   const t = {};
@@ -777,7 +976,7 @@ function appleIntoWindowScript(cmds, window, tabs) {
       return;
     }
     if (i === 0)
-      L.push(`if crosstalkNew then`, `	tell application "Terminal"`, `		activate`, `		do script ${asq(c)}`, `	end tell`, `	set crosstalkOpened to 1`, `else`, ...tabTry(c), `end if`);
+      L.push(`if crosstalkNew then`, ...appleFirstLines(c).map((l) => `	${l}`), `	set crosstalkOpened to 1`, `else`, ...tabTry(c), `end if`);
     else
       L.push(...tabTry(c));
   });
@@ -839,6 +1038,25 @@ function adapterFor(r, e) {
     return cur;
   return "manual";
 }
+function appleFirstLines(c) {
+  return [
+    `set crosstalkWasRunning to (application "Terminal" is running)`,
+    `tell application "Terminal"`,
+    `	activate`,
+    `	if not crosstalkWasRunning then`,
+    `		repeat 20 times`,
+    `			if (count of windows) > 0 then exit repeat`,
+    `			delay 0.2`,
+    `		end repeat`,
+    `	end if`,
+    `	if (not crosstalkWasRunning) and (count of windows) > 0 then`,
+    `		do script ${asq(c)} in selected tab of front window`,
+    `	else`,
+    `		do script ${asq(c)}`,
+    `	end if`,
+    `end tell`
+  ];
+}
 function appleNewTabLines(c) {
   return [
     `		delay 0.3`,
@@ -852,20 +1070,33 @@ function appleNewTabLines(c) {
     `		end repeat`,
     `		tell application "Terminal"`,
     `			if not frontmost then error "Terminal is not in front" number 1001`,
-    `			set crosstalkWin to id of front window`,
-    `			set crosstalkTabs to count of tabs of front window`,
-    `			set crosstalkTty to tty of selected tab of front window`,
+    `			set crosstalkSeen to {}`,
+    `			repeat with w in windows`,
+    `				repeat with t in tabs of w`,
+    `					set end of crosstalkSeen to (tty of t)`,
+    `				end repeat`,
+    `			end repeat`,
     `		end tell`,
     `		tell application "System Events" to key code 17 using command down`,
-    `		delay 0.6`,
-    `		tell application "Terminal"`,
-    `			if (id of front window) is not crosstalkWin or (count of tabs of front window) is not (crosstalkTabs + 1) or (tty of selected tab of front window) is crosstalkTty then error "the new tab did not open where expected" number 1001`,
-    `			do script ${asq(c)} in selected tab of front window`,
-    `		end tell`
+    `		set crosstalkNewTab to missing value`,
+    `		repeat 20 times`,
+    `			delay 0.2`,
+    `			tell application "Terminal"`,
+    `				repeat with w in windows`,
+    `					repeat with t in tabs of w`,
+    `						set crosstalkT to (tty of t)`,
+    `						if crosstalkT is not "" and crosstalkSeen does not contain crosstalkT then set crosstalkNewTab to (contents of t)`,
+    `					end repeat`,
+    `				end repeat`,
+    `			end tell`,
+    `			if crosstalkNewTab is not missing value then exit repeat`,
+    `		end repeat`,
+    `		if crosstalkNewTab is missing value then error "the new tab did not open" number 1001`,
+    `		tell application "Terminal" to do script ${asq(c)} in crosstalkNewTab`
   ];
 }
 function appleTerminalScript(cmds, tabs) {
-  const L = [`set crosstalkFallback to ""`, `set crosstalkOpened to 1`, `tell application "Terminal"`, `	activate`, `	do script ${asq(cmds[0])}`, `end tell`];
+  const L = [`set crosstalkFallback to ""`, `set crosstalkOpened to 1`, ...appleFirstLines(cmds[0])];
   for (const c of cmds.slice(1)) {
     if (!tabs)
       L.push(`tell application "Terminal" to do script ${asq(c)}`, `set crosstalkOpened to crosstalkOpened + 1`);
@@ -1136,6 +1367,14 @@ function claimPending() {
     } catch {}
   }
 }
+function becomeMain(self) {
+  try {
+    const rec = readOne(self);
+    return setMain(true, { sessionId: self, name: rec ? label(rec) : "this session", pid: rec?.pid ?? sessionPid(self) }).changed;
+  } catch {
+    return false;
+  }
+}
 function startDetached(s, env) {
   try {
     const c = spawn2(s.cmd, s.args, { detached: true, stdio: "ignore", ...env ? { env } : {} });
@@ -1161,8 +1400,10 @@ function restore(o, only) {
   const picked = o.recentOnly ? recentOf(all) : all;
   const folderGone = picked.filter((r) => r.cwd && !fs4.existsSync(r.cwd));
   const lost = picked.filter((r) => !folderGone.includes(r));
+  const madeMain = o.userAction && o.self ? becomeMain(o.self) : false;
+  const mainNote = madeMain ? " This session is your main one now: their questions come here." : "";
   if (!lost.length)
-    return { ok: true, text: "\u25e2 crosstalk: nothing to restore.", lost, restored: [] };
+    return { ok: true, text: `\u25e2 crosstalk: nothing to restore.${mainNote}`, lost, restored: [] };
   claimPending();
   const e = liveEnv(env, tabsFor(o));
   let { plans, skipped } = plan(lost, e);
@@ -1270,7 +1511,7 @@ ${lines.join(`
     const [steps, cmd] = permissionSteps(missing, app);
     notes.push(opened ? `Opened System Settings, so next time they open as tabs: ${steps}` : `For tabs next time: ${steps}`, `  ${cmd}`);
   }
-  const head = restored.length ? `\u25e2 crosstalk: reopened ${restored.length} session${restored.length === 1 ? "" : "s"} (${names(restored)}).` : `\u25e2 crosstalk: reopened nothing.`;
+  const head = restored.length ? `\u25e2 crosstalk: reopened ${restored.length} session${restored.length === 1 ? "" : "s"} (${names(restored)}).${mainNote}` : `\u25e2 crosstalk: reopened nothing.${mainNote}`;
   return { ok: !failed.length, text: [head, ...notes.map((n) => `  ${n}`)].join(`
 `), lost, restored };
 }
@@ -1304,6 +1545,7 @@ var dir = () => path7.join(P.root, "open"), safe = (id) => id.replace(/[^A-Za-z0
   return m;
 }, num = (n) => n === undefined || Number.isNaN(n) ? Infinity : n, SETTINGS_URL, REOPEN_SETTINGS_MS, JXA_AX = `ObjC.import("ApplicationServices"); var f; try { f = $.AXIsProcessTrusted() } catch (e) { ObjC.bindFunction("AXIsProcessTrusted", ["bool", []]); f = $.AXIsProcessTrusted() } f ? "yes" : "no"`, tmuxWindowIndex = (t, env = process.env) => tmuxWindowOf(t, env)?.index, label = (r) => r.name && !/^session-\d+$/.test(r.name) ? r.name : path7.basename(r.cwd) || r.sessionId.slice(0, 8), names = (rs, max = 4) => rs.slice(0, max).map(label).join(", ") + (rs.length > max ? ", \u2026" : ""), commandsFile = () => path7.join(P.root, "restore-commands.sh"), RECENT_MS = () => Number(process.env.CROSSTALK_RESTORE_RECENT_MS ?? 4 * 3600000), pendingFile = () => path7.join(P.root, "restore-pending.json"), tabsFor = (o) => o.userAction || o.asked ? o.tabs ?? true : false, WAIT_MS = () => Number(process.env.CROSSTALK_RESTORE_WAIT_MS ?? 2 * 60 * 1000);
 var init_restore = __esm(() => {
+  init_main();
   init_config();
   init_paths();
   init_repo();
@@ -2608,7 +2850,7 @@ function run2(o) {
   const unknown = [...asked].filter((a) => !others.some((w) => path14.resolve(w.path) === a));
   const ok = removed.filter((r) => r.ok);
   const kb = ok.reduce((s, r) => s + r.kb, 0);
-  const parts = [ok.length ? `\u25e2 crosstalk: removed ${ok.length} worktree${ok.length === 1 ? "" : "s"}, freeing ${human(kb)}.` : "\u25e2 crosstalk: removed no worktree."];
+  const parts = [ok.length ? `\u25e2 crosstalk: removed ${ok.length} worktree${ok.length === 1 ? "" : "s"}, freeing ${human2(kb)}.` : "\u25e2 crosstalk: removed no worktree."];
   if (stopped.length)
     parts.push(`  stopped ${stopped.length === 1 ? "its service" : "their services"} first: ${stopped.join(", ")}`);
   for (const r of removed.filter((x) => !x.ok))
@@ -2634,7 +2876,7 @@ function act2(session, id, action, value) {
 var svcLabel = (s) => {
   const b = badge([{ listening: s.listening, ports: s.ports }]);
   return b ? `${s.name} \u00b7 ${b}` : s.name;
-}, human = (kb) => kb >= 1024 * 1024 ? `${(kb / 1024 / 1024).toFixed(1)} GB` : kb >= 1024 ? `${Math.round(kb / 1024)} MB` : `${kb} KB`, liveGuard = () => ({ services: (w) => runningIn(w), inUse: (w) => inUseBy(w) }), cleanupId = (sessionId) => `cleanup:${sessionId}`, CLEANUP_OPTIONS, stamp = () => path14.join(P.root, "cleanup-stamp"), CHECK_EVERY_MS = () => Number(process.env.CROSSTALK_CLEANUP_EVERY_MS ?? 10 * 60 * 1000), removeYes = (action, value) => action === "answer" && (value ?? "").trim() === CLEANUP_OPTIONS[0];
+}, human2 = (kb) => kb >= 1024 * 1024 ? `${(kb / 1024 / 1024).toFixed(1)} GB` : kb >= 1024 ? `${Math.round(kb / 1024)} MB` : `${kb} KB`, liveGuard = () => ({ services: (w) => runningIn(w), inUse: (w) => inUseBy(w) }), cleanupId = (sessionId) => `cleanup:${sessionId}`, CLEANUP_OPTIONS, stamp = () => path14.join(P.root, "cleanup-stamp"), CHECK_EVERY_MS = () => Number(process.env.CROSSTALK_CLEANUP_EVERY_MS ?? 10 * 60 * 1000), removeYes = (action, value) => action === "answer" && (value ?? "").trim() === CLEANUP_OPTIONS[0];
 var init_cleanup = __esm(() => {
   init_config();
   init_restore();
@@ -8597,6 +8839,7 @@ var rootFrom2 = (metaUrl) => path26.join(dirOf2(metaUrl), "..");
 var shim2 = (root) => path26.join(root, "bin", "crosstalk");
 
 // src/registry.ts
+init_pure();
 import os6 from "node:os";
 import path27 from "node:path";
 var claudeConfigDir2 = (env = process.env) => env.CLAUDE_CONFIG_DIR || path27.join(os6.homedir(), ".claude");
@@ -8604,6 +8847,7 @@ var sessionsDir2 = (env = process.env) => path27.join(claudeConfigDir2(env), "se
 var SESSIONS2 = sessionsDir2();
 
 // src/restore.ts
+init_main();
 init_config();
 init_paths();
 init_repo();
@@ -8742,6 +8986,32 @@ function pidAlive3(pid, pidStart) {
   return now === null ? true : now === pidStart;
 }
 var recAlive2 = (r) => pidAlive3(r.pid, r.pidStart);
+var SHELL3 = /^-?(sh|bash|zsh|dash|fish|ksh|tcsh|csh)$/;
+function sessionPid2(sessionId) {
+  try {
+    const reg = sessionsDir();
+    for (const f of fs23.readdirSync(reg)) {
+      if (!f.endsWith(".json"))
+        continue;
+      try {
+        const e = JSON.parse(fs23.readFileSync(path28.join(reg, f), "utf8"));
+        if (e.sessionId === sessionId && Number(e.pid) > 0)
+          return Number(e.pid);
+      } catch {}
+    }
+  } catch {}
+  let pid = process.ppid;
+  for (let i = 0;i < 4; i++) {
+    const comm = ps3(pid, "comm");
+    if (!comm || !SHELL3.test(path28.basename(comm)))
+      break;
+    const up = Number(ps3(pid, "ppid"));
+    if (!up || up <= 1)
+      break;
+    pid = up;
+  }
+  return pid;
+}
 var appleLocateScript2 = (tty) => [
   `tell application "Terminal"`,
   `	repeat with w in windows`,
@@ -8954,7 +9224,7 @@ function appleIntoWindowScript3(cmds, window, tabs) {
       return;
     }
     if (i === 0)
-      L.push(`if crosstalkNew then`, `	tell application "Terminal"`, `		activate`, `		do script ${asq2(c)}`, `	end tell`, `	set crosstalkOpened to 1`, `else`, ...tabTry2(c), `end if`);
+      L.push(`if crosstalkNew then`, ...appleFirstLines2(c).map((l) => `	${l}`), `	set crosstalkOpened to 1`, `else`, ...tabTry2(c), `end if`);
     else
       L.push(...tabTry2(c));
   });
@@ -9030,6 +9300,25 @@ var groupBy2 = (xs, key) => {
   return m;
 };
 var num2 = (n) => n === undefined || Number.isNaN(n) ? Infinity : n;
+function appleFirstLines2(c) {
+  return [
+    `set crosstalkWasRunning to (application "Terminal" is running)`,
+    `tell application "Terminal"`,
+    `	activate`,
+    `	if not crosstalkWasRunning then`,
+    `		repeat 20 times`,
+    `			if (count of windows) > 0 then exit repeat`,
+    `			delay 0.2`,
+    `		end repeat`,
+    `	end if`,
+    `	if (not crosstalkWasRunning) and (count of windows) > 0 then`,
+    `		do script ${asq2(c)} in selected tab of front window`,
+    `	else`,
+    `		do script ${asq2(c)}`,
+    `	end if`,
+    `end tell`
+  ];
+}
 function appleNewTabLines2(c) {
   return [
     `		delay 0.3`,
@@ -9043,20 +9332,33 @@ function appleNewTabLines2(c) {
     `		end repeat`,
     `		tell application "Terminal"`,
     `			if not frontmost then error "Terminal is not in front" number 1001`,
-    `			set crosstalkWin to id of front window`,
-    `			set crosstalkTabs to count of tabs of front window`,
-    `			set crosstalkTty to tty of selected tab of front window`,
+    `			set crosstalkSeen to {}`,
+    `			repeat with w in windows`,
+    `				repeat with t in tabs of w`,
+    `					set end of crosstalkSeen to (tty of t)`,
+    `				end repeat`,
+    `			end repeat`,
     `		end tell`,
     `		tell application "System Events" to key code 17 using command down`,
-    `		delay 0.6`,
-    `		tell application "Terminal"`,
-    `			if (id of front window) is not crosstalkWin or (count of tabs of front window) is not (crosstalkTabs + 1) or (tty of selected tab of front window) is crosstalkTty then error "the new tab did not open where expected" number 1001`,
-    `			do script ${asq2(c)} in selected tab of front window`,
-    `		end tell`
+    `		set crosstalkNewTab to missing value`,
+    `		repeat 20 times`,
+    `			delay 0.2`,
+    `			tell application "Terminal"`,
+    `				repeat with w in windows`,
+    `					repeat with t in tabs of w`,
+    `						set crosstalkT to (tty of t)`,
+    `						if crosstalkT is not "" and crosstalkSeen does not contain crosstalkT then set crosstalkNewTab to (contents of t)`,
+    `					end repeat`,
+    `				end repeat`,
+    `			end tell`,
+    `			if crosstalkNewTab is not missing value then exit repeat`,
+    `		end repeat`,
+    `		if crosstalkNewTab is missing value then error "the new tab did not open" number 1001`,
+    `		tell application "Terminal" to do script ${asq2(c)} in crosstalkNewTab`
   ];
 }
 function appleTerminalScript2(cmds, tabs) {
-  const L = [`set crosstalkFallback to ""`, `set crosstalkOpened to 1`, `tell application "Terminal"`, `	activate`, `	do script ${asq2(cmds[0])}`, `end tell`];
+  const L = [`set crosstalkFallback to ""`, `set crosstalkOpened to 1`, ...appleFirstLines2(cmds[0])];
   for (const c of cmds.slice(1)) {
     if (!tabs)
       L.push(`tell application "Terminal" to do script ${asq2(c)}`, `set crosstalkOpened to crosstalkOpened + 1`);
@@ -9387,6 +9689,14 @@ function claimPending2() {
     } catch {}
   }
 }
+function becomeMain2(self) {
+  try {
+    const rec = readOne2(self);
+    return setMain(true, { sessionId: self, name: rec ? label3(rec) : "this session", pid: rec?.pid ?? sessionPid2(self) }).changed;
+  } catch {
+    return false;
+  }
+}
 var tabsFor2 = (o) => o.userAction || o.asked ? o.tabs ?? true : false;
 function startDetached2(s, env) {
   try {
@@ -9413,8 +9723,10 @@ function restore2(o, only) {
   const picked = o.recentOnly ? recentOf2(all) : all;
   const folderGone = picked.filter((r) => r.cwd && !fs23.existsSync(r.cwd));
   const lost = picked.filter((r) => !folderGone.includes(r));
+  const madeMain = o.userAction && o.self ? becomeMain2(o.self) : false;
+  const mainNote = madeMain ? " This session is your main one now: their questions come here." : "";
   if (!lost.length)
-    return { ok: true, text: "\u25e2 crosstalk: nothing to restore.", lost, restored: [] };
+    return { ok: true, text: `\u25e2 crosstalk: nothing to restore.${mainNote}`, lost, restored: [] };
   claimPending2();
   const e = liveEnv2(env, tabsFor2(o));
   let { plans, skipped } = plan2(lost, e);
@@ -9522,7 +9834,7 @@ ${lines.join(`
     const [steps, cmd] = permissionSteps2(missing, app);
     notes.push(opened ? `Opened System Settings, so next time they open as tabs: ${steps}` : `For tabs next time: ${steps}`, `  ${cmd}`);
   }
-  const head = restored.length ? `\u25e2 crosstalk: reopened ${restored.length} session${restored.length === 1 ? "" : "s"} (${names4(restored)}).` : `\u25e2 crosstalk: reopened nothing.`;
+  const head = restored.length ? `\u25e2 crosstalk: reopened ${restored.length} session${restored.length === 1 ? "" : "s"} (${names4(restored)}).${mainNote}` : `\u25e2 crosstalk: reopened nothing.${mainNote}`;
   return { ok: !failed.length, text: [head, ...notes.map((n) => `  ${n}`)].join(`
 `), lost, restored };
 }
@@ -10593,156 +10905,9 @@ function setName(sessionId, name) {
 }
 
 // src/attention/relay.ts
-import path36 from "node:path";
-
-// src/ui-extra/pure.ts
-function parseAt(prompt) {
-  const m = /^@([A-Za-z0-9_][\w.-]*)(?:\s+([\s\S]*))?$/.exec(prompt.trim());
-  if (!m)
-    return null;
-  const word = m[1].toLowerCase();
-  const rest = (m[2] ?? "").trim();
-  if (word === "main") {
-    if (!rest || /^(on|yes|y)$/i.test(rest))
-      return { kind: "main", on: true };
-    if (/^(off|no|n|stop)$/i.test(rest))
-      return { kind: "main", on: false };
-    return null;
-  }
-  if (word === "restore") {
-    const w = rest.toLowerCase();
-    if (!w || w === "yes" || w === "y")
-      return { kind: "restore", want: "yes" };
-    if (w === "no" || w === "n" || w === "not now")
-      return { kind: "restore", want: "no" };
-    if (w === "windows")
-      return { kind: "restore", want: "windows" };
-    return null;
-  }
-  if (!rest)
-    return null;
-  return { kind: "name", name: word, text: rest };
-}
-function matchOption(typed, options) {
-  const t = typed.trim().toLowerCase();
-  if (!t || !options.length)
-    return;
-  const exact = options.find((o) => o.toLowerCase() === t);
-  if (exact)
-    return exact;
-  if (t === "y" || t === "yes")
-    return options[0];
-  if (t === "n" || t === "no")
-    return options.find((o) => /^(no|not|don't|dont|hold|cancel)\b/i.test(o)) ?? options[options.length - 1];
-  const starts = options.filter((o) => o.toLowerCase().startsWith(t));
-  return starts.length === 1 ? starts[0] : undefined;
-}
-var runningWhere = (r) => r.url ?? (r.ports?.length ? `localhost:${r.ports[0]}` : "");
-function runningLine(r, now) {
-  const mark = r.alive ? "\u25cf" : "\u25cb";
-  if (r.kind === "screenshot")
-    return `${r.label}${r.path ? ` ${r.path}` : ""} \u00b7 ${r.before ? `before ${ago(r.before.at, now)}` : "no before yet"} \u00b7 after ${ago(r.after?.at, now)}`;
-  if (r.broken)
-    return `${mark} ${r.label} \u00b7 broken: ${r.broken}`;
-  if (r.kind === "server" && !r.url && !r.ports?.length)
-    return `${mark} ${r.label} \u00b7 starting`;
-  const who = r.kind === "share" ? r.owner === "you" ? r.with?.length ? ` \u00b7 with ${r.with.join(", ")}` : "" : ` \u00b7 from ${r.owner}` : "";
-  const left = r.kind === "share" && r.alive && r.until ? ` \u00b7 ${until(r.until, now)} left` : "";
-  if (r.kind === "pr") {
-    const sign = r.state === "MERGED" ? SIGN.done : r.checks === "failed" ? SIGN.broken : r.checks === "running" ? SIGN.working : r.checks === "passed" ? SIGN.done : mark;
-    return `${sign} ${r.label}${prState(r)}`;
-  }
-  const dead = r.alive ? "" : r.kind === "share" ? " \u00b7 ended" : " \u00b7 dead";
-  return `${mark} ${r.label}${who}${left}${dead}`;
-}
-function until(ts, now) {
-  const s = Math.max(0, Math.round((ts - now) / 1000));
-  if (s < 3600)
-    return `${Math.max(1, Math.round(s / 60))}m`;
-  if (s < 86400)
-    return `${Math.round(s / 3600)}h`;
-  return `${Math.round(s / 86400)}d`;
-}
-function runningSummary(items) {
-  const up = items.filter((r) => r.alive && r.kind !== "screenshot" && r.owner === "you");
-  const servers = up.filter((r) => r.kind === "server");
-  return servers.length === 1 ? runningWhere(servers[0]).replace(/^https?:\/\//, "") : up.length ? `${up.length} running` : "";
-}
-function ago(ts, now) {
-  if (!ts)
-    return "";
-  const s = Math.max(0, Math.round((now - ts) / 1000));
-  if (s < 60)
-    return "now";
-  if (s < 3600)
-    return `${Math.round(s / 60)}m`;
-  if (s < 86400)
-    return `${Math.round(s / 3600)}h`;
-  return `${Math.round(s / 86400)}d`;
-}
-function prState(r) {
-  if (r.state === "MERGED")
-    return " \u00b7 merged";
-  if (r.state === "CLOSED")
-    return " \u00b7 closed";
-  if (!r.alive)
-    return " \u00b7 dead";
-  const parts = [r.draft ? "draft" : ""];
-  if (r.checks === "running")
-    parts.push("checks running", r.eta ?? "");
-  else if (r.checks === "failed")
-    parts.push(`checks failed${r.failed?.length ? `: ${r.failed.join(", ")}` : ""}`);
-  else if (r.checks === "passed")
-    parts.push("checks passed");
-  if (r.queued)
-    parts.push("in the merge queue");
-  return parts.filter(Boolean).map((x) => ` \u00b7 ${x}`).join("");
-}
-function inboxScore(it, now) {
-  if (it.kind === "session" || it.kind === "steer")
-    return 1000 + Math.min(30, Math.max(0, (now - it.createdAt) / 60000) / 2);
-  const base = it.kind === "restore" ? 120 : it.id.startsWith("relay:") || it.id.startsWith("attn:perm:") || it.id.startsWith("attn:circle:") ? 100 : it.kind === "ask" ? 90 : it.kind === "ship" || it.kind === "conflict" ? 80 : it.id.startsWith("attn:staff:") ? 60 : it.kind === "route" || it.kind === "team" ? 55 : it.id.startsWith("open:") ? 40 : it.kind === "message" ? 35 : 30;
-  const waitedMin = Math.max(0, (now - it.createdAt) / 60000);
-  return base + Math.min(30, waitedMin / 2);
-}
-function inboxOrder(items, now) {
-  return [...items].sort((a, b) => inboxScore(b, now) - inboxScore(a, now) || a.createdAt - b.createdAt);
-}
-function inboxLine(it, now) {
-  const what = shortQuestion(it.question ?? it.text ?? it.id);
-  const where = it.thread ? human2(it.thread, 24) : it.from ? human2(it.from, 24) : "";
-  return `${it.thread ? dotFor(it.thread) + " " : ""}${where ? `${where} \u2014 ` : ""}${what} \u00b7 ${ago(it.createdAt, now) || "now"}`;
-}
-var DOTS = ["\uD83D\uDFE0", "\uD83D\uDFE1", "\uD83D\uDFE2", "\uD83D\uDD35", "\uD83D\uDFE3", "\uD83D\uDFE4", "\u26aa"];
-function dotFor(thread) {
-  let h = 2166136261;
-  for (const c of thread.toLowerCase())
-    h = Math.imul(h ^ c.charCodeAt(0), 16777619);
-  return DOTS[(h >>> 0) % DOTS.length] ?? "\u26aa";
-}
-var SIGN = { waiting: "\u2753", working: "\u23f3", done: "\u2705", broken: "\u2757", idle: "\uD83D\uDCA4" };
-var LEGEND = `${SIGN.waiting} needs you \u00b7 ${SIGN.working} working \u00b7 ${SIGN.done} done \u00b7 ${SIGN.broken} something broke \u00b7 ${SIGN.idle} idle \u00b7 a coloured dot per thread`;
-var ACRONYMS = new Set(["mcp", "ai", "pr", "ci", "api", "ui", "ux", "led", "pal", "esp32", "sdk", "cli", "id", "ids", "url", "db", "css", "html", "ios", "qr", "llm", "cbmc", "scd30"]);
-function human2(name, max = 32) {
-  const words = name.replace(/[_-]+/g, " ").trim().split(/\s+/).map((w) => ACRONYMS.has(w.toLowerCase()) ? w.toUpperCase() : w);
-  if (!words.length || !words[0])
-    return name;
-  words[0] = words[0][0].toUpperCase() + words[0].slice(1);
-  let out = "";
-  for (const w of words) {
-    if ((out ? out.length + 1 : 0) + w.length > max)
-      return out ? `${out}\u2026` : `${w.slice(0, max - 1)}\u2026`;
-    out = out ? `${out} ${w}` : w;
-  }
-  return out;
-}
-function shortQuestion(q, max = 72) {
-  const t = q.replace(/^\s*\S+ asks:\s*/i, "").replace(/\s+/g, " ").trim();
-  return t.length > max ? t.slice(0, max - 1) + "\u2026" : t;
-}
-
-// src/attention/relay.ts
+init_pure();
 init_uistate();
+import path36 from "node:path";
 
 // src/sessions/transcripts.ts
 init_registry();
@@ -11042,13 +11207,13 @@ function answerAway(sessionId, q, now = Date.now()) {
   const s = read3();
   const a = awayAnswer(q.options ?? [], s.until);
   const rec = readOne(sessionId);
-  const who = rec?.thread ? human2(rec.thread, 32) : "An agent";
+  const who = rec?.thread ? human(rec.thread, 32) : "An agent";
   update((st) => decided(st, { at: now, who, question: clean3(q.question, 200), answer: a.how === "recommended" ? a.answer : "left to the agent (safest reversible choice)", how: "away" }));
   return a.answer;
 }
 function relay(sessionId, q, main, now = Date.now()) {
   const rec = readOne(sessionId);
-  const name = rec?.thread ? human2(rec.thread, 32) : nameOf2(sessionId) ?? (rec?.cwd ? human2(path36.basename(rec.cwd), 32) : "An agent");
+  const name = rec?.thread ? human(rec.thread, 32) : nameOf2(sessionId) ?? (rec?.cwd ? human(path36.basename(rec.cwd), 32) : "An agent");
   const id = `relay:${sessionId}:${crypto7.randomBytes(4).toString("hex")}`;
   const opts = (q.options ?? []).slice(0, 4);
   const described = opts.filter((o) => o.description).map((o) => `${clean3(o.label, 60)}: ${clean3(o.description, 160)}`);
@@ -11381,6 +11546,7 @@ function sequence(state, id = "crosstalk") {
 }
 
 // src/terminal/status.ts
+init_pure();
 var COLOUR = {
   working: [47, 111, 214],
   waiting: [229, 140, 10],
@@ -12558,6 +12724,7 @@ var active = (x, now = Date.now()) => !x.ended && x.expiresAt > now;
 
 // src/threads/running.ts
 init_restore();
+init_pure();
 var ORDER2 = { server: 0, preview: 1, pr: 2, share: 3, link: 4, screenshot: 5 };
 function project(thread, s) {
   const now = s.now ?? Date.now();
@@ -12675,15 +12842,20 @@ function allPrs(now = Date.now(), store = urls()) {
   return store.read().filter((u) => u.kind === "pr" && (u.alive || u.lastCheck && now - u.lastCheck < 86400000)).sort((a, b) => Number(b.alive) - Number(a.alive) || (b.lastSeen ?? 0) - (a.lastSeen ?? 0)).slice(0, 12).map((u) => ({ kind: "pr", label: u.label, url: u.url, alive: u.alive, owner: "you", ...u.thread ? { thread: u.thread } : {}, ...prFields(u, now) }));
 }
 
+// src/uicli.ts
+init_pure();
+
 // src/ui-extra/uicli.ts
 init_client();
 init_restore();
 init_uistate();
 init_model();
+init_pure();
 
 // src/ui-extra/pane.ts
 init_model();
 init_uistate();
+init_pure();
 init_threadfile();
 init_main();
 
@@ -12717,6 +12889,7 @@ init_restore();
 init_gather();
 init_uistate();
 import path51 from "node:path";
+init_pure();
 import fs44 from "node:fs";
 var alive3 = (pid) => {
   try {
@@ -12852,7 +13025,7 @@ function agentsPane(sessionId, list = agents(sessionId)) {
   } catch {}
   for (const a of others)
     if (a.state === "waiting" && a.asks && !(a.sessionId && relayed.has(a.sessionId)))
-      needs.push(`${a.thread ? dotFor(a.thread) + " " : ""}${human2(a.thread ?? a.name, 24)} \u2014 ${shortQuestion(a.asks)} (in its tab)`);
+      needs.push(`${a.thread ? dotFor(a.thread) + " " : ""}${human(a.thread ?? a.name, 24)} \u2014 ${shortQuestion(a.asks)} (in its tab)`);
   let prs = [];
   let events = [];
   try {
@@ -12936,6 +13109,7 @@ init_model();
 init_threadfile();
 import fs45 from "node:fs";
 import path52 from "node:path";
+init_pure();
 var HOUR = 60 * 60000;
 var DAY4 = 24 * HOUR;
 var cut2 = (s, n = 140) => {
