@@ -69,5 +69,11 @@ describe("questions nobody can receive any more", () => {
     const s = ui.snapshot()
     expect([s["relay:gone1:a"].state, s["relay:here1:b"].state, s["relay:here1:old"].state]).toEqual(["muted", "pending", "muted"])
     expect(Rl.sweep(now, () => true)).toBe(0)
+    // Old "For you" to-dos from sessions on an older version: put away too.
+    ui.withStore((items, t) => {
+      ui.upsert(items, { id: "you:old1:h", kind: "attention", sessionId: "m", question: "Sign-in may be broken", options: ["Done", "Later"], ts: now }, t)
+    })
+    expect(Rl.sweep(now, () => true)).toBe(1)
+    expect(ui.snapshot()["you:old1:h"].state).toBe("muted")
   })
 })

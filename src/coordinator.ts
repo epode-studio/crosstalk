@@ -140,7 +140,9 @@ export class Coordinator {
   itemsFor(items: Record<string, ui.UiItem>, sid: string): ui.UiItem[] {
     // A parked thread's items wait out of sight (src/attention/park.ts), kept for when it is back.
     const parked = Park.read()
-    const open = Object.values(items).filter((i) => !ui.FINAL.has(i.state) && !Park.held(i, parked))
+    // "For you" to-dos (you:) are gone since 0.2.10: an agent does those itself, or asks. Sessions started
+    // before an update still make them, so none is shown, whichever version a session runs.
+    const open = Object.values(items).filter((i) => !ui.FINAL.has(i.state) && !Park.held(i, parked) && !i.id.startsWith("you:") && !i.id.startsWith("open:"))
     return mainS.itemsFor(open, sid, this.mainId())
   }
 

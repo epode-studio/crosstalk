@@ -151,7 +151,12 @@ export function poll(id: string, o: { mainAlive?: () => boolean } = {}): { answe
  * someone is still waiting on. Returns how many.
  */
 export function sweep(now = Date.now(), alive: (id: string) => boolean = askerAlive): number {
-  const gone = Object.values(ui.snapshot()).filter((i) => i.id.startsWith("relay:") && i.state === "pending" && (!alive(i.id) || now - (i.ts ?? now) > 86_400_000))
+  const gone = Object.values(ui.snapshot()).filter(
+    (i) =>
+      ((i.id.startsWith("relay:") && i.state === "pending" && (!alive(i.id) || now - (i.ts ?? now) > 86_400_000)) ||
+        // Old "For you" to-dos, from sessions started before 0.2.10: put away.
+        ((i.id.startsWith("you:") || i.id.startsWith("open:")) && (i.state === "pending" || i.state === "later"))),
+  )
   if (!gone.length) return 0
   ui.withStore((items, t) => {
     for (const i of gone) ui.act(items, i.id, "mute", t)
