@@ -101,6 +101,12 @@ test('the pane draws a thread: waiting, notes, features with flag stage, recent,
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
     expect((await ui.find({ type: 'Text', text: /keep the v1 endpoint/ }))?.text).toContain('blocking')
+    // Features and recent messages wait behind "more".
+    if (surface === 'terminal') {
+      expect(await ui.find({ type: 'Text', text: /v2 token format/ })).toBeUndefined()
+      await ui.press({ key: 'more' })
+      await clock.settle()
+    }
     expect((await ui.find({ type: 'Text', text: /v1 tokens accepted/ }))?.text).toContain('paul')
     expect((await ui.find({ type: 'Text', text: /v2 token format/ }))?.text).toContain('flag auth-v2-tokens at internal')
     await clock.settle()
@@ -120,6 +126,10 @@ test('the pane has a Running section: by kind, clickable, dead ones marked', asy
   await clock.settle()
   await $.tool.call({ tool: 'mcp__plugin_crosstalk_crosstalk__crosstalk_look', action: 'pane', thread: 'auth' } as any)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await clock.settle()
+  // Servers and pull requests at once; links an agent printed behind "more".
+  expect(await ui.find({ type: 'Text', text: /Links found in output/ })).toBeUndefined()
+  await ui.press({ key: 'more' })
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: /^Running$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /Servers/ })).toBeDefined()

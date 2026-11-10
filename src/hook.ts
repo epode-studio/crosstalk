@@ -13,6 +13,7 @@
 // mid-turn there too. The daemon decides: a session that registered a socket is
 // pushed to, a session without one pulls here instead. Neither does both.
 
+import { recordEvent as ciLately } from "./urls/ci.ts"
 import path from "node:path"
 import os from "node:os"
 import fs from "node:fs"
@@ -482,7 +483,10 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
 if (restoreClient === "claude" && sessionId && isSessionStart && !process.env[BG_ENV] && process.env.CLAUDE_CODE_ENTRYPOINT === "cli")
   try {
     const m = dayMod.morning(Date.now())
-    if (m) systemMessage = systemMessage ? `${systemMessage}\n${m}` : m
+    // With a main session open elsewhere, it goes there (Lately), not into the first working session opened.
+    const main = mainS.currentMain()
+    if (m && main && main.sessionId !== sessionId) ciLately(m.replace(/^◢\s*/, ""))
+    else if (m) systemMessage = systemMessage ? `${systemMessage}\n${m}` : m
   } catch {}
 // crosstalk's own prompts are not the person: they never count as them being here (openitems.ts isCrosstalkPrompt).
 const typedByPerson = /^UserPromptSubmit$/.test(eventName) && !openItems.isCrosstalkPrompt(String(hook.prompt ?? ""))

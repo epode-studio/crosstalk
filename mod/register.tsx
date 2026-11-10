@@ -81,6 +81,7 @@ const paneAtom = atom({ plugin: 'crosstalk', key: 'pane' } as const, null as Pan
 const paneError = atom({ plugin: 'crosstalk', key: 'paneError' } as const, '')
 const digestAtom = atom({ plugin: 'crosstalk', key: 'digest' } as const, '')
 const inboxOpen = atom({ plugin: 'crosstalk', key: 'inboxOpen' } as const, '')
+const paneMore = atom({ plugin: 'crosstalk', key: 'paneMore' } as const, false)
 /** Main's pane is up with its inbox: what can wait sits there instead of taking the keyboard. */
 let inboxShown = false
 
@@ -263,7 +264,10 @@ async function received($: EngineInterface, line: string) {
  * watch before it; so does the pane being closed.
  */
 async function openPane($: EngineInterface, thread: string | undefined): Promise<boolean> {
-  if (thread !== paneThread) await update($, paneAtom, () => null)
+  if (thread !== paneThread) {
+    await update($, paneAtom, () => null)
+    await update($, paneMore, () => false)
+  }
   paneThread = thread
   const gen = ++paneGen
   await update($, paneError, () => '')
@@ -819,6 +823,8 @@ export const register: Register = on => {
       agent: sid => void cli($, ['show', '--target', sid]).then(r => $.ui.toast(oneLine(String(r?.text ?? r?.error ?? '')).replace(/^◢ crosstalk: /, ''))),
       // A thread opened in main: one press back to the inbox.
       ...(mainTotals && paneThread ? { back: () => void openPane($, undefined) } : {}),
+      more: () => void update($, paneMore, () => true),
+      expanded: await read($, paneMore),
     })
   })
 

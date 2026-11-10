@@ -102,6 +102,8 @@ declare module 'claude-code' {
       digest: string
       /** The inbox row the person opened in main's pane; empty: the first. */
       inboxOpen: string
+      /** The thread pane shows everything ("more" pressed), not only what is open and running. */
+      paneMore: boolean
     }
   }
 }

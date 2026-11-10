@@ -1,0 +1,60 @@
+┌─ pane · collapsed · 60 cols ───────────────────────────────┐
+│🟣 auth · active · 2 working                                 │
+│paul  marie                                                 │
+│Moving tokens to v2 format; v1 kept for one release.        │
+│                                                            │
+│On your phone · auth · preview                              │
+│█▀▀▀▀▀█ ▄▀▄ █▀▀▀▀▀█                                         │
+│█ ███ █ ▀█▀ █ ███ █                                         │
+│█ ▀▀▀ █ █▄▀ █ ▀▀▀ █                                         │
+│▀▀▀▀▀▀▀ ▀ ▀ ▀▀▀▀▀▀▀                                         │
+│https://auth-pr-12.vercel.app                               │
+│                                                            │
+│Needs you                                                   │
+│ ? keep the v1 endpoint? (blocking)                         │
+│ ? jo asks: can billing read v2 yet?                        │
+│                                                            │
+│Notes                                                       │
+│ • remove the v1 parser after 0.2                           │
+│ → write the migration note (marie is on it)                │
+│ Decided: v1 tokens accepted until 0.2 (paul, 3h)           │
+│                                                            │
+│Running                                                     │
+│ Servers                                                    │
+│  ● web http://auth.localhost:1355                          │
+│  ○ worker · broken: exited with status 1                   │
+│ Previews                                                   │
+│  ● preview https://auth-pr-12.vercel.app                   │
+│ Pull requests                                              │
+│  ○ PR #12 · dead https://github.com/acme/api/pull/12       │
+└────────────────────────────────────────────────────────────┘
+
+styles (dark theme):
+  1 [bold fg=suggestion:#b1b9f9]🟣 auth[/][dim] · active · 2 working[/]
+  2 paul  marie
+  3 [dim]Moving tokens to v2 format; v1 kept for one release.[/]
+  4 
+  5 [bold]On your phone · auth · preview[/]
+  6 [fg=#ffffff bg=#000000]█▀▀▀▀▀█ ▄▀▄ █▀▀▀▀▀█[/]
+  7 [fg=#ffffff bg=#000000]█ ███ █ ▀█▀ █ ███ █[/]
+  8 [fg=#ffffff bg=#000000]█ ▀▀▀ █ █▄▀ █ ▀▀▀ █[/]
+  9 [fg=#ffffff bg=#000000]▀▀▀▀▀▀▀ ▀ ▀ ▀▀▀▀▀▀▀[/]
+ 10 [dim]https://auth-pr-12.vercel.app[/]
+ 11 
+ 12 [bold]Needs you[/]
+ 13  ? keep the v1 endpoint? (blocking)
+ 14  ? jo asks: can billing read v2 yet?
+ 15 
+ 16 [bold]Notes[/]
+ 17  • remove the v1 parser after 0.2
+ 18  → write the migration note (marie is on it)
+ 19  Decided: v1 tokens accepted until 0.2 (paul, 3h)
+ 20 
+ 21 [bold]Running[/]
+ 22 [dim] Servers[/]
+ 23   ● web [link=http://auth.localhost:1355]http://auth.localhost:1355[/]
+ 24 [dim]  [/][dim fg=error:#ff6b80]○ worker · broken: exited with status 1[/]
+ 25 [dim] Previews[/]
+ 26   ● preview [link=https://auth-pr-12.vercel.app]https://auth-pr-12.vercel.app[/]
+ 27 [dim] Pull requests[/]
+ 28 [dim]  ○ PR #12 · dead [/][dim link=https://github.com/acme/api/pull/12]https://github.com/acme/api/pull/12[/]

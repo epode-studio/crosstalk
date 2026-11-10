@@ -136,7 +136,7 @@ function size(bytes: number | undefined): string {
  * what is waiting, then Notes, Features, Running (by kind), recent messages
  * and History. `problem`: what the pane could not show.
  */
-export function paneTree(E: Els, p: Pane | null, problem: string, now: number, inbox?: any, on: { agent?: (sessionId: string) => void; back?: () => void } = {}) {
+export function paneTree(E: Els, p: Pane | null, problem: string, now: number, inbox?: any, on: { agent?: (sessionId: string) => void; back?: () => void; more?: () => void; expanded?: boolean } = {}) {
   const { Box, Text, Link, Button } = E
   if (!p)
     return (
@@ -273,12 +273,13 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number, i
         </Box>
       ) : null}
       {section('Needs you', p.waiting.length ? p.waiting.map(w => `? ${w}`) : ['nothing'], 'w')}
-      {p.notes?.length ? section('Notes', p.notes.map(n => noteLine(n, now)), 'n') : null}
-      {p.features.length ? section('Features', p.features.map(featureLine), 'f') : null}
+      {/* What is open and what was decided; the rest of a thread's detail waits behind "more". */}
+      {p.notes?.length ? section('Notes', p.notes.filter(n => on.expanded || n.kind === 'decision' || (n.kind === 'task' && n.state !== 'done')).slice(0, on.expanded ? 99 : 5).map(n => noteLine(n, now)), 'n') : null}
+      {on.expanded && p.features.length ? section('Features', p.features.map(featureLine), 'f') : null}
       {p.running?.length ? (
         <Box key="r" flexDirection="column" marginTop={1}>
           <Text bold>Running</Text>
-          {runningGroups(p.running).map(g => (
+          {runningGroups(on.expanded ? p.running : p.running.filter(r => r.kind === 'server' || r.kind === 'pr' || r.kind === 'preview')).map(g => (
             <Box key={`r${g.kind}`} flexDirection="column">
               <Text dimColor> {g.title}</Text>
               {g.items.map((r, i) =>
@@ -312,8 +313,15 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number, i
           ))}
         </Box>
       ) : null}
-      {p.recent.length ? section('Recent', p.recent.map(r => `${r.from} ${ago(r.ts, now)} ${r.text}`), 'm') : null}
-      {p.history?.length ? section('History', p.history.map(h => historyLine(h, now)), 'h') : null}
+      {on.expanded && p.recent.length ? section('Recent', p.recent.map(r => `${r.from} ${ago(r.ts, now)} ${r.text}`), 'm') : null}
+      {on.expanded && p.history?.length ? section('History', p.history.map(h => historyLine(h, now)), 'h') : null}
+      {Button && on.more && !on.expanded && (p.features.length || p.recent.length || p.history?.length || p.running?.some(r => r.kind !== 'server' && r.kind !== 'pr' && r.kind !== 'preview') || (p.notes?.length ?? 0) > 5) ? (
+        <Box marginTop={1}>
+          <Button key="more" plain dimColor hotkey="m" onPress={on.more}>
+            more: features, recent messages, history, links
+          </Button>
+        </Box>
+      ) : null}
       {problem ? <Text dimColor>{clean(problem)}</Text> : null}
     </Box>
   )

@@ -697,6 +697,20 @@ async function doctor() {
       const s = await request({ op: "status" })
       rows.push(["daemon ↔ relay", s.relay === "connected", s.relay])
       rows.push(["registered sessions", s.sessions.length > 0, s.sessions.map((x: any) => x.name).join(", ") || "none"])
+      // Messages: what is waiting to go out, for whom, and what is waiting here for the person to say where it goes.
+      const waits: { label: string; count: number; since: number }[] = Array.isArray(s.waitingFor) ? s.waitingFor : []
+      const ago = (t: number) => `${Math.max(1, Math.round((Date.now() - t) / 3_600_000))}h`
+      rows.push([
+        "messages out",
+        waits.length || s.outbox ? false : true,
+        waits.length
+          ? waits.map((w) => `${w.count} waiting for ${w.label} (not online for ${ago(w.since)}; it goes when they are back, or through a shared thread)`).join("; ")
+          : s.outbox
+            ? `${s.outbox} waiting for the relay link`
+            : "all delivered",
+      ])
+      const heldN = Object.values((s.held ?? {}) as Record<string, number>).reduce((a, b) => a + b, 0)
+      if (heldN) rows.push(["messages held", false, `${heldN} waiting for you to say which session they are for: open your main session's inbox`])
     } catch (e) {
       rows.push(["daemon ↔ relay", false, (e as Error).message])
     }

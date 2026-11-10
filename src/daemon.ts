@@ -2667,6 +2667,9 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         held: Object.fromEntries(
           Object.entries(held).map(([k, v]) => [k, v.filter((m) => !m.readAt).length]),
         ),
+        // Messages to people who were not on the relay, since when (src/daemon.ts waitingFor).
+        waitingFor: [...waitingFor].map(([label, w]) => ({ label, count: w.count, since: w.since })),
+        outbox: loadOutbox().length,
       }
 
     // Who is trusted through the repository, who is waiting on a question, and

@@ -129,10 +129,12 @@ describe("message cards", () => {
 describe("the thread pane", () => {
   for (const theme of ["light", "dark"] as Theme[])
     test(`every section, ${theme}`, () => {
-      snapshot(`pane-${theme}-60`, frame(`pane · ${theme} · 60 cols`, D.paneTree(ELS, PANE, "", NOW), 60, theme))
+      snapshot(`pane-${theme}-60`, frame(`pane · ${theme} · 60 cols`, D.paneTree(ELS, PANE, "", NOW, undefined, { expanded: true }), 60, theme))
     })
   test("every section, dark, 120 columns", () => {
-    snapshot("pane-dark-120", frame("pane · dark · 120 cols", D.paneTree(ELS, PANE, "", NOW), 120, "dark"))
+    snapshot("pane-dark-120", frame("pane · dark · 120 cols", D.paneTree(ELS, PANE, "", NOW, undefined, { expanded: true }), 120, "dark"))
+    // What a thread's pane shows to begin with: what is open and running; the rest behind "more".
+    snapshot("pane-collapsed-60", frame("pane · collapsed · 60 cols", D.paneTree(ELS, PANE, "", NOW), 60, "dark"))
   })
   test("while it loads, and when it cannot show the thread", () => {
     snapshot("pane-loading", [frame("pane · loading", D.paneTree(ELS, null, "", NOW), 60, "dark"), frame("pane · no thread", D.paneTree(ELS, null, 'no thread called "nope"', NOW), 60, "dark")].join("\n"))
