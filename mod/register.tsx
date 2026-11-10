@@ -413,8 +413,9 @@ async function maybeRaise($: EngineInterface) {
         if (typeof c.nudge === 'string') $.ui.toast(c.nudge)
       }
     }
-    // Main's inbox is on screen: what can wait waits there, as in any inbox; only what stops an agent asks.
-    if (inboxShown) allow = false
+    // Main: what can wait waits in its inbox, on screen or one press away (the band's "open your inbox"); only
+    // what stops an agent asks by itself. Never a chain of pickers, at any width.
+    if (inboxShown || mainTotals) allow = false
     const queue = inboxOrder(candidates.filter(i => urgent(i) || allow), now0)
     const next = own ?? queue[0]
     if (!next) return
@@ -854,14 +855,19 @@ export const register: Register = on => {
     const open = await read($, items)
     const digest = await read($, digestAtom)
     if (open.length === 0 && !digest) return next(e)
-    if (inboxShown) {
+    if (inboxShown || mainTotals) {
       const n = inboxItems(open, await $.clock.now()).length
       if (!n) return next(e)
-      const { Text } = $.ui.resolve(e)
-      return (
+      const { Text, Button } = $.ui.resolve(e)
+      // On screen: where it is. Not on screen (a narrower terminal): one press opens it, at any width.
+      return inboxShown ? (
         <Text dimColor wrap="truncate">
           ◢ {n} in your inbox · ctrl+x tab to go there
         </Text>
+      ) : (
+        <Button key="open-inbox" plain hotkey="i" onPress={() => void openPane($, undefined)}>
+          ◢ {n} in your inbox · open it
+        </Button>
       )
     }
     return bandTree($.ui.resolve(e), open, digest, await $.clock.now(), e.props.bodyColumns, raisable)
