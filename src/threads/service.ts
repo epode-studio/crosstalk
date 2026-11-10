@@ -28,6 +28,7 @@
 // thread reaches an agent only through crosstalk_thread action "read", framed as other
 // people's words. docs/security.md, "Who may change a thread".
 
+import { baseName } from "../ui-extra/pure.ts"
 import fs from "node:fs"
 import path from "node:path"
 import crypto from "node:crypto"
@@ -161,6 +162,10 @@ const empty = (): State => ({
 
 /** Files a thread keeps. A thread is about now, so the oldest fall off. */
 const MAX_FILES = 60
+/** The files that say what a thread is about, for placing sessions: its first ones. */
+const DEFINING_FILES = 24
+/** On the default branch, a session's thread follows what it touched lately, not all it ever touched. */
+const RECENT_PATHS = 10
 /** How often a session's presence in a thread is refreshed, which is also an edit. */
 const SESSION_REFRESH_MS = 10 * 60_000
 /** A peer's session counts as there for this long after its presence said so. */
@@ -252,7 +257,9 @@ export class ThreadService {
       repo: t.meta.value.repo,
       live: M.isLive(t),
       branches: M.ids(t, "branches"),
-      files: M.ids(t, "files"),
+      // What it is about: its first files. Files picked up later by sessions passing through
+      // must not let one thread swallow every session in the repo.
+      files: M.ids(t, "files").slice(0, DEFINING_FILES),
       createdAt: t.meta.value.createdAt,
       combinedInto: t.meta.value.combinedInto,
     }
@@ -277,8 +284,9 @@ export class ThreadService {
 
   /** `auth · tokens · api`: the session's threads before its own name. */
   title(sessionId: string, name: string): string | undefined {
-    const names = this.namesFor(sessionId)
-    return names.length ? `${names.slice(0, 2).join(" · ")} · ${name}` : undefined
+    // One thread, and the session's own name: never a title built on the last title (pure.ts baseName).
+    const names = [...new Set(this.namesFor(sessionId))]
+    return names.length ? `${names[0]} · ${baseName(name)}` : undefined
   }
 
   /** Local sessions in any of these threads. */
@@ -516,7 +524,8 @@ export class ThreadService {
   }
 
   private footprint(s: LocalSession): I.Footprint {
-    return { repo: s.repo, branch: s.branch, paths: s.paths, onDefault: this.onDefault(s) }
+    const onDefault = this.onDefault(s)
+    return { repo: s.repo, branch: s.branch, paths: onDefault ? s.paths.slice(0, RECENT_PATHS) : s.paths, onDefault }
   }
 
   private place(s: LocalSession): void {
@@ -583,13 +592,14 @@ export class ThreadService {
         const before = this.st.questions[s.sessionId]
         if (!before || before.candidates.join() !== p.candidates.join())
           this.st.questions[s.sessionId] = { candidates: p.candidates, why: p.why, at: this.now() }
-        want = rec.threads.map((id) => ({ id, why: rec.why[id] ?? "" }))
+        want = (fp.onDefault ? rec.threads.slice(-1) : rec.threads).map((id) => ({ id, why: rec.why[id] ?? "" }))
       } else {
-        // Nothing new to say: a session on the default branch stays where it was.
-        want = fp.onDefault ? rec.threads.map((id) => ({ id, why: rec.why[id] ?? "" })) : []
+        // Nothing new to say: a session on the default branch stays where it was (its latest thread only).
+        want = fp.onDefault ? rec.threads.slice(-1).map((id) => ({ id, why: rec.why[id] ?? "" })) : []
       }
-      // On the default branch the threads accumulate: files keep a session in each.
-      if (fp.onDefault) for (const id of rec.threads) if (!want.some((w) => w.id === id)) want.push({ id, why: rec.why[id] ?? "" })
+      // On the default branch a session is in one thread at a time: the one its latest files are in.
+      // It moves when its work does; it never collects every thread it ever touched.
+      if (fp.onDefault && want.length > 1) want = want.slice(0, 1)
     }
     // A thread this person left, or was taken out of, is not joined again by matching it.
     want = want.filter((w) => !(this.st.threads[this.resolve(w.id)] && K.isRemoved(this.st.threads[this.resolve(w.id)], this.me)))
@@ -645,9 +655,13 @@ export class ThreadService {
     if (fp.branch && !fp.onDefault && M.ids(t, "branches").length && !t.branches[fp.branch])
       changed = M.put(t, "branches", fp.branch, { at: now }, this.me, now) || changed
     const files = M.ids(t, "files")
+    // On the default branch a thread only takes files beside its own: a session passing through
+    // must not make it cover the whole repo, and pull every other session in.
+    const near = (p: string) => files.some((q) => path.posix.dirname(q.replace(/\/\*\*$/, "/x")) === path.posix.dirname(p))
     for (const p of s.paths.slice(0, 12)) {
       if (files.length >= MAX_FILES) break
       if (files.some((q) => I.covers(q, p))) continue
+      if (fp.onDefault && files.length && !near(p)) continue
       changed = M.put(t, "files", p, { at: now }, this.me, now) || changed
       files.push(p)
     }

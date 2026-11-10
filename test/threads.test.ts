@@ -488,6 +488,26 @@ describe("service", () => {
     expect(ana.svc.list()).toEqual([])
   })
 
+  test("on main, a session's thread follows its latest work: one at a time, never all it ever touched", () => {
+    const [ana] = pair()
+    ana.svc.observe(sess("m", "main", ["src/auth/a.ts", "src/auth/b.ts", "src/auth/c.ts"]))
+    expect(ana.svc.namesFor("m")).toEqual(["auth"])
+    // It moves on to billing: billing, and auth no longer.
+    const later = ["src/billing/a.ts", "src/billing/b.ts", "src/billing/c.ts", "src/billing/d.ts", "src/billing/e.ts", "src/billing/f.ts", "src/billing/g.ts", "src/billing/h.ts", "src/billing/i.ts", "src/billing/j.ts"]
+    ana.svc.observe(sess("m", "main", [...later, "src/auth/a.ts", "src/auth/b.ts", "src/auth/c.ts"]))
+    expect(ana.svc.namesFor("m")).toEqual(["billing"])
+    // auth never took billing's files on the way, so a session working on billing is not pulled into auth.
+    ana.svc.observe(sess("n", "main", ["src/billing/x.ts"]))
+    expect(ana.svc.namesFor("n")).toEqual(["billing"])
+  })
+
+  test("the title is one thread and the session's own name, never built on the last title", () => {
+    const [ana] = pair()
+    ana.svc.observe(sess("t", "main", ["src/auth/a.ts", "src/auth/b.ts", "src/auth/c.ts"]))
+    expect(ana.svc.title("t", "api-2")).toBe("auth · api-2")
+    expect(ana.svc.title("t", "🟣 auth · 🟣 auth · ⏳ api-2")).toBe("auth · api-2")
+  })
+
   test("ambiguity is one question, and the answer sticks", () => {
     const [ana] = pair()
     ana.svc.observe({ ...sess("s1", "main", ["src/auth/a.ts", "src/auth/b.ts", "src/auth/c.ts"]) })

@@ -6,6 +6,7 @@
 // spike/README.md. Long-lived sessions lose their socket to /tmp cleanup while
 // still running, so callers that need reachability must probe.
 
+import { baseName } from "./ui-extra/pure.ts"
 import fs from "node:fs"
 import net from "node:net"
 import os from "node:os"
@@ -61,7 +62,8 @@ export function listLocalSessions(): LocalSession[] {
       out.push({
         pid: e.pid,
         sessionId: e.sessionId,
-        name: e.name ?? `session-${e.pid}`,
+        // Claude Code reports crosstalk's own title back as the name: only the name itself.
+        name: e.name ? baseName(String(e.name)) : `session-${e.pid}`,
         cwd: e.cwd ?? "",
         status: e.status ?? "unknown",
         version: e.version ?? "",

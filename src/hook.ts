@@ -22,6 +22,7 @@ import { rootFrom } from "./paths.ts"
 import { sessionsDir } from "./registry.ts"
 import { pathsFromToolInput } from "./footprint.ts"
 import * as restore from "./restore.ts"
+import { baseName } from "./ui-extra/pure.ts"
 import * as ui from "./uistate.ts"
 import * as gather from "./gather.ts"
 import * as termHook from "./terminal/hook.ts"
@@ -516,7 +517,8 @@ async function registerSession() {
         if (!f.endsWith(".json")) continue
         const e = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"))
         if (e.sessionId === sessionId) {
-          name = e.name ?? name
+          // Claude Code reports crosstalk's own title back as the name: only the name itself is kept.
+          name = e.name ? baseName(String(e.name)) : name
           break
         }
       }

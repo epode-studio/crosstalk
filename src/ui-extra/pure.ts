@@ -462,3 +462,23 @@ export function shortQuestion(q: string, max = 72): string {
     .trim()
   return t.length > max ? t.slice(0, max - 1) + "…" : t
 }
+
+/**
+ * A session's own name, out of a title crosstalk gave it: `🟣 auth · billing · api-2` is `api-2`.
+ * Claude Code reports the title back as the session's name; without this, each new title would
+ * put the threads in front again, and the name would grow by a thread each time.
+ */
+export function baseName(name: string): string {
+  const marks = [...DOTS, ...Object.values(SIGN)]
+  let s = name.split(" · ").pop() ?? name
+  for (let again = true; again; ) {
+    again = false
+    s = s.trim()
+    for (const m of marks)
+      if (s.startsWith(m)) {
+        s = s.slice(m.length)
+        again = true
+      }
+  }
+  return s.trim() || name.trim()
+}
