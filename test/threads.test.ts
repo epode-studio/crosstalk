@@ -402,6 +402,22 @@ const presence = (w: Wire, s: LocalSession) => ({
 const sess = (sessionId: string, branch: string, paths: string[] = []): LocalSession => ({ sessionId, name: sessionId, cwd: "/x", repo: "github.com/acme/api", branch, paths })
 
 describe("service", () => {
+  test("a task is finished by its id from whichever thread the session is in now", () => {
+    const [ana] = pair()
+    ana.svc.observe(sess("s", "token-expiry", ["src/auth/a.ts"]))
+    const [first] = ana.svc.idsFor("s")
+    const added = ana.svc.task("s", { op: "add", text: "write the expiry migration" })
+    expect(added.ok && added.id).toMatch(/^t_[0-9a-f]{10}$/)
+    // The session moves to another worktree: another branch, another thread.
+    ana.clock.t += 1000
+    ana.svc.observe({ ...sess("s", "staging-redirects", ["src/pages/x.ts"]), repo: "github.com/acme/web" })
+    expect(ana.svc.idsFor("s")).not.toContain(first)
+    const id = (added as { id: string }).id
+    expect(ana.svc.task("s", { op: "done", id })).toMatchObject({ ok: true, id, thread: ana.svc.thread(first!)!.meta.value.name })
+    expect(M.noteOf(ana.svc.thread(first!), id, "task")?.state).toBe("done")
+    expect(ana.svc.task("s", { op: "done", id: "t_00000000ff" })).toMatchObject({ ok: false, error: expect.stringContaining("no task t_00000000ff") })
+  })
+
   test("two people's sessions on one branch end up in one thread, and each is told who can read it", () => {
     const [ana, ben] = pair()
     const sa = sess("a-feat", "token-v2", ["src/auth/token.ts"])

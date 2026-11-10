@@ -1692,16 +1692,16 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
     }
 
     case "tasks": {
-      // Same split as facts: a session in a thread adds to the thread, and a
-      // task id the thread holds is claimed and finished there.
+      // Same split as facts: a session in a thread adds to the thread. A task id
+      // any thread keeps is claimed and finished there, whichever thread the
+      // session is in now: it may have moved worktrees since it was handed it.
       const self = req.sessionId ? resolveSession(req) : undefined
       const mine = self ? threads.idsFor(self.sessionId) : []
-      if (req.write && (req.thread || (mine.length && !req.room))) {
-        const inThread =
-          req.write === "add" || mine.some((id) => threadModel.noteOf(threads.thread(id), String(req.id), "task")) || req.thread
-        if (inThread && (req.write === "add" || req.write === "claim" || req.write === "done")) {
-          const owner = req.thread ?? mine.find((id) => threadModel.noteOf(threads.thread(id), String(req.id), "task"))
-          const r = threads.task(self?.sessionId, { op: req.write, text: req.text, id: req.id, note: req.note, thread: owner })
+      if (req.write && (req.thread || !req.room)) {
+        const byId = req.write === "claim" || req.write === "done"
+        const holder = byId && req.id && !req.thread ? threads.taskHolder(self?.sessionId, String(req.id)) : undefined
+        if ((req.write === "add" && (req.thread || mine.length)) || (byId && (req.thread || holder))) {
+          const r = threads.task(self?.sessionId, { op: req.write, text: req.text, id: req.id, note: req.note, thread: req.thread ?? holder?.id })
           return r.ok ? { ok: true, thread: r.thread, op: req.write, id: r.id } : r
         }
       }
@@ -1711,7 +1711,14 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         ...Object.values(rooms.load()).map((r) => r.name),
       ]
       if (req.write) {
-        const room = rooms.normalise(String(req.room ?? roomNames[0] ?? ""))
+        // A task named by id is looked for in every room, not only the first.
+        const keeps = (r: string) => !!store[rooms.normalise(r)]?.some((t) => t.id === String(req.id))
+        const room = rooms.normalise(String(req.room ?? (req.write !== "add" ? roomNames.find(keeps) : undefined) ?? roomNames[0] ?? ""))
+        const looked = () => {
+          const names = [...new Set([...threads.namesFor(self?.sessionId ?? ""), ...(req.thread ? [String(req.thread)] : [])])]
+          return names.length ? `thread ${names.join(", ")}` : "any thread"
+        }
+        if (!room && req.write !== "add") return { ok: false, error: `no task ${req.id} in ${looked()}, and no room joined` }
         if (!room) return { ok: false, error: "no room to put work in; run /crosstalk:join first" }
         const now = Date.now()
         let op: tasks.TaskOp
@@ -1741,13 +1748,16 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         }
         const changed = tasks.apply(room, op, store)
         if (changed) broadcastTask(room, op)
-        // A refused claim is the whole point of claiming, so say so plainly.
-        if (!changed && req.write === "claim")
-          return {
-            ok: false,
-            error:
-              "somebody else has that one. Pick a different task rather than doing it twice.",
-          }
+        if (!changed && req.write !== "add") {
+          const id = String(req.id)
+          const had = store[room]?.find((t) => t.id === id)
+          if (!had) return { ok: false, error: `no task ${id} in ${looked()} or room ${room}` }
+          // A refused claim is the whole point of claiming, so say so plainly.
+          if (req.write === "claim" && had.state !== "done")
+            return { ok: false, error: "somebody else has that one. Pick a different task rather than doing it twice." }
+          if (had.state === "done") return { ok: false, error: `task ${id} in room ${room} is already done` }
+          return { ok: false, error: `task ${id} in room ${room} is not yours to ${req.write}` }
+        }
         return { ok: changed, room, op: req.write, id: (op as any).task?.id ?? req.id }
       }
       return {
