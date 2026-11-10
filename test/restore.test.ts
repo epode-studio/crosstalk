@@ -510,3 +510,16 @@ describe("only the recent ones", () => {
     expect(R.recentOf([], 4 * H)).toEqual([])
   })
 })
+
+describe("the session you restore from", () => {
+  test("becomes the main session, and says so; an unattended restore changes nothing", async () => {
+    const Main = await import("../src/main.ts")
+    Main.writeMain(null)
+    expect(R.restore({ self: "waiter-run", userAction: false, asked: true }, []).text).not.toContain("main one now")
+    expect(Main.readMain()).toBe(null)
+    const out = R.restore({ self: "asker", userAction: true }, [])
+    expect(out.text).toContain("This session is your main one now")
+    expect(Main.readMain()?.sessionId).toBe("asker")
+    expect(R.restore({ self: "asker", userAction: true }, []).text).not.toContain("main one now") // already main: said once
+  })
+})

@@ -16,6 +16,7 @@
 //
 // Nothing here needs an identity, a room or the daemon.
 
+import * as Main from "./main.ts"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -1309,6 +1310,16 @@ function claimPending(): Pending | null {
   }
 }
 
+/** Make the asking session main (src/main.ts); true when it was not already. */
+function becomeMain(self: string): boolean {
+  try {
+    const rec = readOne(self)
+    return Main.setMain(true, { sessionId: self, name: rec ? label(rec) : "this session", pid: rec?.pid ?? sessionPid(self) }).changed
+  } catch {
+    return false
+  }
+}
+
 export type RunOpts = {
   self?: string
   env?: NodeJS.ProcessEnv
@@ -1369,7 +1380,11 @@ export function restore(o: RunOpts, only?: Rec[]): Outcome {
   const picked = o.recentOnly ? recentOf(all) : all
   const folderGone = picked.filter((r) => r.cwd && !fs.existsSync(r.cwd))
   const lost = picked.filter((r) => !folderGone.includes(r))
-  if (!lost.length) return { ok: true, text: "◢ crosstalk: nothing to restore.", lost, restored: [] }
+  // The session a person restores from is where they are: it becomes main, and the restored
+  // sessions' questions come to it.
+  const madeMain = o.userAction && o.self ? becomeMain(o.self) : false
+  const mainNote = madeMain ? " This session is your main one now: their questions come here." : ""
+  if (!lost.length) return { ok: true, text: `◢ crosstalk: nothing to restore.${mainNote}`, lost, restored: [] }
   claimPending() // anything waiting in the background is superseded by this
 
   // Unattended, with nobody having asked: one window per session through
@@ -1475,8 +1490,8 @@ export function restore(o: RunOpts, only?: Rec[]): Outcome {
     notes.push(opened ? `Opened System Settings, so next time they open as tabs: ${steps}` : `For tabs next time: ${steps}`, `  ${cmd}`)
   }
   const head = restored.length
-    ? `◢ crosstalk: reopened ${restored.length} session${restored.length === 1 ? "" : "s"} (${names(restored)}).`
-    : `◢ crosstalk: reopened nothing.`
+    ? `◢ crosstalk: reopened ${restored.length} session${restored.length === 1 ? "" : "s"} (${names(restored)}).${mainNote}`
+    : `◢ crosstalk: reopened nothing.${mainNote}`
   return { ok: !failed.length, text: [head, ...notes.map((n) => `  ${n}`)].join("\n"), lost, restored }
 }
 

@@ -116,9 +116,17 @@ export class Coordinator {
    * only on their next hook, and main must not be dropped meanwhile, or its
    * questions land in whatever tab is in front.
    */
+  /** The main session last seen, so one made main elsewhere (a restore) leaves its threads here too. */
+  private lastMain?: string
+
   mainId(): string | undefined {
     const m = mainS.readMain()
     if (!m) return undefined
+    if (m.sessionId !== this.lastMain) {
+      if (this.lastMain) this.d.threads.setOutside(this.lastMain, false)
+      this.d.threads.setOutside(m.sessionId, true)
+      this.lastMain = m.sessionId
+    }
     if (!this.d.sessions().has(m.sessionId) && !mainS.currentMain()) {
       mainS.writeMain(null)
       this.d.threads.setOutside(m.sessionId, false)

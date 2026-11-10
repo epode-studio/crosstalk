@@ -113,7 +113,7 @@ you, it asks.
   and its questions wait, kept, not lost. *"Unpark billing"* brings it all
   back. Only an agent stuck on a permission still reaches you.
 - *"Restore them."* After a restart or a crash, every session back in its
-  tab, mid-conversation.
+  tab, mid-conversation. The session you ask from becomes your main one.
 - *"Make this the main session."* Your inbox: every question, from crosstalk,
   your teammates and your agents' own, comes here one at a time, the most
   pressing first, with what you need to answer it. Answering closes it and the
