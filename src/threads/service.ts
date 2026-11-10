@@ -289,6 +289,11 @@ export class ThreadService {
     return names.length ? `${names[0]} · ${baseName(name)}` : undefined
   }
 
+  /** The repository a local session is working in now, as its footprint says. */
+  repoOfSession(sessionId: string): string | undefined {
+    return this.locals.get(sessionId)?.repo
+  }
+
   /** Local sessions in any of these threads. */
   sessionsIn(threadIds: string[]): string[] {
     const want = new Set(threadIds.map((id) => this.resolve(id)))
@@ -538,6 +543,26 @@ export class ThreadService {
       if (rec) rec.threads = []
       delete this.st.questions[s.sessionId]
       return
+    }
+    // A thread is one repository's work: a session out of it (another project, or no repository)
+    // is not in it, whatever placed it there before. Only the person's own choice holds.
+    {
+      const rec = this.st.placed[s.sessionId]
+      if (rec?.threads.length) {
+        const keep = rec.threads.filter((id) => {
+          const t = this.st.threads[this.resolve(id)]
+          return t && ((s.repo && t.meta.value.repo === s.repo) || rec.pinned?.includes(id))
+        })
+        if (keep.length !== rec.threads.length) {
+          for (const id of rec.threads)
+            if (!keep.includes(id)) {
+              const t = this.st.threads[this.resolve(id)]
+              if (t && M.remove(t, "sessions", `${this.me}:${rec.name ?? s.name}`, this.me, this.now())) this.touched.add(t.id)
+              delete rec.why[id]
+            }
+          rec.threads = keep
+        }
+      }
     }
     if (!s.repo) return
     if (s.root) {

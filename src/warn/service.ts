@@ -273,6 +273,9 @@ export class WarnService {
       const auto = screen.auto && this.memberOf(label, t)
       for (const sid of this.d.threads.sessionsIn([t])) {
         if (delivered.has(sid)) continue
+        // Only a session working in the repository it is about: never one in another project.
+        const repo = this.d.threads.repoOfSession?.(sid)
+        if (repo && repo !== w.repo) continue
         delivered.add(sid)
         this.d.deliver(sid, { id: env.id, kind: "heads-up", from: label, fromSession: env.fromSession, text: env.text, slices: env.slices ?? [], threads: auto ? [t] : [], auto })
       }

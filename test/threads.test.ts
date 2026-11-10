@@ -501,6 +501,18 @@ describe("service", () => {
     expect(ana.svc.namesFor("n")).toEqual(["billing"])
   })
 
+  test("a session in another project, or in no repository, is in none of this repository's threads", () => {
+    const [ana] = pair()
+    ana.svc.observe(sess("p", "main", ["src/auth/a.ts", "src/auth/b.ts", "src/auth/c.ts"]))
+    expect(ana.svc.namesFor("p")).toEqual(["auth"])
+    ana.svc.observe({ ...sess("p", "main", ["eval/run.py"]), repo: "github.com/other/evals" })
+    expect(ana.svc.namesFor("p")).toEqual([])
+    ana.svc.observe(sess("q", "main", ["src/auth/a.ts", "src/auth/b.ts", "src/auth/c.ts"]))
+    ana.svc.observe({ ...sess("q", "main", []), repo: undefined })
+    expect(ana.svc.namesFor("q")).toEqual([])
+    expect(ana.svc.repoOfSession("p")).toBe("github.com/other/evals")
+  })
+
   test("the title is one thread and the session's own name, never built on the last title", () => {
     const [ana] = pair()
     ana.svc.observe(sess("t", "main", ["src/auth/a.ts", "src/auth/b.ts", "src/auth/c.ts"]))
