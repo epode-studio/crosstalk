@@ -3679,6 +3679,7 @@ function covers(pattern, file) {
   return pattern === file;
 }
 var overlap = (patterns, paths) => paths.filter((p) => patterns.some((q) => covers(q, p))).length;
+var telling = (p) => p.includes("/") && !/(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|Cargo\.lock|go\.sum|poetry\.lock|Gemfile\.lock)$/.test(p);
 function filesConverge(a, b) {
   if (!a.length || !b.length)
     return null;
@@ -3726,7 +3727,7 @@ function place(fp, threads, min = MIN_CLUSTER) {
   }
   if (!fp.paths.length)
     return { kind: "none", why: "on the default branch and nothing touched yet" };
-  const scored = here.map((t) => ({ t, n: overlap(t.files, fp.paths) })).filter((s) => s.n > 0).sort((a, b) => b.n - a.n);
+  const scored = here.map((t) => ({ t, n: overlap(t.files, fp.paths.filter(telling)) })).filter((s) => s.n > 0).sort((a, b) => b.n - a.n);
   if (scored.length) {
     const top = scored.filter((s) => s.n === scored[0].n);
     if (top.length > 1)
@@ -3997,7 +3998,10 @@ class ThreadService {
   }
   title(sessionId, name) {
     const names = [...new Set(this.namesFor(sessionId))];
-    return names.length ? `${names[0]} \u00b7 ${baseName(name)}` : undefined;
+    if (!names.length)
+      return;
+    const own = baseName(name);
+    return own.toLowerCase().startsWith(names[0].toLowerCase()) ? own : `${names[0]} \u00b7 ${own}`;
   }
   repoOfSession(sessionId) {
     return this.locals.get(sessionId)?.repo;
@@ -4778,6 +4782,8 @@ class ThreadService {
       return { ok: false, error: `no task ${o.id} in ${t.meta.value.name}` };
     const { l: _l, by: _b, id: _i, gone: _g, ...data } = k;
     if (o.op === "claim") {
+      if (k.state === "done")
+        return { ok: false, error: `that one is already done${k.doneBy ? ` (by ${k.doneBy})` : ""}.` };
       if (k.state !== "open" && k.claimedBy !== this.label)
         return { ok: false, error: "somebody else has that one. Pick a different task rather than doing it twice." };
       put(t, "notes", k.id, { ...data, state: "claimed", claimedBy: this.label }, this.me, now);
@@ -5046,6 +5052,37 @@ class ThreadService {
       this.flush();
     }
   }
+  mail(to, env) {
+    const shared = Object.values(this.st.threads).find((t) => isLive(t) && people(t).includes(to.fingerprint) && people(t).includes(this.me));
+    if (!shared)
+      return null;
+    const now = this.now();
+    for (const q of live(shared, "questions"))
+      if (q.mail && q.who === this.label && now - q.at > 2 * 86400000)
+        remove(shared, "questions", q.id, this.me, now);
+    put(shared, "questions", newItemId("m"), { text: "(mail)", who: this.label, at: now, answer: "(mail)", mail: { to: to.fingerprint, env: JSON.stringify(env) } }, this.me, now);
+    this.touched.add(shared.id);
+    this.flush();
+    const repo = shared.meta.value.repo;
+    if (repo && this.st.roots[repo])
+      this.sync(repo, true).catch(() => {});
+    return shared.meta.value.name;
+  }
+  deliverMail(t) {
+    const seen = this.st.mailSeen ??= [];
+    for (const q of live(t, "questions")) {
+      if (!q.mail || q.mail.to !== this.me || seen.includes(q.id))
+        continue;
+      seen.push(q.id);
+      try {
+        this.d.onMail?.(q.who, JSON.parse(q.mail.env), q.by);
+      } catch (e) {
+        this.d.log(`mail in ${t.meta.value.name} could not be read: ${e.message}`);
+      }
+    }
+    if (seen.length > 500)
+      this.st.mailSeen = seen.slice(-500);
+  }
   mergeRef(root, repo, ref) {
     const { files } = readRef(root, ref);
     const peers = Object.values(this.d.peers());
@@ -5104,6 +5141,7 @@ class ThreadService {
         this.st.threads[t.id] = merged;
         this.touched.add(t.id);
       }
+      this.deliverMail(merged);
       if (!known && merged.meta.value.combinedInto && !this.st.noticed.includes(t.id))
         this.st.noticed.push(t.id);
     }
@@ -8262,13 +8300,11 @@ function spawnAgents(o) {
   const main = wts[0]?.path ?? top.out;
   const common = g(o.cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   const claudeBin = which3("claude", env) ?? "claude";
-  if (o.background === undefined && currentMain())
-    o = { ...o, background: true };
   const claudeBg = !!o.background && !which3("tmux", env) && claudeBackground(claudeBin, env).bg;
   if (o.background && !which3("tmux", env) && !claudeBg)
     return { ok: false, text: "\u25e2 crosstalk: background agents run in tmux, which is not installed here. Install tmux, or start the agent in a tab instead.", agents: [] };
   if (o.background && !o.noQueue) {
-    const working = readSpawned().filter((r) => r.background && !r.removedAt && !!r.tmux && tmuxHas(r.tmux, env)).map((r) => r.name);
+    const working = agentsAtWork(env).map((r) => r.name);
     const max = wipMax(env);
     if (working.length + Math.max(1, o.count ?? 1) > max) {
       let n = 0;
@@ -8413,6 +8449,18 @@ ${r.opened.typed.map((l) => `  ${l}`).join(`
   return { ok, text: head + deps + envNote + (notes.length ? `
   ${notes.join(`
   `)}` : ""), agents: made };
+}
+function agentsAtWork(env = process.env, recs = readSpawned()) {
+  return recs.filter((r) => {
+    if (r.removedAt)
+      return false;
+    if (r.background)
+      return !!r.tmux && tmuxHas(r.tmux, env);
+    if (!r.sessionId)
+      return false;
+    const rec = readOne(r.sessionId);
+    return !!rec && !rec.endedAt && recAlive(rec);
+  });
 }
 
 // src/cleanup.ts
@@ -12054,7 +12102,7 @@ Allow them for this repository? You are asked again if they change.`,
           recap: recap(t),
           decisions: notes(t, "decision").map((x) => x.text).slice(-20),
           facts: notes(t, "fact").map((x) => x.text).filter((x) => !/^Review \(/.test(x)).slice(-20),
-          questions: live(t, "questions").filter((q) => q.answer).map((q) => `${q.text} \u2192 ${q.answer}`).slice(-10)
+          questions: live(t, "questions").filter((q) => q.answer && !q.mail).map((q) => `${q.text} \u2192 ${q.answer}`).slice(-10)
         },
         feature: { name: f.name, risk: f.risk, why: f.ship?.why, flag: f.flag },
         base: d,
@@ -15568,6 +15616,9 @@ class Coordinator {
     return m.sessionId;
   }
   itemsFor(items, sid) {
+    for (const i of Object.values(items))
+      if (i.id.startsWith("attn:perm:") && i.state === "pending" && /wants to use AskUserQuestion\b/.test(String(i.question ?? "")))
+        act2(items, i.id, "answer", Date.now(), "Allow");
     const parked = read5();
     const open = Object.values(items).filter((i) => !FINAL2.has(i.state) && !held(i, parked) && !i.id.startsWith("you:") && !i.id.startsWith("open:"));
     return itemsFor(open, sid, this.mainId());
@@ -17835,6 +17886,10 @@ var empty4 = (now) => ({
   bg: {}
 });
 var CIRCLE_STOP = "Stop it";
+var CLOSE_YES = "Close it";
+var UPDATE_NOW = "Restart now";
+var UPDATE_LATER = "Later";
+var CLOSE_NO = "Keep it open";
 var CIRCLE_LET = "Let it run";
 var START_FRESH = "Start fresh";
 var COMPACT = "Compact as usual";
@@ -17846,7 +17901,7 @@ var ALWAYS_MERGE = "Always merge my green PRs";
 var DISPOSE_RULE_QUESTION = "That is twice you started a session fresh. Start sessions fresh from their thread by themselves from now on, whenever their context is spent?";
 var itemId = (what, key) => `attn:${what}:${key}`;
 var parseId = (id) => {
-  const m = /^attn:(dispose|staff|perm|rule|circle|merge):(.+)$/.exec(id);
+  const m = /^attn:(dispose|staff|perm|rule|circle|merge|close|update):(.+)$/.exec(id);
   return m ? { what: m[1], key: m[2] } : null;
 };
 
@@ -17948,8 +18003,6 @@ class AttentionService {
             last = reg?.transcript ? lastReply(reg.transcript).replace(/\s+/g, " ").trim() : "";
           } catch {}
           const bits = [recap2 ? `${recap2.slice(0, 160)}` : "", last ? `Last: ${last.slice(0, 160)}${last.length > 160 ? "\u2026" : ""}` : ""].filter(Boolean);
-          if (bits.length)
-            this.note(f.sessionId, { id: `where:${f.sessionId}:${this.now()}`, text: `\u25e2 Where you left off${t ? ` in ${human(t, 32)}` : ""}: ${bits.join(" \u00b7 ")}` });
         }
         if (this.st.focus.sessionId)
           (this.st.lastFocus ??= {})[this.st.focus.sessionId] = this.now();
@@ -18123,6 +18176,8 @@ class AttentionService {
       return false;
     }
     if (rule === START_FRESH) {
+      if (why !== "precompact")
+        return false;
       this.d.log(`attention: a standing rule starts ${this.nameOf(sessionId)} fresh (${why})`);
       setTimeout(() => void this.dispose(sessionId, { rule: true }), why === "precompact" ? 300 : 0);
       return true;
@@ -18377,30 +18432,39 @@ class AttentionService {
     this.save();
     return on ? `\u25e2 crosstalk: your green PRs merge by themselves from now on. Say "stop merging my PRs by itself" to be asked again.` : "\u25e2 crosstalk: you will be asked before a green PR is merged.";
   }
-  handing = false;
   async handover() {
-    if (this.handing || !this.d.handover || !this.d.version)
+    if (!this.d.handover || !this.d.version)
       return;
     const sid = this.d.mainId();
     if (!sid)
       return;
-    const s = this.d.sessions().get(sid);
-    const front = this.st.focus.sessionId ?? this.focused()?.sessionId;
-    const main = { sessionId: sid, startedAt: readOne(sid)?.startedAt, seenAt: s?.seenAt, status: this.d.status(sid) ?? "", inFront: front === sid };
+    const main = { sessionId: sid, startedAt: readOne(sid)?.startedAt, seenAt: 0, status: "", inFront: false };
     if (!due({ main, installedAt: this.d.installedAt, version: this.d.version, done: this.st.handedOver, now: this.now(), env: this.env }))
       return;
-    this.handing = true;
     this.st.handedOver = `${sid}@${this.d.version}`;
     this.save();
+    this.put({
+      id: itemId("update", `${sid}@${this.d.version}`),
+      sessionId: sid,
+      from: "crosstalk",
+      question: `crosstalk updated to ${this.d.version}. Restart this session on it now?`,
+      text: "It reopens in a new tab with its whole conversation and inbox. Until then it keeps running the old version.",
+      options: [UPDATE_NOW, UPDATE_LATER]
+    });
+  }
+  async restartMain(sid) {
+    if (!this.d.handover)
+      return { ok: false, text: "crosstalk cannot restart it from here" };
     try {
       const r = await this.d.handover(sid);
       if (r.ok)
-        recordEvent(line2(this.d.version), this.now());
-      this.d.log(`handover: ${r.ok ? "main restarted on" : "could not restart main on"} ${this.d.version}: ${r.text}`);
+        recordEvent(line2(this.d.version ?? ""), this.now());
+      else if (!/cannot open a tab for crosstalk|is not open/.test(r.text))
+        recordEvent(`could not reopen your main session: say "resume ${this.nameOf(sid)}" in any session`, this.now());
+      this.d.log(`handover: ${r.ok ? "main restarted" : "could not restart main"}: ${r.text}`);
+      return r.ok ? { ok: true, text: "\u25e2 crosstalk: restarting on the new version in a new tab." } : { ok: false, text: `\u25e2 crosstalk: not restarted: ${r.text}. Restart it yourself when convenient.` };
     } catch (e) {
-      this.d.log(`handover: ${e.message}`);
-    } finally {
-      this.handing = false;
+      return { ok: false, text: `\u25e2 crosstalk: not restarted: ${e.message}` };
     }
   }
   markShipped(sessionId) {
@@ -18439,14 +18503,24 @@ class AttentionService {
           continue;
         if (dirty(s.cwd))
           continue;
-        const r = await this.d.closeSession(s.sessionId);
-        if (r.ok) {
-          if (this.st.shipped)
-            delete this.st.shipped[s.sessionId];
-          const t = this.d.threads.namesFor(s.sessionId)[0];
-          recordEvent(`closed ${t ? human(t, 32) : s.name}: ${reason} (say "resume ${s.name}" to bring it back)`, now);
-          this.d.log(`autoclose: ${s.name}: ${reason}`);
-        }
+        const id = itemId("close", s.sessionId);
+        if (snap[id])
+          continue;
+        const to = this.target();
+        if (!to)
+          continue;
+        const t = this.d.threads.namesFor(s.sessionId)[0];
+        const who = t ? human(t, 32) : s.name;
+        this.put({
+          id,
+          sessionId: to,
+          from: who,
+          ...t ? { thread: t } : {},
+          question: `${who} looks finished: ${reason}. Close it?`,
+          text: `Closing archives it and its tab; "resume ${s.name}" brings it back with its whole conversation.`,
+          options: [CLOSE_YES, CLOSE_NO]
+        });
+        this.d.log(`autoclose: asked about ${s.name}: ${reason}`);
       }
       this.save();
     } finally {
@@ -18566,7 +18640,7 @@ class AttentionService {
     if (!to)
       return Promise.resolve({ ok: true, decision: null });
     const threads = this.d.threads.namesFor(sessionId);
-    this.put({ id, sessionId: to, from: agent, thread: threads[0] ?? agent, question: question3(agent, o.tool, o.input), options: optionsFor(o.tool, o.input) });
+    this.put({ id, sessionId: to, from: agent, ...threads[0] ? { thread: threads[0] } : {}, question: question3(agent, o.tool, o.input), options: optionsFor(o.tool, o.input) });
     this.alert({ key: id, asker: sessionId, askerName: agent, thread: threads[0] ?? agent, blocking: true, count: 1 });
     this.d.log(`attention: ${agent} asks to use ${o.tool}; asked in ${this.nameOf(to)}`);
     return new Promise((resolve) => {
@@ -18612,7 +18686,7 @@ class AttentionService {
         } catch {}
       }
       const to = this.target();
-      if (to && to !== o.asker)
+      if (to && to !== o.asker && to !== this.d.mainId())
         this.note(to, { id: `waiting:${o.key}`, text: `\u25e2 crosstalk: ${askerName} (${o.thread}) is waiting on you. Say "show me ${askerName}" to go to it.` });
     }
     if (this.away()) {
@@ -18636,7 +18710,7 @@ class AttentionService {
     if (action === "raised" || action === "later")
       return withStore2((items, now) => act2(items, id, action, now));
     const v = (value ?? "").trim();
-    const answer = action === "mute" ? p.what === "perm" ? DENY : p.what === "dispose" ? COMPACT : p.what === "rule" ? NOT_NOW4 : p.what === "merge" ? NOT_YET : p.what === "circle" ? CIRCLE_LET : NOT_NOW : v;
+    const answer = action === "mute" ? p.what === "perm" ? DENY : p.what === "dispose" ? COMPACT : p.what === "rule" ? NOT_NOW4 : p.what === "merge" ? NOT_YET : p.what === "circle" ? CIRCLE_LET : p.what === "close" ? CLOSE_NO : p.what === "update" ? UPDATE_LATER : NOT_NOW : v;
     if (!answer)
       return { ok: false, error: "an attention question is answered with one of its options" };
     const item = snapshot2()[id];
@@ -18691,6 +18765,23 @@ class AttentionService {
       const r = await this.merge(pr, false);
       return { ok: r.ok, item: claim.item, text: rule + r.text };
     }
+    if (p.what === "update") {
+      if (answer !== UPDATE_NOW)
+        return { ok: true, item: claim.item, text: "\u25e2 crosstalk: later, then. It keeps running the old version until it restarts." };
+      const sid = p.key.split("@")[0] ?? "";
+      return await new Promise((res) => setTimeout(() => void this.restartMain(sid).then((r) => res({ ...r, item: claim.item })), 500));
+    }
+    if (p.what === "close") {
+      if (answer !== CLOSE_YES || !this.d.closeSession)
+        return { ok: true, item: claim.item, text: `\u25e2 crosstalk: ${claim.item.from ?? "it"} stays open.` };
+      const r = await this.d.closeSession(p.key);
+      if (r.ok) {
+        if (this.st.shipped)
+          delete this.st.shipped[p.key];
+        recordEvent(`closed ${claim.item.from ?? "a session"} (you said so)`, this.now());
+      }
+      return { ok: r.ok, item: claim.item, text: r.ok ? `\u25e2 crosstalk: closed ${claim.item.from ?? "it"}. "Resume" brings it back.` : r.text };
+    }
     if (p.what === "circle") {
       if (answer !== CIRCLE_STOP || !this.d.closeSession)
         return { ok: true, item: claim.item, text: `\u25e2 crosstalk: ${claim.item.from ?? "it"} keeps going.` };
@@ -18724,7 +18815,7 @@ class AttentionService {
   systemMessage(sessionId) {
     const lines = this.takeNotes(sessionId).map((n) => n.text);
     for (const it of openFor2(snapshot2(), sessionId)) {
-      if (it.kind !== "attention" || this.st.told[it.id])
+      if (it.kind !== "attention" || !it.question || it.id.startsWith("tackle:") || this.st.told[it.id])
         continue;
       this.st.told[it.id] = this.now();
       lines.push(`\u25e2 crosstalk: ${it.question} (${(it.options ?? []).join(" / ")}). Say which, and the agent will answer with crosstalk_answer action "attention" (id ${it.id}).`);
@@ -18852,10 +18943,14 @@ function createAttention(o) {
       const l = (await liveSessions(d)).find((x) => x.id === sid);
       if (!l)
         return { ok: false, text: "main is not open" };
+      const kind = kindOf(l.terminal);
+      if (!kind || !canDrive(kind, liveEnv(process.env, true), l.terminal))
+        return { ok: false, text: "its terminal cannot open a tab for crosstalk" };
       const c = await close(l, { services: "keep" }, d);
       if (!c.ok)
         return c;
-      const r = await resume(sid, { cwd: l.cwd }, d);
+      const r0 = await resume(sid, { cwd: l.cwd }, d);
+      const r = r0.ok && /cannot open a tab|To resume it yourself/.test(r0.text) ? { ...r0, ok: false } : r0;
       if (r.ok)
         (async () => {
           for (let i = 0;i < 60; i++) {
@@ -18870,7 +18965,7 @@ function createAttention(o) {
       return r;
     },
     drainQueue: () => {
-      const working = readSpawned().filter((r) => r.background && !r.removedAt && !!r.tmux && tmuxHas(r.tmux)).length;
+      const working = agentsAtWork().length;
       const started = drain(working, (x) => spawnAgents({ task: x.task, name: x.name, cwd: x.cwd, by: x.by, background: true, thread: x.thread, noQueue: true }).agents.length > 0, {
         threadOf: (x) => x.thread?.name
       });
@@ -19100,13 +19195,11 @@ function spawnAgents2(o) {
   const main = wts[0]?.path ?? top.out;
   const common = g(o.cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   const claudeBin = which6("claude", env) ?? "claude";
-  if (o.background === undefined && currentMain())
-    o = { ...o, background: true };
   const claudeBg = !!o.background && !which6("tmux", env) && claudeBackground(claudeBin, env).bg;
   if (o.background && !which6("tmux", env) && !claudeBg)
     return { ok: false, text: "\u25e2 crosstalk: background agents run in tmux, which is not installed here. Install tmux, or start the agent in a tab instead.", agents: [] };
   if (o.background && !o.noQueue) {
-    const working = readSpawned2().filter((r) => r.background && !r.removedAt && !!r.tmux && tmuxHas3(r.tmux, env)).map((r) => r.name);
+    const working = agentsAtWork2(env).map((r) => r.name);
     const max = wipMax(env);
     if (working.length + Math.max(1, o.count ?? 1) > max) {
       let n = 0;
@@ -19251,6 +19344,18 @@ ${r.opened.typed.map((l) => `  ${l}`).join(`
   return { ok, text: head + deps + envNote + (notes.length ? `
   ${notes.join(`
   `)}` : ""), agents: made };
+}
+function agentsAtWork2(env = process.env, recs = readSpawned2()) {
+  return recs.filter((r) => {
+    if (r.removedAt)
+      return false;
+    if (r.background)
+      return !!r.tmux && tmuxHas3(r.tmux, env);
+    if (!r.sessionId)
+      return false;
+    const rec = readOne(r.sessionId);
+    return !!rec && !rec.endedAt && recAlive(rec);
+  });
 }
 
 // src/urls/queue.ts
@@ -22927,6 +23032,16 @@ var sessionOps;
 var shares;
 var threads2 = new ThreadService({
   tiebreak: (sid, cands, mode) => attention?.tiebreak(sid, cands, mode),
+  onMail: (from, env, fp) => {
+    const label = (fp ? peersByFingerprint().get(fp)?.label : undefined) ?? (loadPeers()[from] ? from : undefined);
+    if (!label)
+      return log(`dropped mail from ${from}, who is not paired here`);
+    try {
+      onEnvelope(label, env);
+    } catch (e) {
+      log(`mail from ${from}: ${e.message}`);
+    }
+  },
   extra: { file: RULES_FILE2, read: (repo, text) => coord?.readRules(repo, text), render: (repo) => coord?.renderRules(repo) },
   onFlush: (ids) => {
     coord?.onThreadsFlush(ids);
@@ -23342,6 +23457,9 @@ function connect() {
       online.clear();
       for (const p of f.peers)
         online.add(p);
+      for (const [label, w] of waitingFor3)
+        if (online.has(w.fingerprint))
+          waitingFor3.delete(label);
       return;
     }
     if (f.t === "deliver") {
@@ -23389,6 +23507,17 @@ function connect() {
   sock.onerror = () => {};
 }
 var FAN_OUT = new Set(["message", "handoff", "ask", "answer", "decision"]);
+var waitingFor3 = new Map;
+setInterval(() => {
+  for (const [label, w] of waitingFor3)
+    if (Date.now() - w.since > 20 * 3600000) {
+      waitingFor3.delete(label);
+      try {
+        recordEvent2(`${w.count} message${w.count === 1 ? "" : "s"} to ${label} may not have arrived: ${label} has not been online since. Ask them to open crosstalk, or to say "is crosstalk OK?".`);
+      } catch {}
+      log(`messages to ${label} waited a day undelivered`);
+    }
+}, 30 * 60000).unref?.();
 function sendEnvelope(peerLabel, env) {
   const peer = loadPeers()[peerLabel];
   if (!peer)
@@ -23407,6 +23536,24 @@ function sendEnvelope(peerLabel, env) {
       const p = loadPeers()[sib];
       if (p)
         relayQueue({ t: "send", to: p.fingerprint, id: `${env.id}.${p.fingerprint}`, body: seal(channelKey(identity, p), JSON.stringify(env)) }, sib);
+    }
+  const reachable = online.has(peer.fingerprint) || siblings(peerLabel).some((sib) => {
+    const p = loadPeers()[sib];
+    return !!p && online.has(p.fingerprint);
+  });
+  if (FAN_OUT.has(env.kind) && !reachable) {
+    const w = waitingFor3.get(peerLabel);
+    waitingFor3.set(peerLabel, { count: (w?.count ?? 0) + 1, since: w?.since ?? Date.now(), fingerprint: peer.fingerprint });
+  }
+  if (FAN_OUT.has(env.kind) && !reachable)
+    try {
+      const via = threads2.mail({ label: peerLabel, fingerprint: peer.fingerprint }, env);
+      if (via) {
+        log(`${peerLabel} is not on the relay: ${env.kind} ${env.id} also sent through the thread ${via}`);
+        return { ok: true, queued: true, note: `${peerLabel} is not connected to crosstalk's relay right now, so it also went through your shared thread ${via}: it arrives when their crosstalk next syncs (within about 5 minutes of it running).` };
+      }
+    } catch (e) {
+      log(`mail to ${peerLabel}: ${e.message}`);
     }
   return now ? { ok: true } : { ok: true, queued: true, note: `${peerLabel} or the relay is unreachable; held and will go when the link is back` };
 }
@@ -24098,10 +24245,12 @@ async function handle(req, sock) {
     case "tasks": {
       const self = req.sessionId ? resolveSession(req) : undefined;
       const mine = self ? threads2.idsFor(self.sessionId) : [];
-      if (req.write && (req.thread || mine.length && !req.room)) {
-        const inThread = req.write === "add" || mine.some((id) => noteOf2(threads2.thread(id), String(req.id), "task")) || req.thread;
+      const holds = (id) => !!noteOf2(threads2.thread(id), String(req.id), "task");
+      const holder = req.id && req.write !== "add" ? mine.find(holds) ?? threads2.list().map((t) => t.id).find(holds) : undefined;
+      if (req.write && (req.thread || holder || mine.length && !req.room)) {
+        const inThread = req.write === "add" || !!holder || req.thread;
         if (inThread && (req.write === "add" || req.write === "claim" || req.write === "done")) {
-          const owner = req.thread ?? mine.find((id) => noteOf2(threads2.thread(id), String(req.id), "task"));
+          const owner = req.thread ?? holder;
           const r = threads2.task(self?.sessionId, { op: req.write, text: req.text, id: req.id, note: req.note, thread: owner });
           return r.ok ? { ok: true, thread: r.thread, op: req.write, id: r.id } : r;
         }
@@ -24150,6 +24299,8 @@ async function handle(req, sock) {
             ok: false,
             error: "somebody else has that one. Pick a different task rather than doing it twice."
           };
+        if (!changed && req.write === "done")
+          return { ok: false, error: `No task ${req.id} in any of your threads or rooms: it may already be done or removed. List the open ones with crosstalk_thread action "note", kind "task", and use one of those ids.` };
         return { ok: changed, room, op: req.write, id: op.task?.id ?? req.id };
       }
       return {
@@ -24413,16 +24564,19 @@ async function handle(req, sock) {
         const sent = [];
         const failed = [];
         let last;
+        const notes = [];
         for (const label of r.labels) {
           last = await handle({ ...req, to: label, threadIds: r.threads }, sock);
           if (last?.ok)
             sent.push(label);
           else
             failed.push({ to: label, error: last?.error ?? "not sent" });
+          if (last?.note)
+            notes.push(String(last.note));
         }
         if (!sent.length)
           return { ok: false, error: failed.map((f) => `${f.to}: ${f.error}`).join("; ") };
-        return { ...req.op === "ask" ? last : { ok: true, id: last?.id }, threads: names, sentTo: sent, ...failed.length ? { failed } : {} };
+        return { ...req.op === "ask" ? last : { ok: true, id: last?.id }, threads: names, sentTo: sent, ...failed.length ? { failed } : {}, ...notes.length ? { note: notes.join(" ") } : {} };
       }
       const [label, session] = String(req.to).split("/");
       const fromThreads = Array.isArray(req.threadIds) ? req.threadIds : (() => {
@@ -24469,7 +24623,7 @@ async function handle(req, sock) {
         return { ok: false, error: r.error };
       record2(label, "sent", env.text.length);
       if (req.op !== "ask")
-        return { ok: true, id: env.id };
+        return { ok: true, id: env.id, ...r.queued ? { queued: true } : {}, ...r.note ? { note: r.note } : {} };
       const timeout = Math.min(Number(req.timeoutMs ?? 120000), 600000);
       const answer = await new Promise((resolve) => {
         const t = setTimeout(() => {
@@ -25239,8 +25393,6 @@ control.listen(P.daemonSock, () => {
             }
           if (c.kind === "failed" && t)
             threads2.task(undefined, { op: "add", text: investigation(u.label, u.url, c.failed), thread: t.meta.value.name });
-          for (const sid of to)
-            withStore((items, now) => upsert(items, { id: `ci:${u.id}:${c.kind}:${u.lastCheck}`, kind: "message", sessionId: sid, from: "crosstalk", ...t ? { thread: t.meta.value.name } : {}, text, auto: true, ts: now }, now));
           const told = tellTeam({
             u,
             c,

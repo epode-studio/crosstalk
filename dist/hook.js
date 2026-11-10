@@ -279,34 +279,6 @@ async function start(root) {
   }
   return false;
 }
-function staleNotice(sessionId, mine) {
-  if (!mine || !sessionId)
-    return null;
-  let theirs = "";
-  try {
-    theirs = String(JSON.parse(fs2.readFileSync(P.daemonVersion, "utf8")).version ?? "");
-  } catch {
-    return null;
-  }
-  if (!newer(theirs, mine))
-    return null;
-  const f = path3.join(P.root, "stale-noted.json");
-  let noted = {};
-  try {
-    noted = JSON.parse(fs2.readFileSync(f, "utf8"));
-  } catch {}
-  if (noted[sessionId])
-    return null;
-  const now = Date.now();
-  for (const [k, at] of Object.entries(noted))
-    if (now - at > 7 * 86400000)
-      delete noted[k];
-  noted[sessionId] = now;
-  try {
-    fs2.writeFileSync(f, JSON.stringify(noted), { mode: 384 });
-  } catch {}
-  return `\u25e2 crosstalk updated to ${theirs}. This session still runs ${mine}: it picks up the new one next time it starts. Nothing to do now.`;
-}
 
 // src/config.ts
 import fs3 from "node:fs";
@@ -626,6 +598,14 @@ function endedNormally(r, all, boot) {
   const burst = all.some((o) => o.sessionId !== r.sessionId && o.endReason === "other" && !!o.endedAt && Math.abs(o.endedAt - r.endedAt) <= BURST_MS);
   return !burst;
 }
+function windowClosed(r, c) {
+  if (!r.endedAt || r.endedAt < c.boot)
+    return false;
+  const app = kindOf(r.terminal);
+  if (!app || app === "tmux")
+    return false;
+  return c.all.some((o) => o.sessionId !== r.sessionId && !o.endedAt && kindOf(o.terminal) === app && o.startedAt < r.endedAt && c.alive(o));
+}
 var openFile = () => path10.join(P.root, "open-now.json");
 function openAtDown(boot) {
   try {
@@ -641,6 +621,8 @@ function isLost(r, c) {
   if (r.interactive === false)
     return false;
   if (endedNormally(r, c.all, c.boot))
+    return false;
+  if (windowClosed(r, c))
     return false;
   const before = r.seenAt < c.boot;
   const ref = before ? c.boot : c.now;
@@ -1349,13 +1331,16 @@ function askOnceOffer(self, current) {
     for (const r of fresh)
       if (!r.askedAt)
         writeRec({ ...r, askedAt: Date.now() });
-    const text = question(fresh, c.boot, current);
+    const shown = fresh.filter((r) => !isCrosstalkSocket(r.terminal.tmux?.socket));
+    if (!shown.length)
+      return null;
+    const text = question(shown, c.boot, current);
     if (!text)
       return null;
     return {
       text,
-      count: fresh.length,
-      names: fresh.slice(0, 4).map(label).concat(fresh.length > 4 ? ["\u2026"] : []),
+      count: shown.length,
+      names: shown.slice(0, 4).map(label).concat(shown.length > 4 ? ["\u2026"] : []),
       restart: fresh.some((r) => r.seenAt < c.boot),
       recent: recentOf(fresh).length
     };
@@ -4920,7 +4905,7 @@ function consent(slug, s = load3()) {
   return publishedBefore(slug) ? "yes" : undefined;
 }
 var connectId = (slug) => `connect:${slug}`;
-var questionText2 = (slug) => `Connect with your team in ${slug}? This publishes your public key and GitHub login on a hidden ref in this repo.`;
+var questionText2 = (slug) => `Let teammates in ${slug} reach you through crosstalk? It shares your GitHub name and a public key in the repository, nothing else.`;
 async function offer(cwd, sessionId, now = Date.now()) {
   if (off3() || !cwd)
     return null;
@@ -4928,9 +4913,11 @@ async function offer(cwd, sessionId, now = Date.now()) {
   if (!repo)
     return null;
   const s = load3();
-  if (consent(repo.slug, s) || s.repos[repo.slug])
+  const was = s.repos[repo.slug];
+  const again = was?.state === "asked" && now - was.at > 86400000 && (was.times ?? 1) < 3;
+  if (consent(repo.slug, s) || was && !again)
     return null;
-  s.repos[repo.slug] = { state: "asked", at: now, session: sessionId, cwd: repo.top };
+  s.repos[repo.slug] = { state: "asked", at: now, session: sessionId, cwd: repo.top, times: (was?.times ?? 0) + 1 };
   save3(s);
   return { slug: repo.slug, question: questionText2(repo.slug) };
 }
@@ -5223,103 +5210,8 @@ function record2(e) {
 }
 var QUESTION_KINDS2 = new Set(["route", "gather", "team", "cleanup", "thread", "ship", "rule", "connect", "conflict", "disk", "install", "restore"]);
 
-// src/attention/activity.ts
-import fs28 from "node:fs";
-import path36 from "node:path";
-var dir6 = () => path36.join(P.root, "typed");
-var safe6 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
-function noteTyped(sessionId, now = Date.now()) {
-  if (!sessionId)
-    return;
-  try {
-    fs28.mkdirSync(dir6(), { recursive: true, mode: 448 });
-    const f = path36.join(dir6(), safe6(sessionId));
-    fs28.writeFileSync(f, sessionId, { mode: 384 });
-    const t = new Date(now);
-    fs28.utimesSync(f, t, t);
-  } catch {}
-}
-
-// src/attention/permission.ts
-var waitMs = (env = process.env) => {
-  const n = Number(env.CROSSTALK_PERMISSION_WAIT_MS);
-  return n > 0 ? n : 55 * 60000;
-};
-function sessionOnly(suggestions) {
-  if (!Array.isArray(suggestions))
-    return [];
-  return suggestions.filter((x) => x && typeof x === "object" && !Array.isArray(x)).map((x) => ({ ...x, destination: "session" }));
-}
-var hookOutput = (d) => ({
-  hookSpecificOutput: {
-    hookEventName: "PermissionRequest",
-    decision: d.behavior === "allow" && d.updatedPermissions ? { ...d, updatedPermissions: sessionOnly(d.updatedPermissions) } : d
-  }
-});
-var backgroundAgent = (env) => (env.CROSSTALK_BG_AGENT ?? "").trim();
-
-// src/attention/hook.ts
-async function fromHook2(o) {
-  if (o.env.CROSSTALK_NO_ATTENTION === "1")
-    return {};
-  const { event, sessionId, hook } = o;
-  const out = {};
-  try {
-    const agent = backgroundAgent(o.env);
-    if (agent && /^(SessionStart|Stop)$/.test(event))
-      await request2({ op: "attn_bg", sessionId, agent }, 3000).catch(() => null);
-    if (event === "UserPromptSubmit" && !agent)
-      noteTyped(sessionId);
-    if (event === "Stop" && !hook.stop_hook_active) {
-      await request2({ op: "attn_stop", sessionId, cwd: o.cwd, transcript: hook.transcript_path }, 5000).catch(() => null);
-    }
-    if (event === "PreCompact") {
-      const r = await request2({ op: "attn_precompact", sessionId, cwd: o.cwd, trigger: hook.trigger ?? "auto" }, 1e4).catch(() => null);
-      if (r?.block)
-        out.exit = { decision: "block", reason: String(r.block) };
-    }
-    if (event === "PermissionRequest") {
-      if (!agent)
-        return out;
-      const r = await request2({ op: "attn_permission", sessionId, cwd: o.cwd, agent, tool: hook.tool_name, input: hook.tool_input, suggestions: hook.permission_suggestions }, waitMs(o.env) + 30000).catch(() => null);
-      out.exit = r?.decision ? hookOutput(r.decision) : {};
-    }
-    if (!o.mod && /^(SessionStart|UserPromptSubmit)$/.test(event)) {
-      const r = await request2({ op: "attn_notes", sessionId }, 3000).catch(() => null);
-      if (r?.systemMessage)
-        out.systemMessage = String(r.systemMessage);
-    }
-  } catch {}
-  return out;
-}
-
-// src/sessions/names.ts
-import fs29 from "node:fs";
-import path37 from "node:path";
-var file9 = () => path37.join(P.root, "sessions", "names.json");
-function all() {
-  try {
-    const o = JSON.parse(fs29.readFileSync(file9(), "utf8"));
-    return o && typeof o === "object" ? o : {};
-  } catch {
-    return {};
-  }
-}
-var nameOf2 = (sessionId) => {
-  const n = all()[sessionId];
-  return typeof n === "string" && n ? n : undefined;
-};
-
-// src/sessions/index.ts
-import fs32 from "node:fs";
-import path39 from "node:path";
-
-// src/sessions/transcripts.ts
-import fs31 from "node:fs";
-import path38 from "node:path";
-
 // src/attention/recap.ts
-import fs30 from "node:fs";
+import fs28 from "node:fs";
 var TAIL_BYTES = 512 * 1024;
 var USER_MAX = 200;
 var ASSISTANT_MAX = 300;
@@ -5329,11 +5221,11 @@ function tail(file, bytes = TAIL_BYTES) {
     return "";
   let fd = -1;
   try {
-    fd = fs30.openSync(file, "r");
-    const size = fs30.fstatSync(fd).size;
+    fd = fs28.openSync(file, "r");
+    const size = fs28.fstatSync(fd).size;
     const start = Math.max(0, size - bytes);
     const buf = Buffer.alloc(size - start);
-    fs30.readSync(fd, buf, 0, buf.length, start);
+    fs28.readSync(fd, buf, 0, buf.length, start);
     const text = buf.toString("utf8");
     return start > 0 ? text.slice(text.indexOf(`
 `) + 1) : text;
@@ -5341,7 +5233,7 @@ function tail(file, bytes = TAIL_BYTES) {
     return "";
   } finally {
     if (fd >= 0)
-      fs30.closeSync(fd);
+      fs28.closeSync(fd);
   }
 }
 function lines(text) {
@@ -5392,7 +5284,103 @@ function extract(entries) {
 }
 var STOP2 = new Set(("a an the and or but of to in on at by for from with into onto over under is are was were be been being am it its this that these those " + "i you we they he she me my our your their them us so if then than as do does did done doing have has had having can could would should will " + "shall may might must not no yes ok okay please thanks thank just also very really let lets let's here there what which who whom when where why how " + "now all any some more most other such only own same too up down out off again further once about after before while because until both each few " + "file files code change changes changed make made use used using want need get got go going see look fix fixed fixing add added adding sure done").split(" "));
 
+// src/attention/openitems.ts
+var isCrosstalkPrompt = (prompt) => /^\s*(Tackle the open items you listed|You left these for the person|I handed you the crosstalk message|What you were waiting on has moved|.{0,200}was taken out of the merge queue, and crosstalk asks you)/.test(prompt);
+
+// src/attention/activity.ts
+import fs29 from "node:fs";
+import path36 from "node:path";
+var dir6 = () => path36.join(P.root, "typed");
+var safe6 = (id) => id.replace(/[^A-Za-z0-9._-]/g, "_");
+function noteTyped(sessionId, now = Date.now()) {
+  if (!sessionId)
+    return;
+  try {
+    fs29.mkdirSync(dir6(), { recursive: true, mode: 448 });
+    const f = path36.join(dir6(), safe6(sessionId));
+    fs29.writeFileSync(f, sessionId, { mode: 384 });
+    const t = new Date(now);
+    fs29.utimesSync(f, t, t);
+  } catch {}
+}
+
+// src/attention/permission.ts
+var waitMs = (env = process.env) => {
+  const n = Number(env.CROSSTALK_PERMISSION_WAIT_MS);
+  return n > 0 ? n : 55 * 60000;
+};
+function sessionOnly(suggestions) {
+  if (!Array.isArray(suggestions))
+    return [];
+  return suggestions.filter((x) => x && typeof x === "object" && !Array.isArray(x)).map((x) => ({ ...x, destination: "session" }));
+}
+var hookOutput = (d) => ({
+  hookSpecificOutput: {
+    hookEventName: "PermissionRequest",
+    decision: d.behavior === "allow" && d.updatedPermissions ? { ...d, updatedPermissions: sessionOnly(d.updatedPermissions) } : d
+  }
+});
+var backgroundAgent = (env) => (env.CROSSTALK_BG_AGENT ?? "").trim();
+
+// src/attention/hook.ts
+async function fromHook2(o) {
+  if (o.env.CROSSTALK_NO_ATTENTION === "1")
+    return {};
+  const { event, sessionId, hook } = o;
+  const out = {};
+  try {
+    const agent = backgroundAgent(o.env);
+    if (agent && /^(SessionStart|Stop)$/.test(event))
+      await request2({ op: "attn_bg", sessionId, agent }, 3000).catch(() => null);
+    if (event === "UserPromptSubmit" && !agent && !isCrosstalkPrompt(String(hook.prompt ?? "")))
+      noteTyped(sessionId);
+    if (event === "Stop" && !hook.stop_hook_active) {
+      await request2({ op: "attn_stop", sessionId, cwd: o.cwd, transcript: hook.transcript_path }, 5000).catch(() => null);
+    }
+    if (event === "PreCompact") {
+      const r = await request2({ op: "attn_precompact", sessionId, cwd: o.cwd, trigger: hook.trigger ?? "auto" }, 1e4).catch(() => null);
+      if (r?.block)
+        out.exit = { decision: "block", reason: String(r.block) };
+    }
+    if (event === "PermissionRequest") {
+      if (!agent)
+        return out;
+      const r = await request2({ op: "attn_permission", sessionId, cwd: o.cwd, agent, tool: hook.tool_name, input: hook.tool_input, suggestions: hook.permission_suggestions }, waitMs(o.env) + 30000).catch(() => null);
+      out.exit = r?.decision ? hookOutput(r.decision) : {};
+    }
+    if (!o.mod && /^(SessionStart|UserPromptSubmit)$/.test(event)) {
+      const r = await request2({ op: "attn_notes", sessionId }, 3000).catch(() => null);
+      if (r?.systemMessage)
+        out.systemMessage = String(r.systemMessage);
+    }
+  } catch {}
+  return out;
+}
+
+// src/sessions/names.ts
+import fs30 from "node:fs";
+import path37 from "node:path";
+var file9 = () => path37.join(P.root, "sessions", "names.json");
+function all() {
+  try {
+    const o = JSON.parse(fs30.readFileSync(file9(), "utf8"));
+    return o && typeof o === "object" ? o : {};
+  } catch {
+    return {};
+  }
+}
+var nameOf2 = (sessionId) => {
+  const n = all()[sessionId];
+  return typeof n === "string" && n ? n : undefined;
+};
+
+// src/sessions/index.ts
+import fs32 from "node:fs";
+import path39 from "node:path";
+
 // src/sessions/transcripts.ts
+import fs31 from "node:fs";
+import path38 from "node:path";
 var projectsDir = (env = process.env) => path38.join(claudeConfigDir2(env), "projects");
 var projectSlug = (cwd) => cwd.replace(/[^A-Za-z0-9]/g, "-");
 var HEAD_BYTES = 64 * 1024;
@@ -6690,14 +6678,13 @@ function writePrefs(p) {
   fs39.writeFileSync(tmp, JSON.stringify({ ...p, seen, seenItems }), { mode: 384 });
   fs39.renameSync(tmp, file11());
 }
-var setAlways = (on) => writePrefs({ ...readPrefs(), always: on });
 function tacklePrompt(items, ids = [], persons = []) {
   return [
     ...items.length ? [
       `Tackle the open items you listed:`,
       ...items.map((x, i) => `${i + 1}. ${x}${ids[i] ? ` (task ${ids[i]})` : ""}`),
       ``,
-      `Do each one you can do yourself${ids.length ? `, and mark it done with crosstalk_thread action "task", op "done" and its task id` : ""}. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). For any that needs a decision only the person can make, ask them (one question for all of those, at the end) instead of guessing.`
+      `Do each one you can do yourself${ids.length ? `, and mark it done with crosstalk_thread action "note", kind "task", op "done" and its task id` : ""}. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). For any that needs a decision only the person can make, ask them (one question for all of those, at the end) instead of guessing.`
     ] : [],
     ...persons.length ? [
       ...items.length ? [``] : [],
@@ -6748,6 +6735,7 @@ function atStop(o) {
   writePrefs({ ...p, seenItems: { ...p.seenItems ?? {}, [o.sessionId]: kept }, ...auto ? { chain: { ...p.chain ?? {}, [o.sessionId]: rounds + 1 } } : {}, ...waiting.length ? { waitingOn: { ...p.waitingOn ?? {}, [o.sessionId]: { items: waiting, at: now } } } : {} });
   return { items, waiting, persons: newPersons, id, fresh: !o.continuing, auto };
 }
+var isCrosstalkPrompt2 = (prompt) => /^\s*(Tackle the open items you listed|You left these for the person|I handed you the crosstalk message|What you were waiting on has moved|.{0,200}was taken out of the merge queue, and crosstalk asks you)/.test(prompt);
 
 // src/attention/calm.ts
 import fs40 from "node:fs";
@@ -7112,7 +7100,14 @@ if (restoreClient && sessionId && !process.env.CROSSTALK_NO_RESTORE) {
       try {
         sweep();
       } catch {}
-    if (isSessionStart && restoreClient === "claude" && !/^(clear|compact)$/.test(String(hook.source ?? "")))
+    const ownAgent = !!process.env[BG_ENV] || (() => {
+      try {
+        return !!spawnedAt2(cwd);
+      } catch {
+        return false;
+      }
+    })();
+    if (isSessionStart && restoreClient === "claude" && !ownAgent && !/^(clear|compact)$/.test(String(hook.source ?? "")))
       systemMessage = restoreSurface(sessionId, askOnceOffer(sessionId, captureTerminal(process.env, process.pid, false))).systemMessage;
   } catch {}
 }
@@ -7278,20 +7273,20 @@ if (restoreClient === "claude" && sessionId && isSessionStart && !process.env[BG
       systemMessage = systemMessage ? `${systemMessage}
 ${m}` : m;
   } catch {}
-if (sessionId && /^UserPromptSubmit$/.test(eventName) && !process.env[BG_ENV])
+var typedByPerson = /^UserPromptSubmit$/.test(eventName) && !isCrosstalkPrompt2(String(hook.prompt ?? ""));
+if (sessionId && typedByPerson && !process.env[BG_ENV])
   try {
     seen(Date.now());
   } catch {}
-if (sessionId && /^UserPromptSubmit$/.test(eventName) && !/^\s*(Tackle the open items you listed|I handed you the crosstalk message)/.test(String(hook.prompt ?? "")))
+if (sessionId && typedByPerson)
   try {
     resetChain(sessionId);
   } catch {}
-if (restoreClient === "claude" && sessionId && /^UserPromptSubmit$/.test(eventName) && !process.env[BG_ENV] && isAway())
+if (restoreClient === "claude" && sessionId && typedByPerson && !process.env[BG_ENV] && isAway())
   try {
     const was = update((s) => end(s));
     if (!was.workerWasOn)
       write5({ ...read7(), on: false });
-    setAlways(false);
     const m = short2(gather2(was.since ?? Date.now() - 8 * 3600000, { ...was.usdAtStart !== undefined ? { usdAtStart: was.usdAtStart } : {} }));
     systemMessage = systemMessage ? `${systemMessage}
 ${m}` : m;
@@ -7331,12 +7326,6 @@ async function registerSession() {
   if (registered?.systemMessage && restoreClient === "claude")
     systemMessage = [systemMessage, String(registered.systemMessage)].filter(Boolean).join(`
 `);
-  if (eventName === "UserPromptSubmit" && restoreClient === "claude") {
-    const m = staleNotice(sessionId ?? "", pluginVersion(root));
-    if (m)
-      systemMessage = [systemMessage, m].filter(Boolean).join(`
-`);
-  }
 }
 async function pendingNotice() {
   try {
@@ -7403,12 +7392,10 @@ async function threadsSay() {
   if (r.title)
     sessionTitle = String(r.title).replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
   const say = [];
-  if (r.banner?.length)
-    say.push(`\u25E2 crosstalk: joined ${r.banner.join(", ")}`);
   for (const n of r.notes ?? [])
     say.push(n);
   if (r.question && !r.mod && !modActive(sessionId))
-    say.push(`\u25E2 crosstalk: ${r.question.question} (${r.question.options.join(" / ")}). Say which, and the agent will set it with crosstalk_thread action "pick".`);
+    say.push(`\u25E2 crosstalk: ${r.question.question} (${r.question.options.join(" / ")}). Say which.`);
   if (say.length)
     systemMessage = [systemMessage, ...say].filter(Boolean).join(`
 `);
