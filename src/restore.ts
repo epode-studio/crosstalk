@@ -204,6 +204,17 @@ export function endedNormally(r: Rec, all: Rec[], boot: number): boolean {
   return !burst
 }
 
+/**
+ * Within this boot, sessions that ended together while others in the same terminal app kept running:
+ * a window the person closed, not a terminal that crashed (a crash takes every session in it).
+ */
+export function windowClosed(r: Rec, c: Pick<Ctx, "all" | "alive" | "boot">): boolean {
+  if (!r.endedAt || r.endedAt < c.boot) return false
+  const app = kindOf(r.terminal)
+  if (!app || app === "tmux") return false
+  return c.all.some((o) => o.sessionId !== r.sessionId && !o.endedAt && kindOf(o.terminal) === app && o.startedAt < r.endedAt! && c.alive(o))
+}
+
 export type Ctx = {
   now: number
   boot: number
@@ -248,6 +259,7 @@ export function openAtDown(boot: number): Set<string> | undefined {
 export function isLost(r: Rec, c: Ctx): boolean {
   if (r.interactive === false) return false
   if (endedNormally(r, c.all, c.boot)) return false
+  if (windowClosed(r, c)) return false
   const before = r.seenAt < c.boot
   const ref = before ? c.boot : c.now
   if (ref - r.seenAt > WINDOW_MS) return false
@@ -1235,12 +1247,15 @@ export function askOnceOffer(self: string, current: Term): Offer | null {
     const fresh = lostSessions(ctxNow(), self)
     if (!fresh.some((r) => !r.askedAt)) return null
     for (const r of fresh) if (!r.askedAt) writeRec({ ...r, askedAt: Date.now() })
-    const text = question(fresh, c.boot, current)
+    // crosstalk's own background agents come back with the rest, out of sight: never counted or named as tabs.
+    const shown = fresh.filter((r) => !isCrosstalkSocket(r.terminal.tmux?.socket))
+    if (!shown.length) return null
+    const text = question(shown, c.boot, current)
     if (!text) return null
     return {
       text,
-      count: fresh.length,
-      names: fresh.slice(0, 4).map(label).concat(fresh.length > 4 ? ["…"] : []),
+      count: shown.length,
+      names: shown.slice(0, 4).map(label).concat(shown.length > 4 ? ["…"] : []),
       restart: fresh.some((r) => r.seenAt < c.boot),
       recent: recentOf(fresh).length,
     }

@@ -104,6 +104,16 @@ describe("detection", () => {
     expect(R.openAtDown(BOOT + 2 * 24 * H)).toBe(undefined) // too old
   })
 
+  test("within this boot, a window closed on purpose is not a crash: others in that terminal kept running", () => {
+    const apple = { program: "Apple_Terminal", apple: { window: 1, tab: 1 } }
+    const gone1 = rec({ sessionId: "g1", seenAt: NOW - 5 * 60_000, endedAt: NOW - 5 * 60_000, endReason: "other", terminal: apple })
+    const gone2 = rec({ sessionId: "g2", seenAt: NOW - 5 * 60_000, endedAt: NOW - 5 * 60_000 + 500, endReason: "other", terminal: apple })
+    const still = rec({ sessionId: "live", seenAt: NOW, startedAt: NOW - 3_600_000, terminal: { ...apple, apple: { window: 2, tab: 1 } } })
+    const alive = (r: Rec) => r.sessionId === "live"
+    expect(R.isLost(gone1, ctx([gone1, gone2, still], alive))).toBe(false) // a window closed
+    expect(R.isLost(gone1, ctx([gone1, gone2], alive))).toBe(true) // the whole terminal went: a crash
+  })
+
   test("claude -p has no tab to come back to", () => {
     expect(lost(rec({ interactive: false }))).toBe(false)
   })

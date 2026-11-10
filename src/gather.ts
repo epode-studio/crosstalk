@@ -807,7 +807,8 @@ export async function finish(sys: Sys = liveSys()): Promise<string> {
           selfPids: j.selfPids,
           sys,
           registry,
-          reopen: (rec) => R.restore({ self: j.by, userAction: false, tabs: true }, [rec]).restored.length > 0,
+          // The person said "bring them in": as tabs, the way they asked, never a window each.
+          reopen: (rec) => R.restore({ self: j.by, userAction: false, asked: true, tabs: true }, [rec]).restored.length > 0,
         })
         if (r === "wait") continue
         const cur = loadJob() ?? j
