@@ -28,6 +28,8 @@
 // which stops with it.") and a yes goes ahead. Sending one to the background
 // waits instead, silently, in a detached waiter, until that has stopped.
 
+import * as F from "../attention/focus.ts"
+import { focusSession } from "../attention/show.ts"
 import crypto from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
@@ -719,6 +721,14 @@ export async function resume(ref: string, o: { by?: string; cwd: string; backgro
   const bot = refuseBot(o.from, "resume a session on this machine")
   if (bot) return { ok: false, text: `◢ crosstalk: ${bot}` }
   const live = I.liveIds()
+  // Open already (by name or its thread): that tab, in front, never a second copy resumed beside it.
+  try {
+    const openRec = F.findRec(ref, F.liveRecs())
+    if (openRec) {
+      const f = focusSession({ sessionId: openRec.sessionId, env: d.env })
+      return { ok: true, text: f.ok ? f.text : `◢ crosstalk: ${openRec.name ?? ref} is open already, in ${openRec.cwd}.` }
+    }
+  } catch {}
   const entries = I.all({ env: d.env, live })
   let p = I.lookup(ref, entries)
   if (!p) {

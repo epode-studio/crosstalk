@@ -384,3 +384,15 @@ describe("one set of signs", () => {
     expect(tty).not.toContain("\x07") // still waiting: not again
   })
 })
+
+describe("finding a session by what it is", () => {
+  test("by its name or its thread, exact before partial, the one used last of several", async () => {
+    const F = await import("../src/attention/focus.ts")
+    const r = (sessionId: string, o: any) => ({ sessionId, cwd: `/w/${sessionId}`, client: "claude", pid: 1, startedAt: 0, seenAt: 0, terminal: {}, ...o })
+    const recs = [r("a", { name: "api-2", thread: "login-fix", seenAt: 10 }), r("b", { name: "web", thread: "login-page", seenAt: 20 }), r("c", { name: "login", seenAt: 5 })]
+    expect(F.findRec("login-fix", recs)?.sessionId).toBe("a") // its thread
+    expect(F.findRec("login", recs)?.sessionId).toBe("c") // an exact name first
+    expect(F.findRec("login-p", recs)?.sessionId).toBe("b")
+    expect(F.findRec("log", recs)?.sessionId).toBe("b") // several partial: the one used last
+  })
+})

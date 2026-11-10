@@ -300,10 +300,13 @@ export function focusTerm(t: Term, sys: Sys): { ok: boolean; kind?: string } {
 export function findRec(nameOrId: string, recs: Rec[]): Rec | undefined {
   const n = nameOrId.trim().toLowerCase()
   if (!n) return undefined
+  // Its name or its thread ("the one on login"), exact before partial; of several, the one used last.
+  const newest = (xs: Rec[]) => [...xs].sort((a, b) => b.seenAt - a.seenAt)[0]
+  const words = (r: Rec) => [(r.name ?? "").toLowerCase(), (r.thread ?? "").toLowerCase()]
   return (
     recs.find((r) => r.sessionId === nameOrId) ??
-    recs.find((r) => (r.name ?? "").toLowerCase() === n) ??
-    recs.find((r) => (r.name ?? "").toLowerCase().includes(n)) ??
-    recs.find((r) => r.cwd.toLowerCase().endsWith("/" + n))
+    newest(recs.filter((r) => words(r).includes(n))) ??
+    newest(recs.filter((r) => words(r).some((w) => w && w.includes(n)))) ??
+    newest(recs.filter((r) => r.cwd.toLowerCase().endsWith("/" + n)))
   )
 }
