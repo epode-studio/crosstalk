@@ -130,18 +130,18 @@ test('the pane has a Running section: by kind, clickable, dead ones marked', asy
   await ui.unmount()
 })
 
-test('the card picker: Hand to agent / Reply / Open thread / More…, and More… opens Mute / Later', async ($, on) => {
+test('the card picker: Hand to agent / Reply / Later, three plain choices with nothing behind them', async ($, on) => {
   const acts: string[][] = []
   const asked: { question: string; options: string[] }[] = []
   const clock = engine(on, acts, q => {
     asked.push(q)
-    return q.options.includes('More…') ? 'More…' : 'Mute'
+    return 'Later'
   })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.advance(3000)
-  expect(asked[0]?.options).toEqual(['Hand to agent', 'Reply', 'Open thread', 'More…'])
-  expect(asked[1]?.options).toEqual(['Mute', 'Later'])
-  expect(acts.some(a => a.includes('--action') && a[a.indexOf('--action') + 1] === 'mute')).toBe(true)
+  expect(asked[0]?.options).toEqual(['Hand to agent', 'Reply', 'Later'])
+  expect(asked.length).toBe(1)
+  expect(acts.some(a => a.includes('--action') && a[a.indexOf('--action') + 1] === 'later')).toBe(true)
 })
 
 test('@auth keep v1 is taken before it is a prompt, and the drop names the thread, not the text', async ($, on) => {

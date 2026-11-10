@@ -184,7 +184,7 @@ describe("main's inbox", () => {
     const open = frame("inbox · second open", asText(D.inboxTree(E, ROWS, "attn:merge:u1@1", NOW0, noop)), 100, "dark")
     expect(open).toContain("1: Merge it")
     expect(open).toContain("s: snooze")
-    expect(open).toContain("e: done")
+    expect(open).not.toContain("e: done") // done only dismisses a message; on a question it would answer it
     expect(frame("inbox · empty", D.inboxTree(E, [], undefined, NOW0, noop), 70, "dark")).toContain("Nothing needs you.")
   })
 
@@ -195,7 +195,8 @@ describe("main's inbox", () => {
     const walk = (n: any) => (Array.isArray(n) ? n.forEach(walk) : n && typeof n === "object" && n.props ? (n.type === "Button" && buttons.push(n), walk(n.props.children ?? [])) : null)
     walk(D.inboxTree(E, ROWS, undefined, NOW0, on))
     for (const b of buttons) b.props.onPress({})
-    expect(seen).toEqual(["open attn:perm:s1", "choose Allow", "choose Deny", "snooze", "done", "open attn:merge:u1@1", "open msg:1"])
-    expect(buttons.filter((b) => b.props.hotkey).map((b) => b.props.hotkey)).toEqual(["1", "2", "s", "e"])
+    // A permission: only its own answers, never snoozed or dismissed past its deadline.
+    expect(seen).toEqual(["open attn:perm:s1", "choose Allow", "choose Deny", "open attn:merge:u1@1", "open msg:1"])
+    expect(buttons.filter((b) => b.props.hotkey).map((b) => b.props.hotkey)).toEqual(["1", "2"])
   })
 })

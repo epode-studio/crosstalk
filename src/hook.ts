@@ -678,7 +678,7 @@ async function threadsSay(): Promise<string | undefined> {
   // only interrupts. (r.banner is still taken, so it is not said later either.)
   for (const n of r.notes ?? []) say.push(n)
   if (r.question && !r.mod && !ui.modActive(sessionId!))
-    say.push(`◢ crosstalk: ${r.question.question} (${r.question.options.join(" / ")}). Say which, and the agent will set it with crosstalk_thread action "pick".`)
+    say.push(`◢ crosstalk: ${r.question.question} (${r.question.options.join(" / ")}). Say which.`)
   if (say.length) systemMessage = [systemMessage, ...say].filter(Boolean).join("\n")
   const names = (r.threads ?? []).map((t: { name: string }) => t.name)
   threadNames = names

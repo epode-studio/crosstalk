@@ -72,9 +72,9 @@ function authThread(o: { public?: boolean } = {}) {
 const st = (threads: ReturnType<typeof authThread>[]) => ({ threads: Object.fromEntries(threads.map((t) => [t.id, t])), placed: {}, roots: {} })
 
 describe("pickers stay within four options", () => {
-  test("a card: Hand to agent / Reply / Open thread / More…", () => {
-    expect(pure.cardOptions("message")).toEqual(["Hand to agent", "Reply", "Open thread", "More…"])
-    expect(pure.cardOptions("ask")).toEqual(["Answer", "Hand to agent", "Open thread", "More…"])
+  test("a card: Hand to agent / Reply / Later", () => {
+    expect(pure.cardOptions("message")).toEqual(["Hand to agent", "Reply", "Later"])
+    expect(pure.cardOptions("ask")).toEqual(["Answer", "Hand to agent", "Later"])
     for (const k of ["message", "ask"]) expect(pure.cardOptions(k).length).toBeLessThanOrEqual(pure.MAX_OPTIONS)
   })
   test("More… opens Mute / Later", () => {

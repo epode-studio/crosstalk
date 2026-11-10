@@ -623,7 +623,7 @@ async function hand($: EngineInterface, it: Item, auto = false) {
     $.ui.toast(`not handed over: ${appended.deny}`)
     return
   }
-  await receipt($, `hand-${it.id}`, auto ? `◢ passed ${it.from}${it.thread ? ` · ${it.thread}` : ''} to the agent: its own thread` : `◢ handed ${it.from}${it.thread ? ` · ${it.thread}` : ''} to the agent`)
+  await receipt($, `hand-${it.id}`, auto ? `◢ gave ${it.from}'s note about this work to the agent` : `◢ gave ${it.from}'s message to the agent`)
   if (!auto) await $.prompt.submit({ text: HANDED_PROMPT })
 }
 

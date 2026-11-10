@@ -34,9 +34,10 @@ export const STEER_YES = "Tell it"
 export const STEER_NO = "Don't"
 
 /** The first picker for a message card. */
-export const CARD_OPTIONS: readonly string[] = [HAND, REPLY, OPEN_THREAD, MORE]
+// Three plain choices, no second picker behind "More…": mute stays in words ("mute marie").
+export const CARD_OPTIONS: readonly string[] = [HAND, REPLY, LATER]
 /** The first picker for a peer's question. */
-export const ASK_OPTIONS: readonly string[] = [ANSWER, HAND, OPEN_THREAD, MORE]
+export const ASK_OPTIONS: readonly string[] = [ANSWER, HAND, LATER]
 /** What More… opens. */
 export const MORE_OPTIONS: readonly string[] = [MUTE, LATER]
 

@@ -1,7 +1,7 @@
 ┌─ inbox · dark · 70 cols ─────────────────────────────────────────────┐
 │Inbox · 3                                                             │
 │▸ 🔐 Allow api to run `npm install`? 🟤 api · 1m                        │
-│1: Allow   2: Deny   s: snooze   e: done                              │
+│1: Allow   2: Deny                                                    │
 │  🔀 auth · PR #12 is green and approved. Merge it? 🟣 auth · 5m        │
 │  💬 marie: token format changed, see the diff 🟤 billing · 3h          │
 └──────────────────────────────────────────────────────────────────────┘
@@ -9,6 +9,6 @@
 styles (dark theme):
   1 [bold]Inbox [/][bold dim]· 3[/]
   2 ▸ 🔐 [bold]Allow api to run `npm install`?[/] [dim]🟤 api · 1m[/]
-  3 1: Allow   2: Deny   [dim]s: snooze[/]   [dim]e: done[/]
+  3 1: Allow   2: Deny
   4   🔀 auth · PR #12 is green and approved. Merge it? [dim]🟣 auth · 5m[/]
   5   💬 marie: token format changed, see the diff [dim]🟤 billing · 3h[/]

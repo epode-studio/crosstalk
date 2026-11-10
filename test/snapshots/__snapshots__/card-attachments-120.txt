@@ -7,7 +7,7 @@
 │╭─ ◢ jo · billing ─────────────────────────────────────── 40m─╮                                                         │
 ││ ? can billing read v2 tokens yet, or should we wait for the… │                                                        │
 ││ ▸ turns last 6 turns 900 B                                   │                                                        │
-││ the picker comes after your next turn                        │                                                        │
+││ asks after your next message                                 │                                                        │
 │╰──────────────────────────────────────────────────────────────╯                                                        │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 
@@ -20,5 +20,5 @@ styles (dark theme):
   6 [fg=inactive:#999999]╭─ [/][bold fg=claude:#d77757]◢ jo[/][fg=inactive:#999999] · [/][fg=suggestion:#b1b9f9]billing[/][fg=inactive:#999999] ─────────────────────────────────────── [/][dim]40m[/][fg=inactive:#999999]─╮[/]
   7 [fg=inactive:#999999]│ [/]? can billing read v2 tokens yet, or should we wait for the…[fg=inactive:#999999] │[/]
   8 [fg=inactive:#999999]│ [/][fg=suggestion:#b1b9f9]▸ turns[/] last 6 turns [dim]900 B[/]                                  [fg=inactive:#999999] │[/]
-  9 [fg=inactive:#999999]│ [/][dim]the picker comes after your next turn[/]                       [fg=inactive:#999999] │[/]
+  9 [fg=inactive:#999999]│ [/][dim]asks after your next message[/]                                [fg=inactive:#999999] │[/]
  10 [fg=inactive:#999999]╰──────────────────────────────────────────────────────────────╯[/]

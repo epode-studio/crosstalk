@@ -416,7 +416,7 @@ function card(E: Els, it: Item, W: number, now: number, later: string) {
         ? body(
             `${it.id}:later`,
             <Text dimColor wrap="truncate">
-              the picker comes after your next turn
+              asks after your next message
             </Text>,
           )
         : null}
@@ -433,7 +433,7 @@ function card(E: Els, it: Item, W: number, now: number, later: string) {
 export function bandTree(E: Els, open: Item[], digest: string, now: number, bodyColumns: number, raisable: (it: Item) => boolean) {
   const { Box, Text } = E
   const W = Math.max(24, Math.min(bodyColumns, CARD_MAX))
-  const later = (it: Item) => (raisable(it) ? '' : ' · picker after your next turn')
+  const later = (it: Item) => (raisable(it) ? '' : ' · asks after your next message')
   // Calm: never a wall. Nothing empty, nothing stale (a day old and not blocking), no open-list leftovers;
   // at most two shown, the rest counted.
   const DAY = 86_400_000
