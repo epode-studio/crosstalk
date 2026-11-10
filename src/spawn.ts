@@ -383,7 +383,7 @@ export function spawnAgents(o: {
   // No tmux (native Windows, mostly): Claude Code's own background sessions, if this claude has them.
   const claudeBin = which("claude", env) ?? "claude"
   // With a main session open, new agents work out of sight unless a tab was asked for: their questions come to main.
-  if (o.background === undefined && currentMain()) o = { ...o, background: true }
+  // New agents open as tabs, where the person can see and reach them; the background is asked for ("in the background").
   const claudeBg = !!o.background && !which("tmux", env) && bgx.claudeBackground(claudeBin, env).bg
   if (o.background && !which("tmux", env) && !claudeBg)
     return { ok: false, text: "◢ crosstalk: background agents run in tmux, which is not installed here. Install tmux, or start the agent in a tab instead.", agents: [] }

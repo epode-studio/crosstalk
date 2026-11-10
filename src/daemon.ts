@@ -1696,11 +1696,14 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       // task id the thread holds is claimed and finished there.
       const self = req.sessionId ? resolveSession(req) : undefined
       const mine = self ? threads.idsFor(self.sessionId) : []
-      if (req.write && (req.thread || (mine.length && !req.room))) {
-        const inThread =
-          req.write === "add" || mine.some((id) => threadModel.noteOf(threads.thread(id), String(req.id), "task")) || req.thread
+      // A task is found wherever it is: a session moves between threads as its work does, and a task
+      // added in the thread it was in before must still be claimed or finished from it.
+      const holds = (id: string) => !!threadModel.noteOf(threads.thread(id), String(req.id), "task")
+      const holder = req.id && req.write !== "add" ? (mine.find(holds) ?? threads.list().map((t) => t.id).find(holds)) : undefined
+      if (req.write && (req.thread || holder || (mine.length && !req.room))) {
+        const inThread = req.write === "add" || !!holder || req.thread
         if (inThread && (req.write === "add" || req.write === "claim" || req.write === "done")) {
-          const owner = req.thread ?? mine.find((id) => threadModel.noteOf(threads.thread(id), String(req.id), "task"))
+          const owner = req.thread ?? holder
           const r = threads.task(self?.sessionId, { op: req.write, text: req.text, id: req.id, note: req.note, thread: owner })
           return r.ok ? { ok: true, thread: r.thread, op: req.write, id: r.id } : r
         }

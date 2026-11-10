@@ -9,7 +9,7 @@
 // on black, so it scans on any theme. No hook, state or I/O in here.
 
 import type { Item, Pane } from './types'
-import { agentAsks, agentLine, ago, dotFor, featureLine, fileLink, historyLine, inboxChoices, inboxRow, linkable, noteLine, runningGroups, runningLine, runningWhere } from '../src/ui-extra/pure.ts'
+import { agentAsks, agentLine, ago, dotFor, featureLine, fileLink, historyLine, cleanRecap, inboxChoices, inboxRow, linkable, withoutThread, noteLine, runningGroups, runningLine, runningWhere } from '../src/ui-extra/pure.ts'
 
 /** The elements these trees are made of: the surface's own Box, Text and Link, and Button where a tree takes presses. */
 export type Els = { Box: any; Text: any; Link: any; Button?: any }
@@ -130,8 +130,8 @@ function size(bytes: number | undefined): string {
  * what is waiting, then Notes, Features, Running (by kind), recent messages
  * and History. `problem`: what the pane could not show.
  */
-export function paneTree(E: Els, p: Pane | null, problem: string, now: number, inbox?: any) {
-  const { Box, Text, Link } = E
+export function paneTree(E: Els, p: Pane | null, problem: string, now: number, inbox?: any, on: { agent?: (sessionId: string) => void; back?: () => void } = {}) {
+  const { Box, Text, Link, Button } = E
   if (!p)
     return (
       <Box flexDirection="column">
@@ -169,13 +169,22 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number, i
         )}
         {p.agents.length ? (
           <Box flexDirection="column" marginTop={1}>
-            <Text bold>Working · {p.agents.length}</Text>
-            {p.agents.map((a, i) => (
-              <Text key={`a${i}`} wrap="truncate">
-                {' '}
-                {clean(agentLine(a))}
-              </Text>
-            ))}
+            <Text bold>
+              Agents · {p.agents.length} <Text dimColor>· Enter to open one</Text>
+            </Text>
+            {p.agents.map((a, i) =>
+              Button && on.agent && a.sessionId ? (
+                <Button key={`agent:${a.sessionId}`} plain onPress={() => on.agent!(a.sessionId!)}>
+                  {' '}
+                  {clean(agentLine(a))}
+                </Button>
+              ) : (
+                <Text key={`a${i}`} wrap="truncate">
+                  {' '}
+                  {clean(agentLine(a))}
+                </Text>
+              ),
+            )}
           </Box>
         ) : null}
         {p.prs?.length ? (
@@ -225,6 +234,13 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number, i
   const link = (url: string) => (linkable(url) ? <Link href={url}>{url}</Link> : clean(url))
   return (
     <Box flexDirection="column">
+      {Button && on.back ? (
+        <Box marginBottom={1}>
+          <Button key="back" plain hotkey="b" autoFocus onPress={on.back}>
+            ◂ back to your inbox
+          </Button>
+        </Box>
+      ) : null}
       <Text wrap="truncate">
         <Text color={THREAD} bold>
           {p.thread ? dotFor(p.thread) : '◢'} {clean(p.thread)}
@@ -232,9 +248,9 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number, i
         <Text dimColor> · {clean(p.status)}{p.sessions ? ` · ${p.sessions} working` : ''}</Text>
       </Text>
       <Text wrap="truncate">{clean(p.people.join('  ') || 'nobody yet')}</Text>
-      {p.recap ? (
+      {p.recap && cleanRecap(p.recap) ? (
         <Text dimColor wrap="wrap">
-          {clean(p.recap)}
+          {clean(cleanRecap(p.recap))}
         </Text>
       ) : null}
       {p.qr ? (
@@ -250,7 +266,7 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number, i
           {p.qr.why ? <Text dimColor wrap="wrap">{clean(p.qr.why)}</Text> : null}
         </Box>
       ) : null}
-      {section('Waiting', p.waiting.length ? p.waiting.map(w => `? ${w}`) : ['nothing'], 'w')}
+      {section('Needs you', p.waiting.length ? p.waiting.map(w => `? ${w}`) : ['nothing'], 'w')}
       {p.notes?.length ? section('Notes', p.notes.map(n => noteLine(n, now)), 'n') : null}
       {p.features.length ? section('Features', p.features.map(featureLine), 'f') : null}
       {p.running?.length ? (
@@ -280,7 +296,7 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number, i
                 ) : (
                   <Text key={`r${g.kind}${i}`} wrap="truncate" dimColor={!r.alive}>
                     {'  '}
-                    {r.broken ? <Text color={BROKEN}>{clean(runningLine(r, now))}</Text> : clean(runningLine(r, now))}
+                    {r.broken ? <Text color={BROKEN}>{clean(runningLine({ ...r, label: withoutThread(r.label, p.thread) }, now))}</Text> : clean(runningLine({ ...r, label: withoutThread(r.label, p.thread) }, now))}
                     {runningWhere(r) ? ' ' : ''}
                     {runningWhere(r) ? link(r.url ?? `http://${runningWhere(r)}`) : null}
                   </Text>

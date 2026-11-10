@@ -105,8 +105,9 @@ test('the pane draws a thread: waiting, notes, features with flag stage, recent,
     expect((await ui.find({ type: 'Text', text: /v2 token format/ }))?.text).toContain('flag auth-v2-tokens at internal')
     await clock.settle()
     expect(await ui.find({ type: 'Text', text: /token format changed to v2/ })).toBeDefined()
-    expect((await ui.find({ type: 'Text', text: /remove the v1 parser/ }))?.text).toContain('[ ]')
-    expect((await ui.find({ type: 'Text', text: /● auth · dev server/ }))?.text).toContain('http://auth.localhost:1355')
+    expect((await ui.find({ type: 'Text', text: /remove the v1 parser/ }))?.text).toContain('•')
+    // In its own thread's pane, a server is named without the thread in front.
+    expect((await ui.find({ type: 'Text', text: /● dev server/ }))?.text).toContain('http://auth.localhost:1355')
     expect((await ui.find({ type: 'Text', text: /PR #9/ }))?.text).toContain('pull request')
     await ui.unmount()
   }
@@ -124,7 +125,7 @@ test('the pane has a Running section: by kind, clickable, dead ones marked', asy
   expect(await ui.find({ type: 'Text', text: /Servers/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /Pull requests/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /Links found in output/ })).toBeDefined()
-  expect((await ui.find({ type: 'Text', text: /auth · dev server/ }))?.text).toContain('http://auth.localhost:1355')
+  expect((await ui.find({ type: 'Text', text: /dev server/ }))?.text).toContain('http://auth.localhost:1355')
   expect((await ui.find({ type: 'Text', text: /PR #12/ }))?.text).toContain('dead')
   await ui.unmount()
 })
@@ -279,5 +280,6 @@ test('a main session\'s totals reach the status line', async ($, on) => {
   const { clock, seen } = engine2(on, { card: CARD, main: true, ask: () => null })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.advance(1000)
-  expect(seen.status.some(s => s.includes('main · 2 threads · ⏳ 3 working · ❓ 5 for you'))).toBe(true)
+  // The count is what main's inbox shows (here the one card), so the two never disagree.
+  expect(seen.status.some(s => s.includes('main · 2 threads · ⏳ 3 working · ❓ 1 for you'))).toBe(true)
 })

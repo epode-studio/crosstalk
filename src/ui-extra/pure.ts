@@ -238,8 +238,8 @@ export function until(ts: number, now: number): string {
 /** A note's line in the pane: `decision · v1 accepted until 0.2 (paul, 2h)`, `[ ] remove the v1 parser`. */
 export function noteLine(n: PaneNote, now: number): string {
   const when = n.who || n.at ? ` (${[n.who, n.at ? ago(n.at, now) : ""].filter(Boolean).join(", ")})` : ""
-  if (n.kind === "task") return `[${n.state === "done" ? "x" : n.state === "claimed" ? "~" : " "}] ${n.text}${n.state === "claimed" && n.who ? ` (${n.who})` : ""}`
-  return `${n.kind} · ${n.text}${when}`
+  if (n.kind === "task") return `${n.state === "done" ? "✓" : n.state === "claimed" ? "→" : "•"} ${n.text}${n.state === "claimed" && n.who ? ` (${n.who} is on it)` : ""}`
+  return `${n.kind === "decision" ? "Decided" : n.kind === "fact" ? "Fact" : n.kind === "rule" ? "Rule" : n.kind}: ${n.text}${when}`
 }
 
 /** A History line: `PR #9 · merged · 3d` or `fact · staging was shared · ended 5d`. */
@@ -264,7 +264,7 @@ export function runningSummary(items: readonly PaneRunning[]): string {
 export function statusLine(o: { threads: readonly string[]; cards?: readonly string[]; repo?: string; running?: readonly PaneRunning[]; where?: string; waiting: number; label?: string; main?: { sessions: number; threads: number; waiting: number } }): string | undefined {
   // What waits on the person, said only when something does: "0 waiting" read as noise.
   const forYou = (n: number) => (n > 0 ? `${SIGN.waiting} ${n} for you` : "")
-  if (o.main) return ["◢ main", `${o.main.threads} thread${o.main.threads === 1 ? "" : "s"}`, `${SIGN.working} ${o.main.sessions} working`, forYou(Math.max(o.main.waiting, o.waiting))].filter(Boolean).join(" · ")
+  if (o.main) return ["◢ main", `${o.main.threads} thread${o.main.threads === 1 ? "" : "s"}`, `${SIGN.working} ${o.main.sessions} working`, forYou(o.waiting)].filter(Boolean).join(" · ")
   const named = o.threads.length ? o.threads.slice(0, 3).join(" · ") : o.cards?.length ? o.cards.slice(0, 3).join(", ") : o.repo ?? ""
   const where = o.where || runningSummary(o.running ?? [])
   if (!o.waiting && !o.label && !where) return undefined
@@ -525,3 +525,16 @@ export function inboxChoices(it: Pick<InboxRowItem, "kind" | "options">): string
   if (it.kind === "message" || it.kind === "ask") return cardOptions(it.kind).filter((o) => o !== MORE)
   return (it.options?.length ? it.options : ["Not now"]).slice(0, 4)
 }
+
+/** A thread's recap, readable at a glance: no markdown, no tool chatter, two lines at most. */
+export function cleanRecap(s: string, max = 200): string {
+  const t = s
+    .replace(/\*\*|__|`/g, "")
+    .replace(/^(\s*(Tool loaded\.?|[-–—•])\s*)+/i, "")
+    .replace(/\s+/g, " ")
+    .trim()
+  return t.length > max ? t.slice(0, max - 1) + "…" : t
+}
+
+/** A running thing's label inside its own thread's pane: without the thread's name in front. */
+export const withoutThread = (label: string, thread: string) => (thread && label.toLowerCase().startsWith(`${thread.toLowerCase()} · `) ? label.slice(thread.length + 3) : label)

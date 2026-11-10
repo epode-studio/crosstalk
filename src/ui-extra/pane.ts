@@ -145,7 +145,8 @@ export function pane(o: { sessionId?: string; thread?: string; st?: ThreadState;
   const model = paneModel(t, o.items ?? ui.snapshot())
   let items: PaneRunning[] = []
   try {
-    items = running(model.thread, { sessionId: o.sessionId, main: !!o.sessionId && currentMain()?.sessionId === o.sessionId, servers: o.services })
+    // Links an agent printed are not running things: kept in History, never a wall of rows here.
+    items = running(model.thread, { sessionId: o.sessionId, main: !!o.sessionId && currentMain()?.sessionId === o.sessionId, servers: o.services }).filter((r) => r.kind !== "link")
   } catch {}
   // History: what the thread had and no longer runs or knows, the latest few.
   const now = new Set(items.map((r) => r.url).filter(Boolean))

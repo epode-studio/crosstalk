@@ -28,6 +28,8 @@ import { running } from "./threads/running.ts"
 import { runningSummary } from "./ui-extra/pure.ts"
 import * as extra from "./ui-extra/uicli.ts"
 import * as sessionCtl from "./sessions/control.ts"
+import * as spawnMod from "./spawn.ts"
+import { focusSession } from "./attention/show.ts"
 import * as envTools from "./env/tools.ts"
 
 type Out = Record<string, unknown>
@@ -184,6 +186,14 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
       return print({ ok: true })
     case "list":
       return print({ ok: true, ...(await waiting(session, false)) })
+    // A row of main's pane pressed: that session, in front. A background agent opens in a tab attached to it.
+    case "show": {
+      const target = arg(argv, "--target") ?? ""
+      if (!target) return print({ ok: false, error: "--target is needed" })
+      const bg = spawnMod.readSpawned().find((r) => r.sessionId === target && r.background && !r.removedAt)
+      if (bg) return print(spawnMod.show({ name: bg.name, cwd: bg.cwd, by: session }))
+      return print(focusSession({ sessionId: target }))
+    }
     // An agent's own question, put to the main session (src/attention/relay.ts).
     case "relay": {
       let q: unknown = null

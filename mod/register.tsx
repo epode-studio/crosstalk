@@ -183,7 +183,9 @@ function header(it: Item): string {
 async function showStatus($: EngineInterface, open: Item[]) {
   // `◢ auth · tokens · auth.localhost:1355 · 1 for you`: the session's own threads first, else what the cards are about.
   const cards = [...new Set(open.filter(isCard).map(i => i.thread).filter((t): t is string => !!t))]
-  const text = statusLine({ threads: threadNames, cards, repo, where, waiting: open.length, label, ...(mainTotals ? { main: mainTotals } : {}) })
+  // Main counts what its inbox shows, so the two never disagree.
+  const waiting = mainTotals ? inboxItems(open, await $.clock.now()).length : open.length
+  const text = statusLine({ threads: threadNames, cards, repo, where, waiting, label, ...(mainTotals ? { main: mainTotals } : {}) })
   if (text !== lastStatus) $.ui.status(text)
   lastStatus = text
 }
@@ -802,7 +804,12 @@ export const register: Register = on => {
           done: it => void step($, it, 'mute'),
         })
       : undefined
-    return paneTree(E, p, problem, now, inbox)
+    return paneTree(E, p, problem, now, inbox, {
+      // A row in the agents list: that session, in front (a background agent opens in a tab attached to it).
+      agent: sid => void cli($, ['show', '--target', sid]).then(r => $.ui.toast(oneLine(String(r?.text ?? r?.error ?? '')).replace(/^◢ crosstalk: /, ''))),
+      // A thread opened in main: one press back to the inbox.
+      ...(mainTotals && paneThread ? { back: () => void openPane($, undefined) } : {}),
+    })
   })
 
   // crosstalk's own deliveries into the inbox (a notice, a route question, a

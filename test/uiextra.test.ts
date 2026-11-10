@@ -126,7 +126,7 @@ describe("the thread pane", () => {
     expect(p.recent.some((r) => r.text === "elsewhere")).toBe(false)
     const f = p.features.find((x) => x.name === "v2 token format")!
     expect(pure.featureLine(f)).toBe("v2 token format · risky · flag auth-v2-tokens at internal · merged")
-    expect(pure.paneLines(p, T0).join("\n")).toContain(" decision · v1 tokens accepted until 0.2 (paul, 1h)")
+    expect(pure.paneLines(p, T0).join("\n")).toContain(" Decided: v1 tokens accepted until 0.2 (paul, 1h)")
   })
 })
 

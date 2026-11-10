@@ -169,8 +169,9 @@ you, it asks.
   *"resume <name>"* brings it back with its conversation.
 - A session whose context runs out starts fresh from its thread, in the same
   tab, at a natural break. *"Stop starting fresh by itself"* compacts as usual.
-- New agents work out of sight while a main session is open; their questions
-  come to main.
+- New agents open as tabs beside their thread's, so you can see them start;
+  their questions come to main. In main's pane, Enter on an agent takes you to
+  it (one in the background opens in a tab attached to it).
 - An agent that keeps spending without changing anything (five dollars in
   half an hour, no edits) gets one question in main: stop it, or let it run.
 - Questions from a session that has since ended are put away by themselves.
