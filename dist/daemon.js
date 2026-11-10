@@ -15559,7 +15559,7 @@ class Coordinator {
   }
   itemsFor(items, sid) {
     const parked = read5();
-    const open = Object.values(items).filter((i) => !FINAL2.has(i.state) && !held(i, parked));
+    const open = Object.values(items).filter((i) => !FINAL2.has(i.state) && !held(i, parked) && !i.id.startsWith("you:") && !i.id.startsWith("open:"));
     return itemsFor(open, sid, this.mainId());
   }
   redirect(o) {
@@ -17778,7 +17778,7 @@ function askerAlive(id) {
   return !!r && !r.endedAt && recAlive(r);
 }
 function sweep2(now = Date.now(), alive = askerAlive) {
-  const gone = Object.values(snapshot2()).filter((i) => i.id.startsWith("relay:") && i.state === "pending" && (!alive(i.id) || now - (i.ts ?? now) > 86400000));
+  const gone = Object.values(snapshot2()).filter((i) => i.id.startsWith("relay:") && i.state === "pending" && (!alive(i.id) || now - (i.ts ?? now) > 86400000) || (i.id.startsWith("you:") || i.id.startsWith("open:")) && (i.state === "pending" || i.state === "later"));
   if (!gone.length)
     return 0;
   withStore2((items, t) => {
