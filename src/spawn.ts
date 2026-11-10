@@ -30,6 +30,7 @@ import { refuseBot } from "./ui-extra/bots.ts"
 import * as bgx from "./attention/background.ts"
 import * as Park from "./attention/park.ts"
 import { focusSession } from "./attention/show.ts"
+import * as F from "./attention/focus.ts"
 import * as St from "./attention/staffing.ts"
 import type { View } from "./attention/dispose.ts"
 import { request } from "./client.ts"
@@ -554,6 +555,16 @@ export function show(o: { name: string; cwd: string; env?: NodeJS.ProcessEnv; by
     return { ok: false, text: `◢ crosstalk: no background agent called ${o.name}.${bg.length ? ` Running in the background: ${bg.join(", ")}.` : ""}` }
   }
   if (!tmuxHas(session, env)) return { ok: false, text: `◢ crosstalk: ${rec?.name ?? session} is not running any more.` }
+  // Already showing in a tab: that tab, in front, never a second one.
+  const clients = spawnSync("tmux", ["-L", TMUX_SOCKET, "list-clients", "-t", `=${session}`, "-F", "#{client_tty}"], { encoding: "utf8", env: cleanEnv(env), timeout: 2000 })
+  const tty = clients.status === 0 ? String(clients.stdout).trim().split("\n")[0] : ""
+  if (tty) {
+    let front = false
+    try {
+      front = F.focusTerm({ tty, ...(env.TERM_PROGRAM ? { program: env.TERM_PROGRAM } : {}) } as any, F.liveSys(env)).ok
+    } catch {}
+    return { ok: true, text: `◢ crosstalk: ${rec?.name ?? session} is open in a tab already${front ? "; brought it to the front" : ` (${tty})`}.` }
+  }
   const r = openForRepo([{ cwd: rec?.cwd ?? o.cwd, argv: attachArgv(session), name: session, thread: rec?.thread }], { cwd: rec?.cwd ?? o.cwd, envVars: env, by: o.by, thread: rec?.thread })
   if (r.opened.kind === "manual") return { ok: true, text: `◢ crosstalk: this terminal cannot open a tab from outside. To watch ${session}, run:\n  ${R.shq("tmux")} -L ${TMUX_SOCKET} attach -t ${R.shq("=" + session)}` }
   if (!r.ok) return { ok: false, text: `◢ crosstalk: could not open a tab for ${session}: ${r.out.split("\n").pop()}` }
