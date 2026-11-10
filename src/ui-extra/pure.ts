@@ -482,3 +482,46 @@ export function baseName(name: string): string {
   }
   return s.trim() || name.trim()
 }
+
+// --- the inbox, as main's pane draws it (mod/draw.tsx inboxTree) -----------------------------
+
+export type InboxRowItem = InboxItem & { kind: string; question?: string; text?: string; from?: string; thread?: string; options?: string[]; auto?: boolean; state: string; raisedAt?: number }
+
+/** How long a snoozed row stays out of the inbox. */
+export const SNOOZE_MS = 2 * 3_600_000
+
+/** What sits in the inbox: waiting on the person, not settled, not sent by itself, not snoozed. */
+export function inboxItems<T extends InboxRowItem>(items: T[], now: number): T[] {
+  return inboxOrder(
+    items.filter(
+      (i) => (i.state === "pending" || (i.state === "later" && now - (i.raisedAt ?? 0) >= SNOOZE_MS)) && !i.auto && !/^(tackle|you|open):/.test(i.id),
+    ),
+    now,
+  )
+}
+
+/** Its kind, at a glance: a permission, a question, a message, a merge, an agent going in circles. */
+export function inboxGlyph(it: Pick<InboxRowItem, "id" | "kind">): string {
+  if (it.id.startsWith("attn:perm:")) return "🔐"
+  if (it.id.startsWith("attn:merge:")) return "🔀"
+  if (it.id.startsWith("attn:circle:")) return "🔁"
+  if (it.kind === "message" || it.kind === "ask") return "💬"
+  if (it.kind === "restore") return "↺"
+  return "❓"
+}
+
+/** One row: what it is in a few words, and where it is from and how long it has waited. */
+export function inboxRow(it: InboxRowItem, now: number, max = 60): { glyph: string; title: string; meta: string } {
+  const raw = it.kind === "message" || it.kind === "ask" ? `${it.from ?? "someone"}: ${it.text ?? ""}` : (it.question ?? it.text ?? "crosstalk has a question")
+  const title = shortQuestion(raw, max)
+  const where = it.thread ? `${dotFor(it.thread)} ${it.thread}` : it.from && it.kind !== "message" && it.kind !== "ask" ? it.from : ""
+  const mins = Math.max(0, Math.round((now - it.createdAt) / 60_000))
+  const age = mins < 1 ? "now" : mins < 60 ? `${mins}m` : mins < 1440 ? `${Math.round(mins / 60)}h` : `${Math.round(mins / 1440)}d`
+  return { glyph: inboxGlyph(it), title, meta: [where, age].filter(Boolean).join(" · ") }
+}
+
+/** The choices an open row offers, on keys 1 to 4: the item's own, else a message's. */
+export function inboxChoices(it: Pick<InboxRowItem, "kind" | "options">): string[] {
+  if (it.kind === "message" || it.kind === "ask") return cardOptions(it.kind).filter((o) => o !== MORE)
+  return (it.options?.length ? it.options : ["Not now"]).slice(0, 4)
+}

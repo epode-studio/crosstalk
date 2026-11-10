@@ -114,11 +114,14 @@ you, it asks.
   back. Only an agent stuck on a permission still reaches you.
 - *"Restore them."* After a restart or a crash, every session back in its
   tab, mid-conversation. The session you ask from becomes your main one.
-- *"Make this the main session."* Your inbox: every question, from crosstalk,
-  your teammates and your agents' own, comes here one at a time, the most
-  pressing first, with what you need to answer it. Answering closes it and the
-  next one comes up. Its pane shows the inbox, your agents, pull requests,
-  credit usage and what just happened.
+- *"Make this the main session."* Your inbox, the way Linear's works: every
+  question, from crosstalk, your teammates and your agents' own, is one row in
+  its pane, the most pressing first, with where it is from and how long it has
+  waited. Arrows move, Enter opens one in place with what you need to answer it,
+  1 to 4 answer, s snoozes it for two hours, e marks it done. Nothing pops up
+  over your work except what stops an agent (a permission, a question it is
+  blocked on). Below the inbox: your agents, pull requests, credit usage and
+  what just happened.
 
 **More hands**
 - *"Put two more agents on auth."* Each gets its own copy of the code and

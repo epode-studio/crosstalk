@@ -100,6 +100,8 @@ declare module 'claude-code' {
       paneError: string
       /** The digest's one line at a pause; empty when there is none. */
       digest: string
+      /** The inbox row the person opened in main's pane; empty: the first. */
+      inboxOpen: string
     }
   }
 }

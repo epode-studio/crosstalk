@@ -340,3 +340,30 @@ describe("invite words", () => {
     expect(people.scrub("phrase cherry-horn-cataract-redwing", "3644-cherry-horn-cataract-redwing")).toBe("phrase [the words]")
   })
 })
+
+describe("main's inbox rows", () => {
+  const NOW = 1_800_000_000_000
+  const it = (o: any) => ({ id: "x", kind: "attention", state: "pending", createdAt: NOW - 60_000, ...o })
+  test("what waits, most pressing first; never one sent by itself, an old to-do, or one snoozed under two hours", () => {
+    const rows = pure.inboxItems(
+      [
+        it({ id: "msg:1", kind: "message", createdAt: NOW - 3_600_000 }),
+        it({ id: "attn:perm:a" }),
+        it({ id: "tackle:a:1", auto: true }),
+        it({ id: "you:a:1" }),
+        it({ id: "relay:a:1", state: "later", raisedAt: NOW - 30 * 60_000 }),
+        it({ id: "relay:b:1", state: "later", raisedAt: NOW - 3 * 3_600_000 }),
+        it({ id: "done:1", state: "answered" }),
+      ],
+      NOW,
+    )
+    expect(rows.map((r: any) => r.id).sort()).toEqual(["attn:perm:a", "msg:1", "relay:b:1"])
+    expect(rows.at(-1).id).toBe("msg:1") // a message comes after what stops an agent
+  })
+  test("a row: its kind, what it is, where from and how long ago; an open one's choices", () => {
+    expect(pure.inboxRow(it({ id: "attn:merge:u", question: "auth · PR #12 is green. Merge it?", thread: "auth", createdAt: NOW - 2 * 3_600_000 }), NOW)).toEqual({ glyph: "🔀", title: "auth · PR #12 is green. Merge it?", meta: `${pure.dotFor("auth")} auth · 2h` })
+    expect(pure.inboxRow(it({ kind: "message", from: "marie", text: "the token format changed" }), NOW).title).toBe("marie: the token format changed")
+    expect(pure.inboxChoices({ kind: "attention", options: ["A", "B", "C", "D", "E"] })).toEqual(["A", "B", "C", "D"])
+    expect(pure.inboxChoices({ kind: "message" })).not.toContain(pure.MORE)
+  })
+})

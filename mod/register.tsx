@@ -72,14 +72,17 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Item, Pane } from './types'
-import { HANDED_PROMPT, LATER, MORE, MORE_OPTIONS, MUTE, OPEN_THREAD, cardOptions, dotFor, inboxOrder, parseAt, statusLine, takesAt } from '../src/ui-extra/pure.ts'
-import { bandTree, paneTree } from './draw.tsx'
+import { HANDED_PROMPT, LATER, MORE, MORE_OPTIONS, MUTE, OPEN_THREAD, cardOptions, dotFor, inboxItems, inboxOrder, parseAt, statusLine, takesAt } from '../src/ui-extra/pure.ts'
+import { bandTree, inboxTree, paneTree } from './draw.tsx'
 
 const items = atom({ plugin: 'crosstalk', key: 'items' } as const, [])
 const receipts = atom({ plugin: 'crosstalk', key: 'receipts' } as const, [])
 const paneAtom = atom({ plugin: 'crosstalk', key: 'pane' } as const, null as Pane | null)
 const paneError = atom({ plugin: 'crosstalk', key: 'paneError' } as const, '')
 const digestAtom = atom({ plugin: 'crosstalk', key: 'digest' } as const, '')
+const inboxOpen = atom({ plugin: 'crosstalk', key: 'inboxOpen' } as const, '')
+/** Main's pane is up with its inbox: what can wait sits there instead of taking the keyboard. */
+let inboxShown = false
 
 const PANE_ID = 'thread'
 
@@ -260,7 +263,8 @@ async function openPane($: EngineInterface, thread: string | undefined): Promise
   const gen = ++paneGen
   await update($, paneError, () => '')
   void followPane($, gen, thread)
-  const r = await $.ui.open({ id: PANE_ID, title: thread ? `${dotFor(thread)} ${thread}` : '◢ thread' }).catch(() => ({ isPlaced: false }))
+  const r = await $.ui.open({ id: PANE_ID, title: thread ? `${dotFor(thread)} ${thread}` : '◢ inbox' }).catch(() => ({ isPlaced: false }))
+  inboxShown = !thread && !!mainTotals && r.isPlaced
   return r.isPlaced
 }
 
@@ -402,6 +406,8 @@ async function maybeRaise($: EngineInterface) {
         if (typeof c.nudge === 'string') $.ui.toast(c.nudge)
       }
     }
+    // Main's inbox is on screen: what can wait waits there, as in any inbox; only what stops an agent asks.
+    if (inboxShown) allow = false
     const queue = inboxOrder(candidates.filter(i => urgent(i) || allow), now0)
     const next = own ?? queue[0]
     if (!next) return
@@ -777,6 +783,7 @@ export const register: Register = on => {
     if (e.id === PANE_ID) {
       paneGen++
       paneThread = undefined
+      inboxShown = false
     }
     return next(e)
   }).catch(($, e, next) => next(e))
@@ -784,7 +791,18 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($, e) => {
     const p = await read($, paneAtom)
     const problem = await read($, paneError)
-    return paneTree($.ui.resolve(e), p, problem, await $.clock.now())
+    const now = await $.clock.now()
+    const E = $.ui.resolve(e)
+    // Main's overview: the inbox, Linear's way (draw.tsx inboxTree), answered through the pickers' own paths.
+    const inbox = p?.agents
+      ? inboxTree(E, inboxItems(await read($, items), now), (await read($, inboxOpen)) || undefined, now, {
+          open: id => void update($, inboxOpen, () => id),
+          choose: (it, c) => void answered($, it, c),
+          snooze: it => void step($, it, 'later').then(() => $.ui.toast('snoozed for 2 hours')),
+          done: it => void step($, it, 'mute'),
+        })
+      : undefined
+    return paneTree(E, p, problem, now, inbox)
   })
 
   // crosstalk's own deliveries into the inbox (a notice, a route question, a
@@ -820,6 +838,16 @@ export const register: Register = on => {
     const open = await read($, items)
     const digest = await read($, digestAtom)
     if (open.length === 0 && !digest) return next(e)
+    if (inboxShown) {
+      const n = inboxItems(open, await $.clock.now()).length
+      if (!n) return next(e)
+      const { Text } = $.ui.resolve(e)
+      return (
+        <Text dimColor wrap="truncate">
+          ◢ {n} in your inbox · ctrl+x tab to go there
+        </Text>
+      )
+    }
     return bandTree($.ui.resolve(e), open, digest, await $.clock.now(), e.props.bodyColumns, raisable)
   })
 }

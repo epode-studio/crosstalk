@@ -9,10 +9,94 @@
 // on black, so it scans on any theme. No hook, state or I/O in here.
 
 import type { Item, Pane } from './types'
-import { agentAsks, agentLine, ago, dotFor, featureLine, fileLink, historyLine, linkable, noteLine, runningGroups, runningLine, runningWhere } from '../src/ui-extra/pure.ts'
+import { agentAsks, agentLine, ago, dotFor, featureLine, fileLink, historyLine, inboxChoices, inboxRow, linkable, noteLine, runningGroups, runningLine, runningWhere } from '../src/ui-extra/pure.ts'
 
-/** The elements these trees are made of: the surface's own Box, Text and Link. */
-export type Els = { Box: any; Text: any; Link: any }
+/** The elements these trees are made of: the surface's own Box, Text and Link, and Button where a tree takes presses. */
+export type Els = { Box: any; Text: any; Link: any; Button?: any }
+
+/** What the inbox's presses do: register.tsx answers them through the same paths as its pickers. */
+export type InboxActions = {
+  open: (id: string) => void
+  choose: (it: Item, choice: string) => void
+  snooze: (it: Item) => void
+  done: (it: Item) => void
+}
+
+/**
+ * The inbox, as Linear's: one row per thing waiting on the person, most pressing
+ * first, each its kind, what it is, where it is from and how long it has waited.
+ * Arrows move, Enter opens a row in place: its context, its choices on 1 to 4,
+ * s to snooze it and e to mark it done. The first row is open to begin with.
+ */
+export function inboxTree(E: Els, rows: Item[], openId: string | undefined, now: number, on: InboxActions) {
+  const { Box, Text, Button } = E
+  if (!rows.length)
+    return (
+      <Box flexDirection="column">
+        <Text bold>Inbox</Text>
+        <Text dimColor> Nothing needs you.</Text>
+      </Box>
+    )
+  const openKey = (rows.find(r => r.id === openId) ?? rows[0])?.id
+  return (
+    <Box flexDirection="column">
+      <Text bold>
+        Inbox <Text dimColor>· {rows.length}</Text>
+      </Text>
+      {rows.map((it, i) => {
+        const r = inboxRow(it as any, now)
+        const isOpen = it.id === openKey
+        const context = clean((it.kind === 'message' || it.kind === 'ask' ? '' : (it.text ?? '')).trim()).slice(0, 420)
+        return (
+          <Box key={`box:${it.id}`} flexDirection="column" marginTop={isOpen && i > 0 ? 1 : 0}>
+            {Button ? (
+              <Button key={`row:${it.id}`} plain onPress={() => on.open(it.id)} {...(i === 0 ? { autoFocus: true } : {})}>
+                {isOpen ? '▸ ' : '  '}
+                {r.glyph} {isOpen ? <Text bold>{clean(r.title)}</Text> : clean(r.title)} <Text dimColor>{clean(r.meta)}</Text>
+              </Button>
+            ) : (
+              <Text wrap="truncate">
+                {isOpen ? '▸ ' : '  '}
+                {r.glyph} {clean(r.title)} <Text dimColor>{clean(r.meta)}</Text>
+              </Text>
+            )}
+            {isOpen ? (
+              <Box flexDirection="column" marginLeft={4} marginBottom={1}>
+                {it.kind === 'message' || it.kind === 'ask' ? (
+                  <Text wrap="wrap">{clean(it.text ?? '').slice(0, 420)}</Text>
+                ) : r.title !== clean(it.question ?? '') && it.question ? (
+                  <Text wrap="wrap">{clean(it.question)}</Text>
+                ) : null}
+                {context ? (
+                  <Text dimColor wrap="wrap">
+                    {context}
+                  </Text>
+                ) : null}
+                {Button ? (
+                  <Box flexDirection="row" flexWrap="wrap">
+                    {inboxChoices(it as any).flatMap((c, n) => [
+                      <Button key={`choice:${it.id}:${n}`} plain hotkey={String(n + 1)} onPress={() => on.choose(it, c)}>
+                        {clean(c)}
+                      </Button>,
+                      <Text key={`gap:${it.id}:${n}`}>{'   '}</Text>,
+                    ])}
+                    <Button key={`snooze:${it.id}`} plain dimColor hotkey="s" onPress={() => on.snooze(it)}>
+                      snooze
+                    </Button>
+                    <Text key={`gap:${it.id}:s`}>{'   '}</Text>
+                    <Button key={`done:${it.id}`} plain dimColor hotkey="e" onPress={() => on.done(it)}>
+                      done
+                    </Button>
+                  </Box>
+                ) : null}
+              </Box>
+            ) : null}
+          </Box>
+        )
+      })}
+    </Box>
+  )
+}
 
 export const FRAME = 'inactive'
 export const SENDER = 'claude'
@@ -46,7 +130,7 @@ function size(bytes: number | undefined): string {
  * what is waiting, then Notes, Features, Running (by kind), recent messages
  * and History. `problem`: what the pane could not show.
  */
-export function paneTree(E: Els, p: Pane | null, problem: string, now: number) {
+export function paneTree(E: Els, p: Pane | null, problem: string, now: number, inbox?: any) {
   const { Box, Text, Link } = E
   if (!p)
     return (
@@ -64,19 +148,25 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number) {
           </Text>
           <Text dimColor> · {clean(p.status)}</Text>
         </Text>
-        <Box flexDirection="column" marginTop={1}>
-          <Text bold>Needs you{p.inbox?.length ? ` · ${p.inbox.length}` : ''}</Text>
-          {p.inbox?.length ? (
-            p.inbox.map((l, i) => (
-              <Text key={`i${i}`} wrap="truncate" bold={i === 0}>
-                {' '}
-                {i + 1}. {clean(l)}
-              </Text>
-            ))
-          ) : (
-            <Text dimColor> nothing right now</Text>
-          )}
-        </Box>
+        {inbox ? (
+          <Box flexDirection="column" marginTop={1}>
+            {inbox}
+          </Box>
+        ) : (
+          <Box flexDirection="column" marginTop={1}>
+            <Text bold>Needs you{p.inbox?.length ? ` · ${p.inbox.length}` : ''}</Text>
+            {p.inbox?.length ? (
+              p.inbox.map((l, i) => (
+                <Text key={`i${i}`} wrap="truncate" bold={i === 0}>
+                  {' '}
+                  {i + 1}. {clean(l)}
+                </Text>
+              ))
+            ) : (
+              <Text dimColor> nothing right now</Text>
+            )}
+          </Box>
+        )}
         {p.agents.length ? (
           <Box flexDirection="column" marginTop={1}>
             <Text bold>Working · {p.agents.length}</Text>

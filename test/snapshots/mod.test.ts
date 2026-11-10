@@ -161,3 +161,41 @@ describe("the status line", () => {
     snapshot("status-line", cases.map(([what, o]) => `${what}\n  ${statusLine(o) ?? "(no status line)"}`).join("\n") + "\n")
   })
 })
+
+describe("main's inbox", () => {
+  const NOW0 = Date.parse("2026-11-10T12:00:00Z")
+  const it = (o: Partial<Item>): Item => ({ id: "x", kind: "attention", sessionId: "main", state: "pending", createdAt: NOW0 - 5 * 60_000, updatedAt: NOW0, ...o }) as Item
+  const ROWS: Item[] = [
+    it({ id: "attn:perm:s1", question: "Allow api to run `npm install`?", thread: "api", options: ["Allow", "Deny"], createdAt: NOW0 - 60_000 }),
+    it({ id: "attn:merge:u1@1", question: "auth · PR #12 is green and approved. Merge it?", thread: "auth", text: "Checks passed 3 min ago.", options: ["Merge it", "Not yet", "Always merge my green PRs"] }),
+    it({ id: "msg:1", kind: "message", from: "marie", thread: "billing", text: "token format changed, see the diff", createdAt: NOW0 - 3 * 3_600_000 }),
+  ]
+  // A press is the engine's: here a Button is drawn as its hotkey and label, as the terminal's plain one reads.
+  const asText = (n: any): any =>
+    Array.isArray(n) ? n.map(asText) : n && typeof n === "object" && n.type === "Button"
+      ? { type: "Text", props: { dimColor: n.props.dimColor, children: [n.props.hotkey ? `${n.props.hotkey}: ` : "", ...asText(n.props.children ?? [])] } }
+      : n && typeof n === "object" && n.props ? { ...n, props: { ...n.props, children: asText(n.props.children ?? []) } } : n
+  const noop = { open: () => {}, choose: () => {}, snooze: () => {}, done: () => {} }
+  const E = { ...ELS, Button: "Button" }
+
+  test("one row each, most pressing first; the open one shows its context and choices on 1 to 4, s and e", () => {
+    const tree = D.inboxTree(E, ROWS, undefined, NOW0, noop)
+    snapshot("inbox-dark-70", frame("inbox · dark · 70 cols", asText(tree), 70, "dark"))
+    const open = frame("inbox · second open", asText(D.inboxTree(E, ROWS, "attn:merge:u1@1", NOW0, noop)), 100, "dark")
+    expect(open).toContain("1: Merge it")
+    expect(open).toContain("s: snooze")
+    expect(open).toContain("e: done")
+    expect(frame("inbox · empty", D.inboxTree(E, [], undefined, NOW0, noop), 70, "dark")).toContain("Nothing needs you.")
+  })
+
+  test("a press answers through the actions it is given", () => {
+    const seen: string[] = []
+    const on = { open: (id: string) => seen.push(`open ${id}`), choose: (_: Item, c: string) => seen.push(`choose ${c}`), snooze: () => seen.push("snooze"), done: () => seen.push("done") }
+    const buttons: any[] = []
+    const walk = (n: any) => (Array.isArray(n) ? n.forEach(walk) : n && typeof n === "object" && n.props ? (n.type === "Button" && buttons.push(n), walk(n.props.children ?? [])) : null)
+    walk(D.inboxTree(E, ROWS, undefined, NOW0, on))
+    for (const b of buttons) b.props.onPress({})
+    expect(seen).toEqual(["open attn:perm:s1", "choose Allow", "choose Deny", "snooze", "done", "open attn:merge:u1@1", "open msg:1"])
+    expect(buttons.filter((b) => b.props.hotkey).map((b) => b.props.hotkey)).toEqual(["1", "2", "s", "e"])
+  })
+})
