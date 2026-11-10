@@ -84,7 +84,7 @@ export function createAttention(o: {
       return r
     },
     drainQueue: () => {
-      const working = spawn.readSpawned().filter((r) => r.background && !r.removedAt && !!r.tmux && spawn.tmuxHas(r.tmux)).length
+      const working = spawn.agentsAtWork().length
       const started = Park.drain(working, (x) => spawn.spawnAgents({ task: x.task, name: x.name, cwd: x.cwd, by: x.by, background: true, thread: x.thread as any, noQueue: true }).agents.length > 0, {
         threadOf: (x) => (x.thread as { name?: string } | undefined)?.name,
       })

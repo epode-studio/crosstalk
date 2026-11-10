@@ -389,7 +389,7 @@ export function spawnAgents(o: {
     return { ok: false, text: "◢ crosstalk: background agents run in tmux, which is not installed here. Install tmux, or start the agent in a tab instead.", agents: [] }
   // At most N agents at once: past it, a background agent waits its turn and starts by itself when one ends.
   if (o.background && !o.noQueue) {
-    const working = readSpawned().filter((r) => r.background && !r.removedAt && !!r.tmux && tmuxHas(r.tmux, env)).map((r) => r.name)
+    const working = agentsAtWork(env).map((r) => r.name)
     const max = Park.wipMax(env)
     if (working.length + Math.max(1, o.count ?? 1) > max) {
       let n = 0
@@ -566,4 +566,15 @@ export function claim(sessionId: string, cwd: string): SpawnRec | null {
   if (!rec) return null
   if (rec.sessionId !== sessionId) writeSpawned({ ...rec, sessionId })
   return rec
+}
+
+/** Every agent crosstalk started that is at work now: in the background (its tmux session lives) or in a tab (its session runs). One count for the cap. */
+export function agentsAtWork(env: NodeJS.ProcessEnv = process.env, recs = readSpawned()): SpawnRec[] {
+  return recs.filter((r) => {
+    if (r.removedAt) return false
+    if (r.background) return !!r.tmux && tmuxHas(r.tmux, env)
+    if (!r.sessionId) return false
+    const rec = R.readOne(r.sessionId)
+    return !!rec && !rec.endedAt && R.recAlive(rec)
+  })
 }

@@ -520,6 +520,7 @@ describe("service", () => {
     ana.svc.observe(sess("t", "main", ["src/auth/a.ts", "src/auth/b.ts", "src/auth/c.ts"]))
     expect(ana.svc.title("t", "api-2")).toBe("auth · api-2")
     expect(ana.svc.title("t", "🟣 auth · 🟣 auth · ⏳ api-2")).toBe("auth · api-2")
+    expect(ana.svc.title("t", "auth-2")).toBe("auth-2") // named for it already: not "auth · auth-2"
   })
 
   test("ambiguity is one question, and the answer sticks", () => {

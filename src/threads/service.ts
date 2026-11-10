@@ -290,7 +290,10 @@ export class ThreadService {
   title(sessionId: string, name: string): string | undefined {
     // One thread, and the session's own name: never a title built on the last title (pure.ts baseName).
     const names = [...new Set(this.namesFor(sessionId))]
-    return names.length ? `${names[0]} · ${baseName(name)}` : undefined
+    if (!names.length) return undefined
+    // "auth-2" in auth is already named for it: "auth-2", not "auth · auth-2".
+    const own = baseName(name)
+    return own.toLowerCase().startsWith(names[0]!.toLowerCase()) ? own : `${names[0]} · ${own}`
   }
 
   /** The repository a local session is working in now, as its footprint says. */
