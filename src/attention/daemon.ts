@@ -1,8 +1,12 @@
 // Sessions and attention, plugged into the daemon: the service over the
 // daemon's sessions and threads, and the few things daemon.ts calls.
 
+import fs from "node:fs"
 import path from "node:path"
 import { P } from "../config.ts"
+import { pluginVersion } from "../client.ts"
+import * as R from "../restore.ts"
+import * as Main from "../main.ts"
 import type { ThreadService } from "../threads/service.ts"
 import type { Coordinator } from "../coordinator.ts"
 import * as spawn from "../spawn.ts"
@@ -50,6 +54,30 @@ export function createAttention(o: {
       return r
     },
     background: backgroundOf,
+    version: pluginVersion(o.root) || undefined,
+    installedAt: firstRun(pluginVersion(o.root)),
+    // Main onto the new version: closed (archived) and resumed in a new tab, the same session and
+    // conversation, made main again once it is back.
+    handover: async (sid) => {
+      const d = Ctl.liveDeps()
+      const l = (await Ctl.liveSessions(d)).find((x) => x.id === sid)
+      if (!l) return { ok: false, text: "main is not open" }
+      const c = await Ctl.close(l, { services: "keep" }, d)
+      if (!c.ok) return c
+      const r = await Ctl.resume(sid, { cwd: l.cwd }, d)
+      if (r.ok)
+        void (async () => {
+          for (let i = 0; i < 60; i++) {
+            await new Promise((res) => setTimeout(res, 2000))
+            const rec = R.readOne(sid)
+            if (rec && rec.pid !== l.pid && R.recAlive(rec)) {
+              Main.setMain(true, { sessionId: sid, name: l.name, pid: rec.pid })
+              return
+            }
+          }
+        })()
+      return r
+    },
     drainQueue: () => {
       const working = spawn.readSpawned().filter((r) => r.background && !r.removedAt && !!r.tmux && spawn.tmuxHas(r.tmux)).length
       const started = Park.drain(working, (x) => spawn.spawnAgents({ task: x.task, name: x.name, cwd: x.cwd, by: x.by, background: true, thread: x.thread as any, noQueue: true }).agents.length > 0, {
@@ -76,4 +104,22 @@ export function createAttention(o: {
       }
     },
   })
+}
+
+/** When this version of crosstalk first ran here: sessions started before it run an older one. */
+export function firstRun(version: string, now = Date.now()): number | undefined {
+  if (!version) return undefined
+  const f = path.join(P.root, "versions.json")
+  let seen: Record<string, number> = {}
+  try {
+    seen = JSON.parse(fs.readFileSync(f, "utf8"))
+  } catch {}
+  if (typeof seen[version] === "number") return seen[version]
+  // A minute's grace: the session whose hook started this daemon began just before it.
+  seen[version] = now - 60_000
+  try {
+    fs.mkdirSync(P.root, { recursive: true, mode: 0o700 })
+    fs.writeFileSync(f, JSON.stringify(seen), { mode: 0o600 })
+  } catch {}
+  return seen[version]
 }

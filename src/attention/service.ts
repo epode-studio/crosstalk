@@ -58,6 +58,7 @@ import { BG_ENV } from "./background.ts"
 import * as PP from "../services/postpone.ts"
 import * as Relay from "./relay.ts"
 import * as Park from "./park.ts"
+import * as HO from "./handover.ts"
 
 export type Reg = { sessionId: string; name: string; cwd: string; transcript?: string; pid?: number; seenAt?: number }
 
@@ -79,6 +80,11 @@ export type Deps = {
   spawn: (o: { task: string; name: string; cwd: string; by?: string; background: boolean; noTab?: boolean; thread?: { id: string; name: string; view?: ReturnType<typeof M.view> } }) => { ok: boolean; text: string; agents: { name: string }[] }
   /** Whether a background agent is still running (crosstalk's tmux has its session). */
   agentAlive?: (name: string) => boolean
+  /** After an update: restart main on the new version (close, then resume it; src/attention/handover.ts). */
+  handover?: (sessionId: string) => Promise<{ ok: boolean; text: string }>
+  /** This crosstalk's version, and when it was first run here (what is older runs the old one). */
+  version?: string
+  installedAt?: number
   /** Close one of the person's sessions (archived, resumable): src/sessions/control.ts close. */
   closeSession?: (sessionId: string) => Promise<{ ok: boolean; text: string }>
   /** Whether something a session started still runs (a dev server, a watcher). */
@@ -127,6 +133,8 @@ type State = {
   lastFocus?: Record<string, number>
   /** What each session had cost at its last edit, for spotting one going in circles. */
   spendAtEdit?: Record<string, { usd: number; at: number; editAt: number; asked?: number }>
+  /** The main session moved onto a version, as `sessionId@version`: once per version. */
+  handedOver?: string
   /** Sessions whose own hook said they are a background agent (CROSSTALK_BG_AGENT). */
   bg: Record<string, string>
   /**
@@ -328,6 +336,7 @@ export class AttentionService {
       if (this.now() - this.lastWorkCheck >= Math.max(0, Number(this.env.CROSSTALK_WORK_EVERY_MS ?? 60_000))) {
         this.lastWorkCheck = this.now()
         this.workBoard()
+        void this.handover()
         // Agents that waited their turn (src/attention/park.ts): started while there is room.
         try {
           for (const n of this.d.drainQueue?.() ?? []) this.d.log(`attention: ${n} had waited its turn and has started`)
@@ -776,6 +785,31 @@ export class AttentionService {
   }
 
   // --- finished sessions close themselves (src/attention/autoclose.ts) --------------------
+
+  private handing = false
+
+  /** After an update, main moves onto the new version at a quiet moment (src/attention/handover.ts). */
+  async handover() {
+    if (this.handing || !this.d.handover || !this.d.version) return
+    const sid = this.d.mainId()
+    if (!sid) return
+    const s = this.d.sessions().get(sid)
+    const front = this.st.focus.sessionId ?? this.focused()?.sessionId
+    const main = { sessionId: sid, startedAt: R.readOne(sid)?.startedAt, seenAt: s?.seenAt, status: this.d.status(sid) ?? "", inFront: front === sid }
+    if (!HO.due({ main, installedAt: this.d.installedAt, version: this.d.version, done: this.st.handedOver, now: this.now(), env: this.env })) return
+    this.handing = true
+    this.st.handedOver = `${sid}@${this.d.version}`
+    this.save()
+    try {
+      const r = await this.d.handover(sid)
+      if (r.ok) recordEvent(HO.line(this.d.version), this.now())
+      this.d.log(`handover: ${r.ok ? "main restarted on" : "could not restart main on"} ${this.d.version}: ${r.text}`)
+    } catch (e) {
+      this.d.log(`handover: ${(e as Error).message}`)
+    } finally {
+      this.handing = false
+    }
+  }
 
   /** A session's work shipped: it closes once idle. */
   markShipped(sessionId: string) {
