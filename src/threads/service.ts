@@ -1077,6 +1077,11 @@ export class ThreadService {
     return ids.map((x) => this.thread(x)).find((t): t is M.Thread => !!t && !!M.noteOf(t, id, kind))
   }
 
+  /** The thread that keeps task `id`: the session's own first, then any thread this machine knows. */
+  taskHolder(sessionId: string | undefined, id: string): M.Thread | undefined {
+    return (sessionId ? this.holding(sessionId, id, "task") : undefined) ?? this.holding(undefined, id, "task")
+  }
+
   /** A fact still holds: whoever says so stands behind it, as with facts kept outside threads. */
   confirmFact(sessionId: string | undefined, o: { id: string; thread?: string }) {
     const t = this.holding(sessionId, o.id, "fact", o.thread)
@@ -1105,7 +1110,10 @@ export class ThreadService {
   }
 
   task(sessionId: string | undefined, o: { text?: string; id?: string; op: "add" | "claim" | "done"; note?: string; thread?: string }) {
-    const t = this.target(sessionId, o.thread)
+    // A task is finished by its id wherever it is kept: the session may have moved to
+    // another worktree, and so another thread, since it was handed the task.
+    const holder = o.op !== "add" && !o.thread && o.id ? this.taskHolder(sessionId, o.id) : undefined
+    const t = holder ?? this.target(sessionId, o.thread)
     if ("error" in t) return { ok: false as const, error: t.error }
     const now = this.now()
     if (o.op === "add") {
