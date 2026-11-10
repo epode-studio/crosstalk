@@ -163,9 +163,9 @@ describe("chasing what waits", () => {
 
 describe("saying items were kept", () => {
   test("at most once an hour per session", () => {
-    expect(O.mayRemind("r1", 1_000_000)).toBe(true)
-    expect(O.mayRemind("r1", 1_000_000 + 60_000)).toBe(false)
-    expect(O.mayRemind("r2", 1_000_000 + 60_000)).toBe(true)
-    expect(O.mayRemind("r1", 1_000_000 + 3_600_001)).toBe(true)
+    expect(O.mayRemind("r1", 1_800_000_000_000)).toBe(true)
+    expect(O.mayRemind("r1", 1_800_000_000_000 + 60_000)).toBe(false)
+    expect(O.mayRemind("r2", 1_800_000_000_000 + 60_000)).toBe(true)
+    expect(O.mayRemind("r1", 1_800_000_000_000 + 3_600_001)).toBe(true)
   })
 })
