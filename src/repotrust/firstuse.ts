@@ -30,7 +30,7 @@ import { ownLogin } from "./github.ts"
 export const CONNECT = "Connect"
 export const NOT_HERE = "Not in this repo"
 
-type Entry = { state: "asked" | "yes" | "no"; at: number; session?: string; cwd?: string }
+type Entry = { state: "asked" | "yes" | "no"; at: number; session?: string; cwd?: string; /** How many times it was asked. */ times?: number }
 type State = { v: 1; repos: Record<string, Entry> }
 
 const FILE = () => path.join(ROOT, "repotrust", "firstuse.json")
@@ -76,7 +76,7 @@ export const allowed = (slug: string) => !off() && consent(slug) === "yes"
 export const connectId = (slug: string) => `connect:${slug}`
 
 export const questionText = (slug: string) =>
-  `Connect with your team in ${slug}? This publishes your public key and GitHub login on a hidden ref in this repo.`
+  `Let teammates in ${slug} reach you through crosstalk? It shares your GitHub name and a public key in the repository, nothing else.`
 
 /**
  * The first-use question for a session starting in `cwd`, at most once per
@@ -87,8 +87,11 @@ export async function offer(cwd: string, sessionId: string, now = Date.now()): P
   const repo = await findRepo(cwd).catch(() => null)
   if (!repo) return null
   const s = load()
-  if (consent(repo.slug, s) || s.repos[repo.slug]) return null
-  s.repos[repo.slug] = { state: "asked", at: now, session: sessionId, cwd: repo.top }
+  const was = s.repos[repo.slug]
+  // Unanswered (missed, dismissed): asked again a day later, three times at most, never more often.
+  const again = was?.state === "asked" && now - was.at > 86_400_000 && (was.times ?? 1) < 3
+  if (consent(repo.slug, s) || (was && !again)) return null
+  s.repos[repo.slug] = { state: "asked", at: now, session: sessionId, cwd: repo.top, times: (was?.times ?? 0) + 1 }
   save(s)
   return { slug: repo.slug, question: questionText(repo.slug) }
 }

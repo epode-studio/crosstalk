@@ -296,7 +296,7 @@ cara() { # the third machine: no identity, trust through the repo on
 }
 start_hook() { echo "{\"session_id\":\"$1\",\"cwd\":\"$2\",\"hook_event_name\":\"SessionStart\",\"source\":\"startup\"}" | cara bun src/hook.ts 2>&1; }
 H1=$(start_hook c1 "$R/rt")
-has "$(field "$H1" 'r.systemMessage')" "Connect with your team in local/rt? This publishes your public key and GitHub login on a hidden ref in this repo." "the first session in a repo asks, with no identity at all"
+has "$(field "$H1" 'r.systemMessage')" "Let teammates in local/rt reach you through crosstalk? It shares your GitHub name and a public key in the repository, nothing else." "the first session in a repo asks, with no identity at all"
 H2=$(start_hook c2 "$R/rt")
 hasnt "$H2" "Connect with your team" "a second session in the same repo does not ask again"
 check "$(git -C "$R/rt.git" for-each-ref refs/crosstalk | wc -l | tr -d ' ')" "0" "nothing is pushed before a yes"

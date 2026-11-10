@@ -786,6 +786,8 @@ function connect() {
     if (f.t === "presence") {
       online.clear()
       for (const p of f.peers) online.add(p)
+      // Whoever is back has what was waiting for them (the relay hands it over now).
+      for (const [label, w] of waitingFor) if (online.has(w.fingerprint)) waitingFor.delete(label)
       return
     }
     if (f.t === "deliver") {
@@ -834,6 +836,19 @@ function connect() {
 
 const FAN_OUT = new Set<Kind>(["message", "handoff", "ask", "answer", "decision"])
 
+/** Messages sent to someone who was not on the relay, until they come back: said in Lately if a day passes. */
+const waitingFor = new Map<string, { count: number; since: number; fingerprint: string }>()
+setInterval(() => {
+  for (const [label, w] of waitingFor)
+    if (Date.now() - w.since > 20 * 3_600_000) {
+      waitingFor.delete(label)
+      try {
+        ciMod.recordEvent(`${w.count} message${w.count === 1 ? "" : "s"} to ${label} may not have arrived: ${label} has not been online since. Ask them to open crosstalk, or to say "is crosstalk OK?".`)
+      } catch {}
+      log(`messages to ${label} waited a day undelivered`)
+    }
+}, 30 * 60_000).unref?.()
+
 function sendEnvelope(
   peerLabel: string,
   env: Envelope,
@@ -858,7 +873,16 @@ function sendEnvelope(
     }
   // Not on the relay (offline, or their crosstalk cannot reach it): also through a thread both are in,
   // which their crosstalk syncs on its own. Whichever arrives first is kept; the other is a replay.
-  if (FAN_OUT.has(env.kind) && !online.has(peer.fingerprint))
+  // One person, several machines (repo trust): online when any of them is.
+  const reachable = online.has(peer.fingerprint) || repotrust.siblings(peerLabel).some((sib) => {
+    const p = loadPeers()[sib]
+    return !!p && online.has(p.fingerprint)
+  })
+  if (FAN_OUT.has(env.kind) && !reachable) {
+    const w = waitingFor.get(peerLabel)
+    waitingFor.set(peerLabel, { count: (w?.count ?? 0) + 1, since: w?.since ?? Date.now(), fingerprint: peer.fingerprint })
+  }
+  if (FAN_OUT.has(env.kind) && !reachable)
     try {
       const via = threads.mail({ label: peerLabel, fingerprint: peer.fingerprint }, env)
       if (via) {
