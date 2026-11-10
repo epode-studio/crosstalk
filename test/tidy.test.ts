@@ -238,7 +238,7 @@ describe("questions already waiting", () => {
     fs.appendFileSync(f, JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tu1", content: "Pi flat" }] } }) + "\n")
     expect(T.openQuestion(f)).toBe(null)
   })
-  test("main's pane: what needs you (an agent's own question too), then what works; in words", async () => {
+  test("main's pane: what needs you, an agent asking in its own tab said and listed first, then every session; in words", async () => {
     const P = await import("../src/ui-extra/pane.ts")
     const pure = await import("../src/ui-extra/pure.ts")
     const list = [
@@ -251,11 +251,14 @@ describe("questions already waiting", () => {
     if (!out.ok) throw new Error("no pane")
     const lines = pure.paneLines(out.pane, NOW)
     const dot = pure.dotFor("organic-case-shape-brief-design")
-    expect(lines.slice(0, 4)).toEqual(["◢ main · 1 needs you · 1 working", "", "Needs you · 1", ` 1. ${dot} Organic case shape brief… — Keep the Pi flat? (Pi flat / Keep any tilt) (in its tab)`])
-    expect(lines).toContain("Working · 1")
+    // An agent asking in its own tab is said in the header and listed first, never "nothing needs you".
+    expect(lines[0]).toBe("◢ main · 1 asking in its own tab · 1 working")
+    expect(lines).toContain("Sessions · 3")
+    const i = lines.indexOf("Sessions · 3")
+    expect(lines[i + 1]).toContain(`${dot}`)
+    expect(lines[i + 2]).toBe("   asks: Keep the Pi flat? (Pi flat / Keep any tilt)")
     expect(lines.some((l) => l.includes("A module change"))).toBe(true)
-    expect(lines.join("\n")).not.toContain("palpable-") // never a session's id
-    expect(lines.at(-1)).toContain("1 idle")
+    expect(lines.some((l) => l.includes("idle 5 h"))).toBe(true)
   })
 })
 

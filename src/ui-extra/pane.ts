@@ -94,8 +94,6 @@ export function agentsPane(sessionId?: string, list = allAgents(sessionId)): Pan
     // The same rule as the inbox, the status line and the band (pure.ts inboxItems): one count everywhere.
     needs = inboxItems(mine as any, now).map((i: any) => inboxLine(i, now))
   } catch {}
-  // An agent asking in its own tab is in the Sessions list, waiting, with its question under it.
-  void relayed
   let prs: PaneRunning[] = []
   let events: { text: string; at: number }[] = []
   try {
@@ -107,7 +105,15 @@ export function agentsPane(sessionId?: string, list = allAgents(sessionId)): Pan
   try {
     usage = usageLine()
   } catch {}
-  const status = [needs.length ? `${needs.length} need${needs.length === 1 ? "s" : ""} you` : "nothing needs you", working.length ? `${working.length} working` : ""].filter(Boolean).join(" · ")
+  // An agent asking in its own tab waits on the person too: said, never hidden behind "nothing needs you".
+  const asking = others.filter((a) => a.state === "waiting" && a.asks && !(a.sessionId && relayed.has(a.sessionId))).length
+  const status = [
+    needs.length ? `${needs.length} need${needs.length === 1 ? "s" : ""} you` : asking ? "" : "nothing needs you",
+    asking ? `${asking} asking in ${asking === 1 ? "its own tab" : "their own tabs"}` : "",
+    working.length ? `${working.length} working` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ")
   return {
     ok: true,
     pane: {

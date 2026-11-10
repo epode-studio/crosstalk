@@ -308,7 +308,7 @@ export function paneLines(p: PaneModel, now: number): string[] {
       "",
       `Needs you${p.inbox?.length ? ` · ${p.inbox.length}` : ""}`,
       ...(p.inbox?.length ? p.inbox.map((l, i) => ` ${i + 1}. ${l}`) : [" nothing right now"]),
-      ...(p.agents.length ? ["", `Working · ${p.agents.length}`, ...p.agents.map((a) => ` ${agentLine(a)}`)] : []),
+      ...(p.agents.length ? ["", `Sessions · ${p.agents.length}`, ...p.agents.flatMap((a) => [` ${agentLine(a)}`, ...(a.asks ? [`   asks: ${a.asks}`] : [])])] : []),
       ...(p.prs?.length ? ["", "Pull requests", ...p.prs.map((r) => ` ${runningLine(r, now)}`)] : []),
       ...(p.events?.length ? ["", "Lately", ...p.events.map((e) => ` ${e.text} · ${ago(e.at, now)}`)] : []),
       ...(p.idle || p.usage ? ["", [p.idle ? `${p.idle} idle` : "", p.usage ? p.usage.text : ""].filter(Boolean).join(" · ")] : []),
