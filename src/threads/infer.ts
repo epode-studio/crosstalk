@@ -77,6 +77,12 @@ export function covers(pattern: string, file: string): boolean {
 export const overlap = (patterns: string[], paths: string[]) => paths.filter((p) => patterns.some((q) => covers(q, p))).length
 
 /**
+ * Files every piece of work touches now and then (the repo's root files, lockfiles): they say nothing
+ * about which work a session is on, so they never place it in a thread.
+ */
+export const telling = (p: string) => p.includes("/") && !/(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|Cargo\.lock|go\.sum|poetry\.lock|Gemfile\.lock)$/.test(p)
+
+/**
  * Whether two sets of files are about the same work: at least two in common,
  * and at least half of the smaller set. One shared file (a lockfile, a config)
  * is a coincidence, not a thread.
@@ -135,7 +141,7 @@ export function place(fp: Footprint, threads: ThreadLite[], min = MIN_CLUSTER): 
   }
   if (!fp.paths.length) return { kind: "none", why: "on the default branch and nothing touched yet" }
   const scored = here
-    .map((t) => ({ t, n: overlap(t.files, fp.paths) }))
+    .map((t) => ({ t, n: overlap(t.files, fp.paths.filter(telling)) }))
     .filter((s) => s.n > 0)
     .sort((a, b) => b.n - a.n)
   if (scored.length) {

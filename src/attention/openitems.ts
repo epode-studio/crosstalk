@@ -203,7 +203,7 @@ export function tacklePrompt(items: string[], ids: string[] = [], persons: strin
           `Tackle the open items you listed:`,
           ...items.map((x, i) => `${i + 1}. ${x}${ids[i] ? ` (task ${ids[i]})` : ""}`),
           ``,
-          `Do each one you can do yourself${ids.length ? `, and mark it done with crosstalk_thread action "task", op "done" and its task id` : ""}. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). For any that needs a decision only the person can make, ask them (one question for all of those, at the end) instead of guessing.`,
+          `Do each one you can do yourself${ids.length ? `, and mark it done with crosstalk_thread action "note", kind "task", op "done" and its task id` : ""}. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). For any that needs a decision only the person can make, ask them (one question for all of those, at the end) instead of guessing.`,
         ]
       : []),
     ...(persons.length
@@ -288,3 +288,10 @@ export function atStop(o: { reply: string; sessionId: string; continuing: boolea
   writePrefs({ ...p, seenItems: { ...(p.seenItems ?? {}), [o.sessionId]: kept }, ...(auto ? { chain: { ...(p.chain ?? {}), [o.sessionId]: rounds + 1 } } : {}), ...(waiting.length ? { waitingOn: { ...(p.waitingOn ?? {}), [o.sessionId]: { items: waiting, at: now } } } : {}) })
   return { items, waiting, persons: newPersons, id, fresh: !o.continuing, auto }
 }
+
+/**
+ * A prompt crosstalk sent itself (open items carried on, a chase, a merge-queue fix, a handed message),
+ * never the person typing: it must not end away, reset the rounds, or count as them being here.
+ */
+export const isCrosstalkPrompt = (prompt: string) =>
+  /^\s*(Tackle the open items you listed|You left these for the person|I handed you the crosstalk message|What you were waiting on has moved|.{0,200}was taken out of the merge queue, and crosstalk asks you)/.test(prompt)

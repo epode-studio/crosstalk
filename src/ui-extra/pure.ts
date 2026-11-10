@@ -505,6 +505,7 @@ export function inboxGlyph(it: Pick<InboxRowItem, "id" | "kind">): string {
   if (it.id.startsWith("attn:perm:")) return "🔐"
   if (it.id.startsWith("attn:merge:")) return "🔀"
   if (it.id.startsWith("attn:circle:")) return "🔁"
+  if (it.id.startsWith("attn:close:")) return "🏁"
   if (it.kind === "message" || it.kind === "ask") return "💬"
   if (it.kind === "restore") return "↺"
   return "❓"
@@ -538,3 +539,7 @@ export function cleanRecap(s: string, max = 200): string {
 
 /** A running thing's label inside its own thread's pane: without the thread's name in front. */
 export const withoutThread = (label: string, thread: string) => (thread && label.toLowerCase().startsWith(`${thread.toLowerCase()} · `) ? label.slice(thread.length + 3) : label)
+
+/** What has a deadline and an agent waiting on it: never snoozed or dismissed, only answered. */
+export const inboxUrgent = (it: { id: string; kind: string }) =>
+  it.kind === "restore" || it.kind === "session" || it.kind === "steer" || /^(relay|attn:perm|attn:circle|sess):/.test(it.id)

@@ -8,7 +8,7 @@
 
 import * as M from "../threads/model.ts"
 import * as ui from "../uistate.ts"
-import { dotFor, human, inboxLine, inboxOrder, shortQuestion, type PaneModel, type PaneNote, type PaneRunning } from "./pure.ts"
+import { dotFor, human, inboxItems, inboxLine, shortQuestion, type PaneModel, type PaneNote, type PaneRunning } from "./pure.ts"
 import { defaultThread, findThread, readThreads, type ThreadState } from "./threadfile.ts"
 import type * as Svc from "../services/service.ts"
 import { currentMain, itemsFor } from "../main.ts"
@@ -91,11 +91,11 @@ export function agentsPane(sessionId?: string, list = allAgents(sessionId)): Pan
     const open = Object.values(ui.snapshot()).filter((i) => (i.state === "pending" || i.state === "later") && !i.id.startsWith("open:") && now - i.createdAt < 86_400_000)
     relayed = new Set(open.filter((i) => i.id.startsWith("relay:")).map((i) => i.id.split(":")[1] ?? ""))
     const mine = sessionId ? itemsFor(open, sessionId, currentMain()?.sessionId) : []
-    needs = inboxOrder(mine, now).map((i) => inboxLine(i, now))
+    // The same rule as the inbox, the status line and the band (pure.ts inboxItems): one count everywhere.
+    needs = inboxItems(mine as any, now).map((i: any) => inboxLine(i, now))
   } catch {}
-  for (const a of others)
-    if (a.state === "waiting" && a.asks && !(a.sessionId && relayed.has(a.sessionId)))
-      needs.push(`${a.thread ? dotFor(a.thread) + " " : ""}${human(a.thread ?? a.name, 24)} — ${shortQuestion(a.asks)} (in its tab)`)
+  // An agent asking in its own tab is in the Sessions list, waiting, with its question under it.
+  void relayed
   let prs: PaneRunning[] = []
   let events: { text: string; at: number }[] = []
   try {
@@ -118,9 +118,10 @@ export function agentsPane(sessionId?: string, list = allAgents(sessionId)): Pan
       waiting: [],
       recent: [],
       features: [],
-      agents: working,
+      // Every session, the ones waiting on you first, then working, then idle: each one opens its tab.
+      agents: [...others.filter((a) => a.state === "waiting"), ...working, ...others.filter((a) => a.state === "idle")],
       inbox: needs.slice(0, 8),
-      ...(idle ? { idle } : {}),
+
       ...(usage ? { usage } : {}),
       ...(prs.length ? { prs } : {}),
       ...(events.length ? { events } : {}),

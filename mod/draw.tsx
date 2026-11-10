@@ -9,7 +9,7 @@
 // on black, so it scans on any theme. No hook, state or I/O in here.
 
 import type { Item, Pane } from './types'
-import { agentAsks, agentLine, ago, dotFor, featureLine, fileLink, historyLine, cleanRecap, inboxChoices, inboxRow, linkable, withoutThread, noteLine, runningGroups, runningLine, runningWhere } from '../src/ui-extra/pure.ts'
+import { agentAsks, agentLine, ago, dotFor, featureLine, fileLink, historyLine, cleanRecap, inboxChoices, inboxRow, inboxUrgent, linkable, withoutThread, noteLine, runningGroups, runningLine, runningWhere } from '../src/ui-extra/pure.ts'
 
 /** The elements these trees are made of: the surface's own Box, Text and Link, and Button where a tree takes presses. */
 export type Els = { Box: any; Text: any; Link: any; Button?: any }
@@ -80,13 +80,19 @@ export function inboxTree(E: Els, rows: Item[], openId: string | undefined, now:
                       </Button>,
                       <Text key={`gap:${it.id}:${n}`}>{'   '}</Text>,
                     ])}
-                    <Button key={`snooze:${it.id}`} plain dimColor hotkey="s" onPress={() => on.snooze(it)}>
-                      snooze
-                    </Button>
-                    <Text key={`gap:${it.id}:s`}>{'   '}</Text>
-                    <Button key={`done:${it.id}`} plain dimColor hotkey="e" onPress={() => on.done(it)}>
-                      done
-                    </Button>
+                    {/* Snooze only what has no deadline: a permission or an agent's question waits on you, and goes its own way when its time runs out. */}
+                    {!inboxUrgent(it) ? (
+                      <Button key={`snooze:${it.id}`} plain dimColor hotkey="s" onPress={() => on.snooze(it)}>
+                        snooze
+                      </Button>
+                    ) : null}
+                    {!inboxUrgent(it) ? <Text key={`gap:${it.id}:s`}>{'   '}</Text> : null}
+                    {/* Done only dismisses a message: on a question it would quietly answer it (a permission's Deny). */}
+                    {it.kind === 'message' || it.kind === 'ask' ? (
+                      <Button key={`done:${it.id}`} plain dimColor hotkey="e" onPress={() => on.done(it)}>
+                        done
+                      </Button>
+                    ) : null}
                   </Box>
                 ) : null}
               </Box>
@@ -170,7 +176,7 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number, i
         {p.agents.length ? (
           <Box flexDirection="column" marginTop={1}>
             <Text bold>
-              Agents · {p.agents.length} <Text dimColor>· Enter to open one</Text>
+              Sessions · {p.agents.length} <Text dimColor>· Enter opens one</Text>
             </Text>
             {p.agents.map((a, i) =>
               Button && on.agent && a.sessionId ? (

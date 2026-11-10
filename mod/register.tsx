@@ -147,7 +147,9 @@ const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim()
 function withContext(it: Item, q: string): string {
   // How many wait after this one: last, and in brackets, so it never reads as the question.
   const more = inboxLeft > 0 ? `(${inboxLeft} more waiting after this one)` : ''
-  const elsewhere = it.thread && ((it.sessionId && it.sessionId !== session) || it.id.startsWith('relay:')) ? `${dotFor(it.thread)} ${it.thread}` : ''
+  // Who is asking: the thread, else the agent's own name, so a question is never anonymous.
+  const away = (it.sessionId && it.sessionId !== session) || it.id.startsWith('relay:')
+  const elsewhere = away ? (it.thread ? `${dotFor(it.thread)} ${it.thread}` : it.from ? `◢ ${it.from}` : '') : ''
   const ctx = typeof it.text === 'string' ? it.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '').trim().slice(0, 700) : ''
   return [elsewhere, q, ctx, more].filter(Boolean).join('\n')
 }
@@ -176,7 +178,8 @@ function header(it: Item): string {
   if (it.kind === 'session') return 'Session'
   if (it.kind === 'share') return 'Shared'
   if (it.kind === 'env') return 'Local files'
-  if (it.kind === 'attention') return it.id.startsWith('attn:perm:') ? 'Permission' : it.id.startsWith('attn:staff:') ? 'Staffing' : 'Fresh start'
+  if (it.kind === 'attention')
+    return it.id.startsWith('attn:perm:') ? 'Permission' : it.id.startsWith('attn:staff:') ? 'Another agent' : it.id.startsWith('attn:close:') ? 'Finished' : it.id.startsWith('attn:dispose:') ? 'Fresh start' : 'Question'
   return cut(it.thread ? `${it.from} · ${it.thread}` : it.from ?? 'crosstalk', 12)
 }
 
@@ -569,8 +572,8 @@ async function answered($: EngineInterface, it: Item, answer: string) {
       await step($, it, 'later')
       return
     case OPEN_THREAD: {
-      // The card stays, for after the person has looked.
-      await step($, it, 'later')
+      // The card stays, for after the person has looked: in main it stays in the inbox, not hidden as snoozed.
+      if (!mainTotals) await step($, it, 'later')
       const placed = await openPane($, it.thread)
       if (!placed) $.ui.toast(`the ${it.thread ?? 'thread'} pane opens when there is room for it`)
       return

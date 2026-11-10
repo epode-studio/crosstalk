@@ -11,6 +11,7 @@
 //   SessionStart,       without the mod, receipts and questions as one
 //   UserPromptSubmit    systemMessage line each, shown to the person alone
 
+import { isCrosstalkPrompt } from "./openitems.ts"
 import { request } from "../client.ts"
 import * as A from "./activity.ts"
 import * as Pm from "./permission.ts"
@@ -26,7 +27,7 @@ export async function fromHook(o: { event: string; sessionId: string; cwd: strin
     // A background agent: nobody is looking at it, so it is never asked anything itself.
     if (agent && /^(SessionStart|Stop)$/.test(event)) await request({ op: "attn_bg", sessionId, agent }, 3000).catch(() => null)
     // Only the person types; a background agent's first prompt is crosstalk's.
-    if (event === "UserPromptSubmit" && !agent) A.noteTyped(sessionId)
+    if (event === "UserPromptSubmit" && !agent && !isCrosstalkPrompt(String(hook.prompt ?? ""))) A.noteTyped(sessionId)
     if (event === "Stop" && !hook.stop_hook_active) {
       await request({ op: "attn_stop", sessionId, cwd: o.cwd, transcript: hook.transcript_path }, 5000).catch(() => null)
     }

@@ -173,6 +173,8 @@ const empty = (now: number): State => ({
 })
 
 export const CIRCLE_STOP = "Stop it"
+export const CLOSE_YES = "Close it"
+export const CLOSE_NO = "Keep it open"
 export const CIRCLE_LET = "Let it run"
 export const START_FRESH = "Start fresh"
 export const COMPACT = "Compact as usual"
@@ -183,10 +185,10 @@ export const NOT_YET = "Not yet"
 export const ALWAYS_MERGE = "Always merge my green PRs"
 export const DISPOSE_RULE_QUESTION = "That is twice you started a session fresh. Start sessions fresh from their thread by themselves from now on, whenever their context is spent?"
 
-type What = "dispose" | "staff" | "perm" | "rule" | "circle" | "merge"
+type What = "dispose" | "staff" | "perm" | "rule" | "circle" | "merge" | "close"
 export const itemId = (what: What, key: string) => `attn:${what}:${key}`
 const parseId = (id: string) => {
-  const m = /^attn:(dispose|staff|perm|rule|circle|merge):(.+)$/.exec(id)
+  const m = /^attn:(dispose|staff|perm|rule|circle|merge|close):(.+)$/.exec(id)
   return m ? { what: m[1] as What, key: m[2] } : null
 }
 
@@ -312,7 +314,8 @@ export class AttentionService {
             last = reg?.transcript ? lastReply(reg.transcript).replace(/\s+/g, " ").trim() : ""
           } catch {}
           const bits = [recap ? `${recap.slice(0, 160)}` : "", last ? `Last: ${last.slice(0, 160)}${last.length > 160 ? "…" : ""}` : ""].filter(Boolean)
-          if (bits.length) this.note(f.sessionId, { id: `where:${f.sessionId}:${this.now()}`, text: `◢ Where you left off${t ? ` in ${human(t, 32)}` : ""}: ${bits.join(" · ")}` })
+          // Not said: the tab already shows where it was, and a line on top of it only repeats it.
+          void bits
         }
         if (this.st.focus.sessionId) (this.st.lastFocus ??= {})[this.st.focus.sessionId] = this.now()
         this.st.focus = { sessionId: f.sessionId, how: f.how, changedAt: this.now() }
@@ -506,6 +509,9 @@ export class AttentionService {
       return false
     }
     if (rule === START_FRESH) {
+      // Only when Claude Code is about to compact anyway: never the moment a turn ends at 85%, while the
+      // person is reading the reply or starting the next message.
+      if (why !== "precompact") return false
       this.d.log(`attention: a standing rule starts ${this.nameOf(sessionId)} fresh (${why})`)
       setTimeout(() => void this.dispose(sessionId, { rule: true }), why === "precompact" ? 300 : 0)
       return true
@@ -803,6 +809,10 @@ export class AttentionService {
     try {
       const r = await this.d.handover(sid)
       if (r.ok) recordEvent(HO.line(this.d.version), this.now())
+      else if (!/cannot open a tab for crosstalk|is not open/.test(r.text)) {
+        // Closed but not reopened: said where it will be seen, with the way back.
+        recordEvent(`could not reopen your main session after updating: say "resume ${this.nameOf(sid)}" in any session`, this.now())
+      }
       this.d.log(`handover: ${r.ok ? "main restarted on" : "could not restart main on"} ${this.d.version}: ${r.text}`)
     } catch (e) {
       this.d.log(`handover: ${(e as Error).message}`)
@@ -847,13 +857,23 @@ export class AttentionService {
         const reason = AC.why(c, now)
         if (!reason) continue
         if (AC.dirty(s.cwd)) continue
-        const r = await this.d.closeSession(s.sessionId)
-        if (r.ok) {
-          if (this.st.shipped) delete this.st.shipped[s.sessionId]
-          const t = this.d.threads.namesFor(s.sessionId)[0]
-          recordEvent(`closed ${t ? human(t, 32) : s.name}: ${reason} (say "resume ${s.name}" to bring it back)`, now)
-          this.d.log(`autoclose: ${s.name}: ${reason}`)
-        }
+        // Asked, in main's inbox, never done behind the person's back: closing takes their tab away.
+        const id = itemId("close", s.sessionId)
+        if (snap[id]) continue
+        const to = this.target()
+        if (!to) continue
+        const t = this.d.threads.namesFor(s.sessionId)[0]
+        const who = t ? human(t, 32) : s.name
+        this.put({
+          id,
+          sessionId: to,
+          from: who,
+          ...(t ? { thread: t } : {}),
+          question: `${who} looks finished: ${reason}. Close it?`,
+          text: `Closing archives it and its tab; "resume ${s.name}" brings it back with its whole conversation.`,
+          options: [CLOSE_YES, CLOSE_NO],
+        })
+        this.d.log(`autoclose: asked about ${s.name}: ${reason}`)
       }
       this.save()
     } finally {
@@ -985,7 +1005,8 @@ export class AttentionService {
     const to = this.target()
     if (!to) return Promise.resolve({ ok: true, decision: null })
     const threads = this.d.threads.namesFor(sessionId)
-    this.put({ id, sessionId: to, from: agent, thread: threads[0] ?? agent, question: Pm.question(agent, o.tool, o.input), options: Pm.optionsFor(o.tool, o.input) })
+    // Never the agent's name as a thread: it would get a thread's colour and read as one.
+    this.put({ id, sessionId: to, from: agent, ...(threads[0] ? { thread: threads[0] } : {}), question: Pm.question(agent, o.tool, o.input), options: Pm.optionsFor(o.tool, o.input) })
     void this.alert({ key: id, asker: sessionId, askerName: agent, thread: threads[0] ?? agent, blocking: true, count: 1 })
     this.d.log(`attention: ${agent} asks to use ${o.tool}; asked in ${this.nameOf(to)}`)
     return new Promise((resolve) => {
@@ -1039,7 +1060,8 @@ export class AttentionService {
         } catch {}
       }
       const to = this.target()
-      if (to && to !== o.asker)
+      // Main already has it in its inbox: a second line there saying so is only noise.
+      if (to && to !== o.asker && to !== this.d.mainId())
         this.note(to, { id: `waiting:${o.key}`, text: `◢ crosstalk: ${askerName} (${o.thread}) is waiting on you. Say "show me ${askerName}" to go to it.` })
     }
     if (this.away()) {
@@ -1064,7 +1086,7 @@ export class AttentionService {
     if (!p) return { ok: false, error: `not an attention question: ${id}` }
     if (action === "raised" || action === "later") return ui.withStore((items, now) => ui.act(items, id, action as ui.UiAction, now))
     const v = (value ?? "").trim()
-    const answer = action === "mute" ? (p.what === "perm" ? Pm.DENY : p.what === "dispose" ? COMPACT : p.what === "rule" ? NOT_NOW : p.what === "merge" ? NOT_YET : p.what === "circle" ? CIRCLE_LET : St.NOT_NOW) : v
+    const answer = action === "mute" ? (p.what === "perm" ? Pm.DENY : p.what === "dispose" ? COMPACT : p.what === "rule" ? NOT_NOW : p.what === "merge" ? NOT_YET : p.what === "circle" ? CIRCLE_LET : p.what === "close" ? CLOSE_NO : St.NOT_NOW) : v
     if (!answer) return { ok: false, error: "an attention question is answered with one of its options" }
     const item = ui.snapshot()[id]
     // One of its own options, word for word: "Deny for this session" is not "Allow for this session".
@@ -1112,6 +1134,15 @@ export class AttentionService {
       const r = await this.merge(pr, false)
       return { ok: r.ok, item: claim.item, text: rule + r.text }
     }
+    if (p.what === "close") {
+      if (answer !== CLOSE_YES || !this.d.closeSession) return { ok: true, item: claim.item, text: `◢ crosstalk: ${claim.item.from ?? "it"} stays open.` }
+      const r = await this.d.closeSession(p.key)
+      if (r.ok) {
+        if (this.st.shipped) delete this.st.shipped[p.key]
+        recordEvent(`closed ${claim.item.from ?? "a session"} (you said so)`, this.now())
+      }
+      return { ok: r.ok, item: claim.item, text: r.ok ? `◢ crosstalk: closed ${claim.item.from ?? "it"}. "Resume" brings it back.` : r.text }
+    }
     if (p.what === "circle") {
       if (answer !== CIRCLE_STOP || !this.d.closeSession) return { ok: true, item: claim.item, text: `◢ crosstalk: ${claim.item.from ?? "it"} keeps going.` }
       const r = await this.d.closeSession(p.key)
@@ -1149,7 +1180,8 @@ export class AttentionService {
   systemMessage(sessionId: string): string | undefined {
     const lines = this.takeNotes(sessionId).map((n) => n.text)
     for (const it of ui.openFor(ui.snapshot(), sessionId)) {
-      if (it.kind !== "attention" || this.st.told[it.id]) continue
+      // Only real questions: a carried-on prompt or a chase has none, and would print "undefined".
+      if (it.kind !== "attention" || !it.question || it.id.startsWith("tackle:") || this.st.told[it.id]) continue
       this.st.told[it.id] = this.now()
       lines.push(`◢ crosstalk: ${it.question} (${(it.options ?? []).join(" / ")}). Say which, and the agent will answer with crosstalk_answer action "attention" (id ${it.id}).`)
     }

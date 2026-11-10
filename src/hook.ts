@@ -16,7 +16,7 @@
 import path from "node:path"
 import os from "node:os"
 import fs from "node:fs"
-import { ensureDaemon, pluginVersion, request, staleNotice } from "./client.ts"
+import { ensureDaemon, request } from "./client.ts"
 import { loadIdentity } from "./config.ts"
 import { rootFrom } from "./paths.ts"
 import { sessionsDir } from "./registry.ts"
@@ -484,13 +484,15 @@ if (restoreClient === "claude" && sessionId && isSessionStart && !process.env[BG
     const m = dayMod.morning(Date.now())
     if (m) systemMessage = systemMessage ? `${systemMessage}\n${m}` : m
   } catch {}
-if (sessionId && /^UserPromptSubmit$/.test(eventName) && !process.env[BG_ENV])
+// crosstalk's own prompts are not the person: they never count as them being here (openitems.ts isCrosstalkPrompt).
+const typedByPerson = /^UserPromptSubmit$/.test(eventName) && !openItems.isCrosstalkPrompt(String(hook.prompt ?? ""))
+if (sessionId && typedByPerson && !process.env[BG_ENV])
   try {
     dayMod.seen(Date.now())
   } catch {}
 
 // The person typed: open lists may carry on again (openItems.CHAIN_MAX rounds in a row at most).
-if (sessionId && /^UserPromptSubmit$/.test(eventName) && !/^\s*(Tackle the open items you listed|I handed you the crosstalk message)/.test(String(hook.prompt ?? "")))
+if (sessionId && typedByPerson)
   try {
     openItems.resetChain(sessionId)
   } catch {}
@@ -499,11 +501,10 @@ if (sessionId && /^UserPromptSubmit$/.test(eventName) && !/^\s*(Tackle the open 
  * Back from away (src/attention/calm.ts): the person's first message in any
  * session ends it, and they see what happened, in one paragraph.
  */
-if (restoreClient === "claude" && sessionId && /^UserPromptSubmit$/.test(eventName) && !process.env[BG_ENV] && calmMod.isAway())
+if (restoreClient === "claude" && sessionId && typedByPerson && !process.env[BG_ENV] && calmMod.isAway())
   try {
     const was = calmMod.update((s) => calmMod.end(s))
     if (!was.workerWasOn) workerMod.write({ ...workerMod.read(), on: false })
-    openItems.setAlways(false)
     const m = summaryMod.short(summaryMod.gather(was.since ?? Date.now() - 8 * 3600_000, { ...(was.usdAtStart !== undefined ? { usdAtStart: was.usdAtStart } : {}) }))
     systemMessage = systemMessage ? `${systemMessage}\n${m}` : m
   } catch {}
@@ -559,10 +560,8 @@ async function registerSession() {
   if (registered?.systemMessage && restoreClient === "claude")
     systemMessage = [systemMessage, String(registered.systemMessage)].filter(Boolean).join("\n")
   // Updated while this session ran: said once, so a missing feature is not a mystery.
-  if (eventName === "UserPromptSubmit" && restoreClient === "claude") {
-    const m = staleNotice(sessionId ?? "", pluginVersion(root))
-    if (m) systemMessage = [systemMessage, m].filter(Boolean).join("\n")
-  }
+  // (An old version's session is not told so: "nothing to do now" in the middle of a conversation is noise.
+  // Main moves onto a new version by itself, src/attention/handover.ts.)
 }
 
 /** Anything waiting, phrased as a notice with none of the sender's words in it. */

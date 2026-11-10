@@ -326,6 +326,8 @@ describe("inference", () => {
     expect(I.place({ repo: "r", branch: "main", onDefault: true, paths: ["src/auth/token.ts"] }, ts)).toMatchObject({ kind: "join", threads: [{ id: "a" }] })
     expect(I.place({ repo: "r", branch: "main", onDefault: true, paths: [] }, ts).kind).toBe("none")
     expect(I.place({ repo: "r", branch: "main", onDefault: true, paths: ["README.md"] }, ts).kind).toBe("none")
+    // Root files and lockfiles say nothing about the work: they never pull a session into a thread.
+    expect(I.place({ repo: "r", branch: "main", onDefault: true, paths: ["package.json", "bun.lock"] }, [{ ...ts[0]!, files: ["package.json", "src/auth/**"] }]).kind).toBe("none")
   })
 
   test("a cluster of new files starts a thread named from its folder", () => {

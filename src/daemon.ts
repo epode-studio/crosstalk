@@ -187,10 +187,12 @@ let shares: ReturnType<typeof createShares> | undefined
 const threads = new ThreadService({
   tiebreak: (sid, cands, mode) => attention?.tiebreak(sid, cands, mode),
   // A message carried by a thread's sync, for someone the relay could not reach: in as if the relay brought it.
-  onMail: (from, env) => {
-    if (!loadPeers()[from]) return log(`dropped mail from ${from}, who is not paired here`)
+  onMail: (from, env, fp) => {
+    // By key, not by name: names are each machine's own and can differ.
+    const label = (fp ? peersByFingerprint().get(fp)?.label : undefined) ?? (loadPeers()[from] ? from : undefined)
+    if (!label) return log(`dropped mail from ${from}, who is not paired here`)
     try {
-      onEnvelope(from, env as Envelope)
+      onEnvelope(label, env as Envelope)
     } catch (e) {
       log(`mail from ${from}: ${(e as Error).message}`)
     }
@@ -1772,6 +1774,9 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
             error:
               "somebody else has that one. Pick a different task rather than doing it twice.",
           }
+        // Not found anywhere: say so and what to do, never a bare "not marked done".
+        if (!changed && req.write === "done")
+          return { ok: false, error: `No task ${req.id} in any of your threads or rooms: it may already be done or removed. List the open ones with crosstalk_thread action "note", kind "task", and use one of those ids.` }
         return { ok: changed, room, op: req.write, id: (op as any).task?.id ?? req.id }
       }
       return {
@@ -2056,13 +2061,15 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         const sent: string[] = []
         const failed: { to: string; error: string }[] = []
         let last: any
+        const notes: string[] = []
         for (const label of r.labels) {
           last = await handle({ ...req, to: label, threadIds: r.threads }, sock)
           if (last?.ok) sent.push(label)
           else failed.push({ to: label, error: last?.error ?? "not sent" })
+          if (last?.note) notes.push(String(last.note))
         }
         if (!sent.length) return { ok: false, error: failed.map((f) => `${f.to}: ${f.error}`).join("; ") }
-        return { ...(req.op === "ask" ? last : { ok: true, id: last?.id }), threads: names, sentTo: sent, ...(failed.length ? { failed } : {}) }
+        return { ...(req.op === "ask" ? last : { ok: true, id: last?.id }), threads: names, sentTo: sent, ...(failed.length ? { failed } : {}), ...(notes.length ? { note: notes.join(" ") } : {}) }
       }
       const [label, session] = String(req.to).split("/")
       const fromThreads: string[] = Array.isArray(req.threadIds)
@@ -2113,7 +2120,8 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       const r = sendEnvelope(label, env)
       if (!r.ok) return { ok: false, error: r.error }
       usage.record(label, "sent", env.text.length)
-      if (req.op !== "ask") return { ok: true, id: env.id }
+      // Held, or sent another way: the sender is told, in plain words, not just "sent".
+      if (req.op !== "ask") return { ok: true, id: env.id, ...(r.queued ? { queued: true } : {}), ...(r.note ? { note: r.note } : {}) }
 
       const timeout = Math.min(Number(req.timeoutMs ?? 120_000), 600_000)
       const answer = await new Promise<Envelope | null>((resolve) => {
@@ -2933,10 +2941,8 @@ control.listen(P.daemonSock, () => {
               if (prompt) ui.withStore((items, now) => ui.upsert(items, { id: `tackle:${sid}:chase-${u.id}-${c.kind}`, kind: "attention", sessionId: sid, text: prompt, auto: true, ts: now }, now))
             }
           if (c.kind === "failed" && t) threads.task(undefined, { op: "add", text: ciMod.investigation(u.label, u.url, c.failed), thread: t.meta.value.name })
-          for (const sid of to)
-            ui.withStore((items, now) =>
-              ui.upsert(items, { id: `ci:${u.id}:${c.kind}:${u.lastCheck}`, kind: "message", sessionId: sid, from: "crosstalk", ...(t ? { thread: t.meta.value.name } : {}), text, auto: true, ts: now }, now),
-            )
+          // Not pasted into the working sessions: Lately and main's pane show it, and an agent waiting on it is
+          // carried on by chase above. A line in a conversation about something else only muddles it.
           // Teammates in the thread hear a merge or a failure once, as a message from this person (never for a thread only here).
           const told = ciMod.tellTeam({
             u,

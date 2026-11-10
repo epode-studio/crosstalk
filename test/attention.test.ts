@@ -434,6 +434,22 @@ function world(o: { env?: NodeJS.ProcessEnv; rule?: string; recs?: Rec[]; focus?
 }
 
 describe("the service", () => {
+  test("a finished session is asked about in main, never closed behind the person's back", async () => {
+    const w = world()
+    const closed: string[] = []
+    ;(w.svc as any).d.closeSession = async (sid: string) => (closed.push(sid), { ok: true, text: "closed" })
+    w.add("done1", ["src/a/x.ts"], { seenAt: Date.now() - 4 * 3_600_000 })
+    await w.svc.closeFinished()
+    expect(closed).toEqual([])
+    const q = Object.values(ui.snapshot()).find((i) => i.id === S.itemId("close", "done1"))!
+    expect(q.question).toContain("looks finished")
+    expect(q.options).toEqual([S.CLOSE_YES, S.CLOSE_NO])
+    await w.svc.closeFinished()
+    expect(Object.values(ui.snapshot()).filter((i) => i.id === q.id)).toHaveLength(1) // asked once
+    expect((await w.svc.act("x", q.id, "answer", S.CLOSE_YES)).ok).toBe(true)
+    expect(closed).toEqual(["done1"])
+  })
+
   test("a recap breaks a tie the files cannot, and fills an empty thread recap", async () => {
     const w = world()
     w.add("s-auth", ["src/auth/a.ts", "src/auth/b.ts", "src/auth/c.ts"])

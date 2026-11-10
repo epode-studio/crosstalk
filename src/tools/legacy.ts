@@ -176,8 +176,8 @@ export async function callLegacy(name: string, a: any, o: Ctx): Promise<Result |
         slices: await buildSlices(a.slices, CWD),
       })
       if (!r.ok) return err(r.error)
-      if (r.threads) return ok({ sent: true, threads: r.threads, to: r.sentTo, ...(r.failed ? { failed: r.failed } : {}) })
-      return ok(r.room ? { sent: true, room: r.room, to: r.sentTo, failed: r.failed } : { sent: true, id: r.id })
+      if (r.threads) return ok({ sent: true, threads: r.threads, to: r.sentTo, ...(r.failed ? { failed: r.failed } : {}), ...(r.note ? { note: r.note } : {}) })
+      return ok(r.room ? { sent: true, room: r.room, to: r.sentTo, failed: r.failed } : { sent: true, id: r.id, ...(r.note ? { note: r.note } : {}) })
     }
 
     case "crosstalk_ask": {

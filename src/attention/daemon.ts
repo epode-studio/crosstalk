@@ -62,9 +62,14 @@ export function createAttention(o: {
       const d = Ctl.liveDeps()
       const l = (await Ctl.liveSessions(d)).find((x) => x.id === sid)
       if (!l) return { ok: false, text: "main is not open" }
+      // Never closed unless it can be opened again from here: a terminal crosstalk can open tabs in.
+      const kind = R.kindOf(l.terminal)
+      if (!kind || !R.canDrive(kind, R.liveEnv(process.env, true), l.terminal)) return { ok: false, text: "its terminal cannot open a tab for crosstalk" }
       const c = await Ctl.close(l, { services: "keep" }, d)
       if (!c.ok) return c
-      const r = await Ctl.resume(sid, { cwd: l.cwd }, d)
+      const r0 = await Ctl.resume(sid, { cwd: l.cwd }, d)
+      // "Run this to resume it" means nothing was opened: a failure, said in main.
+      const r = r0.ok && /cannot open a tab|To resume it yourself/.test(r0.text) ? { ...r0, ok: false } : r0
       if (r.ok)
         void (async () => {
           for (let i = 0; i < 60; i++) {

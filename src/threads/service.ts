@@ -89,7 +89,7 @@ export type Deps = {
    */
   tiebreak?: (sessionId: string, candidates: string[], mode: "ask" | "create") => { id: string; why: string } | undefined
   /** A message that came by a thread's sync (mail): handed to the daemon as if the relay had brought it. */
-  onMail?: (fromLabel: string, env: unknown) => void
+  onMail?: (fromLabel: string, env: unknown, fromFingerprint?: string) => void
 }
 
 /** Where a local session was placed. `name` is how its thread entry is keyed, the same way a peer sees it in presence. */
@@ -1123,6 +1123,7 @@ export class ThreadService {
     if (!k) return { ok: false as const, error: `no task ${o.id} in ${t.meta.value.name}` }
     const { l: _l, by: _b, id: _i, gone: _g, ...data } = k
     if (o.op === "claim") {
+      if (k.state === "done") return { ok: false as const, error: `that one is already done${k.doneBy ? ` (by ${k.doneBy})` : ""}.` }
       if (k.state !== "open" && k.claimedBy !== this.label) return { ok: false as const, error: "somebody else has that one. Pick a different task rather than doing it twice." }
       M.put(t, "notes", k.id, { ...data, state: "claimed", claimedBy: this.label }, this.me, now)
     } else M.put(t, "notes", k.id, { ...data, state: "done", doneBy: this.label, doneAt: now, ...(o.note ? { note: o.note } : {}) }, this.me, now)
@@ -1475,7 +1476,7 @@ export class ThreadService {
       if (!q.mail || q.mail.to !== this.me || seen.includes(q.id)) continue
       seen.push(q.id)
       try {
-        this.d.onMail?.(q.who, JSON.parse(q.mail.env))
+        this.d.onMail?.(q.who, JSON.parse(q.mail.env), (q as { by?: string }).by)
       } catch (e) {
         this.d.log(`mail in ${t.meta.value.name} could not be read: ${(e as Error).message}`)
       }
