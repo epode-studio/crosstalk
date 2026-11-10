@@ -67,7 +67,7 @@ describe("waiting is not work", () => {
 })
 
 describe("at the end of a turn", () => {
-  test("crosstalk carries on by itself: once per new item, never on a continued turn, three rounds at most until the person types", () => {
+  test("crosstalk carries on by itself once, then waits for the person: never a spiral", () => {
     const first = O.atStop({ reply: REPLY, sessionId: "s1", continuing: false })!
     expect(first.items).toHaveLength(2)
     expect(first.auto).toBe(true) // nobody has to say Always
@@ -76,15 +76,15 @@ describe("at the end of a turn", () => {
     expect(again.auto).toBe(false)
     const cont = O.atStop({ reply: REPLY.trimEnd() + "\n- Write the release notes for B.\n", sessionId: "s1", continuing: true })!
     expect(cont.auto).toBe(false) // a Stop-hook continuation never chains
-    for (const n of ["Add a rollback for the migration.", "Add caching to the projects endpoint."]) {
-      const r = O.atStop({ reply: REPLY.trimEnd() + `\n- ${n}\n`, sessionId: "s1", continuing: false })!
-      expect([n, r.auto]).toEqual([n, true])
-    }
-    const fourth = O.atStop({ reply: REPLY.trimEnd() + "\n- Update the onboarding docs page.\n", sessionId: "s1", continuing: false })!
-    expect(fourth.auto).toBe(false) // three rounds in a row: it stops and says so quietly
+    const next = O.atStop({ reply: REPLY.trimEnd() + "\n- Add a rollback for the migration.\n", sessionId: "s1", continuing: false })!
+    expect(next.auto).toBe(false) // one round already: it waits for the person
     O.resetChain("s1") // the person typed
     expect(O.atStop({ reply: REPLY.trimEnd() + "\n- Delete stale fixtures from tests.\n", sessionId: "s1", continuing: false })!.auto).toBe(true)
+    O.resetChain("s1")
+    // Reworded beyond recognition is still the same work: half its words seen before, no round.
+    expect(O.atStop({ reply: REPLY.trimEnd() + "\n- Delete the stale test fixtures now.\n", sessionId: "s1", continuing: false })!.auto).toBe(false)
     O.setAlways(false) // "stop tackling open items by itself"
+    O.resetChain("s1")
     expect(O.atStop({ reply: REPLY.trimEnd() + "\n- Rename the feature flag in config.\n", sessionId: "s1", continuing: false })!.auto).toBe(false)
     O.setAlways(true)
   })
@@ -158,5 +158,14 @@ describe("chasing what waits", () => {
     expect(p).toContain("1. CI is still running on #12.")
     expect(O.chase("c1", "again")).toBe(null) // once
     expect(O.chase("nobody", "x")).toBe(null)
+  })
+})
+
+describe("saying items were kept", () => {
+  test("at most once an hour per session", () => {
+    expect(O.mayRemind("r1", 1_000_000)).toBe(true)
+    expect(O.mayRemind("r1", 1_000_000 + 60_000)).toBe(false)
+    expect(O.mayRemind("r2", 1_000_000 + 60_000)).toBe(true)
+    expect(O.mayRemind("r1", 1_000_000 + 3_600_001)).toBe(true)
   })
 })

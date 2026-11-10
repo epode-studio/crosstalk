@@ -468,10 +468,10 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
       } else if (r.auto || (away && r.items.length)) {
         process.stdout.write(JSON.stringify({ decision: "block", reason: openItems.tacklePrompt(r.items, ids, r.persons) }))
         process.exit(0)
-      } else if (r.items.length || r.persons.length) {
-        // Carrying on is off, or the rounds are used up: one quiet line, nothing to pick.
+      } else if ((r.items.length || r.persons.length) && openItems.mayRemind(sessionId)) {
+        // Carrying on is off, or the round is used: one quiet line, at most once an hour per session.
         const n = r.items.length + r.persons.length
-        const m = `◢ crosstalk: ${n} open item${n === 1 ? "" : "s"}${thread ? ` kept as tasks in ${thread}` : ""}. Say "tackle them" to go on.`
+        const m = `◢ crosstalk: ${n} open item${n === 1 ? "" : "s"} kept. Say "tackle them" to go on.`
         systemMessage = systemMessage ? `${systemMessage}\n${m}` : m
       }
     }

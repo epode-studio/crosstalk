@@ -131,7 +131,7 @@ export const norm = (s: string) =>
     .trim()
 
 /** Near enough the same item: most of the shorter one's words are in the other. */
-export function same(a: string, b: string): boolean {
+export function same(a: string, b: string, threshold = 0.75): boolean {
   const x = new Set(norm(a).split(" ").filter((w) => w.length > 2))
   const y = new Set(norm(b).split(" ").filter((w) => w.length > 2))
   if (!x.size || !y.size) return norm(a) === norm(b)
@@ -139,7 +139,7 @@ export function same(a: string, b: string): boolean {
   const big = small === x ? y : x
   let hit = 0
   for (const w of small) if (big.has(w)) hit++
-  return hit / small.size >= 0.75
+  return hit / small.size >= threshold
 }
 
 /** An Open list split into work to do, things only waited on, and the person's own. */
@@ -155,7 +155,7 @@ export const hashOf = (items: string[]) => crypto.createHash("sha256").update(it
 
 // --- the preference and what was already taken in --------------------------------------
 
-type Prefs = { /** What each session's last open list only waited on: chased when it happens. */ waitingOn?: Record<string, { items: string[]; at: number }>; always?: boolean; seen?: Record<string, number>; seenItems?: Record<string, { t: string; at: number }[]>; /** Rounds carried on in a row since the person last typed, per session. */ chain?: Record<string, number> }
+type Prefs = { /** What each session's last open list only waited on: chased when it happens. */ waitingOn?: Record<string, { items: string[]; at: number }>; always?: boolean; seen?: Record<string, number>; seenItems?: Record<string, { t: string; at: number }[]>; /** Rounds carried on in a row since the person last typed, per session. */ chain?: Record<string, number>; /** When each session was last reminded that open items were kept. */ reminded?: Record<string, number> }
 const file = () => path.join(P.root, "open-items.json")
 
 export function readPrefs(): Prefs {
@@ -224,7 +224,8 @@ export function tacklePrompt(items: string[], ids: string[] = [], persons: strin
  * What to do at a Stop: the items, and whether they are new. Pure apart from
  * the preference file, which it updates: a list is taken in once.
  */
-export const CHAIN_MAX = 3
+/** One round carried on by itself, then nothing more until the person types: never a spiral. */
+export const CHAIN_MAX = 1
 
 /** Remember what a session's open list only waits on, even when nothing else in it is new. */
 export function noteWaiting(sessionId: string, items: string[], now = Date.now()) {
@@ -283,8 +284,11 @@ export function atStop(o: { reply: string; sessionId: string; continuing: boolea
   // with, at most CHAIN_MAX rounds in a row before the person types again.
   const on = p.always !== false
   const rounds = p.chain?.[o.sessionId] ?? 0
-  // What was left for the person is carried on with too: the agent does it, or asks them in main and then does it.
-  const auto = on && !o.continuing && (items.length > 0 || newPersons.length > 0) && rounds < CHAIN_MAX
+  // Only something new starts a round: a list that only waits, or the same items
+  // reworded (half their words in common with ones seen), never does. What was left for the person rides
+  // along when there is a round (the agent does it, or asks them in main and then does it).
+  const fresh = [...items, ...newPersons].filter((x) => !seen.some((y) => same(x, y, 0.5)))
+  const auto = on && !o.continuing && fresh.length > 0 && rounds < CHAIN_MAX
   writePrefs({ ...p, seenItems: { ...(p.seenItems ?? {}), [o.sessionId]: kept }, ...(auto ? { chain: { ...(p.chain ?? {}), [o.sessionId]: rounds + 1 } } : {}), ...(waiting.length ? { waitingOn: { ...(p.waitingOn ?? {}), [o.sessionId]: { items: waiting, at: now } } } : {}) })
   return { items, waiting, persons: newPersons, id, fresh: !o.continuing, auto }
 }
@@ -295,3 +299,11 @@ export function atStop(o: { reply: string; sessionId: string; continuing: boolea
  */
 export const isCrosstalkPrompt = (prompt: string) =>
   /^\s*(Tackle the open items you listed|You left these for the person|I handed you the crosstalk message|What you were waiting on has moved|.{0,200}was taken out of the merge queue, and crosstalk asks you)/.test(prompt)
+
+/** Whether to say "open items kept" in this session now: at most once an hour, so it never repeats every reply. */
+export function mayRemind(sessionId: string, now = Date.now()): boolean {
+  const p = readPrefs()
+  if (now - (p.reminded?.[sessionId] ?? 0) < 3_600_000) return false
+  writePrefs({ ...p, reminded: { ...(p.reminded ?? {}), [sessionId]: now } })
+  return true
+}
