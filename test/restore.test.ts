@@ -211,10 +211,7 @@ describe("Terminal.app", () => {
       [
         `set crosstalkFallback to ""`,
         `set crosstalkOpened to 1`,
-        `tell application "Terminal"`,
-        `\tactivate`,
-        `\tdo script "cd /w/api && claude --resume a"`,
-        `end tell`,
+        ...R.appleFirstLines(`cd /w/api && claude --resume a`),
         `if crosstalkFallback is "" then`,
         `\ttry`,
         ...R.appleNewTabLines(`cd '/w/My "App"' && claude --resume b`),
@@ -234,10 +231,7 @@ describe("Terminal.app", () => {
       [
         `set crosstalkFallback to ""`,
         `set crosstalkOpened to 1`,
-        `tell application "Terminal"`,
-        `\tactivate`,
-        `\tdo script "cd /a && claude --resume a"`,
-        `end tell`,
+        ...R.appleFirstLines(`cd /a && claude --resume a`),
         `tell application "Terminal" to do script "cd /b && claude --resume b"`,
         `set crosstalkOpened to crosstalkOpened + 1`,
         `return "done " & crosstalkFallback & " " & crosstalkOpened`,
@@ -253,9 +247,12 @@ describe("Terminal.app", () => {
     const i = s.indexOf(`key code 17`)
     expect(s.slice(0, i)).toContain(`set frontmost of process "Terminal" to true`)
     expect(s.slice(0, i).indexOf("set frontmost")).toBeLessThan(s.slice(0, i).indexOf("if not frontmost then error"))
-    expect(s.split("\n").filter((l) => l.includes("do script") && !l.includes("in selected tab")).length).toBe(1) // one window at most
+    const windows = (x: string) => x.split("\n").filter((l) => /do script "[^"]*"\s*$/.test(l.trim())).length
+    expect(windows(s)).toBe(1) // one window at most
     const into = R.appleIntoWindowScript(["claude a", "claude b"], 5, true)
-    expect(into.split("\n").filter((l) => l.includes("do script") && !l.includes("in selected tab")).length).toBe(1) // only when window 5 is gone
+    expect(windows(into)).toBe(1) // only when window 5 is gone
+    // Terminal not running: the empty window it opens by itself takes the first session.
+    expect(R.appleFirstLines("claude a").join("\n")).toContain(`do script "claude a" in selected tab of front window`)
   })
 
   test("the script that finds a session's window and tab", () => {

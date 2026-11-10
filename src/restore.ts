@@ -638,7 +638,7 @@ export function appleIntoWindowScript(cmds: string[], window: number, tabs: bool
       L.push(`tell application "Terminal" to do script ${asq(c)}`, `set crosstalkOpened to crosstalkOpened + 1`)
       return
     }
-    if (i === 0) L.push(`if crosstalkNew then`, `\ttell application "Terminal"`, `\t\tactivate`, `\t\tdo script ${asq(c)}`, `\tend tell`, `\tset crosstalkOpened to 1`, `else`, ...tabTry(c), `end if`)
+    if (i === 0) L.push(`if crosstalkNew then`, ...appleFirstLines(c).map((l) => `\t${l}`), `\tset crosstalkOpened to 1`, `else`, ...tabTry(c), `end if`)
     else L.push(...tabTry(c))
   })
   L.push(`return "done " & crosstalkFallback & " " & crosstalkOpened`)
@@ -765,6 +765,30 @@ const num = (n: number | undefined) => (n === undefined || Number.isNaN(n) ? Inf
  * gets a window of its own instead (`do script` alone), and the script
  * reports why.
  */
+/**
+ * The first session's window. When Terminal was not running, starting it opens
+ * an empty window of its own: the session goes into that one, not a second.
+ */
+export function appleFirstLines(c: string): string[] {
+  return [
+    `set crosstalkWasRunning to (application "Terminal" is running)`,
+    `tell application "Terminal"`,
+    `\tactivate`,
+    `\tif not crosstalkWasRunning then`,
+    `\t\trepeat 20 times`,
+    `\t\t\tif (count of windows) > 0 then exit repeat`,
+    `\t\t\tdelay 0.2`,
+    `\t\tend repeat`,
+    `\tend if`,
+    `\tif (not crosstalkWasRunning) and (count of windows) > 0 then`,
+    `\t\tdo script ${asq(c)} in selected tab of front window`,
+    `\telse`,
+    `\t\tdo script ${asq(c)}`,
+    `\tend if`,
+    `end tell`,
+  ]
+}
+
 export function appleNewTabLines(c: string): string[] {
   return [
     `\t\tdelay 0.3`,
@@ -780,16 +804,32 @@ export function appleNewTabLines(c: string): string[] {
     `\t\tend repeat`,
     `\t\ttell application "Terminal"`,
     `\t\t\tif not frontmost then error "Terminal is not in front" number 1001`,
-    `\t\t\tset crosstalkWin to id of front window`,
-    `\t\t\tset crosstalkTabs to count of tabs of front window`,
-    `\t\t\tset crosstalkTty to tty of selected tab of front window`,
+    // Every tab there is now, by its tty: the new one is the tab that was not here before.
+    `\t\t\tset crosstalkSeen to {}`,
+    `\t\t\trepeat with w in windows`,
+    `\t\t\t\trepeat with t in tabs of w`,
+    `\t\t\t\t\tset end of crosstalkSeen to (tty of t)`,
+    `\t\t\t\tend repeat`,
+    `\t\t\tend repeat`,
     `\t\tend tell`,
     `\t\ttell application "System Events" to key code 17 using command down`,
-    `\t\tdelay 0.6`,
-    `\t\ttell application "Terminal"`,
-    `\t\t\tif (id of front window) is not crosstalkWin or (count of tabs of front window) is not (crosstalkTabs + 1) or (tty of selected tab of front window) is crosstalkTty then error "the new tab did not open where expected" number 1001`,
-    `\t\t\tdo script ${asq(c)} in selected tab of front window`,
-    `\t\tend tell`,
+    // Waited for, not a fixed pause: a slow Terminal must not leave an empty tab behind.
+    `\t\tset crosstalkNewTab to missing value`,
+    `\t\trepeat 20 times`,
+    `\t\t\tdelay 0.2`,
+    `\t\t\ttell application "Terminal"`,
+    `\t\t\t\trepeat with w in windows`,
+    `\t\t\t\t\trepeat with t in tabs of w`,
+    `\t\t\t\t\t\tset crosstalkT to (tty of t)`,
+    `\t\t\t\t\t\tif crosstalkT is not "" and crosstalkSeen does not contain crosstalkT then set crosstalkNewTab to (contents of t)`,
+    `\t\t\t\t\tend repeat`,
+    `\t\t\t\tend repeat`,
+    `\t\t\tend tell`,
+    `\t\t\tif crosstalkNewTab is not missing value then exit repeat`,
+    `\t\tend repeat`,
+    // No new tab: nothing was opened, and nothing is typed anywhere else.
+    `\t\tif crosstalkNewTab is missing value then error "the new tab did not open" number 1001`,
+    `\t\ttell application "Terminal" to do script ${asq(c)} in crosstalkNewTab`,
   ]
 }
 
@@ -801,7 +841,7 @@ export function appleNewTabLines(c: string): string[] {
  * how many opened: `done <error> <opened>`.
  */
 export function appleTerminalScript(cmds: string[], tabs: boolean): string {
-  const L: string[] = [`set crosstalkFallback to ""`, `set crosstalkOpened to 1`, `tell application "Terminal"`, `\tactivate`, `\tdo script ${asq(cmds[0])}`, `end tell`]
+  const L: string[] = [`set crosstalkFallback to ""`, `set crosstalkOpened to 1`, ...appleFirstLines(cmds[0])]
   for (const c of cmds.slice(1)) {
     if (!tabs) L.push(`tell application "Terminal" to do script ${asq(c)}`, `set crosstalkOpened to crosstalkOpened + 1`)
     else L.push(...tabTry(c))

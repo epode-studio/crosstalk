@@ -307,16 +307,19 @@ describe("8. unattended restores never type keys into whatever is in front", () 
     expect(plans.find((p) => p.sessions.some((s) => s.sessionId === "g"))!.kind).toBe("manual")
   })
 
-  test("Cmd-T in Terminal.app is checked before anything is typed in the selected tab", () => {
+  test("Cmd-T in Terminal.app: only a tab that did not exist before is typed into, and none is left empty", () => {
     const s = R.appleTerminalScript(["claude a", "claude b"], true)
     const i = s.indexOf(`key code 17`)
     expect(s.slice(0, i)).toContain("if not frontmost then error")
+    expect(s.slice(0, i)).toContain("set end of crosstalkSeen to (tty of t)") // every tab before, by tty
     const after = s.slice(i)
-    const check = after.indexOf("count of tabs of front window) is not (crosstalkTabs + 1)")
-    const typed = after.indexOf(`do script "claude b" in selected tab of front window`)
-    expect(check).toBeGreaterThan(-1)
-    expect(after.slice(0, typed)).toContain("(tty of selected tab of front window) is crosstalkTty")
-    expect(check).toBeLessThan(typed)
+    const found = after.indexOf("crosstalkSeen does not contain crosstalkT then set crosstalkNewTab")
+    const none = after.indexOf("if crosstalkNewTab is missing value then error")
+    const typed = after.indexOf(`do script "claude b" in crosstalkNewTab`)
+    expect(found).toBeGreaterThan(-1)
+    expect(found).toBeLessThan(none)
+    expect(none).toBeLessThan(typed)
+    expect(after).not.toContain("in selected tab of front window")
   })
 })
 
