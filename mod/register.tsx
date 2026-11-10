@@ -382,7 +382,9 @@ async function maybeRaise($: EngineInterface) {
     // Carrying on with its open items (chosen Always, or away): sent once the turn is over and the
     // prompt is empty, so it is never late.
     const tackle = all.find(i => i.id.startsWith('tackle:') && i.sessionId === session && i.state === 'pending')
-    if (tackle) {
+    // Not the moment a turn ends: the person is reading the reply, or about to answer it. Only after a quiet
+    // minute and a half with nothing typed does crosstalk carry on for them.
+    if (tackle && (await $.clock.now()) - lastTurnEnd >= TACKLE_AFTER_MS) {
       const box = await $.prompt.read()
       if (box.text.trim()) return
       const r = await cli($, ['act', '--id', tackle.id, '--action', 'answer'])
@@ -444,6 +446,9 @@ async function maybeRaise($: EngineInterface) {
 function urgent(it: Item): boolean {
   return it.kind === 'session' || it.kind === 'steer' || it.kind === 'restore' || it.kind === 'ask' || it.id.startsWith('relay:') || it.id.startsWith('attn:perm:') || it.id.startsWith('attn:circle:') || it.id.startsWith('sess:')
 }
+
+/** How long after a turn ends crosstalk waits before carrying on with a session's open items by itself. */
+const TACKLE_AFTER_MS = 90_000
 
 /** How many more are waiting after the one being asked, for its header. */
 let inboxLeft = 0
@@ -639,7 +644,8 @@ async function shortcut($: EngineInterface, text: string) {
 
 /** At a pause, the digest's line in the band: at most every two hours, only when something happened. */
 async function pauseDigest($: EngineInterface) {
-  if (busy || !interactive || asking) return
+  // Only in main: in a working session it lands in the middle of a conversation about something else.
+  if (busy || !interactive || asking || !mainTotals) return
   const now = await $.clock.now()
   if (now - digestAt < 10 * 60_000) return
   digestAt = now

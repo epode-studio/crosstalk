@@ -675,7 +675,8 @@ async function threadsSay(): Promise<string | undefined> {
   // Same strip as src/terminal/hook.ts titleOf: a thread name can come from a peer.
   if (r.title) sessionTitle = String(r.title).replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
   const say: string[] = []
-  if (r.banner?.length) say.push(`◢ crosstalk: joined ${r.banner.join(", ")}`)
+  // Which thread a session is in shows on its tab and status line; a line in the conversation about it
+  // only interrupts. (r.banner is still taken, so it is not said later either.)
   for (const n of r.notes ?? []) say.push(n)
   if (r.question && !r.mod && !ui.modActive(sessionId!))
     say.push(`◢ crosstalk: ${r.question.question} (${r.question.options.join(" / ")}). Say which, and the agent will set it with crosstalk_thread action "pick".`)
