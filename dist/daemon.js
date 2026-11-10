@@ -299,6 +299,7 @@ function baseName(name) {
   }
   return s.trim() || name.trim();
 }
+var SNOOZE_MS = 2 * 3600000;
 
 // src/registry.ts
 import fs2 from "node:fs";

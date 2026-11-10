@@ -397,6 +397,7 @@ function dotFor(thread) {
 var SIGN = { waiting: "\u2753", working: "\u23f3", done: "\u2705", broken: "\u2757", idle: "\uD83D\uDCA4" };
 var LEGEND = `${SIGN.waiting} needs you \u00b7 ${SIGN.working} working \u00b7 ${SIGN.done} done \u00b7 ${SIGN.broken} something broke \u00b7 ${SIGN.idle} idle \u00b7 a coloured dot per thread`;
 var ACRONYMS = new Set(["mcp", "ai", "pr", "ci", "api", "ui", "ux", "led", "pal", "esp32", "sdk", "cli", "id", "ids", "url", "db", "css", "html", "ios", "qr", "llm", "cbmc", "scd30"]);
+var SNOOZE_MS = 2 * 3600000;
 
 // src/registry.ts
 import os3 from "node:os";
@@ -1622,6 +1623,7 @@ function baseName2(name) {
   }
   return s.trim() || name.trim();
 }
+var SNOOZE_MS2 = 2 * 3600000;
 
 // src/uistate.ts
 import fs7 from "node:fs";

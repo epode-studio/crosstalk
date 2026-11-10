@@ -7473,12 +7473,13 @@ function shortQuestion(q, max = 72) {
   const t = q.replace(/^\s*\S+ asks:\s*/i, "").replace(/\s+/g, " ").trim();
   return t.length > max ? t.slice(0, max - 1) + "\u2026" : t;
 }
-var runningWhere = (r) => r.url ?? (r.ports?.length ? `localhost:${r.ports[0]}` : ""), DOTS, SIGN, LEGEND, ACRONYMS;
+var runningWhere = (r) => r.url ?? (r.ports?.length ? `localhost:${r.ports[0]}` : ""), DOTS, SIGN, LEGEND, ACRONYMS, SNOOZE_MS;
 var init_pure = __esm(() => {
   DOTS = ["\uD83D\uDFE0", "\uD83D\uDFE1", "\uD83D\uDFE2", "\uD83D\uDD35", "\uD83D\uDFE3", "\uD83D\uDFE4", "\u26aa"];
   SIGN = { waiting: "\u2753", working: "\u23f3", done: "\u2705", broken: "\u2757", idle: "\uD83D\uDCA4" };
   LEGEND = `${SIGN.waiting} needs you \u00b7 ${SIGN.working} working \u00b7 ${SIGN.done} done \u00b7 ${SIGN.broken} something broke \u00b7 ${SIGN.idle} idle \u00b7 a coloured dot per thread`;
   ACRONYMS = new Set(["mcp", "ai", "pr", "ci", "api", "ui", "ux", "led", "pal", "esp32", "sdk", "cli", "id", "ids", "url", "db", "css", "html", "ios", "qr", "llm", "cbmc", "scd30"]);
+  SNOOZE_MS = 2 * 3600000;
 });
 
 // src/registry.ts
