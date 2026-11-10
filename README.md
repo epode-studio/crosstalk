@@ -532,10 +532,10 @@ Sessions you start afterwards run the new version, and the first of them
 replaces crosstalk's background process if it is older (if the new one will
 not start, the old one comes back and that version is left alone for an
 hour). Sessions already open keep the old version until you restart them,
-and each says so once, so nothing new is a mystery. Your main session moves
-over by itself: at a quiet moment after an update, crosstalk restarts it in a
-new tab with its whole conversation and inbox (`CROSSTALK_NO_HANDOVER=1`
-turns that off).
+and each says so once, so nothing new is a mystery. Your main session asks
+in its inbox: "crosstalk updated. Restart this session on it now?", and
+restarts in a new tab with its whole conversation and inbox only when you say
+so.
 
 If `claude plugin marketplace list` shows `epode` as a **Folder** rather than
 GitHub, it was added from a local copy and never sees a release. Switch it once;

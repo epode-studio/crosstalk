@@ -174,6 +174,8 @@ const empty = (now: number): State => ({
 
 export const CIRCLE_STOP = "Stop it"
 export const CLOSE_YES = "Close it"
+export const UPDATE_NOW = "Restart now"
+export const UPDATE_LATER = "Later"
 export const CLOSE_NO = "Keep it open"
 export const CIRCLE_LET = "Let it run"
 export const START_FRESH = "Start fresh"
@@ -185,10 +187,10 @@ export const NOT_YET = "Not yet"
 export const ALWAYS_MERGE = "Always merge my green PRs"
 export const DISPOSE_RULE_QUESTION = "That is twice you started a session fresh. Start sessions fresh from their thread by themselves from now on, whenever their context is spent?"
 
-type What = "dispose" | "staff" | "perm" | "rule" | "circle" | "merge" | "close"
+type What = "dispose" | "staff" | "perm" | "rule" | "circle" | "merge" | "close" | "update"
 export const itemId = (what: What, key: string) => `attn:${what}:${key}`
 const parseId = (id: string) => {
-  const m = /^attn:(dispose|staff|perm|rule|circle|merge|close):(.+)$/.exec(id)
+  const m = /^attn:(dispose|staff|perm|rule|circle|merge|close|update):(.+)$/.exec(id)
   return m ? { what: m[1] as What, key: m[2] } : null
 }
 
@@ -792,32 +794,40 @@ export class AttentionService {
 
   // --- finished sessions close themselves (src/attention/autoclose.ts) --------------------
 
-  private handing = false
-
   /** After an update, main moves onto the new version at a quiet moment (src/attention/handover.ts). */
+  /**
+   * After an update, main is asked, in its own inbox, whether to restart on the new version: never
+   * restarted behind the person's back (it closes the tab they read everything in). Once per version.
+   */
   async handover() {
-    if (this.handing || !this.d.handover || !this.d.version) return
+    if (!this.d.handover || !this.d.version) return
     const sid = this.d.mainId()
     if (!sid) return
-    const s = this.d.sessions().get(sid)
-    const front = this.st.focus.sessionId ?? this.focused()?.sessionId
-    const main = { sessionId: sid, startedAt: R.readOne(sid)?.startedAt, seenAt: s?.seenAt, status: this.d.status(sid) ?? "", inFront: front === sid }
+    // Quiet does not matter for a question: it waits in the inbox.
+    const main = { sessionId: sid, startedAt: R.readOne(sid)?.startedAt, seenAt: 0, status: "", inFront: false }
     if (!HO.due({ main, installedAt: this.d.installedAt, version: this.d.version, done: this.st.handedOver, now: this.now(), env: this.env })) return
-    this.handing = true
     this.st.handedOver = `${sid}@${this.d.version}`
     this.save()
+    this.put({
+      id: itemId("update", `${sid}@${this.d.version}`),
+      sessionId: sid,
+      from: "crosstalk",
+      question: `crosstalk updated to ${this.d.version}. Restart this session on it now?`,
+      text: "It reopens in a new tab with its whole conversation and inbox. Until then it keeps running the old version.",
+      options: [UPDATE_NOW, UPDATE_LATER],
+    })
+  }
+
+  private async restartMain(sid: string): Promise<{ ok: boolean; text: string }> {
+    if (!this.d.handover) return { ok: false, text: "crosstalk cannot restart it from here" }
     try {
       const r = await this.d.handover(sid)
-      if (r.ok) recordEvent(HO.line(this.d.version), this.now())
-      else if (!/cannot open a tab for crosstalk|is not open/.test(r.text)) {
-        // Closed but not reopened: said where it will be seen, with the way back.
-        recordEvent(`could not reopen your main session after updating: say "resume ${this.nameOf(sid)}" in any session`, this.now())
-      }
-      this.d.log(`handover: ${r.ok ? "main restarted on" : "could not restart main on"} ${this.d.version}: ${r.text}`)
+      if (r.ok) recordEvent(HO.line(this.d.version ?? ""), this.now())
+      else if (!/cannot open a tab for crosstalk|is not open/.test(r.text)) recordEvent(`could not reopen your main session: say "resume ${this.nameOf(sid)}" in any session`, this.now())
+      this.d.log(`handover: ${r.ok ? "main restarted" : "could not restart main"}: ${r.text}`)
+      return r.ok ? { ok: true, text: "◢ crosstalk: restarting on the new version in a new tab." } : { ok: false, text: `◢ crosstalk: not restarted: ${r.text}. Restart it yourself when convenient.` }
     } catch (e) {
-      this.d.log(`handover: ${(e as Error).message}`)
-    } finally {
-      this.handing = false
+      return { ok: false, text: `◢ crosstalk: not restarted: ${(e as Error).message}` }
     }
   }
 
@@ -1086,7 +1096,7 @@ export class AttentionService {
     if (!p) return { ok: false, error: `not an attention question: ${id}` }
     if (action === "raised" || action === "later") return ui.withStore((items, now) => ui.act(items, id, action as ui.UiAction, now))
     const v = (value ?? "").trim()
-    const answer = action === "mute" ? (p.what === "perm" ? Pm.DENY : p.what === "dispose" ? COMPACT : p.what === "rule" ? NOT_NOW : p.what === "merge" ? NOT_YET : p.what === "circle" ? CIRCLE_LET : p.what === "close" ? CLOSE_NO : St.NOT_NOW) : v
+    const answer = action === "mute" ? (p.what === "perm" ? Pm.DENY : p.what === "dispose" ? COMPACT : p.what === "rule" ? NOT_NOW : p.what === "merge" ? NOT_YET : p.what === "circle" ? CIRCLE_LET : p.what === "close" ? CLOSE_NO : p.what === "update" ? UPDATE_LATER : St.NOT_NOW) : v
     if (!answer) return { ok: false, error: "an attention question is answered with one of its options" }
     const item = ui.snapshot()[id]
     // One of its own options, word for word: "Deny for this session" is not "Allow for this session".
@@ -1133,6 +1143,12 @@ export class AttentionService {
       const rule = answer === ALWAYS_MERGE ? `${this.setMergeRule(true)}\n` : ""
       const r = await this.merge(pr, false)
       return { ok: r.ok, item: claim.item, text: rule + r.text }
+    }
+    if (p.what === "update") {
+      if (answer !== UPDATE_NOW) return { ok: true, item: claim.item, text: "◢ crosstalk: later, then. It keeps running the old version until it restarts." }
+      const sid = p.key.split("@")[0] ?? ""
+      // A moment, so the answer is settled and shown before the tab goes.
+      return await new Promise((res) => setTimeout(() => void this.restartMain(sid).then((r) => res({ ...r, item: claim.item })), 500))
     }
     if (p.what === "close") {
       if (answer !== CLOSE_YES || !this.d.closeSession) return { ok: true, item: claim.item, text: `◢ crosstalk: ${claim.item.from ?? "it"} stays open.` }

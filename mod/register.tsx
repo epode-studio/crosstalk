@@ -179,7 +179,7 @@ function header(it: Item): string {
   if (it.kind === 'share') return 'Shared'
   if (it.kind === 'env') return 'Local files'
   if (it.kind === 'attention')
-    return it.id.startsWith('attn:perm:') ? 'Permission' : it.id.startsWith('attn:staff:') ? 'Another agent' : it.id.startsWith('attn:close:') ? 'Finished' : it.id.startsWith('attn:dispose:') ? 'Fresh start' : 'Question'
+    return it.id.startsWith('attn:perm:') ? 'Permission' : it.id.startsWith('attn:staff:') ? 'Another agent' : it.id.startsWith('attn:close:') ? 'Finished' : it.id.startsWith('attn:update:') ? 'Update' : it.id.startsWith('attn:dispose:') ? 'Fresh start' : 'Question'
   return cut(it.thread ? `${it.from} · ${it.thread}` : it.from ?? 'crosstalk', 12)
 }
 
