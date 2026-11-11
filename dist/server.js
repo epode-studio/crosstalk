@@ -8951,7 +8951,9 @@ function findRec(nameOrId, recs) {
   const n = nameOrId.trim().toLowerCase();
   if (!n)
     return;
-  return recs.find((r) => r.sessionId === nameOrId) ?? recs.find((r) => (r.name ?? "").toLowerCase() === n) ?? recs.find((r) => (r.name ?? "").toLowerCase().includes(n)) ?? recs.find((r) => r.cwd.toLowerCase().endsWith("/" + n));
+  const newest = (xs) => [...xs].sort((a, b) => b.seenAt - a.seenAt)[0];
+  const words = (r) => [(r.name ?? "").toLowerCase(), (r.thread ?? "").toLowerCase()];
+  return recs.find((r) => r.sessionId === nameOrId) ?? newest(recs.filter((r) => words(r).includes(n))) ?? newest(recs.filter((r) => words(r).some((w) => w && w.includes(n)))) ?? newest(recs.filter((r) => r.cwd.toLowerCase().endsWith("/" + n)));
 }
 var liveSys = (env = process.env) => ({
   platform: process.platform,
@@ -10324,6 +10326,16 @@ function show(o) {
   }
   if (!tmuxHas(session, env))
     return { ok: false, text: `\u25e2 crosstalk: ${rec?.name ?? session} is not running any more.` };
+  const clients = spawnSync12("tmux", ["-L", TMUX_SOCKET, "list-clients", "-t", `=${session}`, "-F", "#{client_tty}"], { encoding: "utf8", env: cleanEnv(env), timeout: 2000 });
+  const tty = clients.status === 0 ? String(clients.stdout).trim().split(`
+`)[0] : "";
+  if (tty) {
+    let front = false;
+    try {
+      front = focusTerm({ tty, ...env.TERM_PROGRAM ? { program: env.TERM_PROGRAM } : {} }, liveSys(env)).ok;
+    } catch {}
+    return { ok: true, text: `\u25e2 crosstalk: ${rec?.name ?? session} is open in a tab already${front ? "; brought it to the front" : ` (${tty})`}.` };
+  }
   const r = openForRepo([{ cwd: rec?.cwd ?? o.cwd, argv: attachArgv2(session), name: session, thread: rec?.thread }], { cwd: rec?.cwd ?? o.cwd, envVars: env, by: o.by, thread: rec?.thread });
   if (r.opened.kind === "manual")
     return { ok: true, text: `\u25e2 crosstalk: this terminal cannot open a tab from outside. To watch ${session}, run:
@@ -10357,6 +10369,7 @@ var init_spawn = __esm(() => {
   init_background();
   init_park();
   init_show();
+  init_focus();
   init_staffing();
   init_client();
   init_ports();
@@ -12973,6 +12986,34 @@ var init_running = __esm(() => {
   init_restore();
   init_pure();
   ORDER = { server: 0, preview: 1, pr: 2, share: 3, link: 4, screenshot: 5 };
+});
+
+// src/urls/liveness.ts
+var IDLE_MS, PREVIEW_MS, PR_MS;
+var init_liveness = __esm(() => {
+  init_queue();
+  init_extract();
+  init_ci();
+  IDLE_MS = 5 * 60000;
+  PREVIEW_MS = 5 * 60000;
+  PR_MS = 10 * 60000;
+});
+
+// src/urls/queue.ts
+import fs49 from "node:fs";
+import path54 from "node:path";
+function setQueueOff(off) {
+  try {
+    if (off)
+      fs49.writeFileSync(offFile(), String(Date.now()), { mode: 384 });
+    else
+      fs49.rmSync(offFile(), { force: true });
+  } catch {}
+}
+var offFile = () => path54.join(P2.root, "queue-off");
+var init_queue = __esm(() => {
+  init_config();
+  init_liveness();
 });
 
 // node_modules/zod/v4/core/util.js
@@ -21886,8 +21927,8 @@ var ServerResultSchema2 = union([
 
 // src/server.ts
 import net2 from "net";
-import fs52 from "fs";
-import path60 from "path";
+import fs53 from "fs";
+import path61 from "path";
 
 // src/config.ts
 import fs from "node:fs";
@@ -22212,6 +22253,8 @@ init_cleanup();
 init_uistate();
 
 // src/sessions/control.ts
+init_focus();
+init_show();
 init_config();
 init_restore();
 init_gather();
@@ -23552,6 +23595,13 @@ async function resume(ref, o, d) {
   if (bot)
     return { ok: false, text: `\u25e2 crosstalk: ${bot}` };
   const live = liveIds();
+  try {
+    const openRec = findRec(ref, liveRecs());
+    if (openRec) {
+      const f = focusSession({ sessionId: openRec.sessionId, env: d.env });
+      return { ok: true, text: f.ok ? f.text : `\u25e2 crosstalk: ${openRec.name ?? ref} is open already, in ${openRec.cwd}.` };
+    }
+  } catch {}
   const entries = all({ env: d.env, live });
   let p = lookup(ref, entries);
   if (!p) {
@@ -25699,6 +25749,13 @@ async function callTool7(name, a, o) {
     const r = await request({ op: "attn_merge_rule", sessionId: o.sessionId, cwd: o.cwd, on: a.on }, 1e4);
     return r?.ok ? ok4(r.text) : err4(r?.error ?? "the daemon did not answer");
   }
+  if (name === "crosstalk_merge_queue") {
+    if (typeof a.on !== "boolean")
+      return err4("pass on: true or false");
+    const Q = await Promise.resolve().then(() => (init_queue(), {}));
+    setQueueOff(!a.on);
+    return ok4(a.on ? "\u25e2 crosstalk: watching merge queues again: a PR that falls out is put back, or fixed and put back." : "\u25e2 crosstalk: no longer watching merge queues. A PR that falls out stays out until you look.");
+  }
   if (name !== "crosstalk_attention")
     return null;
   const r = await request({ op: "attn_act", sessionId: o.sessionId, cwd: o.cwd, id: String(a.id ?? ""), action: "answer", value: String(a.answer ?? "") }, 120000);
@@ -25707,10 +25764,10 @@ async function callTool7(name, a, o) {
 
 // src/services/tools.ts
 init_service();
-import path54 from "node:path";
+import path55 from "node:path";
 var text3 = (out) => ({ content: [{ type: "text", text: out.text }], ...out.ok ? {} : { isError: true } });
 async function callTool8(name, a, o) {
-  const here = (c) => typeof c === "string" && c.trim() ? path54.resolve(o.cwd, c) : o.cwd;
+  const here = (c) => typeof c === "string" && c.trim() ? path55.resolve(o.cwd, c) : o.cwd;
   switch (name) {
     case "crosstalk_serve":
       return text3(serve({
@@ -26096,29 +26153,29 @@ function introText() {
 
 // src/attention/calm.ts
 init_config();
-import fs49 from "node:fs";
-import path55 from "node:path";
-var file15 = () => path55.join(P2.root, "calm.json");
+import fs50 from "node:fs";
+import path56 from "node:path";
+var file15 = () => path56.join(P2.root, "calm.json");
 var WINDOW_OPEN_MS = 2 * 60000;
 function read6() {
   try {
-    return JSON.parse(fs49.readFileSync(file15(), "utf8")) ?? {};
+    return JSON.parse(fs50.readFileSync(file15(), "utf8")) ?? {};
   } catch {
     return {};
   }
 }
 function update(fn) {
-  fs49.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  fs50.mkdirSync(P2.root, { recursive: true, mode: 448 });
   const lock = `${file15()}.lock`;
   let held = false;
   for (let i = 0;i < 40 && !held; i++) {
     try {
-      fs49.mkdirSync(lock);
+      fs50.mkdirSync(lock);
       held = true;
     } catch {
       try {
-        if (Date.now() - fs49.statSync(lock).mtimeMs > 5000)
-          fs49.rmdirSync(lock);
+        if (Date.now() - fs50.statSync(lock).mtimeMs > 5000)
+          fs50.rmdirSync(lock);
       } catch {}
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
     }
@@ -26127,13 +26184,13 @@ function update(fn) {
     const s = read6();
     const out = fn(s);
     const tmp = `${file15()}.${process.pid}.tmp`;
-    fs49.writeFileSync(tmp, JSON.stringify(s), { mode: 384 });
-    fs49.renameSync(tmp, file15());
+    fs50.writeFileSync(tmp, JSON.stringify(s), { mode: 384 });
+    fs50.renameSync(tmp, file15());
     return out;
   } finally {
     if (held)
       try {
-        fs49.rmdirSync(lock);
+        fs50.rmdirSync(lock);
       } catch {}
   }
 }
@@ -26214,21 +26271,21 @@ init_model();
 init_uistate();
 init_threadfile();
 init_pure();
-import fs50 from "node:fs";
-import path56 from "node:path";
-var file16 = () => path56.join(P2.root, "day.json");
+import fs51 from "node:fs";
+import path57 from "node:path";
+var file16 = () => path57.join(P2.root, "day.json");
 function read7() {
   try {
-    return JSON.parse(fs50.readFileSync(file16(), "utf8")) ?? {};
+    return JSON.parse(fs51.readFileSync(file16(), "utf8")) ?? {};
   } catch {
     return {};
   }
 }
 function write5(d) {
-  fs50.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  fs51.mkdirSync(P2.root, { recursive: true, mode: 448 });
   const tmp = `${file16()}.${process.pid}.tmp`;
-  fs50.writeFileSync(tmp, JSON.stringify(d), { mode: 384 });
-  fs50.renameSync(tmp, file16());
+  fs51.writeFileSync(tmp, JSON.stringify(d), { mode: 384 });
+  fs51.renameSync(tmp, file16());
 }
 function threads2() {
   const st = readThreads();
@@ -27062,8 +27119,8 @@ var answer2 = {
 };
 
 // src/tools/doctor.ts
-var ACTIONS9 = ["report", "stats", "intro", "open_items", "auto_merge"];
-var description8 = `What is wrong with crosstalk and how to fix it. Actions: report (identity, daemon, relay, this session's inbox, sessions to restore, macOS permissions, each with its fix: show it, then help with whatever is marked \u2717; for "is crosstalk OK?", "why aren't messages arriving?"); stats (local measurements, never sent anywhere: time to merge, human minutes, questions answered by rules, tokens to first edit; relay the text); intro ("what can crosstalk do?", "how do I use this?": things to say, to show as they are); open_items, auto_merge (on: false to stop tackling Open lists, or merging green PRs, by itself; true to start).`;
+var ACTIONS9 = ["report", "stats", "intro", "open_items", "auto_merge", "merge_queue"];
+var description8 = `What is wrong with crosstalk and how to fix it. Actions: report (identity, daemon, relay, this session's inbox, sessions to restore, macOS permissions, each with its fix: show it, then help with whatever is marked \u2717; for "is crosstalk OK?", "why aren't messages arriving?"); stats (local measurements, never sent anywhere; relay the text); intro ("what can crosstalk do?", "how do I use this?": things to say, to show as they are); open_items, auto_merge, merge_queue (on: false stops tackling Open lists, merging green PRs, or unblocking merge queues by itself; true starts).`;
 var doctor = {
   actions: ACTIONS9,
   def: def("crosstalk_doctor", description8, ACTIONS9, { weeks: num2("stats: how many weeks back, default 4"), on: bool("true or false") }),
@@ -27079,6 +27136,8 @@ var doctor = {
         return { name: "crosstalk_open_items", args: only(a, "on") };
       case "auto_merge":
         return { name: "crosstalk_auto_merge", args: only(a, "on") };
+      case "merge_queue":
+        return { name: "crosstalk_merge_queue", args: only(a, "on") };
     }
     return { error: `crosstalk_doctor has no action "${a.action}"` };
   }
@@ -27105,29 +27164,29 @@ async function callTool14(tool, a, o) {
 }
 
 // src/paths.ts
-import path57 from "node:path";
+import path58 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
-var dirOf2 = (metaUrl) => path57.dirname(fileURLToPath2(metaUrl));
-var rootFrom2 = (metaUrl) => path57.join(dirOf2(metaUrl), "..");
+var dirOf2 = (metaUrl) => path58.dirname(fileURLToPath2(metaUrl));
+var rootFrom2 = (metaUrl) => path58.join(dirOf2(metaUrl), "..");
 
 // src/registry.ts
 init_pure();
 import os8 from "node:os";
-import path58 from "node:path";
-var claudeConfigDir2 = (env = process.env) => env.CLAUDE_CONFIG_DIR || path58.join(os8.homedir(), ".claude");
-var sessionsDir2 = (env = process.env) => path58.join(claudeConfigDir2(env), "sessions");
+import path59 from "node:path";
+var claudeConfigDir2 = (env = process.env) => env.CLAUDE_CONFIG_DIR || path59.join(os8.homedir(), ".claude");
+var sessionsDir2 = (env = process.env) => path59.join(claudeConfigDir2(env), "sessions");
 var SESSIONS2 = sessionsDir2();
 
 // src/channels.ts
-import fs51 from "node:fs";
-import path59 from "node:path";
+import fs52 from "node:fs";
+import path60 from "node:path";
 import { execFileSync as execFileSync5 } from "node:child_process";
 var SHELLS2 = new Set(["sh", "bash", "dash", "zsh", "env", "fish"]);
 function argvOf(pid) {
   if (!pid || pid <= 1)
     return null;
   try {
-    const raw = fs51.readFileSync(`/proc/${pid}/cmdline`, "utf8");
+    const raw = fs52.readFileSync(`/proc/${pid}/cmdline`, "utf8");
     const a = raw.split("\x00");
     if (a[a.length - 1] === "")
       a.pop();
@@ -27142,7 +27201,7 @@ function argvOf(pid) {
 }
 function parentOf(pid) {
   try {
-    const stat = fs51.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const stat = fs52.readFileSync(`/proc/${pid}/stat`, "utf8");
     return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]) || 0;
   } catch {}
   try {
@@ -27161,7 +27220,7 @@ function hostArgv(registryPid) {
     const a = argvOf(pid);
     if (!a)
       return null;
-    if (!SHELLS2.has(path59.basename(a[0] ?? "")))
+    if (!SHELLS2.has(path60.basename(a[0] ?? "")))
       return a;
     pid = parentOf(pid);
   }
@@ -27193,7 +27252,7 @@ function entryNamesUs(entry, o) {
 function managedSettings() {
   const file = process.env.CROSSTALK_MANAGED_SETTINGS ?? (process.platform === "darwin" ? "/Library/Application Support/ClaudeCode/managed-settings.json" : process.platform === "win32" ? "C:\\Program Files\\ClaudeCode\\managed-settings.json" : "/etc/claude-code/managed-settings.json");
   try {
-    return JSON.parse(fs51.readFileSync(file, "utf8"));
+    return JSON.parse(fs52.readFileSync(file, "utf8"));
   } catch {
     return null;
   }
@@ -27295,10 +27354,10 @@ mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
 function selfRegistration() {
   try {
     const dir = sessionsDir2();
-    for (const f of fs52.readdirSync(dir)) {
+    for (const f of fs53.readdirSync(dir)) {
       if (!f.endsWith(".json"))
         continue;
-      const e = JSON.parse(fs52.readFileSync(path60.join(dir, f), "utf8"));
+      const e = JSON.parse(fs53.readFileSync(path61.join(dir, f), "utf8"));
       if (e.sessionId !== SESSION_ID)
         continue;
       return {
