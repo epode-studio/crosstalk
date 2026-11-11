@@ -167,9 +167,9 @@ you, it asks.
   three hours, comes up in main's inbox: close it? Nothing closes without your
   yes. Never one that is busy, waiting on you, running a server or holding
   uncommitted changes; *"resume <name>"* brings a closed one back.
-- When a session's context is full and Claude Code would compact it, it
-  starts fresh from its thread instead, in the same tab. *"Stop starting fresh
-  by itself"* compacts as usual.
+- crosstalk never ends a session you are in. When its context is full, Claude
+  Code compacts it as usual. *"Start sessions fresh instead of compacting"*
+  makes crosstalk start a fresh one from its thread in the same tab instead.
 - New agents open as tabs beside their thread's, so you can see them start;
   their questions come to main. In main's pane, Enter on an agent takes you to
   it (one in the background opens in a tab attached to it).

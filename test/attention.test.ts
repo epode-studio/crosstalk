@@ -505,6 +505,13 @@ describe("the service", () => {
     expect(ruled.restarted.length).toBe(1)
     // A /compact the person typed is theirs.
     expect((await ruled.svc.precompact("s2", "manual")).block).toBeUndefined()
+    // By default nothing is ended: Claude Code compacts as usual, and nobody is asked.
+    const plain = world({ recs: [rec("s4", { tmux: { pane: "%4" } })] })
+    plain.add("s4", ["src/auth/a.ts", "src/auth/b.ts", "src/auth/c.ts"])
+    expect((await plain.svc.precompact("s4", "auto")).block).toBeUndefined()
+    await new Promise((r) => setTimeout(r, 400))
+    expect(plain.restarted.length).toBe(0)
+    expect(Object.values(ui.snapshot()).some((i) => i.id === S.itemId("dispose", "s4"))).toBe(false)
     // Nowhere to type: nothing is ended, nothing asked.
     const stuck = world({ recs: [rec("s3", { wt: { session: "x" } })], rule: S.START_FRESH })
     stuck.add("s3", ["src/auth/a.ts", "src/auth/b.ts", "src/auth/c.ts"])

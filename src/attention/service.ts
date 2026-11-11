@@ -500,9 +500,10 @@ export class AttentionService {
   async spent(sessionId: string, percent: number | undefined, why: "context" | "precompact"): Promise<boolean> {
     const can = this.canRestart(sessionId)
     if ("why" in can) return false
-    // crosstalk's job by default: a spent session starts fresh from its thread at a natural break.
-    // "Stop starting fresh by itself" (COMPACT) or CROSSTALK_ASK_FRESH=1 asks instead.
-    const rule = this.st.disposeRule ?? (this.env.CROSSTALK_ASK_FRESH === "1" ? undefined : START_FRESH)
+    // Never by default: ending a session the person is in looks like crosstalk killing it. Claude Code compacts
+    // as usual unless the person said "start sessions fresh instead of compacting" (their own standing rule).
+    // CROSSTALK_ASK_FRESH=1 asks once instead; CROSSTALK_FRESH_START=1 starts fresh by itself.
+    const rule = this.st.disposeRule ?? (this.env.CROSSTALK_ASK_FRESH === "1" ? undefined : this.env.CROSSTALK_FRESH_START === "1" ? START_FRESH : COMPACT)
     // The context is fully spent and something the session started still
     // runs: Claude Code compacts as usual, and nothing is ended.
     if (why === "precompact" && (this.postponed.has(sessionId) || (rule === START_FRESH && this.busy(can.rec)))) {
