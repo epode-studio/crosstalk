@@ -404,7 +404,11 @@ async function maybeRaise($: EngineInterface) {
     // The inbox, one at a time: the most pressing first (pure.ts inboxOrder).
     const now0 = await $.clock.now()
     // Open lists never take the keyboard any more (a quiet line instead); any left from before are not raised.
-    const candidates = all.filter(i => raisable(i) && !i.id.startsWith('open:') && !i.id.startsWith('you:'))
+    // A teammate's plain message never interrupts a working session mid-flow: it waits in the band above the
+    // prompt, and is offered only after two quiet minutes. A question for the person (kind ask) and what blocks an
+    // agent still ask at once.
+    const quietNow = (await $.clock.now()) - lastTurnEnd >= MESSAGE_AFTER_MS
+    const candidates = all.filter(i => raisable(i) && !i.id.startsWith('open:') && !i.id.startsWith('you:') && !(i.kind === 'message' && !mainTotals && !quietNow))
     // Calm (src/attention/calm.ts): what stops an agent comes at once; the rest waits for a
     // decision window, and not at all in focus or away. A nudge or focus's end is said once.
     const later = candidates.filter(i => !urgent(i))
@@ -454,6 +458,9 @@ async function maybeRaise($: EngineInterface) {
 function urgent(it: Item): boolean {
   return it.kind === 'session' || it.kind === 'steer' || it.kind === 'restore' || it.kind === 'ask' || it.id.startsWith('relay:') || it.id.startsWith('attn:perm:') || it.id.startsWith('attn:circle:') || it.id.startsWith('sess:')
 }
+
+/** How long a working session is quiet before a teammate's plain message is offered there. */
+const MESSAGE_AFTER_MS = 120_000
 
 /** How long after a turn ends crosstalk waits before carrying on with a session's open items by itself. */
 const TACKLE_AFTER_MS = 90_000

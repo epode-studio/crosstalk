@@ -53,6 +53,11 @@ export type Envelope = {
   room?: string
   /** ask/answer correlation. */
   correlation?: string
+  /**
+   * A notice the sender's crosstalk wrote by itself (a PR merged, checks failed), not a person's words:
+   * kept in the receiver's Lately, never put to them as a message.
+   */
+  notice?: boolean
   /** Presence payload, only on kind === "presence". */
   presence?: SessionPresence[]
   /** A working-set operation, on kind "fact", or a set of them on "fact_sync". */

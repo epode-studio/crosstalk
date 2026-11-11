@@ -1014,6 +1014,14 @@ function onEnvelope(
     return log(`dropped stale or future-dated ${env.kind} from ${peerLabel} (${Math.round(age / 1000)}s)`)
   }
 
+  // A teammate's crosstalk telling ours something by itself (their PR merged): Lately, never an interruption.
+  if (env.notice && env.kind === "message") {
+    seenIds.set(env.id, Date.now())
+    try {
+      ciMod.recordEvent(`${peerLabel}: ${String(env.text ?? "").replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 200)}`)
+    } catch {}
+    return
+  }
   if (env.kind === "presence") {
     peerPresence.set(peerLabel, { sessions: env.presence ?? [], at: Date.now() })
     if (!ctx?.room)
@@ -2128,6 +2136,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         replyTo: req.replyTo,
         room: req.room,
         correlation: req.op === "ask" ? crypto.randomUUID() : undefined,
+        ...(req.notice ? { notice: true } : {}),
         footprint: senderFootprint(req),
         ...(fromThreads.length ? { threads: fromThreads } : {}),
       }
@@ -2987,7 +2996,7 @@ control.listen(P.daemonSock, () => {
             me: identity!.label,
             teammates: (ids) => threads.teammates(ids),
             send: (label, text) =>
-              void Promise.resolve(handle({ op: "send", to: label, ...(u.sessionId && sessions.has(u.sessionId) ? { sessionId: u.sessionId } : {}), threadIds: [t!.id], thread: t!.meta.value.name, intent: "fyi", text })).catch(() => {}),
+              void Promise.resolve(handle({ op: "send", to: label, ...(u.sessionId && sessions.has(u.sessionId) ? { sessionId: u.sessionId } : {}), threadIds: [t!.id], thread: t!.meta.value.name, intent: "fyi", notice: true, text })).catch(() => {}),
           })
           if (told.length) log(`ci: told ${told.join(", ")} in ${t!.meta.value.name}`)
           ciMod.recordEvent(c.kind === "failed" ? `${u.label}: checks failed${c.failed?.length ? `: ${c.failed.join(", ")}` : ""}` : c.kind === "passed" ? `${u.label}: checks passed` : `${u.label} ${c.kind}`)
