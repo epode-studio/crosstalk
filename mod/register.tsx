@@ -72,7 +72,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Item, Pane } from './types'
-import { HANDED_PROMPT, LATER, MORE, MORE_OPTIONS, MUTE, OPEN_THREAD, cardOptions, dotFor, inboxItems, inboxOrder, parseAt, statusLine, takesAt } from '../src/ui-extra/pure.ts'
+import { HANDED_PROMPT, LATER, MORE, MORE_OPTIONS, MUTE, OPEN_THREAD, cardOptions, dotFor, inboxItems, inboxOrder, inboxUrgent, parseAt, statusLine, takesAt } from '../src/ui-extra/pure.ts'
 import { bandTree, inboxTree, paneTree } from './draw.tsx'
 
 const items = atom({ plugin: 'crosstalk', key: 'items' } as const, [])
@@ -127,14 +127,19 @@ async function cli($: EngineInterface, args: string[]): Promise<any> {
   }
 }
 
-/** The same rule as src/uistate.ts raisable(): once by itself, then only after a turn has ended since. */
+/**
+ * The same rule as src/uistate.ts raisable(): once by itself. Asked and not answered (put off, Esc, or the
+ * person just typed on): what blocks an agent comes back after their next turn, anything else not for two
+ * hours, so the same question never follows them from turn to turn.
+ */
 function raisable(it: Item): boolean {
   if (FINAL.has(it.state)) return false
   if (it.raisedAt === undefined) return it.state === 'pending'
-  // A to-do put off ("Remind me later") comes back after two hours, not at the next pause.
-  if (it.id.startsWith('you:') && it.state === 'later') return lastTurnEnd > it.raisedAt + 2 * 3_600_000
-  return lastTurnEnd > it.raisedAt
+  return lastTurnEnd > it.raisedAt + (inboxUrgent(it) ? 0 : ASK_AGAIN_MS)
 }
+
+/** How long a question that was asked and not answered waits before it is asked again. */
+const ASK_AGAIN_MS = 2 * 3_600_000
 
 const isCard = (it: Item) => it.kind === 'message' || it.kind === 'ask'
 const cut = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s)

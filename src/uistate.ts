@@ -337,7 +337,9 @@ export function openFor(items: Record<string, UiItem>, sessionId: string): UiIte
 export function raisable(it: UiItem, o: { idle: boolean; promptEmpty: boolean; lastTurnEnd: number }): boolean {
   if (FINAL.has(it.state) || !o.idle || !o.promptEmpty) return false
   if (it.raisedAt === undefined) return it.state === "pending"
-  return o.lastTurnEnd > it.raisedAt
+  // Asked and not answered: what blocks an agent after the next turn, anything else not for two hours.
+  const urgent = it.kind === "restore" || it.kind === "session" || it.kind === "steer" || /^(relay|attn:perm|attn:circle|sess):/.test(it.id)
+  return o.lastTurnEnd > it.raisedAt + (urgent ? 0 : 2 * 3_600_000)
 }
 
 // --- the mod's marker ---------------------------------------------------------

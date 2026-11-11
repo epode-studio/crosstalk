@@ -461,6 +461,8 @@ export const offerQuestion = (n: number) =>
 export function offerFor(cands: Rec[], state: GState): Offer | null {
   const asked = new Set(state.offered?.ids ?? [])
   if (!cands.length || cands.every((r) => asked.has(r.sessionId))) return null
+  // At most once a day, however many new sessions turn up: never the same question session after session.
+  if (state.offered?.at && Date.now() - state.offered.at < 86_400_000) return null
   const n = cands.length
   const names = cands.slice(0, 4).map(label).concat(n > 4 ? ["…"] : [])
   return {

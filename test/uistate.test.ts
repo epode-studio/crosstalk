@@ -136,9 +136,12 @@ describe("when a picker may come up by itself", () => {
     expect(U.raisable(item({ raisedAt: T0 + 5 }), { ...free, lastTurnEnd: 0 })).toBe(false)
   })
 
-  test("after a turn of the person's has ended since: yes", () => {
-    expect(U.raisable(item({ raisedAt: T0 + 5 }), { ...free, lastTurnEnd: T0 + 6 })).toBe(true)
-    expect(U.raisable(item({ state: "later", raisedAt: T0 + 5 }), { ...free, lastTurnEnd: T0 + 6 })).toBe(true)
+  test("asked and not answered: what blocks an agent after the next turn, anything else not for two hours", () => {
+    const H2 = 2 * 3_600_000
+    expect(U.raisable(item({ raisedAt: T0 + 5 }), { ...free, lastTurnEnd: T0 + 6 })).toBe(false) // never turn after turn
+    expect(U.raisable(item({ state: "later", raisedAt: T0 + 5 }), { ...free, lastTurnEnd: T0 + 6 })).toBe(false)
+    expect(U.raisable(item({ raisedAt: T0 + 5 }), { ...free, lastTurnEnd: T0 + 6 + H2 })).toBe(true)
+    expect(U.raisable(item({ id: "attn:perm:x", raisedAt: T0 + 5 }), { ...free, lastTurnEnd: T0 + 6 })).toBe(true) // an agent waits on it
   })
 
   test("a settled item: never", () => {
