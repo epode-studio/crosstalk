@@ -3528,6 +3528,8 @@ function offerFor2(cands, state) {
   const asked = new Set(state.offered?.ids ?? []);
   if (!cands.length || cands.every((r) => asked.has(r.sessionId)))
     return null;
+  if (state.offered?.at && Date.now() - state.offered.at < 86400000)
+    return null;
   const n = cands.length;
   const names = cands.slice(0, 4).map(label2).concat(n > 4 ? ["\u2026"] : []);
   return {
