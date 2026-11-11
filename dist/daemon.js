@@ -3899,6 +3899,7 @@ var empty3 = () => ({
   publicStatus: {},
   blobs: {}
 });
+var GUESS = "the closest match";
 var MAX_FILES = 60;
 var DEFINING_FILES = 24;
 var RECENT_PATHS = 10;
@@ -4002,6 +4003,10 @@ class ThreadService {
       return;
     const own = baseName(name);
     return own.toLowerCase().startsWith(names[0].toLowerCase()) ? own : `${names[0]} \u00b7 ${own}`;
+  }
+  guessed(sessionId) {
+    const rec = this.st.placed[sessionId];
+    return !!rec && rec.threads.some((id) => rec.why[id] === GUESS);
   }
   repoOfSession(sessionId) {
     return this.locals.get(sessionId)?.repo;
@@ -4300,10 +4305,12 @@ class ThreadService {
           put(t, "files", f, { at: this.now() }, this.me, this.now());
         want = [{ id: t.id, why: p.why }];
       } else if (p.kind === "ask") {
-        const before = this.st.questions[s.sessionId];
-        if (!before || before.candidates.join() !== p.candidates.join())
-          this.st.questions[s.sessionId] = { candidates: p.candidates, why: p.why, at: this.now() };
-        want = (fp.onDefault ? rec.threads.slice(-1) : rec.threads).map((id) => ({ id, why: rec.why[id] ?? "" }));
+        const cands = p.candidates.map((id) => this.resolve(id));
+        const keep = rec.threads.map((id) => this.resolve(id)).find((id) => cands.includes(id));
+        const lately = (id) => Math.max(0, ...live(this.st.threads[id], "sessions").map((x) => x.at ?? 0));
+        const pick = keep ?? [...cands].filter((id) => this.st.threads[id]).sort((a, b) => lately(b) - lately(a))[0];
+        delete this.st.questions[s.sessionId];
+        want = pick ? [{ id: pick, why: keep ? rec.why[pick] ?? GUESS : GUESS }] : [];
       } else {
         want = fp.onDefault ? rec.threads.slice(-1).map((id) => ({ id, why: rec.why[id] ?? "" })) : [];
       }
@@ -18227,7 +18234,7 @@ class AttentionService {
   async stop(sessionId, o = {}) {
     const reg = this.d.sessions().get(sessionId);
     const transcript = o.transcript ?? reg?.transcript;
-    const ambiguous = !!this.d.threads.question(sessionId) || this.d.threads.idsFor(sessionId).length === 0;
+    const ambiguous = !!this.d.threads.question(sessionId) || this.d.threads.idsFor(sessionId).length === 0 || this.d.threads.guessed(sessionId);
     let recap;
     if (ambiguous && transcript && this.env.CROSSTALK_NO_RECAP !== "1") {
       recap = fromTranscript(transcript);
@@ -23336,6 +23343,11 @@ function holdUnrouted(peerLabel, env, ctx, r) {
   const ruled = coord.autoRoute(peerLabel, r.fp.repo);
   if (ruled && sessions.get(ruled))
     return void onEnvelope(peerLabel, { ...env, toSession: sessions.get(ruled).name }, { ...ctx, replayingParked: true });
+  const pick = r.ask === "tie" && r.tied.length ? [...r.tied].sort((a, b) => (b.seenAt ?? 0) - (a.seenAt ?? 0))[0] : sessions.get(coord.mainId() ?? "") ?? mostRecentSession();
+  if (pick && !env.toSession && sessions.get(pick.sessionId) && process.env.CROSSTALK_ASK_ROUTE !== "1") {
+    log(`routed ${env.kind} from ${peerLabel} to ${pick.name} by itself (${r.ask === "tie" ? "used last of the ones it matched" : "nothing matched"})`);
+    return void onEnvelope(peerLabel, { ...env, toSession: pick.name }, { ...ctx, replayingParked: true });
+  }
   seenIds.set(env.id, Date.now());
   if (unrouted.some((u) => u.id === env.id))
     return;
