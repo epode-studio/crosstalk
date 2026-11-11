@@ -165,6 +165,8 @@ const empty = (): State => ({
 })
 
 /** Files a thread keeps. A thread is about now, so the oldest fall off. */
+/** Why a session is in a thread it was put in by a guess between equal matches. */
+const GUESS = "the closest match"
 const MAX_FILES = 60
 /** The files that say what a thread is about, for placing sessions: its first ones. */
 const DEFINING_FILES = 24
@@ -294,6 +296,12 @@ export class ThreadService {
     // "auth-2" in auth is already named for it: "auth-2", not "auth · auth-2".
     const own = baseName(name)
     return own.toLowerCase().startsWith(names[0]!.toLowerCase()) ? own : `${names[0]} · ${own}`
+  }
+
+  /** Placed by a guess between equal matches: its recap may still move it (src/attention/service.ts stop). */
+  guessed(sessionId: string): boolean {
+    const rec = this.st.placed[sessionId]
+    return !!rec && rec.threads.some((id) => rec.why[id] === GUESS)
   }
 
   /** The repository a local session is working in now, as its footprint says. */
@@ -621,10 +629,13 @@ export class ThreadService {
         for (const f of p.files) M.put(t, "files", f, { at: this.now() }, this.me, this.now())
         want = [{ id: t.id, why: p.why }]
       } else if (p.kind === "ask") {
-        const before = this.st.questions[s.sessionId]
-        if (!before || before.candidates.join() !== p.candidates.join())
-          this.st.questions[s.sessionId] = { candidates: p.candidates, why: p.why, at: this.now() }
-        want = (fp.onDefault ? rec.threads.slice(-1) : rec.threads).map((id) => ({ id, why: rec.why[id] ?? "" }))
+        // Decided here, never asked: the thread it is already in among them, else the one worked in most lately.
+        const cands = p.candidates.map((id) => this.resolve(id))
+        const keep = rec.threads.map((id) => this.resolve(id)).find((id) => cands.includes(id))
+        const lately = (id: string) => Math.max(0, ...M.live(this.st.threads[id]!, "sessions").map((x) => x.at ?? 0))
+        const pick = keep ?? [...cands].filter((id) => this.st.threads[id]).sort((a, b) => lately(b) - lately(a))[0]
+        delete this.st.questions[s.sessionId]
+        want = pick ? [{ id: pick, why: keep ? rec.why[pick] ?? GUESS : GUESS }] : []
       } else {
         // Nothing new to say: a session on the default branch stays where it was (its latest thread only).
         want = fp.onDefault ? rec.threads.slice(-1).map((id) => ({ id, why: rec.why[id] ?? "" })) : []

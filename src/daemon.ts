@@ -434,6 +434,13 @@ function holdUnrouted(
   const ruled = coord.autoRoute(peerLabel, r.fp.repo)
   if (ruled && sessions.get(ruled))
     return void onEnvelope(peerLabel, { ...env, toSession: sessions.get(ruled)!.name }, { ...ctx, replayingParked: true })
+  // Decided here, never asked: a tie goes to the session of them used last; no match goes to main's inbox,
+  // else to the session used last. Held only when no session is open at all.
+  const pick = r.ask === "tie" && r.tied.length ? [...r.tied].sort((a, b) => (b.seenAt ?? 0) - (a.seenAt ?? 0))[0] : sessions.get(coord.mainId() ?? "") ?? mostRecentSession()
+  if (pick && !env.toSession && sessions.get(pick.sessionId) && process.env.CROSSTALK_ASK_ROUTE !== "1") {
+    log(`routed ${env.kind} from ${peerLabel} to ${pick.name} by itself (${r.ask === "tie" ? "used last of the ones it matched" : "nothing matched"})`)
+    return void onEnvelope(peerLabel, { ...env, toSession: pick.name }, { ...ctx, replayingParked: true })
+  }
   seenIds.set(env.id, Date.now())
   if (unrouted.some((u) => u.id === env.id)) return
   // With a main session open, that is where the question goes (src/main.ts).

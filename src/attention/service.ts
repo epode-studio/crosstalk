@@ -416,7 +416,7 @@ export class AttentionService {
   async stop(sessionId: string, o: { transcript?: string } = {}): Promise<{ ok: true; recap?: string; threads: string[]; context?: number }> {
     const reg = this.d.sessions().get(sessionId)
     const transcript = o.transcript ?? reg?.transcript
-    const ambiguous = !!this.d.threads.question(sessionId) || this.d.threads.idsFor(sessionId).length === 0
+    const ambiguous = !!this.d.threads.question(sessionId) || this.d.threads.idsFor(sessionId).length === 0 || this.d.threads.guessed(sessionId)
     let recap: string | undefined
     if (ambiguous && transcript && this.env.CROSSTALK_NO_RECAP !== "1") {
       recap = Rc.fromTranscript(transcript)

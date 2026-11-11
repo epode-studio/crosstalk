@@ -15,6 +15,7 @@
 set -u
 export CROSSTALK_NO_GATHER=1  # sessions started before crosstalk: test/gather.sh, with a registry of its own
 export CROSSTALK_THREADS_NO_PUSH=1  # the remotes here are made up: threads are committed locally, never pushed
+export CROSSTALK_ASK_ROUTE=1  # this test covers holding and asking; by default crosstalk routes by itself (checked at the end)
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 PORT=${PORT:-8897}
@@ -192,6 +193,21 @@ sleep 2
 has "$(cat "$TMP/inbox.txt" 2>/dev/null)" 'which session should get it' "the question is injected into the session touched last"
 case "$(cat "$TMP/inbox.txt" 2>/dev/null)" in *"ops runbook"*) fail "the injected question leaked the sender's words" ;; *) pass "and carries none of the sender's words" ;; esac
 kill "$INBOX_PID" 2>/dev/null
+
+echo
+echo "by default, nothing is asked: a tie goes to one session by itself"
+stop_daemon "$A"
+CROSSTALK_ASK_ROUTE=0 CROSSTALK_HOME="$A" nohup bun src/daemon.ts >>"$TMP/da.log" 2>&1 &
+for _ in $(seq 1 40); do [ -S "$A/daemon.sock" ] && break; sleep 0.25; done
+sleep 2
+for s in api api-feat fw; do reg "$A" "$s" "$R/ana-${s}"; done
+reg "$A" api "$R/ana-api"
+sleep 1
+send ben-other ana "tie by itself" >/dev/null
+sleep 2
+GOT=$(where "tie by itself")
+case "$GOT" in "") fail "a tie was held instead of delivered" ;; *" "*) fail "it went to more than one session: $GOT" ;; *) pass "delivered to one session by itself ($GOT)" ;; esac
+grep -q "routed .* by itself" "$TMP/da.log" && pass "and said so in the log" || fail "no routing line in the log"
 
 echo
 [ $FAILED -eq 0 ] && echo "routing: all $PASSES passed" || { echo "routing: failures"; tail -30 "$TMP/da.log"; }

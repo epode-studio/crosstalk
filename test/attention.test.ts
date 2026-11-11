@@ -456,9 +456,10 @@ describe("the service", () => {
     w.add("s-bill", ["src/billing/x.ts", "src/billing/y.ts", "src/billing/z.ts"])
     const auth = w.threads.find("s-auth")!
     w.threads.edit("s-auth", { recap: "rotating the session tokens and their refresh" })
-    // Files equal: a question, without a transcript.
+    // Files equal, no transcript: a guess, never a question, and still open to its recap.
     w.add("s-q", ["src/auth/a.ts", "src/billing/x.ts"])
-    expect(w.threads.question("s-q")).toBeTruthy()
+    expect(w.threads.question("s-q")).toBeUndefined()
+    expect(w.threads.guessed("s-q")).toBe(true)
     // With one: the recap places it.
     const tr = transcript("svc1", [entry("user", "make the session token refresh rotate"), entry("assistant", "The refresh token now rotates.")])
     // (Its own files: the ones it joins with become the thread's, which would tip s-q.)

@@ -27,6 +27,7 @@ export CROSSTALK_NO_GATHER=1 CROSSTALK_NO_RESTORE=1 CROSSTALK_NO_REPOTRUST=1
 export CROSSTALK_THREAD_SETTLE_MS=300 CROSSTALK_THREAD_SYNC_MS=600000 CROSSTALK_WARN_RATE_MS=0
 # a-main reads ben's question before it steers; the wait after peer text is test/boundary.sh's
 export CROSSTALK_STEER_COOLDOWN_MS=0
+export CROSSTALK_ASK_ROUTE=1  # the held-message question; by default crosstalk routes by itself
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 PORT=${PORT:-8897}

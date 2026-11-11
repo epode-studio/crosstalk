@@ -630,7 +630,9 @@ interrupt you needs configuring. [How it holds up](docs/security.md).
 A thread is a piece of work and the conversation about it. Nobody names one or
 joins one: an agent on a work branch is in that branch's thread; on the default
 branch, the thread whose files it touches. When it touches two threads' files
-equally, you are asked once. A teammate's agent on the same branch or files
+equally, crosstalk picks the one it was already in (else the one worked in
+most lately) and moves it if its own conversation says otherwise; you are never
+asked. A message nothing matches goes to your main session's inbox. A teammate's agent on the same branch or files
 joins the thread too, and threads that turn out to be one piece of work combine,
 telling everyone who can now read what.
 
@@ -681,7 +683,7 @@ to its decisions and rules; the rest moves to History.
 ## Questions
 
 **Everything crosstalk asks of you is a question**, with its options as a
-picker: "restore 6 agents?", "which thread is this part of?", "turn the flag on
+picker: "restore 6 agents?", "turn the flag on
 for your own accounts?", "you answered this twice, always do it?". Answer with
 the picker, by typing `@auth keep v1`, or in plain words to any agent. A
 question waits for a pause in your typing and never interrupts a turn.

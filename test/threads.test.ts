@@ -523,17 +523,18 @@ describe("service", () => {
     expect(ana.svc.title("t", "auth-2")).toBe("auth-2") // named for it already: not "auth · auth-2"
   })
 
-  test("ambiguity is one question, and the answer sticks", () => {
+  test("ambiguity is decided, never asked: the thread it was in, else the one worked in most lately; a choice sticks", () => {
     const [ana] = pair()
     ana.svc.observe({ ...sess("s1", "main", ["src/auth/a.ts", "src/auth/b.ts", "src/auth/c.ts"]) })
     ana.svc.observe({ ...sess("s2", "main", ["src/billing/a.ts", "src/billing/b.ts", "src/billing/c.ts"]) })
     expect(ana.svc.list().map((t) => t.name).sort()).toEqual(["auth", "billing"])
     ana.svc.observe(sess("s3", "main", ["src/auth/x.ts", "src/billing/y.ts"]))
-    const q = ana.svc.question("s3")
-    expect(q?.options).toEqual(["auth", "billing", NEW_THREAD, "No thread"])
-    expect(ana.svc.idsFor("s3")).toEqual([])
-    expect(ana.svc.answer("s3", "billing")).toMatchObject({ ok: true, threads: ["billing"] })
     expect(ana.svc.question("s3")).toBeUndefined()
+    expect(ana.svc.namesFor("s3")).toHaveLength(1)
+    const was = ana.svc.namesFor("s3")[0]
+    ana.svc.observe(sess("s3", "main", ["src/auth/x.ts", "src/billing/y.ts"]))
+    expect(ana.svc.namesFor("s3")).toEqual([was!]) // stays where it was
+    expect(ana.svc.answer("s3", "billing")).toMatchObject({ ok: true, threads: ["billing"] })
     ana.svc.observe(sess("s3", "main", ["src/auth/x.ts", "src/billing/y.ts", "src/auth/z.ts"]))
     expect(ana.svc.namesFor("s3")).toEqual(["billing"])
   })
