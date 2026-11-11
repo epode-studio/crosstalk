@@ -141,7 +141,7 @@ reg s-new '["src/auth/a.ts","src/billing/x.ts"]' "$T1"
 check "$(names_of s-new)" "auth" "touching both equally, its transcript places it in auth"
 check "$(question_of s-new)" "" "and nobody is asked"
 reg s-amb '["src/auth/c.ts","src/billing/y.ts"]'
-has "$(question_of s-amb)" "touches auth and billing equally" "with no transcript yet, it is a question"
+check "$(question_of s-amb)" "" "with no transcript yet, it is placed by a guess, never asked"
 T2="$TMP/t2.jsonl"
 { user "retry the failed invoice emails in billing"; assistant "Invoice retries now back off exponentially."; } >"$T2"
 OUT=$(hook "{\"hook_event_name\":\"Stop\",\"session_id\":\"s-amb\",\"cwd\":\"$REPO\",\"transcript_path\":\"$T2\"}")
