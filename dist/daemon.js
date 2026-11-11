@@ -18313,7 +18313,7 @@ class AttentionService {
     const can = this.canRestart(sessionId);
     if ("why" in can)
       return false;
-    const rule = this.st.disposeRule ?? (this.env.CROSSTALK_ASK_FRESH === "1" ? undefined : START_FRESH);
+    const rule = this.st.disposeRule ?? (this.env.CROSSTALK_ASK_FRESH === "1" ? undefined : this.env.CROSSTALK_FRESH_START === "1" ? START_FRESH : COMPACT);
     if (why === "precompact" && (this.postponed.has(sessionId) || rule === START_FRESH && this.busy(can.rec))) {
       this.unpostpone(sessionId);
       this.d.log(`attention: ${this.nameOf(sessionId)} compacts as usual: something it started is still running`);
@@ -23792,6 +23792,13 @@ function onEnvelope(peerLabel, env, ctx) {
   if (!ctx?.replayingParked && (age > REPLAY_WINDOW_MS || age < -MAX_SKEW_MS)) {
     return log(`dropped stale or future-dated ${env.kind} from ${peerLabel} (${Math.round(age / 1000)}s)`);
   }
+  if (env.notice && env.kind === "message") {
+    seenIds.set(env.id, Date.now());
+    try {
+      recordEvent2(`${peerLabel}: ${String(env.text ?? "").replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 200)}`);
+    } catch {}
+    return;
+  }
   if (env.kind === "presence") {
     peerPresence.set(peerLabel, { sessions: env.presence ?? [], at: Date.now() });
     if (!ctx?.room)
@@ -24753,6 +24760,7 @@ async function handle(req, sock) {
         replyTo: req.replyTo,
         room: req.room,
         correlation: req.op === "ask" ? crypto33.randomUUID() : undefined,
+        ...req.notice ? { notice: true } : {},
         footprint: senderFootprint(req),
         ...fromThreads.length ? { threads: fromThreads } : {}
       };
@@ -25553,7 +25561,7 @@ control.listen(P.daemonSock, () => {
             threadId: t?.id,
             me: identity.label,
             teammates: (ids) => threads2.teammates(ids),
-            send: (label, text) => void Promise.resolve(handle({ op: "send", to: label, ...u.sessionId && sessions.has(u.sessionId) ? { sessionId: u.sessionId } : {}, threadIds: [t.id], thread: t.meta.value.name, intent: "fyi", text })).catch(() => {})
+            send: (label, text) => void Promise.resolve(handle({ op: "send", to: label, ...u.sessionId && sessions.has(u.sessionId) ? { sessionId: u.sessionId } : {}, threadIds: [t.id], thread: t.meta.value.name, intent: "fyi", notice: true, text })).catch(() => {})
           });
           if (told.length)
             log(`ci: told ${told.join(", ")} in ${t.meta.value.name}`);
