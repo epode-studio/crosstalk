@@ -12,7 +12,7 @@
 //     items?" Tackle them / Always / Not now. "Tackle them" starts the turn;
 //     "Always" does that and from then on the turn goes on by itself, on this
 //     machine (`open-items.json`). "Stop tackling open items by itself", said
-//     to any session, turns that off (crosstalk_doctor action "open_items").
+//     to any session, turns that off (crosstalk_inbox action "open_items").
 //
 // Continuing by itself is Claude Code's Stop hook block, with one turn of it per
 // prompt the person typed (Claude Code's own stop_hook_active), so an agent
@@ -203,7 +203,7 @@ export function tacklePrompt(items: string[], ids: string[] = [], persons: strin
           `Tackle the open items you listed:`,
           ...items.map((x, i) => `${i + 1}. ${x}${ids[i] ? ` (task ${ids[i]})` : ""}`),
           ``,
-          `Do each one you can do yourself${ids.length ? `, and mark it done with crosstalk_thread action "note", kind "task", op "done" and its task id` : ""}. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). Do nothing that cannot be undone (deleting, deploying, merging, sending, paying) unless the person asked for it in this conversation; leave those, and anything only the person can decide, in your Open list for them.`,
+          `Do each one you can do yourself${ids.length ? `, and mark it done with crosstalk_work action "note", kind "task", op "done" and its task id` : ""}. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). Do nothing that cannot be undone (deleting, deploying, merging, sending, paying) unless the person asked for it in this conversation; leave those, and anything only the person can decide, in your Open list for them.`,
         ]
       : []),
     ...(persons.length

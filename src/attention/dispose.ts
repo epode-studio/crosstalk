@@ -119,7 +119,7 @@ export function primer(t: M.Thread, o: { session?: string; context?: number } = 
     ...r.lines,
     ``,
     `## Your task`,
-    `Carry on the work of the thread "${name}" from where the record above leaves it: check the checkout against it first, then take up its open tasks and questions. crosstalk_thread action "read" shows the thread again at any time.`,
+    `Carry on the work of the thread "${name}" from where the record above leaves it: check the checkout against it first, then take up its open tasks and questions. crosstalk_work action "read" shows the thread again at any time.`,
   ].join("\n")
 }
 

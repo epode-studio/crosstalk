@@ -198,7 +198,7 @@ export function awayAnswer(options: Option[], until?: number): { answer: string;
   if (r) return { answer: r.label, how: "recommended" }
   const back = until ? ` (back around ${new Date(until).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })})` : ""
   return {
-    answer: `The person is away${back} and asked crosstalk to keep things going. Choose the safest, most reversible option yourself, write down which and why as a decision in the thread (crosstalk_thread), and carry on. If nothing here is safe to choose without them, leave this part, say so in the thread, and continue with the rest of the work.`,
+    answer: `The person is away${back} and asked crosstalk to keep things going. Choose the safest, most reversible option yourself, write down which and why as a decision in the thread (crosstalk_work), and carry on. If nothing here is safe to choose without them, leave this part, say so in the thread, and continue with the rest of the work.`,
     how: "own",
   }
 }

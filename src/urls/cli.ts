@@ -1,4 +1,4 @@
-// `crosstalk urls`: the same list as crosstalk_look action "running", for scripts and people.
+// `crosstalk urls`: the same list as crosstalk_work action "running", for scripts and people.
 //
 //   crosstalk urls [--thread T] [--kind K] [--json]   the list
 //   crosstalk urls check                              sync services and check what is due, once

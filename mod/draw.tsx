@@ -260,7 +260,7 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number, i
         </Text>
       ) : null}
       {p.qr ? (
-        // For the phone (crosstalk_look action "qr"): white on black, so it scans on any terminal theme. Never model context.
+        // For the phone (crosstalk_work action "qr"): white on black, so it scans on any terminal theme. Never model context.
         <Box key="q" flexDirection="column" marginTop={1}>
           <Text bold wrap="truncate">On your phone · {clean(p.qr.label)}</Text>
           {p.qr.rows.map((r, i) => (

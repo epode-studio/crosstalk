@@ -64,8 +64,8 @@ send({ jsonrpc: "2.0", method: "notifications/initialized" })
 send({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })
 const list = await waitFor(2)
 const names: string[] = (list?.result?.tools ?? []).map((t: any) => t.name)
-const EIGHT = ["crosstalk_thread", "crosstalk_say", "crosstalk_work", "crosstalk_look", "crosstalk_ship", "crosstalk_people", "crosstalk_answer", "crosstalk_doctor"]
-JSON.stringify([...names].sort()) === JSON.stringify([...EIGHT].sort()) ? ok("lists exactly the eight tools") : bad(`lists ${names.join(", ")}`)
+const FOUR = ["crosstalk_sessions", "crosstalk_work", "crosstalk_inbox", "crosstalk_people"]
+JSON.stringify([...names].sort()) === JSON.stringify([...FOUR].sort()) ? ok("lists exactly the four tools") : bad(`lists ${names.join(", ")}`)
 const actions = (list?.result?.tools ?? []).every((t: any) => t.inputSchema?.properties?.action?.enum?.length && t.inputSchema?.required?.includes("action"))
 actions ? ok("every tool takes a required action from an enum") : bad("a tool has no action enum")
 

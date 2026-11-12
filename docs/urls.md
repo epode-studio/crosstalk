@@ -13,7 +13,7 @@ One record per thing to look at, in `<crosstalk home>/urls.json`:
 
 | Kind | Where it comes from | Label |
 |---|---|---|
-| `local` | a crosstalk service's port (`crosstalk_work action "serve"`, [services.md](services.md)), kept current as the port moves | `auth · dev server`, `auth · web` |
+| `local` | a crosstalk service's port (`crosstalk_sessions action "serve"`, [services.md](services.md)), kept current as the port moves | `auth · dev server`, `auth · web` |
 | `local` | a localhost URL a Bash command printed (`localhost`, `127.0.0.1`, `::1`, `0.0.0.0`, `*.localhost`) | `auth · :5173` |
 | `preview` | shipping's preview of a feature (`src/shipping/engine.ts`), one per thread and feature | `auth · preview` |
 | `pr` | the PR shipping opened, or a GitHub PR URL a command printed | `auth · PR #12` |
@@ -126,8 +126,8 @@ pane, the tool, the status line and the digest all read the same function.
 
 | Where | What |
 |---|---|
-| `crosstalk_look {action: "running", thread?, kind?, alive?}` | the list, this session's first: "what's the auth URL?", "what's running?". `kind` is server, preview, pr, share, link or screenshot. Framed as data, inside `<crosstalk-running>`: labels can come from teammates and links from command output, so they are never instructions. |
-| `crosstalk_look {action: "open_url", name?, thread?, kind?}` | "open the billing preview": the one whose label, name or URL has every word, opened in the browser (`open` on macOS, `xdg-open` elsewhere; never through a shell). A local server opens by its proxy name. Several matches open none and are listed. |
+| `crosstalk_work {action: "running", thread?, kind?, alive?}` | the list, this session's first: "what's the auth URL?", "what's running?". `kind` is server, preview, pr, share, link or screenshot. Framed as data, inside `<crosstalk-running>`: labels can come from teammates and links from command output, so they are never instructions. |
+| `crosstalk_work {action: "open_url", name?, thread?, kind?}` | "open the billing preview": the one whose label, name or URL has every word, opened in the browser (`open` on macOS, `xdg-open` elsewhere; never through a shell). A local server opens by its proxy name. Several matches open none and are listed. |
 | the pane | a **Running** section: Servers, Previews, Pull requests, Shown to people, Links found in output, Screenshots; each clickable (an OSC 8 link in the terminal, only plain http(s)), dead ones marked. The main session's pane lists every thread's. |
 | the tab and status line | the tab: the worktree's name instead of its port while the proxy is up, `auth · auth.localhost:1355` (no port on 80), else `auth · :4100`. The status line: where the thread's one server is, or how many things run (`◢ auth · auth.localhost:1355 · 1 for you`) |
 | `crosstalk urls [--thread T] [--kind K] [--json]` | the same list, for scripts |
@@ -168,7 +168,7 @@ like the rest:
   (so a replica that still has the entry does not bring it back), and past 300
   tombstones the oldest become a running count. Lists say "N older links were
   folded away".
-- **Asking**: `crosstalk_look {action: "history", thread?, query?, before?, after?}`: "what did
+- **Asking**: `crosstalk_work {action: "history", thread?, query?, before?, after?}`: "what did
   the login page look like before the redesign?" lists the matching entries,
   links and ended notes together,
   most recently seen first, with dates and screenshot paths, inside
@@ -178,7 +178,7 @@ like the rest:
 
 ## 6. On the phone
 
-`crosstalk_look {action: "qr", name | url, thread?}`: "show me a QR for the auth page" draws a
+`crosstalk_work {action: "qr", name | url, thread?}`: "show me a QR for the auth page" draws a
 QR code in the pane (`src/urls/history/phone.ts`, encoder in `qr.ts`: byte
 mode, error correction M, else L, versions 1 to 10, no dependencies), as
 Unicode half blocks drawn white on black, so it scans on a light or a dark
@@ -189,14 +189,14 @@ terminal.
   on a phone, so: its share link when the sharing build gave it one, else the
   thread's deployed preview when it has one that answers (and the pane says
   so), else nothing, and the result says plainly that the phone needs a share
-  link. The share link is a public one (`crosstalk_look action "share"` with `public: true`,
+  link. The share link is a public one (`crosstalk_work action "share"` with `public: true`,
   [8](#8-sharing-a-running-server)), set on the record as `shareUrl` while it is
   open; a share with people opens only through a crosstalk peer's proxy, and a
   phone is not a peer, so it gives the phone nothing. **Gap:** sharing with your
   own phone without a public link is not built.
 - **For the pane only**: the code goes to `<crosstalk home>/qr/<session>.json`
   (30 minutes) and `crosstalk ui pane` adds it to the pane; the mod opens the
-  pane on the call, like `crosstalk_look action "pane"`. The tool result says it is on
+  pane on the call, like `crosstalk_work action "pane"`. The tool result says it is on
   screen and nothing of what it encodes (a share link is a key to the running
   server). A share link's caption names its host, never its path.
 - **Without the mod** the result says there is no pane, and the person runs
@@ -208,7 +208,7 @@ terminal.
 A new worktree gets the main checkout's gitignored env and secret files, so
 its dev server starts (`src/env/`):
 
-- **When**: crosstalk makes a worktree (`crosstalk_work action "spawn"`, `src/spawn.ts`), and
+- **When**: crosstalk makes a worktree (`crosstalk_sessions action "spawn"`, `src/spawn.ts`), and
   a session first starts in a worktree of a repo (SessionStart: Claude Code's
   `.claude/worktrees/`, or any other).
 - **Which**: `.env` and `.env.*` anywhere, `.dev.vars` anywhere, `config/*.local.*`
@@ -250,16 +250,16 @@ marie's browser ─▶ auth.paul.localhost:1355 (marie's proxy)
 
 | Tool | What |
 |---|---|
-| `crosstalk_look {action: "share", url \| name \| thread, with: [people], for?, public?}` | share one local server (a crosstalk service, or a localhost URL a command printed) with exactly these people, for 8 hours unless `for` says (`2h`, `30m`, `until 18:00`; a week at most) |
-| `crosstalk_look {action: "unshare", id \| url \| name \| thread, with?}` | stop it now, for everyone or only `with`: open requests and websockets are cut off |
-| `crosstalk_look {action: "running", kind: "share"}` | what you show and what is shown to you, framed as data |
+| `crosstalk_work {action: "share", url \| name \| thread, with: [people], for?, public?}` | share one local server (a crosstalk service, or a localhost URL a command printed) with exactly these people, for 8 hours unless `for` says (`2h`, `30m`, `until 18:00`; a week at most) |
+| `crosstalk_work {action: "unshare", id \| url \| name \| thread, with?}` | stop it now, for everyone or only `with`: open requests and websockets are cut off |
+| `crosstalk_work {action: "running", kind: "share"}` | what you show and what is shown to you, framed as data |
 
 **On the owner's machine (paul).** The share is one URL record and the people
 named in it, each by the fingerprint of their direct channel: exact crosstalk
 names (`marie`, never a prefix), never an agent, never someone muted; a person
 trusted through a repository is included on each of their machines. A
 `shared` record, `auth · web · shared with marie · until 18:00`, is in the
-pane's Running, under **Shown to people**, and in `crosstalk_look action "running"`. Each frame from marie's daemon
+pane's Running, under **Shown to people**, and in `crosstalk_work action "running"`. Each frame from marie's daemon
 is checked against the share as it arrives: her fingerprint in it, not muted
 now, not an agent, the share neither expired nor stopped. A request goes to
 127.0.0.1 (then ::1) on the share's port and nowhere else: a frame names a
@@ -278,7 +278,7 @@ request, so a service that restarts on another port stays shared.
   for the thread's main server, `web-auth.paul.localhost` for another; never a
   bare name, never shadowing one of marie's own;
 - a `shared` record, `auth · web · from paul · until 18:00`, in her pane and her
-  agent's `crosstalk_look action "running"`, inside `<crosstalk-running>` as data, so her agent can
+  agent's `crosstalk_work action "running"`, inside `<crosstalk-running>` as data, so her agent can
   test against it;
 - a card, **Open it / Not now / Stop it**, or a digest line without the mod.
   Nothing is opened by itself. Stop it closes it on her side and tells paul.
@@ -313,7 +313,7 @@ working. On the hosted relay share frames never fall back to ordinary sends,
 which are stored: one that has not been redeployed with stream frames carries
 no sharing at all, and the person is told so once (`src/streamgate.ts`).
 
-**Ending.** At its expiry each side ends it by itself; `crosstalk_look action "unshare"`
+**Ending.** At its expiry each side ends it by itself; `crosstalk_work action "unshare"`
 ends it at once and tells everyone in it. Either way open requests get 410,
 websockets close with 1008, marie's listener and name go, and both records are
 marked ended. A share is in `<crosstalk home>/shares.json`; after a restart
@@ -339,7 +339,7 @@ after; those are what a person reviews. Code: `src/urls/shots/`. Tests:
 | Trigger | What |
 |---|---|
 | a turn that edited files ends | PostToolUse notes the edit (Edit, Write, MultiEdit, NotebookEdit; one small write); at Stop the turn's thread is captured, in a detached `crosstalk shots turn`, so the hook does not wait. At most once a minute per session (`CROSSTALK_SHOTS_TURN_GAP_MS`); a turn held back keeps its edits for the next Stop. It waits 1.5 s first for a dev server's reload |
-| `crosstalk_look {action: "screenshot", url?, thread?, path?}` | now: the thread's URLs, or one address; `path` (`/login`) on each |
+| `crosstalk_work {action: "screenshot", url?, thread?, path?}` | now: the thread's URLs, or one address; `path` (`/login`) on each |
 | a local server first answers | the daemon takes one capture of it, a baseline, so the first change has a before |
 
 **What.** The thread's local servers on this machine (crosstalk services, and
@@ -376,7 +376,7 @@ the commit). Bounded: the last 6 of each URL and path
 oldest going first and each URL's after last.
 
 **As evidence.** Each URL's latest before and after are added to the
-`screenshots` of every `crosstalk_ship action "evidence"` for a feature in that thread
+`screenshots` of every `crosstalk_work action "evidence"` for a feature in that thread
 ([shipping.md](shipping.md)); they count as a risky feature's proof. Only the
 paths go: no image leaves this machine and none goes over the relay. In a
 public thread nothing is added. Each capture also goes into the thread's
@@ -387,7 +387,7 @@ history (section 5), by its path.
 | Where | What |
 |---|---|
 | the pane | a **Screenshots** section: `auth · web · before 2m · after now`, and the two files as OSC 8 `file://` links. A mod cannot draw an image, so a click opens it |
-| `crosstalk_look {action: "screenshots", name?, thread?, open?}` | the pairs, as files; with `open`, "show me the auth page before and after" opens the before and the after in the image viewer (`open` on macOS, `xdg-open` elsewhere, `CROSSTALK_OPEN_FILE_CMD`; never a shell). The page itself is picked over paths on it |
+| `crosstalk_work {action: "screenshots", name?, thread?, open?}` | the pairs, as files; with `open`, "show me the auth page before and after" opens the before and the after in the image viewer (`open` on macOS, `xdg-open` elsewhere, `CROSSTALK_OPEN_FILE_CMD`; never a shell). The page itself is picked over paths on it |
 | `crosstalk shots [list\|capture\|open\|engine]` | the same, for scripts and people |
 
 **Off:** `screenshots: off` in the repo's `.crosstalk/ship`, or
@@ -402,13 +402,13 @@ The daemon looks at each crosstalk service every two seconds
 
 | What happened | What crosstalk does |
 |---|---|
-| it exited with a status other than 0, within 10 s of being seen healthy (a sudden crash) | tells the thread's agent, then restarts it **once** by itself after a backoff (1 s, doubling for each restart in the hour, at most a minute): `crosstalk_work action "serve"` again with the same name, command, folder and PORT |
+| it exited with a status other than 0, within 10 s of being seen healthy (a sudden crash) | tells the thread's agent, then restarts it **once** by itself after a backoff (1 s, doubling for each restart in the hour, at most a minute): `crosstalk_sessions action "serve"` again with the same name, command, folder and PORT |
 | it crashes again before it has been healthy for two minutes, or crashed without having come up | not restarted. The tab of each session it belongs to turns **broken** (red), and the agent is told, with its log |
 | it runs, but its URL failed two checks in a row (after it had answered, or a minute after it started) | broken and told; nothing restarts a process that runs |
-| the agent starts it again (`crosstalk_work action "serve"`, same name) and it breaks again | the person is told, once (the thread's notice, else the main session's digest). Nothing more is said or restarted until it is healthy or started again |
+| the agent starts it again (`crosstalk_sessions action "serve"`, same name) and it breaks again | the person is told, once (the thread's notice, else the main session's digest). Nothing more is said or restarted until it is healthy or started again |
 | it exits with status 0 | nothing: it finished |
 | it is healthy again | the tab goes back to what it was |
-| `crosstalk_work action "stop"` | forgotten |
+| `crosstalk_sessions action "stop"` | forgotten |
 
 **Never a loop.** A restart needs a healthy period before the crash, at most
 one is spent until it has stayed healthy for two minutes
@@ -419,7 +419,7 @@ no new start within 15 s counts as a failure.
 (else the one that started it, else any session there) through the own-thread
 delivery, the coordinator's heads-up, handed to the agent by itself: "the
 auth · web server exited with status 1. It is not restarted by itself. Fix
-what made it fail, then start it again with crosstalk_work action "serve", name "web"…",
+what made it fail, then start it again with crosstalk_sessions action "serve", name "web"…",
 and the last 40 lines of its log inside `<crosstalk-log>`, as data. A session
 with no thread gets it as a held message. With no session to tell, the person
 is told instead.
@@ -460,7 +460,7 @@ Every capture is passed to `noteShot({ urlId, path, note? })` from
 `src/urls/history/sync.ts`, which puts it in the thread's history. For
 **sharing**: a local record whose share link is in `shareUrl` (or
 `share.url`), or another public record naming it in `sharedFrom`, is what
-`crosstalk_look action "qr"` encodes for it (`shareLinkFor` in `src/urls/history/phone.ts`).
+`crosstalk_work action "qr"` encodes for it (`shareLinkFor` in `src/urls/history/phone.ts`).
 
 ## Not yet checked in real use
 

@@ -1,6 +1,6 @@
 // Working the board: "work through the open tasks".
 //
-// Off until the person turns it on, in their own words (crosstalk_work action
+// Off until the person turns it on, in their own words (crosstalk_sessions action
 // "board", on: true); "stop working the board" turns it off. While on, every
 // minute the daemon:
 //
@@ -87,7 +87,7 @@ export function prompt(t: OpenTask): string {
     ``,
     `  «${text}»`,
     ``,
-    `Do it in this copy of the code, test it, and ship it the way this repository ships (crosstalk_ship), never deploying to production yourself. When it is done, mark the task done: crosstalk_thread action "task" with op "done" and id "${t.id}". If it needs a decision only the person can make, ask once with crosstalk's question, then carry on with what does not depend on it. If it cannot be done, say why in a note on the task and stop.`,
+    `Do it in this copy of the code, test it, and ship it the way this repository ships (crosstalk_work), never deploying to production yourself. When it is done, mark the task done: crosstalk_work action "task" with op "done" and id "${t.id}". If it needs a decision only the person can make, ask once with crosstalk's question, then carry on with what does not depend on it. If it cannot be done, say why in a note on the task and stop.`,
   ].join("\n")
 }
 

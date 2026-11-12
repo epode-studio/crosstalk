@@ -1,6 +1,6 @@
 // Parking a thread: out of sight until needed.
 //
-// "park auth" (crosstalk_thread action park). While parked, crosstalk starts
+// "park auth" (crosstalk_work action park). While parked, crosstalk starts
 // nothing new in it (the board, chasing what it waited on) and its notices and
 // questions stay out of main, held, not lost: "unpark auth" brings them back as
 // they were. A permission an agent is stuck on still comes through, so nothing

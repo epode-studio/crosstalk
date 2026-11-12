@@ -2,7 +2,7 @@
 // its questions arrive as a systemMessage the person reads, and the person's
 // answer in plain words reaches this. src/tools/ resolves an action of the
 // eight tools to one of these names and calls callTool. crosstalk_auto_merge
-// turns merging green PRs without asking on or off (crosstalk_doctor).
+// turns merging green PRs without asking on or off (crosstalk_inbox).
 
 import { request } from "../client.ts"
 

@@ -2,7 +2,7 @@
 //
 //   digest    since a moment: decisions, merges and flags turned on, questions
 //             answered (by people and by standing rules), incidents. The tool
-//             crosstalk_thread action "digest" returns it; the mod shows a one-line summary at
+//             crosstalk_work action "digest" returns it; the mod shows a one-line summary at
 //             a natural pause (a turn ends and nothing runs, at most every two
 //             hours) in the band, never in model context unless asked.
 //   standup   "what did the team ship this week": per person, from the threads.

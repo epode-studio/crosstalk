@@ -59,7 +59,7 @@ export type Shipping = {
   op: (req: Record<string, any>, sessionId: string | undefined) => Promise<Out>
   /** The picker's answer: a person pressed it. */
   uiAnswer: (itemId: string, value: string) => Promise<Out & { item?: ui.UiItem }>
-  /** crosstalk_thread may not lower a risk or answer a shipping question; returns the refusal, or the request to go on with. */
+  /** crosstalk_work may not lower a risk or answer a shipping question; returns the refusal, or the request to go on with. */
   guardThreadEdit: (sid: string | undefined, req: Record<string, any>) => Promise<{ stop?: Record<string, unknown>; req: Record<string, any> }>
 }
 
@@ -67,7 +67,7 @@ export function createShipping(o: {
   threads: ThreadService
   root: string
   log: (...a: unknown[]) => void
-  /** Hand text to an agent's session: held, with a notice, read with crosstalk_say action "read". */
+  /** Hand text to an agent's session: held, with a notice, read with crosstalk_people action "read". */
   wake: (sessionId: string, text: string) => void
   /** Where a question goes when no session is in its thread. */
   fallbackSession: () => string | undefined

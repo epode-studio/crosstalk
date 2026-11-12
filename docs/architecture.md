@@ -39,7 +39,7 @@ any amount of file overlap, and shared files and directories break the rest.
 The best session gets it. When none scores or two score the same, nothing is
 delivered: the message is held and the session you touched last is asked where
 it goes, with none of the sender's words in the question. The answer, given
-with `crosstalk_answer action "route"`, is remembered for that sender, repo and branch.
+with `crosstalk_inbox action "route"`, is remembered for that sender, repo and branch.
 
 A peer that sends no footprint (an older crosstalk, or a session outside a git
 repo) is routed as before: an idle session, else any live one, else the first
@@ -53,7 +53,7 @@ live in the daemon. After a restart, the daemon isn't running. When it starts,
 it drops every session whose process is gone, and those are exactly the
 sessions to bring back. A session whose process disappeared without a
 `SessionEnd` was lost. The first session opened afterwards asks once, through
-a `systemMessage` the model never sees. The `crosstalk_work action "restore"` tool reopens
+a `systemMessage` the model never sees. The `crosstalk_sessions action "restore"` tool reopens
 the lost sessions through an adapter per terminal. See [restore.md](restore.md).
 
 ## Two transports

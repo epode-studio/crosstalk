@@ -1650,7 +1650,7 @@ async function installPath() {
 
 /**
  * Sessions lost to a restart or a dead terminal, for scripts. In a session,
- * saying "restore them" does the same through crosstalk_work action "restore".
+ * saying "restore them" does the same through crosstalk_sessions action "restore".
  *
  *   crosstalk restore             list them
  *   crosstalk restore --dry-run   and exactly what would be run, AppleScript included
@@ -1677,7 +1677,7 @@ async function restoreCmd() {
 
 /**
  * Sessions started before crosstalk was installed. In a session, saying "bring
- * my other sessions into crosstalk" does the same through crosstalk_work action "gather".
+ * my other sessions into crosstalk" does the same through crosstalk_sessions action "gather".
  *
  *   crosstalk gather            list them
  *   crosstalk gather --yes      restart each in its tab once idle, with its conversation

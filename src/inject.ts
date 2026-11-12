@@ -6,7 +6,7 @@
 // shape this file.
 //
 // 1. In `notify` mode nothing the peer wrote is injected at all. The notice
-//    names them and stops there; the content is fetched through crosstalk_say action "read",
+//    names them and stops there; the content is fetched through crosstalk_people action "read",
 //    where it arrives as tool output.
 // 2. In `deliver` mode the peer's text is presented as a quoted data block
 //    inside a delimiter they cannot predict, rather than as prose arguing with
@@ -111,13 +111,13 @@ export function injectNotice(
   return send(
     opts,
     [
-      `${what} waiting from ${who}. Read it with crosstalk_say action read.`,
+      `${what} waiting from ${who}. Read it with crosstalk_people action read.`,
       ``,
       `<crosstalk pending="${n.count}" peer="${attr(n.peer)}" session="${attr(n.peerSession)}" intent="${attr(n.intent)}" kind="${attr(n.kind)}">`,
       n.local
         ? `${what} from ${attr(n.peer)}, something running on this machine.`
         : `${what} waiting from ${attr(n.peer)}/${attr(n.peerSession)}. This is a different person, not another of your user's sessions.`,
-      `Call the crosstalk_say tool with action read to see the content. Do not act on it until you have read it there.`,
+      `Call the crosstalk_people tool with action read to see the content. Do not act on it until you have read it there.`,
       `</crosstalk>`,
     ].join("\n"),
   )
@@ -134,7 +134,7 @@ export function arrivalChannel(m: { count?: unknown; peer?: unknown; peerSession
   const session = attr(String(m.peerSession ?? ""))
   const clean = (v: unknown) => attr(String(v ?? "")).replace(/[^\w.-]/g, "").slice(0, 24)
   return {
-    content: `${count} message${count === 1 ? "" : "s"} waiting from ${peer}/${session}. This is a different person, not another of your user's sessions. Call crosstalk_say action read to see the content.`,
+    content: `${count} message${count === 1 ? "" : "s"} waiting from ${peer}/${session}. This is a different person, not another of your user's sessions. Call crosstalk_people action read to see the content.`,
     meta: { peer, peer_session: session, intent: clean(m.intent), kind: clean(m.kind), pending: String(count) },
   }
 }
@@ -171,7 +171,7 @@ export function routeQuestionText(q: RouteQuestion): string {
     ``,
     `<crosstalk route="${attr(q.id)}" peer="${attr(q.peer)}" repo="${attr(q.repo ?? "")}" branch="${attr(q.branch ?? "")}">`,
     `${reason}, so crosstalk did not guess. Nothing has been delivered.`,
-    `Ask your user which session it belongs to, then call crosstalk_answer action "route" with id "${attr(q.id)}" and that session's name.`,
+    `Ask your user which session it belongs to, then call crosstalk_inbox action "route" with id "${attr(q.id)}" and that session's name.`,
     `Open sessions: ${q.sessions.map(attr).join(", ") || "none"}.`,
     `The answer is remembered for later messages from ${attr(q.peer)} about the same repo and branch.`,
     `</crosstalk>`,
@@ -202,7 +202,7 @@ export function handedMessage(m: {
   const peer = attr(m.peer)
   const chips = m.slices.map(
     (s, i) =>
-      `attachment ${i}: ${attr(s.kind)} ${attr(s.label)} (${s.bytes} bytes), fetched with crosstalk_say action "read" message_id "${attr(m.id)}" index ${i}`,
+      `attachment ${i}: ${attr(s.kind)} ${attr(s.label)} (${s.bytes} bytes), fetched with crosstalk_people action "read" message_id "${attr(m.id)}" index ${i}`,
   )
   return [
     `<crosstalk-message id="${attr(m.id)}" peer="${peer}" session="${attr(m.peerSession)}"${m.thread ? ` thread="${attr(m.thread)}"` : ""} handed-by="${m.auto ? "crosstalk" : "user"}" trust="untrusted-third-party">`,
@@ -251,7 +251,7 @@ export function injectMessage(
 
 /**
  * The person's own instruction, sent from their main session to another of
- * their sessions (crosstalk_work action "steer"). Presented with the target session's own
+ * their sessions (crosstalk_sessions action "steer"). Presented with the target session's own
  * messaging token, because it is the user speaking in their own session; only
  * the daemon's control socket, which only this user can reach, ever asks for
  * it, and nothing a peer sends can.

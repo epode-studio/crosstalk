@@ -18,7 +18,7 @@
 // Conflict prediction: every heads-up carries the sender's unmerged symbols for
 // the file. Two threads with unmerged edits to the same symbol are a conflict
 // (conflict.ts): both agents get a `conflict` frame naming the other thread and
-// the symbol, each proposes who changes it with crosstalk_thread action "note" kind "conflict" (recorded as
+// the symbol, each proposes who changes it with crosstalk_work action "note" kind "conflict" (recorded as
 // a decision in its own thread), and only proposals that keep disagreeing
 // become one question to the people.
 
@@ -326,7 +326,7 @@ export class WarnService {
     const what = c.symbol === WHOLE ? c.file : `${c.symbol} in ${c.file}`
     return (
       `conflict ahead: ${what} has unmerged edits in both ${to.name} (here) and ${o.name} (${o.label}). ` +
-      `Agree who changes it before either merges: call crosstalk_thread action "note" kind "conflict" with id ${c.id} and owner "mine" (${to.name} changes it and ${o.name} rebases onto it) or "theirs" (the other way round), with a line of why. ` +
+      `Agree who changes it before either merges: call crosstalk_work action "note" kind "conflict" with id ${c.id} and owner "mine" (${to.name} changes it and ${o.name} rebases onto it) or "theirs" (the other way round), with a line of why. ` +
       `It is recorded as a decision in ${to.name}. The people are asked only if the two of you cannot agree.`
     )
   }
@@ -402,9 +402,9 @@ export class WarnService {
     const to = C.other(c, from.thread)
     if (this.isLocalSide(to)) {
       for (const sid of this.localSessions(to.thread))
-        this.d.deliver(sid, { id: crypto.randomUUID(), kind: "conflict", from: this.d.label, fromSession: from.name, text: `${from.name} proposes, for ${c.symbol} in ${c.file} (conflict ${c.id}): ${ownerName} changes it and ${otherName} rebases onto it.${p.text ? ` "${p.text}"` : ""} Answer with crosstalk_thread action "note" kind "conflict".`, slices: [], threads: [to.thread], auto: true })
+        this.d.deliver(sid, { id: crypto.randomUUID(), kind: "conflict", from: this.d.label, fromSession: from.name, text: `${from.name} proposes, for ${c.symbol} in ${c.file} (conflict ${c.id}): ${ownerName} changes it and ${otherName} rebases onto it.${p.text ? ` "${p.text}"` : ""} Answer with crosstalk_work action "note" kind "conflict".`, slices: [], threads: [to.thread], auto: true })
     } else if (this.d.peers()[to.label])
-      this.d.send(to.label, this.envelope(to.label, "conflict", `${from.name} proposes, for ${c.symbol} in ${c.file} (conflict ${c.id}): ${ownerName} changes it and ${otherName} rebases onto it.${p.text ? ` "${p.text}"` : ""} Answer with crosstalk_thread action "note" kind "conflict".`, { thread: to.thread }, { warn: { conflict: c, proposal: { ...p, from: from.thread } } }))
+      this.d.send(to.label, this.envelope(to.label, "conflict", `${from.name} proposes, for ${c.symbol} in ${c.file} (conflict ${c.id}): ${ownerName} changes it and ${otherName} rebases onto it.${p.text ? ` "${p.text}"` : ""} Answer with crosstalk_work action "note" kind "conflict".`, { thread: to.thread }, { warn: { conflict: c, proposal: { ...p, from: from.thread } } }))
     this.save()
     return { ok: true, outcome, text: outcomeText(c, outcome) }
   }

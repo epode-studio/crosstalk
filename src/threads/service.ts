@@ -25,7 +25,7 @@
 // makes a sealed thread public or folds it into another (accept, mergeRef,
 // settle). Keys move only forward (rekey.ts adoption). Nothing is committed or
 // pushed for a repo before the person connected it (shared). Peer text in a
-// thread reaches an agent only through crosstalk_thread action "read", framed as other
+// thread reaches an agent only through crosstalk_work action "read", framed as other
 // people's words. docs/security.md, "Who may change a thread".
 
 import { baseName } from "../ui-extra/pure.ts"
@@ -924,7 +924,7 @@ export class ThreadService {
     const notes: string[] = []
     const pub = was ? was.public : false
     if (want.public !== pub) {
-      if (want.public && !pub) notes.push(`◢ crosstalk: ${from} made ${want.name} public on their side. It stays sealed here; it is committed in plain text only if you make it public yourself (crosstalk_thread action "status", public: true).`)
+      if (want.public && !pub) notes.push(`◢ crosstalk: ${from} made ${want.name} public on their side. It stays sealed here; it is committed in plain text only if you make it public yourself (crosstalk_work action "status", public: true).`)
       want.public = pub
     }
     if (want.combinedInto !== was?.combinedInto) {
@@ -1175,7 +1175,7 @@ export class ThreadService {
     return { ok: true as const, thread: t.meta.value.name, id: k.id }
   }
 
-  /** Everything else crosstalk_thread can change, in plain fields. */
+  /** Everything else crosstalk_work can change, in plain fields. */
   edit(
     sessionId: string | undefined,
     o: {

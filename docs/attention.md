@@ -10,7 +10,7 @@ terminal", "Wrangling every session").
 Every question here is a crosstalk question (a picker from the mod in the
 session the person is in, hidden from that session's agent). Without the mod
 it is a systemMessage line, answered in plain words through
-`crosstalk_answer action "attention"`.
+`crosstalk_inbox action "attention"`.
 
 ## Recaps
 
@@ -77,7 +77,7 @@ needs no review) and has no conflicts, one question goes to main: "auth · PR
 `gh pr merge <url> --auto` with the method the repository allows, squash
 first. Not yet asks again on the next green run only. Always merge my green
 PRs merges them from then on without asking, with one quiet line in main;
-crosstalk_doctor action `auto_merge` with `on: false` goes back to asking.
+crosstalk_inbox action `auto_merge` with `on: false` goes back to asking.
 `CROSSTALK_NO_MERGE=1` turns it all off.
 
 ## Focus
@@ -104,7 +104,7 @@ Focusing a tab (only on the person's word or a click): tmux `switch-client` +
 `select-window` + `select-pane`; Terminal.app and iTerm2 by AppleScript
 (select the tab, raise the window, activate); kitty `kitten @ focus-window
 --match id:N`; WezTerm `wezterm cli activate-pane --pane-id N`.
-`crosstalk_work action "show"` ("show me api") does this for a session that is not a
+`crosstalk_sessions action "show"` ("show me api") does this for a session that is not a
 background agent, and `crosstalk attn focus --session <id>` is what a
 notification's click runs.
 

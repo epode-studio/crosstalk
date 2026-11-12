@@ -29,7 +29,7 @@
 // Every question is a UiItem of kind "attention" (src/uistate.ts), id
 // `attn:<what>:<key>`, shown by crosstalk's mod in the session the person is
 // in, and answered through ui_act → act(). Without the mod it is a
-// systemMessage line, answered with crosstalk_answer action "attention".
+// systemMessage line, answered with crosstalk_inbox action "attention".
 
 import fs from "node:fs"
 import path from "node:path"
@@ -1092,7 +1092,7 @@ export class AttentionService {
 
   // --- answers ----------------------------------------------------------------------
 
-  /** The mod's picker, or crosstalk_answer action "attention", answered one of these. */
+  /** The mod's picker, or crosstalk_inbox action "attention", answered one of these. */
   async act(sessionId: string, id: string, action: string, value: string | undefined): Promise<Record<string, unknown>> {
     const p = parseId(id)
     if (!p) return { ok: false, error: `not an attention question: ${id}` }
@@ -1201,7 +1201,7 @@ export class AttentionService {
       // Only real questions: a carried-on prompt or a chase has none, and would print "undefined".
       if (it.kind !== "attention" || !it.question || it.id.startsWith("tackle:") || this.st.told[it.id]) continue
       this.st.told[it.id] = this.now()
-      lines.push(`◢ crosstalk: ${it.question} (${(it.options ?? []).join(" / ")}). Say which, and the agent will answer with crosstalk_answer action "attention" (id ${it.id}).`)
+      lines.push(`◢ crosstalk: ${it.question} (${(it.options ?? []).join(" / ")}). Say which, and the agent will answer with crosstalk_inbox action "attention" (id ${it.id}).`)
     }
     if (lines.length) this.save()
     return lines.length ? lines.join("\n") : undefined

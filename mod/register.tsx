@@ -10,7 +10,7 @@
 //                  what is shown to people, links, screenshots) and History,
 //                  and recent messages. By itself in the main session (drawn
 //                  from 144 columns), and when asked: Open thread, or the
-//                  agent's crosstalk_look action "pane". Live. Drawn by draw.tsx.
+//                  agent's crosstalk_work action "pane". Live. Drawn by draw.tsx.
 //   invite         the words for someone joining with words, or for linking a
 //                  machine, from crosstalk_people action "room" / "link": shown here, never to the model
 //   doctor         something broken, noticed at SessionStart, with the fix
@@ -66,7 +66,7 @@
 // Without the mod (claude -p, the SDK, an older Claude Code, mods turned off)
 // nothing here runs, the daemon hears no poll, and every one of these falls back
 // to what the classic hooks always did: the restore question as a
-// systemMessage, a notice in the transcript, "restore them" and crosstalk_say action "read".
+// systemMessage, a notice in the transcript, "restore them" and crosstalk_people action "read".
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
@@ -812,13 +812,13 @@ export const register: Register = on => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  // The agent's crosstalk_look action "pane": the server answers it (saying nothing of what
+  // The agent's crosstalk_work action "pane": the server answers it (saying nothing of what
   // the pane shows), and the pane opens here. It is the person's words behind
   // the call, so the pane is placed even on a narrow terminal where it can be.
   on('tool.call', async ($, e, next) => {
     const ran = await next(e)
-    // crosstalk_look action "qr" too: its QR code is drawn in the pane (src/urls/history/phone.ts).
-    if (/__crosstalk_look$/.test(e.tool) && ['pane', 'qr'].includes(String((e as { action?: unknown }).action)) && !ran.deny && !ran.isError && interactive) {
+    // crosstalk_work action "qr" too: its QR code is drawn in the pane (src/urls/history/phone.ts).
+    if (/__crosstalk_work$/.test(e.tool) && ['pane', 'qr'].includes(String((e as { action?: unknown }).action)) && !ran.deny && !ran.isError && interactive) {
       const thread = typeof (e as { thread?: unknown }).thread === 'string' ? ((e as { thread?: string }).thread as string) : undefined
       void openPane($, thread)
     }

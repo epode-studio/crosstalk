@@ -37,7 +37,7 @@ export type Past = {
   files: string[]
   startedAt?: number
   endedAt?: number
-  /** Closed on purpose with crosstalk_work action "close": not a crash, and not offered by restore. */
+  /** Closed on purpose with crosstalk_sessions action "close": not a crash, and not offered by restore. */
   archived?: number
   /** Where it was found: crosstalk's own records, or only Claude Code's transcripts. */
   source: "crosstalk" | "claude"

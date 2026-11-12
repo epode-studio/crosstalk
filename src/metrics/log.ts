@@ -3,7 +3,7 @@
 //
 // One append-only file on this machine, <crosstalk home>/metrics.jsonl. Nothing
 // here is ever sent anywhere: not over the relay, not to the ref, not to any
-// service. crosstalk_doctor action "stats" reads it back, and so can anyone with `cat`.
+// service. crosstalk_inbox action "stats" reads it back, and so can anyone with `cat`.
 //
 //   asked     a question went up for a person (a picker, or its systemMessage)
 //   answered  a person answered one: how long it was open

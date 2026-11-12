@@ -8,7 +8,7 @@ import { bool, def, oneOf, only, str, strs, type Tool } from "./kit.ts"
 const ACTIONS = ["peers", "team", "room", "trust", "mute", "link", "connect", "env", "install"] as const
 const ROOM_OPS = ["new", "join", "create", "invite", "accept", "decline", "leave", "kick", "list", "members"] as const
 
-const WORDS_RULE =
+export const WORDS_RULE =
   "When a result carries invite or link words (only without crosstalk's mod), show them to the user exactly once, as written, and never repeat them in a later reply, a summary, a commit, a file or any tool call; never send them through crosstalk itself."
 
 const description = `The people the user works with. Actions: peers (who is online, where, unread); team (who the repo trusts with no words, and what waits on the user; refresh checks again); room (people outside the user's repos, joined with words: op new gives four words to read aloud, join takes the words the user was read, exactly as typed; create, invite, accept, decline, leave, kick, list name a group of them; members sets a local name; to the user they are "the people you joined with words", never a room); trust (how much someone may interrupt: mute|notify|ask|handoff|deliver; a bot is never above notify); mute (a person, everyone or a thread, for a while; for 0 unmutes); link (another of the user's own machines: six words); connect, env, install (answer crosstalk's repo questions: connect with the team, copy gitignored local files into new worktrees, turn crosstalk on for everyone who clones; confirm true or false).

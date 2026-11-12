@@ -117,7 +117,7 @@ host() {
   sleep 0.5
 }
 events() { grep -c 'waiting from ben' "$OUT/channel.txt" 2>/dev/null || true; }
-notices() { grep -o 'Read it with crosstalk_say action' "$INBOX" | wc -l | tr -d ' '; }
+notices() { grep -o 'Read it with crosstalk_people action' "$INBOX" | wc -l | tr -d ' '; }
 
 echo
 echo "channels off: the inbox notice"

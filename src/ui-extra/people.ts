@@ -118,7 +118,7 @@ async function roomOut(a: Record<string, any>, o: { sessionId: string; root: str
     return { ok: r.ok, text: scrub(r.out, words) }
   }
   if (!loadIdentity()) return { ok: false, text: 'crosstalk is not set up yet: start with op "new", or join with the words someone read you' }
-  if (!(await ensureDaemon(o.root))) return { ok: false, text: "the crosstalk daemon would not start; crosstalk_doctor action \"report\" says why" }
+  if (!(await ensureDaemon(o.root))) return { ok: false, text: "the crosstalk daemon would not start; crosstalk_inbox action \"report\" says why" }
   const name = String(a.name ?? a.room ?? "").replace(/^#/, "")
   const people = ([] as string[]).concat(a.who ?? a.people ?? []).map(String).filter(Boolean)
   switch (action) {

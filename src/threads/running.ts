@@ -11,7 +11,7 @@
 //   shares       shares.json (src/share/store.ts): this machine's, open to whom
 //   screenshots  each URL's before and after (src/urls/shots/)
 //
-// The pane, crosstalk_look action "running", the status line and the digest
+// The pane, crosstalk_work action "running", the status line and the digest
 // all read this one function, so they never disagree about what runs.
 // project() is the part with no files: what a list is made of, given the
 // stores' records, for the tests and for anyone holding them already.
@@ -161,7 +161,7 @@ export function running(thread: string | undefined, o: { sessionId?: string; wor
 export function runningText(items: Running[], o: { thread?: string } = {}): string {
   const clean = (s: string) => s.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/[<>]/g, (c) => (c === "<" ? "‹" : "›"))
   if (!items.length)
-    return `◢ crosstalk: nothing running${o.thread ? ` for ${clean(o.thread)}` : ""} yet. Servers start with crosstalk_work action "serve"; previews and pull requests come from shipping; links commands print, what is shown to people and screenshots show up here.`
+    return `◢ crosstalk: nothing running${o.thread ? ` for ${clean(o.thread)}` : ""} yet. Servers start with crosstalk_sessions action "serve"; previews and pull requests come from shipping; links commands print, what is shown to people and screenshots show up here.`
   const word: Record<RunningKind, string> = { server: "server", preview: "preview", pr: "pull request", share: "shown to people", link: "link found in output", screenshot: "screenshot" }
   const lines = items.map((r) => {
     const where = (r.url ?? (r.ports?.length ? `http://localhost:${r.ports[0]}` : r.after?.file ?? "")) + (r.raw ? ` (${r.raw})` : "")

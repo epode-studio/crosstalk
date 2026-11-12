@@ -53,7 +53,7 @@ export async function callTool(name: string, a: any, o: { sessionId: string; cwd
       if (!p.ok) return err(`${p.error}${p.threads.length ? `. Threads: ${p.threads.join(", ")}` : ""}`)
       if (await modHere(o.sessionId, o.cwd))
         return ok(p.pane.agents ? `Showing every agent in a pane beside the chat: ${p.pane.status}. What it shows is for the user; it updates by itself.` : `Showing the ${p.pane.thread} thread in a pane beside the chat. What it shows is for the user; it updates by itself.`)
-      return ok(`This session has no crosstalk pane (crosstalk's mod is not running here, as in claude -p or an older Claude Code). If the user wants ${p.pane.thread} read out instead, call crosstalk_thread action "read".`)
+      return ok(`This session has no crosstalk pane (crosstalk's mod is not running here, as in claude -p or an older Claude Code). If the user wants ${p.pane.thread} read out instead, call crosstalk_work action "read".`)
     }
     case "crosstalk_room":
       return out(await people.room(a ?? {}, { ...o, mod: await modHere(o.sessionId, o.cwd) }))

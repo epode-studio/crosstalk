@@ -143,7 +143,7 @@ export function pane(o: { sessionId?: string; thread?: string; st?: ThreadState;
   if (isMain && !o.thread) return agentsPane(o.sessionId)
   const st = o.st ?? readThreads()
   const t = o.thread ? findThread(st, o.thread, o.sessionId) : defaultThread(st, o.sessionId)
-  // A QR code for the phone (crosstalk_look action "qr"), shown in the pane even with no thread to show.
+  // A QR code for the phone (crosstalk_work action "qr"), shown in the pane even with no thread to show.
   const qr = readPaneQr(o.sessionId)
   if (!t && qr && !o.thread) return { ok: true, pane: { thread: "phone", status: "QR code", people: [], sessions: 0, waiting: [], recent: [], features: [], qr } }
   if (!t) {

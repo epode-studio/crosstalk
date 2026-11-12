@@ -52,7 +52,7 @@ export type RemoteDeps = {
   log: (...a: unknown[]) => void
   /** A line in this machine's digest. */
   note: (id: string, text: string) => void
-  /** This machine's open sessions, as crosstalk_work action "sessions" lists them. */
+  /** This machine's open sessions, as crosstalk_sessions action "sessions" lists them. */
   listLocal: () => unknown[]
   /** Whether a session's mod is live, and registered sessions. */
   modLive: (sessionId: string) => boolean

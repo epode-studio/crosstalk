@@ -10,7 +10,7 @@ import { P } from "../config.ts"
 import { openTunnel, tunnelBinary } from "../tunnel.ts"
 
 export const WARNING =
-  "⚠ PUBLIC LINK: anyone who has this URL can reach this server, as if they were on this machine, with no crosstalk check at all. Cloudflare carries the traffic in the clear to its edge. Send it only where it has to go; it expires on its own, and crosstalk_look action \"unshare\" stops it now."
+  "⚠ PUBLIC LINK: anyone who has this URL can reach this server, as if they were on this machine, with no crosstalk check at all. Cloudflare carries the traffic in the clear to its edge. Send it only where it has to go; it expires on its own, and crosstalk_work action \"unshare\" stops it now."
 
 export async function openPublic(port: number, id: string): Promise<{ url: string; pid: number } | { error: string }> {
   const bin = tunnelBinary()

@@ -87,7 +87,7 @@ export type Rec = {
   /** The crosstalk thread it is in (its first), as its hook last heard: tabs of a thread sit together. */
   thread?: string
   /**
-   * Closed on purpose (crosstalk_work action "close", src/sessions/control.ts): never lost,
+   * Closed on purpose (crosstalk_sessions action "close", src/sessions/control.ts): never lost,
    * whatever its SessionEnd hook said, so restore does not offer it back.
    */
   archived?: number

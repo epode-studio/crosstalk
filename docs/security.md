@@ -25,7 +25,7 @@ Marie's message
 crosstalk daemon ──── injects: "1 message from marie/api"
                           │
                           ▼
-                   your Claude calls crosstalk_say action "read"
+                   your Claude calls crosstalk_people action "read"
                           │
                           ▼
                    content arrives as TOOL OUTPUT
@@ -62,7 +62,7 @@ only you can turn it on.
   session's own thread says so, says you have not seen it, and starts no turn.
   A thread's record in a new agent's first prompt sits between markers with a
   nonce nobody can predict, with no heading of anyone's inside, and the task
-  comes after it. With the mod, `crosstalk_say action "read"` returns only what you handed
+  comes after it. With the mod, `crosstalk_people action "read"` returns only what you handed
   over.
 - **Steering another of your sessions needs your yes** on a picker that shows
   the exact words. It is refused without the mod, from a session crosstalk
@@ -84,7 +84,7 @@ only you can turn it on.
   regular files are copied; a symlink is never followed, a path with `..` in
   the repository's `.crosstalk/env` is refused, and nothing is written through
   a symlinked folder ([urls.md](urls.md#7-servers-that-just-start)).
-- **A QR code is for the person's eyes.** `crosstalk_look action "qr"` draws it in the pane;
+- **A QR code is for the person's eyes.** `crosstalk_work action "qr"` draws it in the pane;
   neither the code nor the URL it encodes (a share link is a key to a running
   server) is returned to the model, and `crosstalk urls qr` refuses to print
   it inside an agent.
@@ -217,7 +217,7 @@ A sealed thread has one random content key, wrapped for each of its people
 enough: they already hold the key. So the key is replaced whenever someone who
 may hold it should no longer (`src/threads/rekey.ts`):
 
-- **When.** A person leaves (`crosstalk_thread action "leave"` with "me"), is taken out
+- **When.** A person leaves (`crosstalk_work action "leave"` with "me"), is taken out
   by someone in the thread, or has their crosstalk key revoked through repo
   trust. Each daemon checks after every change to a thread and on every sync
   with the ref.
@@ -301,7 +301,7 @@ dropped commit is written again.
 
 ## Sharing a running server
 
-`crosstalk_look action "share"` lets named people reach one of your local servers through
+`crosstalk_work action "share"` lets named people reach one of your local servers through
 the sealed peer channel (`src/share/`, [urls.md](urls.md#8-sharing-a-running-server)).
 What it rests on, and what it costs:
 
@@ -333,7 +333,7 @@ What it rests on, and what it costs:
   for a share that already ended here is never taken again, so a relay that
   keeps copies cannot re-open what was stopped.
 - **Nothing opens by itself.** The viewer gets a card (Open it, Not now,
-  Stop it) or a digest line. In the viewer agent's `crosstalk_look action "running"` the share is
+  Stop it) or a digest line. In the viewer agent's `crosstalk_work action "running"` the share is
   data inside `<crosstalk-urls>`, its label cut to plain text, so a label
   cannot pass for an instruction; the agent may test against it, as it may
   against any local URL.
@@ -352,7 +352,7 @@ What it rests on, and what it costs:
   people are told, and the client does not fall back to stored sends.
 - **Expiry and revocation.** Eight hours by default, a week at most. Both
   sides end a share at its expiry by themselves, so a viewer whose relay link
-  dropped still loses it on time; `crosstalk_look action "unshare"` ends it at once.
+  dropped still loses it on time; `crosstalk_work action "unshare"` ends it at once.
 - **What the relay sees.** Sealed frames between two fingerprints, their sizes
   and timing, as with messages: a busy share is visible as traffic, never its
   content, URL or headers.
@@ -370,7 +370,7 @@ What it rests on, and what it costs:
 
 ## Local measurements
 
-`crosstalk_doctor action "stats"` and the weekly digest line are computed from
+`crosstalk_inbox action "stats"` and the weekly digest line are computed from
 `<crosstalk home>/metrics.jsonl` and Claude Code's own transcripts on this
 machine. Nothing is sent anywhere: not over the relay, not to the ref. Set
 `CROSSTALK_NO_METRICS=1` to record nothing.

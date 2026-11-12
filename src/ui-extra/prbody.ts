@@ -46,7 +46,7 @@ export function prBody(t: M.Thread, f: M.Item<M.Feature>): string {
     if (open.length) for (const q of open) out.push(`- ${line(q.text)}${q.blocking ? " **(blocking)**" : ""}`)
     else out.push("_None._")
   } else {
-    out.push("", `_The thread **${name}** is sealed to its people, so its recap, decisions and open questions stay in crosstalk (crosstalk_thread action "read")._`)
+    out.push("", `_The thread **${name}** is sealed to its people, so its recap, decisions and open questions stay in crosstalk (crosstalk_work action "read")._`)
   }
 
   const reviewers = (f.ship?.signoff ?? []).map((s) => `${s.kind} (${s.client})`)

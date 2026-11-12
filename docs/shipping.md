@@ -10,18 +10,18 @@ code. The design is in [next-generation.md](design/next-generation.md),
 
 | | Everyday | Risky |
 |---|---|---|
-| Made so by | the default | a path in `.crosstalk/risk`, or an agent (`crosstalk_ship {action: "feature", risk: "risky", why}`) |
+| Made so by | the default | a path in `.crosstalk/risk`, or an agent (`crosstalk_work {action: "feature", risk: "risky", why}`) |
 | Review | one fresh claude session | an adversarial review on another client or model, plus a security pass |
 | Before merge | reviewers sign off, checks pass | the same, plus a preview deploy with its flag on (when `preview:` is set), evidence of behaviour and a person's yes |
 | Flag | optional | required (named for it unless the agent names one) |
 | After merge | done; a flag, when it has one, goes internal, then to everyone by itself once its metrics hold for the dwell | each flag step (dark → internal → N% → on) is a question with the evidence and metrics from the step before |
 | Regression | the flag turns off by itself, the thread reopens | the same |
 
-1. **Declare.** An agent calls `crosstalk_ship {action: "feature", name}`. The branch is the
+1. **Declare.** An agent calls `crosstalk_work {action: "feature", name}`. The branch is the
    session's. crosstalk reads `.crosstalk/risk` from the default branch, plus
    any paths the branch itself adds (a branch can add risky paths, never take
    them away), and marks the feature risky when the branch touches one.
-2. **Ready.** The author calls `crosstalk_ship {action: "ready", feature}`. This explicit call
+2. **Ready.** The author calls `crosstalk_work {action: "ready", feature}`. This explicit call
    is the trigger, not the session going idle: a session goes idle for many
    reasons (a question, a break, a dead end), and only the author knows the
    work is done.
@@ -34,7 +34,7 @@ code. The design is in [next-generation.md](design/next-generation.md),
    `VERDICT: approve|changes` and `FINDINGS:`, and its wrapper hands the answer
    to `crosstalk review --run <id> --secret-file <run folder>/secret --output
    <file in the run folder>`. A reviewer that has crosstalk's tools may call
-   `crosstalk_ship action "review"` itself, from its own copy. Nobody else can hand in a
+   `crosstalk_work action "review"` itself, from its own copy. Nobody else can hand in a
    verdict: the run id alone is refused. No verdict counts as changes; silence
    is never a sign-off, and an answer approves only if every `VERDICT:` line
    in it approves. A reviewer that never answers is counted as "changes,
@@ -47,11 +47,11 @@ code. The design is in [next-generation.md](design/next-generation.md),
 
    Only the commit the reviewers were given is checked, previewed and merged.
    A branch that moves after that is reviewed again on the next
-   `crosstalk_ship action "ready"`, and past `building` a feature's branch cannot be
+   `crosstalk_work action "ready"`, and past `building` a feature's branch cannot be
    repointed.
 4. **Iterate.** Findings go to the author's session as a crosstalk message
-   (read with `crosstalk_say action "read"`, framed as other agents' words). The author
-   fixes, commits and calls `crosstalk_ship {action: "ready", feature, response}`. After
+   (read with `crosstalk_people action "read"`, framed as other agents' words). The author
+   fixes, commits and calls `crosstalk_work {action: "ready", feature, response}`. After
    `rounds` rounds (default 3) still asking for changes, people get one
    question: what each side says, and what each option means.
 5. **Checks.** The branch is checked out again, detached, dependencies linked
@@ -62,7 +62,7 @@ code. The design is in [next-generation.md](design/next-generation.md),
 6. **Preview** (risky, when `preview:` is set). See "Preview per thread" below:
    the branch is deployed with its flag forced on, checked there, and the
    result is evidence.
-7. **Evidence** (risky). `crosstalk_ship {action: "evidence", feature, summary, tests?, evals?,
+7. **Evidence** (risky). `crosstalk_work {action: "evidence", feature, summary, tests?, evals?,
    before_after?, screenshots?, stage?}`: plain language with proof. A diff is
    refused; a risky feature's evidence needs proof beyond the summary;
    screenshot paths must exist. The merge question shows it.
@@ -79,11 +79,11 @@ code. The design is in [next-generation.md](design/next-generation.md),
 9. **Flags.** A risky feature's flag starts off, and its ramp is `dark
    internal 10% 50% on` unless `ramp:` says otherwise. Each step up is a
    question with the evidence gathered at the step before (`stage` on
-   `crosstalk_ship action "evidence"`, or the metrics crosstalk read itself once the step
+   `crosstalk_work action "evidence"`, or the metrics crosstalk read itself once the step
    has held for the dwell); the first step uses the merge evidence and the
    preview. An everyday feature with a flag goes to internal on merge and to
    everyone by itself once its metrics hold (see "Metrics" below). Turning a
-   flag off is never a question: any agent may (`crosstalk_ship {action: "flag", stage:
+   flag off is never a question: any agent may (`crosstalk_work {action: "flag", stage:
    "off"}`), crosstalk does it by itself on a regression, and the people are
    told. At `on`, a task in the thread asks an agent to remove the flag and
    the old path.
@@ -98,7 +98,7 @@ answered by a person only:
 - the picker (`crosstalk ui act`, from the mod), or
 - `crosstalk ship answer <id> "<option>"` typed in a terminal.
 
-An agent's `crosstalk_thread {answer}` is refused, `crosstalk ship answer`
+An agent's `crosstalk_work {answer}` is refused, `crosstalk ship answer`
 and `crosstalk ui act` on a shipping picker run from inside an agent (where
 `CLAUDECODE` is set) are refused, and no standing rule answers them. This
 guards against an agent answering by accident; it is not a security boundary
@@ -112,7 +112,7 @@ as you, so nothing of a repository's runs until a person at this machine says
 repository and that set of commands; a changed `.crosstalk/ship` is asked again.
 
 Lowering a risk is only ever this question too. A feature's `risk` written as
-"everyday" by an edit (`crosstalk_thread`, another spelling of its name, a
+"everyday" by an edit (`crosstalk_work`, another spelling of its name, a
 remove and re-add, a peer's replica) does not count: once crosstalk has seen a
 feature risky, it stays risky until a person's answer clears it.
 
@@ -134,7 +134,7 @@ one trusted through the repository), who is a person (a peer marked as a
 machine never answers these), who is in the thread, for one of the
 question's options. Anything else is not taken, the thread is told why,
 and the question keeps waiting. An `answer` written straight onto the item,
-by an agent's `crosstalk_thread` or a standing rule on any machine, answers
+by an agent's `crosstalk_work` or a standing rule on any machine, answers
 nothing: only a signed vote does, and rules skip shipping questions.
 
 ## Merging (git is invisible)
@@ -508,7 +508,7 @@ rises above 1.
   (default internal → on) and the people are told; a **risky** flag's next
   step is asked, with the metrics recorded as evidence at that stage, so the
   question carries them. Without any metrics, an everyday flag stays where it
-  is and the author's agent is told once to turn it up with `crosstalk_ship action "flag"`; a
+  is and the author's agent is told once to turn it up with `crosstalk_work action "flag"`; a
   risky one waits for evidence from the author as before. An everyday flag
   also holds when there is nothing to compare: no baseline from before the
   step, a metric that stopped being reported, or a `metrics:` command that
@@ -523,7 +523,7 @@ crosstalk incident --json '{"source": "...", "title": "..."}'      # or --stdin
 crosstalk incident --link <incident thread> --cause <thread>
 ```
 
-Also `crosstalk_ship action "incident"` for agents. A clear cause (one thread, by the flag,
+Also `crosstalk_work action "incident"` for agents. A clear cause (one thread, by the flag,
 else a merged commit or its prefix, else the most overlap with files merged in
 the last `incident_days` days, with no tie) reopens that thread with the
 incident as a fact, a task to find the cause, a notice to its people and a

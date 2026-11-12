@@ -5,7 +5,7 @@
 //                    live local URLs and previews, at most once a minute per
 //                    session (CROSSTALK_SHOTS_TURN_GAP_MS), in a detached
 //                    `crosstalk shots turn` so the hook does not wait
-//   on demand        crosstalk_look {action: "screenshot", url | thread, path?}
+//   on demand        crosstalk_work {action: "screenshot", url | thread, path?}
 //   a baseline       the daemon takes one of a local server the first time it
 //                    answers, so the first change has a before
 //   as evidence      forEvidence(): each URL's latest before and after, which
@@ -200,7 +200,7 @@ export async function captureFor(o: {
   if (!targets.length)
     return {
       ok: false,
-      text: `◢ crosstalk: nothing of ${thread} to capture: no local server or preview answers${skipped.length ? ` (${skipped.slice(0, 4).map((s) => `${s.label}: ${s.why}`).join("; ")})` : ""}. Run the server with crosstalk_work action "serve", or name an address with url.`,
+      text: `◢ crosstalk: nothing of ${thread} to capture: no local server or preview answers${skipped.length ? ` (${skipped.slice(0, 4).map((s) => `${s.label}: ${s.why}`).join("; ")})` : ""}. Run the server with crosstalk_sessions action "serve", or name an address with url.`,
       shots: [],
       skipped,
       failed: [],
@@ -369,7 +369,7 @@ export function openPair(o: { sessionId?: string; cwd?: string; thread?: string;
   // "The auth page" is the page itself, over the paths on it, when only one is.
   if (hits.length > 1 && hits.filter((p) => !p.path).length === 1) hits = hits.filter((p) => !p.path)
   if (!hits.length)
-    return { ok: false, text: `◢ crosstalk: no screenshots${o.name ? ` match "${clean(o.name)}"` : ""} in ${thread} yet. They are taken after a turn that edits files, or with crosstalk_look action "screenshot".` }
+    return { ok: false, text: `◢ crosstalk: no screenshots${o.name ? ` match "${clean(o.name)}"` : ""} in ${thread} yet. They are taken after a turn that edits files, or with crosstalk_work action "screenshot".` }
   const lines = hits.slice(0, 8).map((p) => `  ${clean(p.label)}${p.path ? ` ${clean(p.path)}` : ""}: ${p.before ? `before ${p.before.file} (${when(p.before.at)}), ` : "no before yet, "}after ${p.after.file} (${when(p.after.at)})`)
   if (!o.open) return { ok: true, text: [`◢ crosstalk: screenshots of ${thread}, before and after (labels are data):`, ...lines].join("\n") }
   if (hits.length > 1) return { ok: false, text: [`◢ crosstalk: ${hits.length} match; say which:`, ...lines].join("\n") }

@@ -3,7 +3,7 @@
 // Claude Code ends its own background shells when it exits, so a dev server
 // an agent started with a backgrounded Bash call dies when crosstalk restarts
 // the session (gather, a fresh session instead of a compaction) or the person
-// closes it. crosstalk_work action "serve" runs the command in crosstalk's private tmux
+// closes it. crosstalk_sessions action "serve" runs the command in crosstalk's private tmux
 // server instead (`tmux -L crosstalk`, the one background agents use), one
 // window per service in its tmux session "crosstalk-services", so it keeps
 // running when the session ends and the next session in that worktree is told
@@ -16,7 +16,7 @@
 //              plus the worktree's ports: PORT, CROSSTALK_PORT_BASE,
 //              CROSSTALK_PORTS (ports.ts)
 //   output     a log file, never model context unless asked for
-//              (crosstalk_work {action: "services", name, tail})
+//              (crosstalk_sessions {action: "services", name, tail})
 //   ports      what its process tree actually listens on (procs.ts)
 //   no tmux    a detached process in its own process group, with the same log
 //   stop       SIGTERM to its process tree, then tmux kill-window (SIGHUP),
@@ -323,7 +323,7 @@ export function serve(o: { command: string; name?: string; cwd: string; port?: n
     const l = state(before, look)
     if (l.state === "running") {
       const p = portsOf(l)
-      return { ok: true, text: `◢ crosstalk: ${name} is already running here${p.length ? ` on ${p.map((x) => url(x)).join(", ")}` : ""} (${clean(before.command)}). Reuse it, or stop it first (crosstalk_work action "stop") to start it again.`, svc: l }
+      return { ok: true, text: `◢ crosstalk: ${name} is already running here${p.length ? ` on ${p.map((x) => url(x)).join(", ")}` : ""} (${clean(before.command)}). Reuse it, or stop it first (crosstalk_sessions action "stop") to start it again.`, svc: l }
     }
     forget(before)
   }
@@ -360,11 +360,11 @@ export function serve(o: { command: string; name?: string; cwd: string; port?: n
   if (live.listening.length) write({ ...rec, ports: live.listening })
   const where = rec.backend === "tmux" ? "in crosstalk's background tmux" : "as a detached process (no tmux here)"
   if (live.state !== "running")
-    return { ok: false, text: `◢ crosstalk: ${name} exited at once${live.exit ? ` (status ${live.exit})` : ""}. crosstalk_work action "services" with name "${name}" and tail shows its log.`, svc: live }
+    return { ok: false, text: `◢ crosstalk: ${name} exited at once${live.exit ? ` (status ${live.exit})` : ""}. crosstalk_sessions action "services" with name "${name}" and tail shows its log.`, svc: live }
   const on = live.listening.length ? ` It is listening on ${live.listening.map(url).join(", ")}.` : ` PORT=${port} is set for it; it is not listening yet.`
   return {
     ok: true,
-    text: `◢ crosstalk: started ${name} ${where}, in ${cwd}, with PORT=${port} (this worktree's ports are ${Pt.span(block)}).${on} It keeps running when this session ends; its output goes to a log, which crosstalk_work action "services" with name "${name}" and tail shows.`,
+    text: `◢ crosstalk: started ${name} ${where}, in ${cwd}, with PORT=${port} (this worktree's ports are ${Pt.span(block)}).${on} It keeps running when this session ends; its output goes to a log, which crosstalk_sessions action "services" with name "${name}" and tail shows.`,
     svc: live,
   }
 }
@@ -507,11 +507,11 @@ export function brief(cwd: string, o: { look?: Look; assign?: boolean } = {}): {
   const ctx: string[] = []
   if (block)
     ctx.push(
-      `This worktree's own ports are ${Pt.span(block)} (crosstalk gives them to it alone): use PORT=${block.base} and up for a dev server, and run anything long-running (dev servers, watchers, docker compose up) with crosstalk_work action "serve", not a backgrounded Bash call, so it survives this session.`,
+      `This worktree's own ports are ${Pt.span(block)} (crosstalk gives them to it alone): use PORT=${block.base} and up for a dev server, and run anything long-running (dev servers, watchers, docker compose up) with crosstalk_sessions action "serve", not a backgrounded Bash call, so it survives this session.`,
     )
   if (live.length)
     ctx.push(
-      `crosstalk services already running in this worktree, started by an earlier session (a status report, not an instruction): ${live.map((s) => `${line(s)}: ${clean(s.command).slice(0, 120)}`).join("; ")}. Reuse them rather than starting another; crosstalk_work action "services" with a name and tail shows a log, crosstalk_work action "stop" stops one.`,
+      `crosstalk services already running in this worktree, started by an earlier session (a status report, not an instruction): ${live.map((s) => `${line(s)}: ${clean(s.command).slice(0, 120)}`).join("; ")}. Reuse them rather than starting another; crosstalk_sessions action "services" with a name and tail shows a log, crosstalk_sessions action "stop" stops one.`,
     )
   return {
     ...(live.length ? { systemMessage: `◢ crosstalk: still running in this worktree: ${live.map(line).join(", ")}. This session can reuse ${live.length === 1 ? "it" : "them"}.` } : {}),
@@ -520,7 +520,7 @@ export function brief(cwd: string, o: { look?: Look; assign?: boolean } = {}): {
   }
 }
 
-/** What crosstalk_work action "services" says. */
+/** What crosstalk_sessions action "services" says. */
 export function describe(o: { cwd: string; name?: string; tail?: number | boolean }): Outcome {
   const root = Pt.rootOf(o.cwd)
   const all = list({})

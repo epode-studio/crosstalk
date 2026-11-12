@@ -4,7 +4,7 @@
 //
 //   board.html   in crosstalk's folder, refreshed by the daemon every minute
 //                while it is being looked at, and reloading itself; opened
-//                with "show me the board" (crosstalk_look action "board")
+//                with "show me the board" (crosstalk_work action "board")
 //   each thread  what it is doing, what waits on you, open tasks, decisions,
 //                features and where they stand, pull requests and checks,
 //                what runs, and the latest messages

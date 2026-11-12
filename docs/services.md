@@ -13,18 +13,18 @@ Code: `src/services/`. Tests: `test/services.test.ts`, `test/services.sh`.
 
 ## 1. Services outlive sessions
 
-Three actions of `crosstalk_work` ([tools.md](tools.md)):
+Three actions of `crosstalk_sessions` ([tools.md](tools.md)):
 
 | Call | What it does |
 |---|---|
-| `crosstalk_work {action: "serve", command, name?, cwd?, port?}` | Runs the command as a service of this worktree. Its description tells agents to use it instead of a backgrounded Bash call for anything long-running: `npm run dev`, a watcher, `docker compose up`. |
-| `crosstalk_work {action: "services", name?, tail?}` | Lists this worktree's services, their state, the ports they listen on and their URLs; with `name` and `tail`, the last lines of one's log. |
-| `crosstalk_work {action: "stop", name}` | Stops one. |
+| `crosstalk_sessions {action: "serve", command, name?, cwd?, port?}` | Runs the command as a service of this worktree. Its description tells agents to use it instead of a backgrounded Bash call for anything long-running: `npm run dev`, a watcher, `docker compose up`. |
+| `crosstalk_sessions {action: "services", name?, tail?}` | Lists this worktree's services, their state, the ports they listen on and their URLs; with `name` and `tail`, the last lines of one's log. |
+| `crosstalk_sessions {action: "stop", name}` | Stops one. |
 
 **Where it runs.** In crosstalk's private tmux server (`tmux -L crosstalk`, the
 one background agents use), in a tmux session called `crosstalk-services`, one
 window per service. A service is keyed by its worktree's top folder and its
-name: one `web` per worktree. A second `crosstalk_work action "serve"` of a name already
+name: one `web` per worktree. A second `crosstalk_sessions action "serve"` of a name already
 running there says so and starts nothing.
 
 **Its environment.** It is the agent's own request in the person's own session,
@@ -38,7 +38,7 @@ environment never leaks in. Then the worktree's ports (below).
 
 **Its output** goes to a log file, `<crosstalk home>/services/logs/<id>.log`,
 never into the model's context unless the agent asks with
-`crosstalk_work {action: "services", name, tail}`, which returns the last lines (at most 400 and
+`crosstalk_sessions {action: "services", name, tail}`, which returns the last lines (at most 400 and
 16 KB) without escape sequences, marked as the service's own output.
 
 **Without tmux** (native Windows, mostly), a service is a detached process in a
@@ -75,7 +75,7 @@ session's brief at SessionStart names the block.
 **The ports a service actually listens on** are looked up from its process
 tree: the tmux pane's first process and everything below it, matched against
 `ss -ltnpH` on Linux, else `lsof -nP -iTCP -sTCP:LISTEN` (macOS, and Linux
-without ss). `crosstalk_work action "serve"` waits up to three seconds for the server to bind
+without ss). `crosstalk_sessions action "serve"` waits up to three seconds for the server to bind
 so it can say where it listens.
 
 **Where they show.** After the session's title on its tab (`auth · :4100`,
@@ -108,11 +108,11 @@ when it has stopped:
   (`CROSSTALK_POSTPONE_UNTIL_MS`). If the context fills up while it waits, the
   PreCompact is let through: Claude Code compacts as usual, the wait is called
   off, and nothing is ended.
-- **sending a session to the background** (`crosstalk_work action "background"`, after the
+- **sending a session to the background** (`crosstalk_sessions action "background"`, after the
   person's yes) waits the same way, in a detached waiter (`crosstalk ui
   bg-later`) that takes that one yes and moves the session once nothing it
   started still runs, for up to two hours.
-- **closing a session** (`crosstalk_work action "close"`) is the person's own explicit
+- **closing a session** (`crosstalk_sessions action "close"`) is the person's own explicit
   request, so it does not wait: the question says what it would interrupt
   ("Close api? It is still running npm run dev, which stops with it."), and the
   receipt says what stopped with it. Its crosstalk services keep running unless
@@ -121,7 +121,7 @@ when it has stopped:
 
 ## 4. Services stop with the thread; nothing in use is removed
 
-Cleanup (`crosstalk_work action "cleanup"`, the "Remove them" picker) and disk freeing never
+Cleanup (`crosstalk_sessions action "cleanup"`, the "Remove them" picker) and disk freeing never
 remove a worktree that:
 
 - has a process whose working directory is inside it (which covers one

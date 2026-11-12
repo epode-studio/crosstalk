@@ -143,7 +143,7 @@ export type PaneModel = {
   idle?: number
   /** The plan's windows and today's spend, `5-hour 42% (resets 3:10 PM) · week 18% · $12.40 …`; hot at 80%. */
   usage?: { text: string; hot: boolean }
-  /** A QR code crosstalk_look action "qr" made for the phone (src/urls/history/phone.ts): half-block rows, drawn white on black. */
+  /** A QR code crosstalk_work action "qr" made for the phone (src/urls/history/phone.ts): half-block rows, drawn white on black. */
   qr?: { label: string; caption: string; rows: string[]; at: number; why?: string }
 }
 

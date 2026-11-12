@@ -68,7 +68,7 @@ end)
 ## New agents on request
 
 Say "put two more on auth" or "start an agent to fix the flaky login test" in any session.
-The agent calls `crosstalk_work action "spawn"`. For scripts, `crosstalk spawn [--count N] [--name X]
+The agent calls `crosstalk_sessions action "spawn"`. For scripts, `crosstalk spawn [--count N] [--name X]
 [--background] "<task>"` does the same.
 
 Each new agent gets:
@@ -114,7 +114,7 @@ services that outlive the session, on the worktree's own ports
 
 `background: true` ("in the background", "without a window") runs the agent in crosstalk's own
 tmux server, `tmux -L crosstalk`, with one tmux session per agent. Closing every window leaves
-it running. To watch it, say "show me auth" (`crosstalk_work action "show"`, or `crosstalk show auth`). That
+it running. To watch it, say "show me auth" (`crosstalk_sessions action "show"`, or `crosstalk show auth`). That
 opens a tab in your terminal attached to it. Closing the tab leaves the agent running.
 
 Its status comes from its own hooks, like any session's, and shows in crosstalk's status line
@@ -127,14 +127,14 @@ The code is in `src/sessions/`.
 
 | You say | Tool | What happens |
 |---|---|---|
-| "close billing" | `crosstalk_work action "close"` | Billing exits as if you quit it, and its record is marked archived, so restore never offers it back as a crash. Its tab closes too when nothing else runs in it (Terminal.app and tmux). Its services (dev servers and the like) keep running unless you say to stop them too (`services: "stop"`). |
-| "tidy up", "I'm overwhelmed" | `crosstalk_work action "tidy"` | One question for the lot. Sessions idle for 20 minutes or more, with nothing waiting on you, close with their tabs. Sessions doing the same work (the same thread, or the same folder) fold into one: the one you are in, else one in use, else the one used last, stays, and is handed where the others had got to. Tabs that ended sessions left with only a shell close. "And merge my windows" also makes Terminal's windows tabs of one. Busy sessions are never touched, and everything closed can be resumed. "Close everything but auth" names the sessions instead. |
-| "find the session where I fixed the token refresh" | `crosstalk_work action "find"` | Past sessions that match, best first, each with an id. |
-| "resume it" | `crosstalk_work action "resume"` | A new tab in the repository's window, beside its thread's tabs, running `claude --resume <id>` (`codex resume <id>` for Codex) in its folder. |
-| "call this one payments" | `crosstalk_work action "rename"` | The tab title on its next turn, its name in `crosstalk_work action "sessions"`, and its entry in its threads. |
-| "this belongs in auth" | `crosstalk_thread action "move"` | The session joins that thread and leaves the others it was in. Its files do not move it back. |
-| "send billing to the background" | `crosstalk_work action "background"` | It ends in its tab and carries on in `tmux -L crosstalk` as `claude --resume <id>`, with its whole conversation. Its services are not touched. |
-| "pop billing out" | `crosstalk_work action "popout"` | A new tab attached to a background agent. Closing the tab leaves it running. |
+| "close billing" | `crosstalk_sessions action "close"` | Billing exits as if you quit it, and its record is marked archived, so restore never offers it back as a crash. Its tab closes too when nothing else runs in it (Terminal.app and tmux). Its services (dev servers and the like) keep running unless you say to stop them too (`services: "stop"`). |
+| "tidy up", "I'm overwhelmed" | `crosstalk_sessions action "tidy"` | One question for the lot. Sessions idle for 20 minutes or more, with nothing waiting on you, close with their tabs. Sessions doing the same work (the same thread, or the same folder) fold into one: the one you are in, else one in use, else the one used last, stays, and is handed where the others had got to. Tabs that ended sessions left with only a shell close. "And merge my windows" also makes Terminal's windows tabs of one. Busy sessions are never touched, and everything closed can be resumed. "Close everything but auth" names the sessions instead. |
+| "find the session where I fixed the token refresh" | `crosstalk_sessions action "find"` | Past sessions that match, best first, each with an id. |
+| "resume it" | `crosstalk_sessions action "resume"` | A new tab in the repository's window, beside its thread's tabs, running `claude --resume <id>` (`codex resume <id>` for Codex) in its folder. |
+| "call this one payments" | `crosstalk_sessions action "rename"` | The tab title on its next turn, its name in `crosstalk_sessions action "sessions"`, and its entry in its threads. |
+| "this belongs in auth" | `crosstalk_work action "move"` | The session joins that thread and leaves the others it was in. Its files do not move it back. |
+| "send billing to the background" | `crosstalk_sessions action "background"` | It ends in its tab and carries on in `tmux -L crosstalk` as `claude --resume <id>`, with its whole conversation. Its services are not touched. |
+| "pop billing out" | `crosstalk_sessions action "popout"` | A new tab attached to a background agent. Closing the tab leaves it running. |
 
 **Your yes comes first.** Closing, sending to the background, renaming another session and
 moving one each change something, so you are asked first. With the mod, the question is a
@@ -163,9 +163,9 @@ then the recap. Matching is plain word overlap; no model is asked.
 ### On your other machines
 
 Your own machines can see and act on each other's sessions. "What's running on my desk?" is
-`crosstalk_work action "sessions"` with `machine`. Without `machine`, it lists this machine's sessions and
-every other machine's. `crosstalk_work action "find"`, `crosstalk_work action "resume"`, `crosstalk_work action "close"`,
-`crosstalk_work action "background"` and `crosstalk_work action "spawn"` take `machine` too. Requests and answers are
+`crosstalk_sessions action "sessions"` with `machine`. Without `machine`, it lists this machine's sessions and
+every other machine's. `crosstalk_sessions action "find"`, `crosstalk_sessions action "resume"`, `crosstalk_sessions action "close"`,
+`crosstalk_sessions action "background"` and `crosstalk_sessions action "spawn"` take `machine` too. Requests and answers are
 sealed envelopes over the relay, of two new kinds: `sessions_req` and `sessions_res`.
 
 **Only your own machines.** A request is accepted only from a peer that repository trust marks
@@ -190,7 +190,7 @@ named by its name, never at a path the other side gives. Each machine may send 2
 minute and 6 actions in ten minutes. Every action is a line in the receiving machine's digest:
 "ana-desk, your machine, asked to start an agent in shop-auth: done, in the background".
 
-**For the services build** (`src/sessions/services.ts`): `crosstalk_work action "close"` asks
+**For the services build** (`src/sessions/services.ts`): `crosstalk_sessions action "close"` asks
 `services().running({ sessionId, cwd })` to say what keeps running, and
 `services().stop(...)` when told to stop them. Until a services module calls `setServices`,
 a session has no services.
@@ -251,7 +251,7 @@ already mixes repositories stays mixed.
 ## Cleaning up worktrees
 
 Nothing in use is removed: a worktree with a process working in it is kept,
-and one with a crosstalk service running in it (`crosstalk_work action "serve"`) is removed
+and one with a crosstalk service running in it (`crosstalk_sessions action "serve"`) is removed
 only after the person's yes, which stops the service first
 ([services.md](services.md)).
 
@@ -263,7 +263,7 @@ A worktree crosstalk made is finished when both of these are true:
 The default branch is origin's HEAD, otherwise `main` or `master`. A branch with no commits of
 its own is not treated as merged. When a crosstalk worktree is finished, crosstalk offers once
 to remove it. With the mod, the offer is a picker; without it, a message. You can also say
-"clean up the worktrees" (`crosstalk_work action "cleanup"`, or `crosstalk cleanup --yes`).
+"clean up the worktrees" (`crosstalk_sessions action "cleanup"`, or `crosstalk cleanup --yes`).
 
 Removing a worktree takes three steps:
 

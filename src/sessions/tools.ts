@@ -118,12 +118,12 @@ export async function callTool(name: string, a: any, o: { sessionId: string; cwd
   }
 }
 
-/** crosstalk_work action "spawn" on another machine (src/terminal/tools.ts hands it here when `machine` is set). */
+/** crosstalk_sessions action "spawn" on another machine (src/terminal/tools.ts hands it here when `machine` is set). */
 export async function spawnOn(machine: string, a: any, o: { sessionId: string; cwd: string }, d: C.Deps = C.liveDeps()) {
   return remote(o, machine, { kind: "spawn", task: String(a.task ?? ""), ...(a.name ? { name: String(a.name) } : {}), ...(a.repo ? { repo: String(a.repo) } : {}), ...(a.count ? { count: Number(a.count) } : {}) }, d)
 }
 
-/** Other machines' sessions, for crosstalk_work action "sessions": every own machine, or the one named. */
+/** Other machines' sessions, for crosstalk_sessions action "sessions": every own machine, or the one named. */
 export async function otherMachines(o: { sessionId: string; machine?: string }, d: C.Deps = C.liveDeps()): Promise<{ ok: boolean; machines?: unknown[]; error?: string }> {
   try {
     const r = await d.ask({ op: "sessions_remote", sessionId: o.sessionId, ...(o.machine ? { machine: o.machine } : {}), req: { op: "list" } }, 15_000)

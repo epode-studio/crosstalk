@@ -1,5 +1,5 @@
 // What the local measurements add up to (log.ts). Pure: events and threads in,
-// numbers and sentences out, so the same arithmetic backs crosstalk_doctor action "stats", the
+// numbers and sentences out, so the same arithmetic backs crosstalk_inbox action "stats", the
 // weekly digest line and anything the README cites later.
 //
 //   idea to merge     per thread, from its first edit (the thread's start:
@@ -141,7 +141,7 @@ export function tokenLine(s: Stats): string {
   return `Tokens to the first edit: ${kTokens(a.median)} with a thread brief (median, n=${a.n}), ${kTokens(b.median)} without (n=${b.n}); new to the model, without cache reads: ${kTokens(a.medianFresh)} vs ${kTokens(b.medianFresh)}.`
 }
 
-/** What crosstalk_doctor action "stats" shows. */
+/** What crosstalk_inbox action "stats" shows. */
 export function render(s: Stats): string {
   const lines = ["◢ crosstalk stats (local to this machine, never sent anywhere)", ""]
   lines.push(

@@ -60,7 +60,7 @@ export type Pane = {
   running?: Running[]
   /** History: the latest things the thread had and no longer does. */
   history?: { kind: string; label: string; at: number; url?: string }[]
-  /** A QR code for the phone (crosstalk_look action "qr"): half-block rows, drawn white on black. */
+  /** A QR code for the phone (crosstalk_work action "qr"): half-block rows, drawn white on black. */
   qr?: { label: string; caption: string; rows: string[]; at: number; why?: string }
 }
 
