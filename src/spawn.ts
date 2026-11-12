@@ -383,9 +383,13 @@ export function spawnAgents(o: {
   const common = g(o.cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
   // No tmux (native Windows, mostly): Claude Code's own background sessions, if this claude has them.
   const claudeBin = which("claude", env) ?? "claude"
-  // With a main session open, new agents work out of sight unless a tab was asked for: their questions come to main.
-  // New agents open as tabs, where the person can see and reach them; the background is asked for ("in the background").
-  const claudeBg = !!o.background && !which("tmux", env) && bgx.claudeBackground(claudeBin, env).bg
+  // crosstalk's agents are Claude Code's own background sessions wherever this claude has them (`claude --bg`):
+  // they are in Claude Code's own agent list, counted and managed there, and "show me <name>" pops one into a tab
+  // of its own (`claude attach`). Without them: a tab, or crosstalk's tmux when the background was asked for.
+  // CROSSTALK_TMUX_AGENTS=1 keeps crosstalk's own tmux for the background.
+  const native = bgx.claudeBackground(claudeBin, env).bg && env.CROSSTALK_TMUX_AGENTS !== "1"
+  if (o.background === undefined && native) o = { ...o, background: true }
+  const claudeBg = !!o.background && (native || !which("tmux", env)) && bgx.claudeBackground(claudeBin, env).bg
   if (o.background && !which("tmux", env) && !claudeBg)
     return { ok: false, text: "◢ crosstalk: background agents run in tmux, which is not installed here. Install tmux, or start the agent in a tab instead.", agents: [] }
   // At most N agents at once: past it, a background agent waits its turn and starts by itself when one ends.
@@ -583,8 +587,8 @@ export function claim(sessionId: string, cwd: string): SpawnRec | null {
 export function agentsAtWork(env: NodeJS.ProcessEnv = process.env, recs = readSpawned()): SpawnRec[] {
   return recs.filter((r) => {
     if (r.removedAt) return false
-    if (r.background) return !!r.tmux && tmuxHas(r.tmux, env)
-    if (!r.sessionId) return false
+    if (r.background && !r.claudeBg) return !!r.tmux && tmuxHas(r.tmux, env)
+    if (!r.sessionId) return !!r.claudeBg && Date.now() - r.createdAt < 2 * 60_000 // just started, not yet registered
     const rec = R.readOne(r.sessionId)
     return !!rec && !rec.endedAt && R.recAlive(rec)
   })

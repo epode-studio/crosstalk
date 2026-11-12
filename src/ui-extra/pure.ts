@@ -268,7 +268,8 @@ export function statusLine(o: { threads: readonly string[]; cards?: readonly str
   // Main: what waits on the person first, then the person's own sessions at work. "Sessions", never "agents":
   // Claude Code's own agent list sits right under it and counts something else.
   if (o.main)
-    return ["◢ main", o.waiting > 0 ? `${SIGN.waiting} ${o.waiting} in your inbox` : "inbox empty", `${SIGN.working} ${o.main.sessions} session${o.main.sessions === 1 ? "" : "s"} working`].join(" · ")
+    // Only the inbox: sessions are counted once, in Claude Code's own agent list right under it.
+    return ["◢ main", o.waiting > 0 ? `${SIGN.waiting} ${o.waiting} in your inbox` : "inbox empty"].join(" · ")
   const named = o.threads.length ? o.threads.slice(0, 3).join(" · ") : o.cards?.length ? o.cards.slice(0, 3).join(", ") : o.repo ?? ""
   const where = o.where || runningSummary(o.running ?? [])
   if (!o.waiting && !o.label && !where) return undefined

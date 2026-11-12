@@ -295,5 +295,5 @@ test('a main session\'s totals reach the status line', async ($, on) => {
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.advance(1000)
   // The count is what main's inbox shows (here the one card), so the two never disagree.
-  expect(seen.status.some(s => s.includes('main · ❓ 1 in your inbox · ⏳ 3 sessions working'))).toBe(true)
+  expect(seen.status.some(s => s.includes('main · ❓ 1 in your inbox'))).toBe(true)
 })

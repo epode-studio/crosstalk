@@ -90,7 +90,8 @@ export function createAttention(o: {
       })
       return started.map((x) => x.name ?? x.task.slice(0, 40))
     },
-    agentAlive: (name) => spawn.tmuxHas(name),
+    // In crosstalk's tmux, or a Claude Code background session whose process still runs.
+    agentAlive: (name) => spawn.tmuxHas(name) || spawn.agentsAtWork().some((r) => r.name === name),
     // Closing on crosstalk's own judgment: the same close a person's "close billing" makes (archived, resumable).
     closeSession: async (sid) => {
       const d = Ctl.liveDeps()
