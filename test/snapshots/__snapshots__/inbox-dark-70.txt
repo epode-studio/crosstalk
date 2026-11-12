@@ -1,14 +1,20 @@
 ┌─ inbox · dark · 70 cols ─────────────────────────────────────────────┐
-│Needs you · 3                                                         │
-│▸ 🔐 Allow api to run `npm install`? 🟤 api · 1m                        │
-│1: Allow   2: Deny                                                    │
-│  🔀 auth · PR #12 is green and approved. Merge it? 🟣 auth · 5m        │
-│  💬 marie: token format changed, see the diff 🟤 billing · 3h          │
+│◉ Blocked on you 1                                                    │
+│  api          ● Allow api to run `npm install`? 1m                   │
+│                                                                      │
+│◉ Questions 1                                                         │
+│  auth         ● PR #12 is green and approved. Merge it? 5m           │
+│                                                                      │
+│◉ Messages 1                                                          │
+│  marie        ● token format changed, see the diff 3h                │
 └──────────────────────────────────────────────────────────────────────┘
 
 styles (dark theme):
-  1 [bold]Needs you [/][bold dim]· 3[/]
-  2 ▸ 🔐 [bold]Allow api to run `npm install`?[/] [dim]🟤 api · 1m[/]
-  3 1: Allow   2: Deny
-  4   🔀 auth · PR #12 is green and approved. Merge it? [dim]🟣 auth · 5m[/]
-  5   💬 marie: token format changed, see the diff [dim]🟤 billing · 3h[/]
+  1 [fg=error:#ff6b80]◉[/] [bold]Blocked on you[/] [dim]1[/]
+  2 [dim]  api          [/][fg=error:#ff6b80]●[/][bold] Allow api to run `npm install`?[/][dim] 1m[/]
+  3 
+  4 [fg=yellow]◉[/] [bold]Questions[/] [dim]1[/]
+  5 [dim]  auth         [/][fg=green]●[/][bold] PR #12 is green and approved. Merge it?[/][dim] 5m[/]
+  6 
+  7 [fg=blue]◉[/] [bold]Messages[/] [dim]1[/]
+  8 [dim]  marie        [/][fg=blue]●[/][bold] token format changed, see the diff[/][dim] 3h[/]

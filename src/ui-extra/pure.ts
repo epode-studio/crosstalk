@@ -532,12 +532,70 @@ export const SNOOZE_MS = 2 * 3_600_000
 
 /** What sits in the inbox: waiting on the person, not settled, not sent by itself, not snoozed. */
 export function inboxItems<T extends InboxRowItem>(items: T[], now: number): T[] {
-  return inboxOrder(
-    items.filter(
-      (i) => (i.state === "pending" || (i.state === "later" && now - (i.raisedAt ?? 0) >= SNOOZE_MS)) && !i.auto && !/^(tackle|you|open):/.test(i.id),
-    ),
-    now,
+  const open = items.filter(
+    (i) => (i.state === "pending" || (i.state === "later" && now - (i.raisedAt ?? 0) >= SNOOZE_MS)) && !i.auto && !/^(tackle|you|open):/.test(i.id),
   )
+  // Only the newest "crosstalk updated: restart?": an older version's question is moot.
+  const updates = open.filter((i) => i.id.startsWith("attn:update:")).sort((a, b) => b.createdAt - a.createdAt)
+  const shown = open.filter((i) => !i.id.startsWith("attn:update:") || i === updates[0])
+  // As a mail inbox: what an agent is blocked on first, then newest first.
+  return [...shown].sort((a, b) => Number(inboxUrgent(b)) - Number(inboxUrgent(a)) || b.createdAt - a.createdAt)
+}
+
+/**
+ * One inbox entry, as a mail client shows it: who it is from and when, a subject,
+ * and a line of preview. `unread`: not yet put in front of the person.
+ */
+export function inboxMail(it: InboxRowItem, now: number): { sender: string; time: string; subject: string; preview: string; unread: boolean; glyph: string; chip: string; tone: "blue" | "yellow" | "red" | "green" | "gray" } {
+  const msg = it.kind === "message" || it.kind === "ask"
+  const flat = (s: string | undefined) => (s ?? "").replace(/\s+/g, " ").trim()
+  const text = flat(it.text)
+  const sender = msg ? flat(it.from) || "someone" : it.thread || (it.from && it.from !== "crosstalk" ? flat(it.from) : "crosstalk")
+  let subject = msg ? text : flat(it.question) || text || "crosstalk has a question"
+  let rest = msg ? "" : flat(it.question) ? text : ""
+  if (msg) {
+    // A message's first sentence is its subject; the rest is the preview.
+    const m = /^(.{12,90}?[.!?])\s+(.*)$/.exec(text)
+    if (m) {
+      subject = m[1]!
+      rest = m[2]!
+    }
+  }
+  // The sender is already shown: "auth · PR #12 is green" reads "PR #12 is green".
+  if (subject.toLowerCase().startsWith(`${sender.toLowerCase()} · `)) subject = subject.slice(sender.length + 3)
+  if (subject.toLowerCase().startsWith(`${sender.toLowerCase()}: `)) subject = subject.slice(sender.length + 2)
+  const where = msg && it.thread ? `${it.thread} · ` : ""
+  const mins = Math.max(0, Math.round((now - it.createdAt) / 60_000))
+  const time = mins < 1 ? "now" : mins < 60 ? `${mins}m` : mins < 1440 ? `${Math.round(mins / 60)}h` : `${Math.round(mins / 1440)}d`
+  return { sender, time, subject, preview: `${where}${rest}`.trim(), unread: it.raisedAt === undefined, glyph: inboxGlyph(it), ...inboxKind(it) }
+}
+
+/** The inbox in sections, as a tracker's list: what blocks an agent, crosstalk's questions, then messages from people. */
+export function inboxSections<T extends InboxRowItem>(rows: T[]): { key: "blocked" | "questions" | "messages"; title: string; tone: "red" | "yellow" | "blue"; items: T[] }[] {
+  const blocked = rows.filter((r) => inboxUrgent(r))
+  const messages = rows.filter((r) => !blocked.includes(r) && (r.kind === "message" || r.kind === "ask"))
+  const questions = rows.filter((r) => !blocked.includes(r) && !messages.includes(r))
+  return [
+    { key: "blocked" as const, title: "Blocked on you", tone: "red" as const, items: blocked },
+    { key: "questions" as const, title: "Questions", tone: "yellow" as const, items: questions },
+    { key: "messages" as const, title: "Messages", tone: "blue" as const, items: messages },
+  ].filter((g) => g.items.length)
+}
+
+/** The chip under an inbox entry, as a tracker's label: what kind of thing it is, and its color. */
+export function inboxKind(it: Pick<InboxRowItem, "id" | "kind">): { chip: string; tone: "blue" | "yellow" | "red" | "green" | "gray" } {
+  if (it.id.startsWith("attn:perm:")) return { chip: "Permission", tone: "red" }
+  if (it.id.startsWith("relay:")) return { chip: "Agent asks", tone: "red" }
+  if (it.id.startsWith("attn:merge:")) return { chip: "Merge", tone: "green" }
+  if (it.id.startsWith("attn:close:")) return { chip: "Finished", tone: "green" }
+  if (it.id.startsWith("attn:update:")) return { chip: "Update", tone: "gray" }
+  if (it.id.startsWith("attn:circle:")) return { chip: "Stuck", tone: "red" }
+  if (it.id.startsWith("propose:")) return { chip: "Proposal", tone: "yellow" }
+  if (it.kind === "message") return { chip: "Message", tone: "blue" }
+  if (it.kind === "ask") return { chip: "Question", tone: "blue" }
+  if (it.kind === "restore") return { chip: "Restore", tone: "gray" }
+  if (it.kind === "disk" || it.kind === "cleanup") return { chip: "Disk", tone: "gray" }
+  return { chip: "Question", tone: "yellow" }
 }
 
 /** Its kind, at a glance: a permission, a question, a message, a merge, an agent going in circles. */

@@ -180,14 +180,14 @@ describe("main's inbox", () => {
   const noop = { open: () => {}, choose: () => {}, snooze: () => {}, done: () => {} }
   const E = { ...ELS, Button: "Button" }
 
-  test("one row each, most pressing first; the open one shows its context and choices on 1 to 4, s and e", () => {
+  test("a list in sections, one line each, what blocks an agent first; an open one shows its words and choices on 1 to 4, s and e", () => {
     const tree = D.inboxTree(E, ROWS, undefined, NOW0, noop)
     snapshot("inbox-dark-70", frame("inbox · dark · 70 cols", asText(tree), 70, "dark"))
     const open = frame("inbox · second open", asText(D.inboxTree(E, ROWS, "attn:merge:u1@1", NOW0, noop)), 100, "dark")
     expect(open).toContain("1: Merge it")
     expect(open).toContain("s: snooze")
     expect(open).not.toContain("e: done") // done only dismisses a message; on a question it would answer it
-    expect(frame("inbox · empty", D.inboxTree(E, [], undefined, NOW0, noop), 70, "dark")).toContain("Nothing right now.")
+    expect(frame("inbox · empty", D.inboxTree(E, [], undefined, NOW0, noop), 70, "dark")).toContain("Nothing needs you.")
   })
 
   test("a press answers through the actions it is given", () => {
@@ -195,10 +195,10 @@ describe("main's inbox", () => {
     const on = { open: (id: string) => seen.push(`open ${id}`), choose: (_: Item, c: string) => seen.push(`choose ${c}`), snooze: () => seen.push("snooze"), done: () => seen.push("done") }
     const buttons: any[] = []
     const walk = (n: any) => (Array.isArray(n) ? n.forEach(walk) : n && typeof n === "object" && n.props ? (n.type === "Button" && buttons.push(n), walk(n.props.children ?? [])) : null)
-    walk(D.inboxTree(E, ROWS, undefined, NOW0, on))
+    walk(D.inboxTree(E, ROWS, "attn:perm:s1", NOW0, on))
     for (const b of buttons) b.props.onPress({})
-    // A permission: only its own answers, never snoozed or dismissed past its deadline.
-    expect(seen).toEqual(["open attn:perm:s1", "choose Allow", "choose Deny", "open attn:merge:u1@1", "open msg:1"])
+    // A permission: only its own answers, never snoozed or dismissed past its deadline. Pressing an open row closes it.
+    expect(seen).toEqual(["open ", "choose Allow", "choose Deny", "open attn:merge:u1@1", "open msg:1"])
     expect(buttons.filter((b) => b.props.hotkey).map((b) => b.props.hotkey)).toEqual(["1", "2"])
   })
 })

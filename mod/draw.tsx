@@ -9,7 +9,7 @@
 // on black, so it scans on any theme. No hook, state or I/O in here.
 
 import type { Item, Pane } from './types'
-import { agentAsks, agentLine, ago, dotFor, featureLine, fileLink, historyLine, cleanRecap, inboxChoices, inboxRow, inboxUrgent, linkable, withoutThread, noteLine, prGroups, prName, prWhy, runningGroups, runningLine, runningWhere } from '../src/ui-extra/pure.ts'
+import { agentAsks, agentLine, ago, dotFor, featureLine, fileLink, historyLine, cleanRecap, inboxChoices, inboxMail, inboxRow, inboxSections, inboxUrgent, linkable, withoutThread, noteLine, prGroups, prName, prWhy, runningGroups, runningLine, runningWhere } from '../src/ui-extra/pure.ts'
 
 /** The elements these trees are made of: the surface's own Box, Text and Link, and Button where a tree takes presses. */
 export type Els = { Box: any; Text: any; Link: any; Button?: any }
@@ -23,83 +23,103 @@ export type InboxActions = {
 }
 
 /**
- * The inbox, as Linear's: one row per thing waiting on the person, most pressing
- * first, each its kind, what it is, where it is from and how long it has waited.
- * Arrows move, Enter opens a row in place: its context, its choices on 1 to 4,
- * s to snooze it and e to mark it done. The first row is open to begin with.
+ * The inbox, as a tracker's list: sections (blocked on you, questions, messages),
+ * each a header with its count, then one line per thing: who from, its kind's dot,
+ * what it is, and how long it has waited. Arrows move, Enter opens one in place:
+ * its words, its choices on 1 to 4, s to snooze, e to mark a message done.
  */
+export const TONE: Record<string, string> = { blue: 'blue', yellow: 'yellow', red: 'error', green: 'green', gray: 'gray' }
+
 export function inboxTree(E: Els, rows: Item[], openId: string | undefined, now: number, on: InboxActions) {
   const { Box, Text, Button } = E
   if (!rows.length)
     return (
       <Box flexDirection="column">
-        <Text bold>Needs you</Text>
-        <Text dimColor> Nothing right now.</Text>
+        <Text bold>Inbox</Text>
+        <Text dimColor>  Nothing needs you.</Text>
       </Box>
     )
-  const openKey = (rows.find(r => r.id === openId) ?? rows[0])?.id
+  let first = true
   return (
     <Box flexDirection="column">
-      <Text bold>
-        Needs you <Text dimColor>· {rows.length}</Text>
-      </Text>
-      {rows.map((it, i) => {
-        const r = inboxRow(it as any, now)
-        const isOpen = it.id === openKey
-        const context = clean((it.kind === 'message' || it.kind === 'ask' ? '' : (it.text ?? '')).trim()).slice(0, 420)
-        return (
-          <Box key={`box:${it.id}`} flexDirection="column" marginTop={isOpen && i > 0 ? 1 : 0}>
-            {Button ? (
-              <Button key={`row:${it.id}`} plain onPress={() => on.open(it.id)} {...(i === 0 ? { autoFocus: true } : {})}>
-                {isOpen ? '▸ ' : '  '}
-                {r.glyph} {isOpen ? <Text bold>{clean(r.title)}</Text> : clean(r.title)} <Text dimColor>{clean(r.meta)}</Text>
-              </Button>
-            ) : (
-              <Text wrap="truncate">
-                {isOpen ? '▸ ' : '  '}
-                {r.glyph} {clean(r.title)} <Text dimColor>{clean(r.meta)}</Text>
-              </Text>
-            )}
-            {isOpen ? (
-              <Box flexDirection="column" marginLeft={4} marginBottom={1}>
-                {it.kind === 'message' || it.kind === 'ask' ? (
-                  <Text wrap="wrap">{clean(it.text ?? '').slice(0, 420)}</Text>
-                ) : r.title !== clean(it.question ?? '') && it.question ? (
-                  <Text wrap="wrap">{clean(it.question)}</Text>
-                ) : null}
-                {context ? (
-                  <Text dimColor wrap="wrap">
-                    {context}
-                  </Text>
-                ) : null}
-                {Button ? (
-                  <Box flexDirection="row" flexWrap="wrap">
-                    {inboxChoices(it as any).flatMap((c, n) => [
-                      <Button key={`choice:${it.id}:${n}`} plain hotkey={String(n + 1)} onPress={() => on.choose(it, c)}>
-                        {clean(c)}
-                      </Button>,
-                      <Text key={`gap:${it.id}:${n}`}>{'   '}</Text>,
-                    ])}
-                    {/* Snooze only what has no deadline: a permission or an agent's question waits on you, and goes its own way when its time runs out. */}
-                    {!inboxUrgent(it) ? (
-                      <Button key={`snooze:${it.id}`} plain dimColor hotkey="s" onPress={() => on.snooze(it)}>
-                        snooze
-                      </Button>
-                    ) : null}
-                    {!inboxUrgent(it) ? <Text key={`gap:${it.id}:s`}>{'   '}</Text> : null}
-                    {/* Done only dismisses a message: on a question it would quietly answer it (a permission's Deny). */}
+      {inboxSections(rows as any[]).map((g, gi) => (
+        <Box key={`sec:${g.key}`} flexDirection="column" marginTop={gi ? 1 : 0}>
+          <Text>
+            <Text color={TONE[g.tone]}>◉</Text> <Text bold>{g.title}</Text> <Text dimColor>{g.items.length}</Text>
+          </Text>
+          {g.items.map((it: Item) => {
+            const m = inboxMail(it as any, now)
+            const isOpen = it.id === openId
+            const focus = first
+            first = false
+            const context = clean((it.kind === 'message' || it.kind === 'ask' ? '' : (it.text ?? '')).trim()).slice(0, 420)
+            const who = clean(m.sender).slice(0, 12).padEnd(12)
+            const line = [
+              <Text key="w" dimColor>
+                {'  '}
+                {who}{' '}
+              </Text>,
+              <Text key="d" color={TONE[m.tone]}>
+                ●
+              </Text>,
+              <Text key="s" bold={m.unread || isOpen} dimColor={!m.unread && !isOpen}>
+                {' '}
+                {clean(m.subject)}
+              </Text>,
+            ]
+            return (
+              <Box key={`box:${it.id}`} flexDirection="column">
+                <Box flexDirection="row" justifyContent="space-between">
+                  {Button ? (
+                    <Button key={`row:${it.id}`} plain onPress={() => on.open(isOpen ? '' : it.id)} {...(focus ? { autoFocus: true } : {})}>
+                      <Text wrap="truncate">{line}</Text>
+                    </Button>
+                  ) : (
+                    <Text wrap="truncate">{line}</Text>
+                  )}
+                  <Text dimColor> {m.time}</Text>
+                </Box>
+                {isOpen ? (
+                  <Box flexDirection="column" marginLeft={16} marginBottom={1}>
+                    <Text dimColor wrap="truncate">
+                      {m.chip}
+                      {it.thread ? ` · ${clean(it.thread)}` : ''}
+                    </Text>
                     {it.kind === 'message' || it.kind === 'ask' ? (
-                      <Button key={`done:${it.id}`} plain dimColor hotkey="e" onPress={() => on.done(it)}>
-                        done
-                      </Button>
+                      <Text wrap="wrap">{clean(it.text ?? '').slice(0, 600)}</Text>
+                    ) : context ? (
+                      <Text wrap="wrap">{context}</Text>
+                    ) : null}
+                    {Button ? (
+                      <Box flexDirection="row" flexWrap="wrap">
+                        {inboxChoices(it as any).flatMap((c, n) => [
+                          <Button key={`choice:${it.id}:${n}`} plain hotkey={String(n + 1)} onPress={() => on.choose(it, c)}>
+                            {clean(c)}
+                          </Button>,
+                          <Text key={`gap:${it.id}:${n}`}>{'   '}</Text>,
+                        ])}
+                        {/* Snooze only what has no deadline: a permission or an agent's question waits on you, and goes its own way when its time runs out. */}
+                        {!inboxUrgent(it) ? (
+                          <Button key={`snooze:${it.id}`} plain dimColor hotkey="s" onPress={() => on.snooze(it)}>
+                            snooze
+                          </Button>
+                        ) : null}
+                        {!inboxUrgent(it) ? <Text key={`gap:${it.id}:s`}>{'   '}</Text> : null}
+                        {/* Done only dismisses a message: on a question it would quietly answer it (a permission's Deny). */}
+                        {it.kind === 'message' || it.kind === 'ask' ? (
+                          <Button key={`done:${it.id}`} plain dimColor hotkey="e" onPress={() => on.done(it)}>
+                            done
+                          </Button>
+                        ) : null}
+                      </Box>
                     ) : null}
                   </Box>
                 ) : null}
               </Box>
-            ) : null}
-          </Box>
-        )
-      })}
+            )
+          })}
+        </Box>
+      ))}
     </Box>
   )
 }
@@ -147,13 +167,14 @@ function prBlock(E: Els, prs: readonly any[], on: PaneOn, key: string, thread?: 
   const { Box, Text, Button } = E
   const g = prGroups((prs as any[]).map(r => ({ ...r, label: thread ? withoutThread(r.label, thread) : r.label })))
   const row = (r: any, i: number, kind: 'fix' | 'ready') => {
-    const sign = kind === 'fix' ? '❗' : '✅'
-    const text = `${sign} ${prName(r)} · ${prWhy(r)}`
+    const text = `${prName(r)} · ${prWhy(r)}`
     const press = kind === 'fix' ? on.fixPr : on.openUrl
     return Button && press && r.url ? (
       <Button key={`${key}${kind}${i}`} plain onPress={() => press(r.url)}>
-        {'  '}
-        {clean(text)}
+        <Text wrap="truncate">
+          {'  '}
+          <Text color={kind === 'fix' ? 'error' : 'green'}>●</Text> {clean(text)}
+        </Text>
       </Button>
     ) : (
       <Text key={`${key}${kind}${i}`} wrap="truncate" color={kind === 'fix' ? BROKEN : undefined}>
@@ -165,16 +186,16 @@ function prBlock(E: Els, prs: readonly any[], on: PaneOn, key: string, thread?: 
   return [
     g.fix.length ? (
       <Box key={`${key}f`} flexDirection="column" marginTop={1}>
-        <Text bold>
-          Checks failed · {g.fix.length} <Text dimColor>· Enter hands one to an agent to fix</Text>
+        <Text>
+          <Text color="error">◉</Text> <Text bold>Checks failed</Text> <Text dimColor>{g.fix.length} · Enter hands one to an agent</Text>
         </Text>
         {g.fix.map((r, i) => row(r, i, 'fix'))}
       </Box>
     ) : null,
     g.ready.length ? (
       <Box key={`${key}r`} flexDirection="column" marginTop={1}>
-        <Text bold>
-          Ready for you · {g.ready.length} <Text dimColor>· Enter opens it to review and merge</Text>
+        <Text>
+          <Text color="green">◉</Text> <Text bold>Ready to review</Text> <Text dimColor>{g.ready.length} · Enter opens it</Text>
         </Text>
         {g.ready.map((r, i) => row(r, i, 'ready'))}
       </Box>
@@ -238,14 +259,16 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number, i
         )}
         {p.agents.length ? (
           <Box flexDirection="column" marginTop={1}>
-            <Text bold>
-              Sessions · {p.agents.length} <Text dimColor>· Enter opens one</Text>
+            <Text>
+              <Text color="gray">◉</Text> <Text bold>Sessions</Text> <Text dimColor>{p.agents.length} · Enter opens one</Text>
             </Text>
             {p.agents.map((a, i) =>
               Button && on.agent && a.sessionId ? (
                 <Button key={`agent:${a.sessionId}`} plain onPress={() => on.agent!(a.sessionId!)}>
-                  {' '}
-                  {clean(agentLine(a))}
+                  <Text wrap="truncate">
+                    {'  '}
+                    {clean(agentLine(a))}
+                  </Text>
                 </Button>
               ) : (
                 <Text key={`a${i}`} wrap="truncate">

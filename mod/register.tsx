@@ -268,7 +268,7 @@ async function received($: EngineInterface, line: string) {
  * prints it again whenever it changes. Opening another thread retires the
  * watch before it; so does the pane being closed.
  */
-async function openPane($: EngineInterface, thread: string | undefined): Promise<boolean> {
+async function openPane($: EngineInterface, thread: string | undefined, focus = false): Promise<boolean> {
   if (thread !== paneThread) {
     await update($, paneAtom, () => null)
     await update($, paneMore, () => false)
@@ -277,7 +277,7 @@ async function openPane($: EngineInterface, thread: string | undefined): Promise
   const gen = ++paneGen
   await update($, paneError, () => '')
   void followPane($, gen, thread)
-  const r = await $.ui.open({ id: PANE_ID, title: thread ? `${dotFor(thread)} ${thread}` : '◢ inbox' }).catch(() => ({ isPlaced: false }))
+  const r = await $.ui.open({ id: PANE_ID, title: thread ? `${dotFor(thread)} ${thread}` : '◢ inbox', ...(focus ? { focus: true } : {}) }).catch(() => ({ isPlaced: false }))
   inboxShown = !thread && !!mainTotals && r.isPlaced
   return r.isPlaced
 }
@@ -921,10 +921,11 @@ export const register: Register = on => {
       const n = inboxItems(open, await $.clock.now()).length
       if (!n) return next(e)
       const { Text, Button } = $.ui.resolve(e)
-      // One press, or i, always shows the inbox in the pane: at any width, and instead of a thread shown there.
+      // 0 in an empty prompt (a band Button's digit answers from there), a click, or Enter on it: the inbox
+      // in the pane, at any width and instead of a thread shown there, with the keyboard in it (arrows, Enter, Esc back).
       return (
-        <Button key="open-inbox" plain hotkey="i" onPress={() => void openPane($, undefined)}>
-          ◢ {n} in your inbox · open it
+        <Button key="open-inbox" plain hotkey="0" onPress={() => void openPane($, undefined, true)}>
+          ◢ {n} in your inbox · press 0 to go through it
         </Button>
       )
     }
