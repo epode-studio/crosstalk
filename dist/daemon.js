@@ -6264,7 +6264,7 @@ import { spawnSync as spawnSync8 } from "node:child_process";
 var liveSys = (env = process.env) => ({
   platform: process.platform,
   run: (s) => {
-    const r = spawnSync8(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 3000, env: cleanTmuxEnv(env) });
+    const r = spawnSync8(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: s.cmd === "osascript" ? 1e4 : 3000, env: cleanTmuxEnv(env) });
     return { ok: r.status === 0, out: (r.stdout ?? "").trim() };
   },
   has: (bin) => spawnSync8("sh", ["-c", `command -v ${bin}`], { stdio: "ignore", timeout: 2000 }).status === 0
@@ -6472,10 +6472,11 @@ function focusTerm(t, sys) {
   let ok = false;
   for (const s of plan.steps) {
     const r = sys.run(s);
-    if (r.ok)
+    const found = s.cmd !== "osascript" || r.out === "done";
+    if (r.ok && found)
       ok = true;
     else if (plan.kind !== "tmux")
-      return { ok: false, kind: plan.kind };
+      return { ok: false, kind: plan.kind, ...r.ok ? { gone: true } : {} };
   }
   return { ok, kind: plan.kind };
 }
@@ -6498,6 +6499,8 @@ function focusSession(o) {
   const r = focusTerm(rec.terminal, o.sys ?? liveSys(o.env));
   if (r.ok)
     return { ok: true, found: true, text: `\u25e2 crosstalk: brought ${label} to the front${r.kind ? ` (${r.kind})` : ""}.` };
+  if (r.gone)
+    return { ok: false, found: false, text: `\u25e2 crosstalk: ${label} has no tab open any more.` };
   return {
     ok: false,
     found: true,

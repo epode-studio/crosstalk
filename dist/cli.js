@@ -565,16 +565,6 @@ function prState(r) {
     parts.push("in the merge queue");
   return parts.filter(Boolean).map((x) => ` \u00b7 ${x}`).join("");
 }
-function inboxScore(it, now) {
-  if (it.kind === "session" || it.kind === "steer")
-    return 1000 + Math.min(30, Math.max(0, (now - it.createdAt) / 60000) / 2);
-  const base = it.kind === "restore" ? 120 : it.id.startsWith("relay:") || it.id.startsWith("attn:perm:") || it.id.startsWith("attn:circle:") ? 100 : it.kind === "ask" ? 90 : it.kind === "ship" || it.kind === "conflict" ? 80 : it.id.startsWith("attn:staff:") ? 60 : it.kind === "route" || it.kind === "team" ? 55 : it.id.startsWith("open:") ? 40 : it.kind === "message" ? 35 : 30;
-  const waitedMin = Math.max(0, (now - it.createdAt) / 60000);
-  return base + Math.min(30, waitedMin / 2);
-}
-function inboxOrder(items, now) {
-  return [...items].sort((a, b) => inboxScore(b, now) - inboxScore(a, now) || a.createdAt - b.createdAt);
-}
 function inboxLine(it, now) {
   const what = shortQuestion(it.question ?? it.text ?? it.id);
   const where = it.thread ? human(it.thread, 24) : it.from ? human(it.from, 24) : "";
@@ -604,9 +594,12 @@ function shortQuestion(q, max = 72) {
   return t.length > max ? t.slice(0, max - 1) + "\u2026" : t;
 }
 function inboxItems(items, now) {
-  return inboxOrder(items.filter((i) => (i.state === "pending" || i.state === "later" && now - (i.raisedAt ?? 0) >= SNOOZE_MS) && !i.auto && !/^(tackle|you|open):/.test(i.id)), now);
+  const open = items.filter((i) => (i.state === "pending" || i.state === "later" && now - (i.raisedAt ?? 0) >= SNOOZE_MS) && !i.auto && !/^(tackle|you|open):/.test(i.id));
+  const updates = open.filter((i) => i.id.startsWith("attn:update:")).sort((a, b) => b.createdAt - a.createdAt);
+  const shown = open.filter((i) => !i.id.startsWith("attn:update:") || i === updates[0]);
+  return [...shown].sort((a, b) => Number(inboxUrgent(b)) - Number(inboxUrgent(a)) || b.createdAt - a.createdAt);
 }
-var runningWhere = (r) => r.url ?? (r.ports?.length ? `localhost:${r.ports[0]}` : ""), DOTS, SIGN, LEGEND, ACRONYMS, SNOOZE_MS;
+var runningWhere = (r) => r.url ?? (r.ports?.length ? `localhost:${r.ports[0]}` : ""), DOTS, SIGN, LEGEND, ACRONYMS, SNOOZE_MS, inboxUrgent = (it) => it.kind === "restore" || it.kind === "session" || it.kind === "steer" || /^(relay|attn:perm|attn:circle|sess):/.test(it.id);
 var init_pure = __esm(() => {
   DOTS = ["\uD83D\uDFE0", "\uD83D\uDFE1", "\uD83D\uDFE2", "\uD83D\uDD35", "\uD83D\uDFE3", "\uD83D\uDFE4", "\u26aa"];
   SIGN = { waiting: "\u2753", working: "\u23f3", done: "\u2705", broken: "\u2757", idle: "\uD83D\uDCA4" };
@@ -1978,10 +1971,11 @@ function focusTerm(t, sys) {
   let ok = false;
   for (const s of plan.steps) {
     const r = sys.run(s);
-    if (r.ok)
+    const found = s.cmd !== "osascript" || r.out === "done";
+    if (r.ok && found)
       ok = true;
     else if (plan.kind !== "tmux")
-      return { ok: false, kind: plan.kind };
+      return { ok: false, kind: plan.kind, ...r.ok ? { gone: true } : {} };
   }
   return { ok, kind: plan.kind };
 }
@@ -1996,7 +1990,7 @@ function findRec(nameOrId, recs) {
 var liveSys = (env = process.env) => ({
   platform: process.platform,
   run: (s) => {
-    const r = spawnSync7(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 3000, env: cleanTmuxEnv(env) });
+    const r = spawnSync7(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: s.cmd === "osascript" ? 1e4 : 3000, env: cleanTmuxEnv(env) });
     return { ok: r.status === 0, out: (r.stdout ?? "").trim() };
   },
   has: (bin) => spawnSync7("sh", ["-c", `command -v ${bin}`], { stdio: "ignore", timeout: 2000 }).status === 0
@@ -2066,6 +2060,8 @@ function focusSession(o) {
   const r = focusTerm(rec.terminal, o.sys ?? liveSys(o.env));
   if (r.ok)
     return { ok: true, found: true, text: `\u25e2 crosstalk: brought ${label} to the front${r.kind ? ` (${r.kind})` : ""}.` };
+  if (r.gone)
+    return { ok: false, found: false, text: `\u25e2 crosstalk: ${label} has no tab open any more.` };
   return {
     ok: false,
     found: true,
@@ -4567,10 +4563,15 @@ function show(o) {
   const rec = findAgent(o.name);
   if (rec?.claudeBg) {
     const claude = which2("claude", env) ?? "claude";
-    const r = openForRepo([{ cwd: rec.cwd, argv: attachArgv(claude, rec.name), name: rec.name, thread: rec.thread }], { cwd: rec.cwd, envVars: env, by: o.by, thread: rec.thread });
+    const id = rec.sessionId ? rec.sessionId.slice(0, 8) : rec.name;
+    const front = frontAttached([id, rec.name, ...rec.sessionId ? [rec.sessionId] : []], env);
+    if (front)
+      return front;
+    const r = openForRepo([{ cwd: rec.cwd, argv: attachArgv(claude, id), name: rec.name, thread: rec.thread }], { cwd: rec.cwd, envVars: env, by: o.by, thread: rec.thread });
     if (r.opened.kind === "manual" || !r.ok)
-      return { ok: r.opened.kind === "manual", text: `\u25e2 crosstalk: to watch ${rec.name}, run:
-  ${shq(claude)} attach ${shq(rec.name)}` };
+      return { ok: r.opened.kind === "manual", text: `\u25e2 crosstalk: ${r.ok ? "" : `could not open a tab (${(r.out.split(`
+`).pop() ?? "").slice(0, 120)}). `}To watch ${rec.name}, run:
+  ${shq(claude)} attach ${shq(id)}` };
     return { ok: true, text: `\u25e2 crosstalk: opened ${rec.name} in a new tab in ${r.opened.where}. Leaving it leaves it running.` };
   }
   const session = rec?.tmux ?? (tmuxHas(slug(o.name), env) ? slug(o.name) : null);
@@ -4605,6 +4606,48 @@ function show(o) {
     return { ok: false, text: `\u25e2 crosstalk: could not open a tab for ${session}: ${r.out.split(`
 `).pop()}` };
   return { ok: true, text: `\u25e2 crosstalk: opened ${session} in a new tab in ${r.opened.where}. Closing that tab leaves it running.` };
+}
+function attachedTty(ids, ps = () => String(spawnSync14("ps", ["-axo", "tty=,args="], { encoding: "utf8", timeout: 3000 }).stdout ?? "")) {
+  const want = new Set(ids.filter(Boolean));
+  for (const line of ps().split(`
+`)) {
+    const m = /^\s*(\S+)\s+(.*)$/.exec(line);
+    if (!m || m[1] === "?" || m[1] === "??")
+      continue;
+    const a = /(?:^|\/)claude\s+attach\s+(\S+)/.exec(m[2]);
+    if (a && want.has(a[1]))
+      return m[1].startsWith("/dev/") ? m[1] : `/dev/${m[1]}`;
+  }
+  return null;
+}
+function frontAttached(ids, env) {
+  const tty = attachedTty(ids);
+  if (!tty)
+    return null;
+  let ok = false;
+  try {
+    ok = focusTerm({ tty, ...env.TERM_PROGRAM ? { program: env.TERM_PROGRAM } : {} }, liveSys(env)).ok;
+  } catch {}
+  return { ok: true, text: `\u25e2 crosstalk: ${ok ? "brought its tab to the front" : `it is open in a tab already (${tty})`}.` };
+}
+function attachById(sessionId, o = {}) {
+  const env = o.env ?? process.env;
+  const claude = which2("claude", env) ?? "claude";
+  if (!claudeBackground(claude, env).attach)
+    return null;
+  const rec = readOne(sessionId);
+  const cwd = rec?.cwd && fs17.existsSync(rec.cwd) ? rec.cwd : process.cwd();
+  const short = sessionId.slice(0, 8);
+  const name = rec?.name ?? short;
+  const front = frontAttached([short, sessionId], env);
+  if (front)
+    return front;
+  const r = openForRepo([{ cwd, argv: attachArgv(claude, short), name }], { cwd, envVars: env, by: o.by });
+  if (r.opened.kind === "manual" || !r.ok)
+    return { ok: r.opened.kind === "manual", text: `\u25e2 crosstalk: ${r.ok ? "" : `could not open a tab (${(r.out.split(`
+`).pop() ?? "").slice(0, 120)}). `}To open ${name}, run:
+  ${shq(claude)} attach ${short}` };
+  return { ok: true, text: `\u25e2 crosstalk: opened ${name} in a new tab. Leaving it leaves it running.` };
 }
 function agentsAtWork(env = process.env, recs = readSpawned()) {
   return recs.filter((r) => {
@@ -14600,10 +14643,16 @@ async function uiCmd(argv, root) {
       const target = arg2(argv, "--target") ?? "";
       if (!target)
         return print({ ok: false, error: "--target is needed" });
-      const bg = readSpawned().find((r) => r.sessionId === target && r.background && !r.removedAt);
-      if (bg)
-        return print(show({ name: bg.name, cwd: bg.cwd, by: session }));
-      return print(focusSession({ sessionId: target }));
+      const own = readSpawned().find((r) => r.sessionId === target && !r.removedAt && (r.background || r.claudeBg));
+      if (own)
+        return print(show({ name: own.name, cwd: own.cwd, by: session }));
+      const f = focusSession({ sessionId: target });
+      if (f.ok)
+        return print(f);
+      const term = readOne(target)?.terminal;
+      if (f.found && term?.tty)
+        return print(f);
+      return print(attachById(target, { by: session }) ?? f);
     }
     case "open-url": {
       const url = arg2(argv, "--url") ?? "";
