@@ -9,6 +9,7 @@
 //   crosstalk ui watch --session <id>      one JSON line each time what is waiting changes
 //   crosstalk ui list  --session <id>      what is waiting now, once
 //   crosstalk ui act   --session <id> --id <item> --action <hand|answer|mute|later|raised> [--value <text>]
+//   crosstalk ui pr    --session <id> --url <pr> --do <open|fix|spawn>   a PR row of the pane pressed
 //
 // Everything printed is for the mod alone. None of it is model context.
 
@@ -194,6 +195,37 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
       const bg = spawnMod.readSpawned().find((r) => r.sessionId === target && r.background && !r.removedAt)
       if (bg) return print(spawnMod.show({ name: bg.name, cwd: bg.cwd, by: session }))
       return print(focusSession({ sessionId: target }))
+    }
+    // A server or preview row in the pane pressed: in the browser (http and https only, never a shell).
+    case "open-url": {
+      const url = arg(argv, "--url") ?? ""
+      const { openInBrowser } = await import("./urls/tools.ts")
+      return print(process.env.CROSSTALK_NO_OPEN ? { ok: true } : openInBrowser(url) ? { ok: true } : { ok: false, error: `could not open ${url}` })
+    }
+    // A pull request's row in the pane pressed (mod/draw.tsx prRows): open it, or hand its failing
+    // checks to the session that made it (the mod sends it), or to a new background agent when none is open.
+    case "pr": {
+      const url = arg(argv, "--url") ?? ""
+      const what = arg(argv, "--do") ?? "open"
+      if (!/^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+$/.test(url)) return print({ ok: false, error: "not a pull request's address" })
+      if (what === "open") {
+        const { openInBrowser } = await import("./urls/tools.ts")
+        return print(process.env.CROSSTALK_NO_OPEN ? { ok: true, text: `would open ${url}` } : openInBrowser(url) ? { ok: true, text: `opened ${url}` } : { ok: false, error: `could not open ${url}` })
+      }
+      const u = Urls.urls().read().find((x) => x.kind === "pr" && x.url === url)
+      const n = /\/pull\/(\d+)$/.exec(url)?.[1]
+      const name = `PR #${n}${u?.title ? ` (${u.title})` : ""}`
+      const prompt = [
+        `${name} ${url} has failing checks${u?.failed?.length ? `: ${u.failed.join(", ")}` : ""}. The person asked you to fix them.`,
+        `Check out its branch if you are not on it (gh pr checkout ${n}), find why each failed (gh pr checks ${url}, and the run's log), fix the cause rather than skipping or disabling a test, run those checks locally, and push.`,
+        `Do nothing that cannot be undone (merging, deleting, deploying) unless the person asks. If it needs a decision only they can make, ask them with AskUserQuestion.`,
+      ].join("\n")
+      if (what === "fix") return print({ ok: true, prompt, name, ...(u?.sessionId ? { sessionId: u.sessionId } : {}) })
+      if (what === "spawn") {
+        const r = spawnMod.spawnAgents({ task: prompt, name: `fix-${n}`, background: true, cwd: u?.worktree && (await import("node:fs")).existsSync(u.worktree) ? u.worktree : process.cwd(), by: session })
+        return print({ ok: r.ok, text: r.text })
+      }
+      return print({ ok: false, error: `--do is open, fix or spawn` })
     }
     // An agent's own question, put to the main session (src/attention/relay.ts).
     case "relay": {

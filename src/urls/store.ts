@@ -67,6 +67,8 @@ export type Url = {
   /** Since when its checks have been running, for the ETA. */
   checksSince?: number
   draft?: boolean
+  /** A PR's own title (gh). */
+  title?: string
   /** In its repository's merge queue, as last seen, and what crosstalk keeps about it (src/urls/queue.ts). */
   queued?: boolean
   queuedAt?: number

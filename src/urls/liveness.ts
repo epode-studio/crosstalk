@@ -110,7 +110,7 @@ export function runGh(args: string[], o: { cwd?: string; timeoutMs?: number } = 
 }
 
 /** The fields asked of gh for a PR: its state, checks, author, and whether it can be merged. */
-export const PR_FIELDS = "state,isDraft,statusCheckRollup,author,reviewDecision,mergeable,mergeStateStatus,autoMergeRequest"
+export const PR_FIELDS = "title,state,isDraft,statusCheckRollup,author,reviewDecision,mergeable,mergeStateStatus,autoMergeRequest"
 
 /** The person's GitHub login, asked once (gh api user). */
 let login: string | null | undefined
@@ -183,7 +183,7 @@ export async function tick(
         if (u.checks === "running" && v.checks !== "running" && u.checksSince) CI.recordDuration(CI.repoOf(u.url), now - u.checksSince)
         const since = v.checks === "running" ? (u.checks === "running" && u.checksSince ? u.checksSince : (v.startedAt ?? now)) : undefined
         const r = v.state === "OPEN" ? store.markOk(u.id, { state: v.state }) : store.markDead(u.id, { state: v.state })
-        const after = store.update(u.id, { checks: v.checks, draft: v.draft, failed: v.failed, checksSince: since }) ?? r
+        const after = store.update(u.id, { checks: v.checks, draft: v.draft, failed: v.failed, checksSince: since, ...(v.title ? { title: v.title } : {}) }) ?? r
         if (after) out.push(after)
         // Only the person's own PRs, or ones crosstalk's shipping opened: a teammate's or an upstream PR an
         // agent merely looked at is never investigated on their credits.

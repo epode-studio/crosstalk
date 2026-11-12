@@ -113,7 +113,8 @@ test('the pane draws a thread: waiting, notes, features with flag stage, recent,
     expect(await ui.find({ type: 'Text', text: /token format changed to v2/ })).toBeDefined()
     expect((await ui.find({ type: 'Text', text: /remove the v1 parser/ }))?.text).toContain('•')
     // In its own thread's pane, a server is named without the thread in front.
-    expect((await ui.find({ type: 'Text', text: /● dev server/ }))?.text).toContain('http://auth.localhost:1355')
+    // A live server is a row to press: Enter opens it.
+    expect((await ui.find({ type: 'Button', text: /● dev server/ }))?.text).toContain('auth.localhost:1355')
     expect((await ui.find({ type: 'Text', text: /PR #9/ }))?.text).toContain('pull request')
     await ui.unmount()
   }
@@ -131,12 +132,12 @@ test('the pane has a Running section: by kind, clickable, dead ones marked', asy
   expect(await ui.find({ type: 'Text', text: /Links found in output/ })).toBeUndefined()
   await ui.press({ key: 'more' })
   await clock.settle()
-  expect(await ui.find({ type: 'Text', text: /^Running$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Running/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /Servers/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /Pull requests/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /Links found in output/ })).toBeDefined()
-  expect((await ui.find({ type: 'Text', text: /dev server/ }))?.text).toContain('http://auth.localhost:1355')
-  expect((await ui.find({ type: 'Text', text: /PR #12/ }))?.text).toContain('dead')
+  expect((await ui.find({ type: 'Button', text: /dev server/ }))?.text).toContain('auth.localhost:1355')
+  // Pull requests by what can be done with them; one that needs nothing is counted, and shown under "more".
+  expect((await ui.find({ type: 'Text', text: /PR #12/ }))?.text).toContain('gone')
   await ui.unmount()
 })
 

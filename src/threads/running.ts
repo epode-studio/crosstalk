@@ -198,6 +198,7 @@ export function prFields(u: Url, now: number) {
     ...(u.failed?.length ? { failed: u.failed } : {}),
     ...(u.draft ? { draft: true } : {}),
     ...(u.queued ? { queued: true } : {}),
+    ...(u.title ? { title: u.title } : {}),
     ...(eta ? { eta } : {}),
   }
 }

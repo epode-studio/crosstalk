@@ -661,6 +661,28 @@ async function asCrosstalk($: EngineInterface, text: string): Promise<string> {
   }
 }
 
+async function openRow($: EngineInterface, url: string) {
+  if (/\/pull\/\d+$/.test(url)) {
+    const r = await cli($, ['pr', '--url', url, '--do', 'open'])
+    return $.ui.toast(r.ok ? 'opened in your browser' : String(r.error ?? 'could not open it'))
+  }
+  const r = await cli($, ['open-url', '--url', url])
+  $.ui.toast(r.ok ? 'opened in your browser' : String(r.error ?? 'could not open it'))
+}
+
+async function fixPr($: EngineInterface, url: string) {
+  const r = await cli($, ['pr', '--url', url, '--do', 'fix'])
+  if (!r.ok) return $.ui.toast(String(r.error ?? 'could not hand it over'))
+  if (r.sessionId && r.sessionId !== session) {
+    try {
+      const sent = await $.session.send({ to: { sessionId: r.sessionId }, text: r.prompt })
+      if ((sent as { isDelivered?: boolean })?.isDelivered !== false) return $.ui.toast(`handed ${r.name} to the session that made it`)
+    } catch {}
+  }
+  const s = await cli($, ['pr', '--url', url, '--do', 'spawn'])
+  $.ui.toast(s.ok ? `a background agent is fixing ${r.name}` : oneLine(String(s.text ?? s.error ?? 'could not start an agent')).replace(/^◢ crosstalk: /, ''))
+}
+
 async function receipt($: EngineInterface, key: string, text: string) {
   // A placed row's id is 1-64 of letters, digits, _ and -.
   const id = key.replace(/[^A-Za-z0-9_-]/g, '_').slice(-64)
@@ -855,6 +877,10 @@ export const register: Register = on => {
       ...(mainTotals && paneThread ? { back: () => void openPane($, undefined) } : {}),
       more: () => void update($, paneMore, () => true),
       expanded: await read($, paneMore),
+      // A pull request or server row pressed: opened in the browser.
+      openUrl: url => void openRow($, url),
+      // A failing PR pressed: the person delegates the fix. Its own session if open, else a new background agent.
+      fixPr: url => void fixPr($, url),
     })
   })
 

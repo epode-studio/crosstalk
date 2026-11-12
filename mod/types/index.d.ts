@@ -81,7 +81,9 @@ export type Running = {
   failed?: string[]
   eta?: string
   draft?: boolean
+  queued?: boolean
   state?: string
+  title?: string
   with?: string[]
   until?: number
   path?: string

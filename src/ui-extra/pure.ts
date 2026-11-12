@@ -183,12 +183,47 @@ export type PaneRunning = {
   queued?: boolean
   /** OPEN, MERGED, CLOSED. */
   state?: string
+  /** A PR's own title. */
+  title?: string
   /** Who a share of yours is open to. */
   with?: string[]
   until?: number
   path?: string
   before?: { file: string; at: number }
   after?: { file: string; at: number }
+}
+
+/** A PR as a person knows it: `#3024 Fix the scorebook map`, its own title over a branch name. */
+export function prName(r: Pick<PaneRunning, "label" | "url" | "title">): string {
+  const n = /\/pull\/(\d+)/.exec(r.url ?? "")?.[1]
+  if (r.title) return `${n ? `#${n} ` : ""}${r.title}`
+  return r.label
+}
+
+/** What a PR row says after its name: why it needs a hand, or where it stands. */
+export function prWhy(r: PaneRunning): string {
+  if (r.state === "MERGED") return "merged"
+  if (r.state === "CLOSED") return "closed"
+  if (!r.alive && !r.state) return "gone"
+  if (r.checks === "failed") return `failed: ${(r.failed ?? []).slice(0, 2).join(", ") || "checks"}`
+  if (r.checks === "running") return `checks running${r.eta ? `, ${r.eta}` : ""}`
+  if (r.queued) return "in the merge queue"
+  if (r.draft) return "draft"
+  if (r.checks === "passed") return "checks passed"
+  return "open"
+}
+
+/**
+ * Pull requests, by what the person can do with them: failing checks (Enter hands
+ * them to an agent), ready (Enter opens it to review or merge), and the rest,
+ * which need nothing yet (drafts, checks running, merged and closed).
+ */
+export function prGroups(prs: readonly PaneRunning[]): { fix: PaneRunning[]; ready: PaneRunning[]; rest: PaneRunning[] } {
+  const open = (r: PaneRunning) => !r.state || r.state === "OPEN"
+  const fix = prs.filter((r) => open(r) && r.checks === "failed")
+  const ready = prs.filter((r) => open(r) && r.checks === "passed" && !r.draft && !r.queued)
+  const rest = prs.filter((r) => !fix.includes(r) && !ready.includes(r))
+  return { fix, ready, rest }
 }
 
 /** One thing in History: a link, preview, PR or screenshot the thread had, or a note that ended. */

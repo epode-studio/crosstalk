@@ -389,3 +389,19 @@ describe("main's pane, after main restarted", () => {
     Main.writeMain(null)
   })
 })
+
+describe("pull requests in the pane, by what the person can do", () => {
+  test("failing ones to fix, green ones ready, the rest need nothing; named by title over branch", async () => {
+    const P = await import("../src/ui-extra/pure.ts")
+    const pr = (n: number, o: Record<string, unknown>) => ({ kind: "pr" as const, label: `agent-a1b2 · PR #${n}`, url: `https://github.com/acme/app/pull/${n}`, alive: true, owner: "you", state: "OPEN", ...o })
+    const prs = [pr(1, { checks: "failed", failed: ["E2E suite"], title: "Fix the scorebook map" }), pr(2, { checks: "passed" }), pr(3, { checks: "passed", draft: true }), pr(4, { checks: "running" }), pr(5, { checks: "passed", state: "MERGED" })]
+    const g = P.prGroups(prs)
+    expect(g.fix.map((r) => r.url.slice(-1))).toEqual(["1"])
+    expect(g.ready.map((r) => r.url.slice(-1))).toEqual(["2"])
+    expect(g.rest.map((r) => r.url.slice(-1))).toEqual(["3", "4", "5"])
+    expect(P.prName(prs[0]!)).toBe("#1 Fix the scorebook map")
+    expect(P.prWhy(prs[0]!)).toBe("failed: E2E suite")
+    expect(P.prName(prs[1]!)).toBe("agent-a1b2 · PR #2")
+    expect(P.prWhy(prs[2]!)).toBe("draft")
+  })
+})

@@ -9,7 +9,7 @@
 // on black, so it scans on any theme. No hook, state or I/O in here.
 
 import type { Item, Pane } from './types'
-import { agentAsks, agentLine, ago, dotFor, featureLine, fileLink, historyLine, cleanRecap, inboxChoices, inboxRow, inboxUrgent, linkable, withoutThread, noteLine, runningGroups, runningLine, runningWhere } from '../src/ui-extra/pure.ts'
+import { agentAsks, agentLine, ago, dotFor, featureLine, fileLink, historyLine, cleanRecap, inboxChoices, inboxRow, inboxUrgent, linkable, withoutThread, noteLine, prGroups, prName, prWhy, runningGroups, runningLine, runningWhere } from '../src/ui-extra/pure.ts'
 
 /** The elements these trees are made of: the surface's own Box, Text and Link, and Button where a tree takes presses. */
 export type Els = { Box: any; Text: any; Link: any; Button?: any }
@@ -136,7 +136,70 @@ function size(bytes: number | undefined): string {
  * what is waiting, then Notes, Features, Running (by kind), recent messages
  * and History. `problem`: what the pane could not show.
  */
-export function paneTree(E: Els, p: Pane | null, problem: string, now: number, inbox?: any, on: { agent?: (sessionId: string) => void; back?: () => void; more?: () => void; expanded?: boolean } = {}) {
+type PaneOn = { agent?: (sessionId: string) => void; back?: () => void; more?: () => void; expanded?: boolean; fixPr?: (url: string) => void; openUrl?: (url: string) => void }
+
+/**
+ * Pull requests by what the person can do: failing ones (Enter hands the fix to an
+ * agent), ready ones (Enter opens it to review and merge), and a count of the rest,
+ * which need nothing yet. Every row that can be acted on is a button.
+ */
+function prBlock(E: Els, prs: readonly any[], on: PaneOn, key: string, thread?: string) {
+  const { Box, Text, Button } = E
+  const g = prGroups((prs as any[]).map(r => ({ ...r, label: thread ? withoutThread(r.label, thread) : r.label })))
+  const row = (r: any, i: number, kind: 'fix' | 'ready') => {
+    const sign = kind === 'fix' ? '❗' : '✅'
+    const text = `${sign} ${prName(r)} · ${prWhy(r)}`
+    const press = kind === 'fix' ? on.fixPr : on.openUrl
+    return Button && press && r.url ? (
+      <Button key={`${key}${kind}${i}`} plain onPress={() => press(r.url)}>
+        {'  '}
+        {clean(text)}
+      </Button>
+    ) : (
+      <Text key={`${key}${kind}${i}`} wrap="truncate" color={kind === 'fix' ? BROKEN : undefined}>
+        {'  '}
+        {clean(text)}
+      </Text>
+    )
+  }
+  return [
+    g.fix.length ? (
+      <Box key={`${key}f`} flexDirection="column" marginTop={1}>
+        <Text bold>
+          Checks failed · {g.fix.length} <Text dimColor>· Enter hands one to an agent to fix</Text>
+        </Text>
+        {g.fix.map((r, i) => row(r, i, 'fix'))}
+      </Box>
+    ) : null,
+    g.ready.length ? (
+      <Box key={`${key}r`} flexDirection="column" marginTop={1}>
+        <Text bold>
+          Ready for you · {g.ready.length} <Text dimColor>· Enter opens it to review and merge</Text>
+        </Text>
+        {g.ready.map((r, i) => row(r, i, 'ready'))}
+      </Box>
+    ) : null,
+    g.rest.length ? (
+      <Box key={`${key}x`} flexDirection="column" marginTop={on.expanded || !(g.fix.length || g.ready.length) ? 1 : 0}>
+        {on.expanded ? (
+          [<Text key={`${key}xh`} bold>Other pull requests</Text>, ...g.rest.map((r: any, i: number) => (
+            <Text key={`${key}x${i}`} wrap="truncate" dimColor>
+              {'  '}
+              {clean(`${prName(r)} · ${prWhy(r)}`)}
+            </Text>
+          ))]
+        ) : (
+          <Text dimColor wrap="truncate">
+            {' '}
+            {g.rest.length === 1 ? '1 other pull request needs' : `${g.rest.length} other pull requests need`} nothing from you yet
+          </Text>
+        )}
+      </Box>
+    ) : null,
+  ]
+}
+
+export function paneTree(E: Els, p: Pane | null, problem: string, now: number, inbox?: any, on: PaneOn = {}) {
   const { Box, Text, Link, Button } = E
   if (!p)
     return (
@@ -193,19 +256,7 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number, i
             )}
           </Box>
         ) : null}
-        {p.prs?.length ? (
-          <Box flexDirection="column" marginTop={1}>
-            <Text bold>Pull requests</Text>
-            {p.prs.map((r, i) => (
-              <Text key={`p${i}`} wrap="truncate">
-                {' '}
-                {r.checks === 'failed' ? <Text color={BROKEN}>{clean(runningLine(r, now))}</Text> : clean(runningLine(r, now))}
-                {r.url && linkable(r.url) ? ' ' : ''}
-                {r.url && linkable(r.url) ? <Link href={r.url}>open</Link> : null}
-              </Text>
-            ))}
-          </Box>
-        ) : null}
+        {p.prs?.length ? prBlock(E, p.prs, on, 'mp') : null}
         {p.events?.length ? (
           <Box flexDirection="column" marginTop={1}>
             <Text bold>What happened</Text>
@@ -272,14 +323,17 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number, i
           {p.qr.why ? <Text dimColor wrap="wrap">{clean(p.qr.why)}</Text> : null}
         </Box>
       ) : null}
-      {section('Needs you', p.waiting.length ? p.waiting.map(w => `? ${w}`) : ['nothing'], 'w')}
+      {p.waiting.length ? section('Needs you', p.waiting.map(w => `? ${w}`), 'w') : null}
+      {prBlock(E, (p.running ?? []).filter(r => r.kind === 'pr'), on, 'tp', p.thread)}
       {/* What is open and what was decided; the rest of a thread's detail waits behind "more". */}
       {p.notes?.length ? section('Notes', p.notes.filter(n => on.expanded || n.kind === 'decision' || (n.kind === 'task' && n.state !== 'done')).slice(0, on.expanded ? 99 : 5).map(n => noteLine(n, now)), 'n') : null}
       {on.expanded && p.features.length ? section('Features', p.features.map(featureLine), 'f') : null}
-      {p.running?.length ? (
+      {p.running?.some(r => r.kind !== 'pr' && (on.expanded || r.kind === 'server' || r.kind === 'preview')) ? (
         <Box key="r" flexDirection="column" marginTop={1}>
-          <Text bold>Running</Text>
-          {runningGroups(on.expanded ? p.running : p.running.filter(r => r.kind === 'server' || r.kind === 'pr' || r.kind === 'preview')).map(g => (
+          <Text bold>
+            Running {Button && on.openUrl ? <Text dimColor>· Enter opens one</Text> : null}
+          </Text>
+          {runningGroups(p.running.filter(r => r.kind !== 'pr' && (on.expanded || r.kind === 'server' || r.kind === 'preview'))).map(g => (
             <Box key={`r${g.kind}`} flexDirection="column">
               <Text dimColor> {g.title}</Text>
               {g.items.map((r, i) =>
@@ -300,6 +354,11 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number, i
                       )
                     })}
                   </Box>
+                ) : Button && on.openUrl && (r.kind === 'server' || r.kind === 'preview') && r.alive && runningWhere(r) ? (
+                  <Button key={`r${g.kind}${i}`} plain onPress={() => on.openUrl!(r.url ?? `http://${runningWhere(r)}`)}>
+                    {'  '}
+                    {clean(runningLine({ ...r, label: withoutThread(r.label, p.thread) }, now))} {clean(runningWhere(r))}
+                  </Button>
                 ) : (
                   <Text key={`r${g.kind}${i}`} wrap="truncate" dimColor={!r.alive}>
                     {'  '}
@@ -315,10 +374,10 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number, i
       ) : null}
       {on.expanded && p.recent.length ? section('Recent', p.recent.map(r => `${r.from} ${ago(r.ts, now)} ${r.text}`), 'm') : null}
       {on.expanded && p.history?.length ? section('History', p.history.map(h => historyLine(h, now)), 'h') : null}
-      {Button && on.more && !on.expanded && (p.features.length || p.recent.length || p.history?.length || p.running?.some(r => r.kind !== 'server' && r.kind !== 'pr' && r.kind !== 'preview') || (p.notes?.length ?? 0) > 5) ? (
+      {Button && on.more && !on.expanded && (p.features.length || p.recent.length || p.history?.length || p.running?.some(r => r.kind !== 'server' && r.kind !== 'preview' && (r.kind !== 'pr' || !['failed', 'passed'].includes(r.checks ?? ''))) || (p.notes?.length ?? 0) > 5) ? (
         <Box marginTop={1}>
           <Button key="more" plain dimColor hotkey="m" onPress={on.more}>
-            more: features, recent messages, history, links
+            more: features, other pull requests, recent messages, history, links
           </Button>
         </Box>
       ) : null}

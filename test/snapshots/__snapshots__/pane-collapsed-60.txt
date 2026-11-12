@@ -14,6 +14,8 @@
 │ ? keep the v1 endpoint? (blocking)                         │
 │ ? jo asks: can billing read v2 yet?                        │
 │                                                            │
+│ 1 other pull request needs nothing from you yet            │
+│                                                            │
 │Notes                                                       │
 │ • remove the v1 parser after 0.2                           │
 │ → write the migration note (marie is on it)                │
@@ -25,8 +27,6 @@
 │  ○ worker · broken: exited with status 1                   │
 │ Previews                                                   │
 │  ● preview https://auth-pr-12.vercel.app                   │
-│ Pull requests                                              │
-│  ○ PR #12 · dead https://github.com/acme/api/pull/12       │
 └────────────────────────────────────────────────────────────┘
 
 styles (dark theme):
@@ -45,16 +45,16 @@ styles (dark theme):
  13  ? keep the v1 endpoint? (blocking)
  14  ? jo asks: can billing read v2 yet?
  15 
- 16 [bold]Notes[/]
- 17  • remove the v1 parser after 0.2
- 18  → write the migration note (marie is on it)
- 19  Decided: v1 tokens accepted until 0.2 (paul, 3h)
- 20 
- 21 [bold]Running[/]
- 22 [dim] Servers[/]
- 23   ● web [link=http://auth.localhost:1355]http://auth.localhost:1355[/]
- 24 [dim]  [/][dim fg=error:#ff6b80]○ worker · broken: exited with status 1[/]
- 25 [dim] Previews[/]
- 26   ● preview [link=https://auth-pr-12.vercel.app]https://auth-pr-12.vercel.app[/]
- 27 [dim] Pull requests[/]
- 28 [dim]  ○ PR #12 · dead [/][dim link=https://github.com/acme/api/pull/12]https://github.com/acme/api/pull/12[/]
+ 16 [dim] 1 other pull request needs nothing from you yet[/]
+ 17 
+ 18 [bold]Notes[/]
+ 19  • remove the v1 parser after 0.2
+ 20  → write the migration note (marie is on it)
+ 21  Decided: v1 tokens accepted until 0.2 (paul, 3h)
+ 22 
+ 23 [bold]Running [/]
+ 24 [dim] Servers[/]
+ 25   ● web [link=http://auth.localhost:1355]http://auth.localhost:1355[/]
+ 26 [dim]  [/][dim fg=error:#ff6b80]○ worker · broken: exited with status 1[/]
+ 27 [dim] Previews[/]
+ 28   ● preview [link=https://auth-pr-12.vercel.app]https://auth-pr-12.vercel.app[/]

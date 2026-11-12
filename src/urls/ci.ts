@@ -33,6 +33,8 @@ export type PrView = {
   mergeState?: string
   /** Set to merge by itself (auto-merge, or waiting for its merge queue). */
   autoMerge?: boolean
+  /** The PR's own title: what a person recognises it by, never a branch name. */
+  title?: string
 }
 
 const FAIL = new Set(["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"])
@@ -58,6 +60,7 @@ export function summarize(j: any): PrView {
   return {
     state: String(j?.state ?? ""),
     draft: !!j?.isDraft,
+    ...(typeof j?.title === "string" && j.title.trim() ? { title: j.title.trim().slice(0, 120) } : {}),
     ...(typeof j?.author?.login === "string" ? { author: j.author.login } : {}),
     ...(typeof j?.reviewDecision === "string" ? { review: j.reviewDecision.toUpperCase() } : {}),
     ...(typeof j?.mergeable === "string" ? { mergeable: j.mergeable.toUpperCase() } : {}),
