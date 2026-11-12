@@ -187,7 +187,7 @@ describe("main's inbox", () => {
     expect(open).toContain("1: Merge it")
     expect(open).toContain("s: snooze")
     expect(open).not.toContain("e: done") // done only dismisses a message; on a question it would answer it
-    expect(frame("inbox · empty", D.inboxTree(E, [], undefined, NOW0, noop), 70, "dark")).toContain("Nothing needs you.")
+    expect(frame("inbox · empty", D.inboxTree(E, [], undefined, NOW0, noop), 70, "dark")).toContain("Nothing right now.")
   })
 
   test("a press answers through the actions it is given", () => {

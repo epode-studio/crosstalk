@@ -33,15 +33,15 @@ export function inboxTree(E: Els, rows: Item[], openId: string | undefined, now:
   if (!rows.length)
     return (
       <Box flexDirection="column">
-        <Text bold>Inbox</Text>
-        <Text dimColor> Nothing needs you.</Text>
+        <Text bold>Needs you</Text>
+        <Text dimColor> Nothing right now.</Text>
       </Box>
     )
   const openKey = (rows.find(r => r.id === openId) ?? rows[0])?.id
   return (
     <Box flexDirection="column">
       <Text bold>
-        Inbox <Text dimColor>· {rows.length}</Text>
+        Needs you <Text dimColor>· {rows.length}</Text>
       </Text>
       {rows.map((it, i) => {
         const r = inboxRow(it as any, now)
@@ -141,7 +141,7 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number, i
   if (!p)
     return (
       <Box flexDirection="column">
-        <Text dimColor>{clean(problem || 'loading the thread…')}</Text>
+        <Text dimColor>{clean(problem || 'loading…')}</Text>
       </Box>
     )
   // Every agent ("show me all my agents", and the main session's pane): waiting on you first, then working, then idle.
@@ -208,7 +208,7 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number, i
         ) : null}
         {p.events?.length ? (
           <Box flexDirection="column" marginTop={1}>
-            <Text bold>Lately</Text>
+            <Text bold>What happened</Text>
             {p.events.map((e, i) => (
               <Text key={`e${i}`} wrap="truncate" dimColor>
                 {' '}
@@ -362,11 +362,11 @@ function questionRow(E: Els, it: Item, later: string) {
     case 'ship':
       return row('ship', `${it.thread ? `${it.thread}: ` : ''}${cut(oneLine(it.question ?? 'a question for you'), 90)}`)
     case 'thread':
-      return row('thread', 'which thread is this part of?')
+      return row('work', 'which work is this part of?')
     case 'rule':
       return row('rule', 'always answer this way?')
     case 'disk':
-      return row('disk', 'free disk from finished threads?')
+      return row('disk', 'free disk from finished work?')
     case 'install':
       return row('install', `turn crosstalk on for everyone in ${it.thread ?? 'this repo'}?`)
     case 'connect':

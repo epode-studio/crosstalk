@@ -1,5 +1,5 @@
 ┌─ inbox · dark · 70 cols ─────────────────────────────────────────────┐
-│Inbox · 3                                                             │
+│Needs you · 3                                                         │
 │▸ 🔐 Allow api to run `npm install`? 🟤 api · 1m                        │
 │1: Allow   2: Deny                                                    │
 │  🔀 auth · PR #12 is green and approved. Merge it? 🟣 auth · 5m        │
@@ -7,7 +7,7 @@
 └──────────────────────────────────────────────────────────────────────┘
 
 styles (dark theme):
-  1 [bold]Inbox [/][bold dim]· 3[/]
+  1 [bold]Needs you [/][bold dim]· 3[/]
   2 ▸ 🔐 [bold]Allow api to run `npm install`?[/] [dim]🟤 api · 1m[/]
   3 1: Allow   2: Deny
   4   🔀 auth · PR #12 is green and approved. Merge it? [dim]🟣 auth · 5m[/]

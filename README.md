@@ -171,7 +171,7 @@ in: when its context is full, Claude Code compacts it as usual.
   stops an agent interrupts you; everything else waits in your inbox, and your
   first message back says what happened.
 - When a pull request in a shared piece of work merges or its checks fail,
-  teammates on it see it in their Lately, never as an interruption.
+  teammates on it see it under What happened in their inbox, never as an interruption.
 
 **When something is off**
 - *"Is crosstalk OK?"* It checks itself and tells you what to fix.

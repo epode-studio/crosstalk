@@ -171,7 +171,7 @@ function header(it: Item): string {
   if (it.kind === 'gather') return 'Gather'
   if (it.kind === 'team') return 'Team'
   if (it.kind === 'cleanup') return 'Clean up'
-  if (it.kind === 'thread') return 'Thread'
+  if (it.kind === 'thread') return 'Work'
   if (it.kind === 'ship') return 'Ship'
   if (it.kind === 'rule') return 'Rule'
   if (it.kind === 'connect') return 'Connect'
@@ -490,7 +490,7 @@ async function raise($: EngineInterface, it: Item) {
     else if (it.kind === 'ship')
       answer = await $.ui.ask(it.question ?? 'crosstalk has a shipping question', { options: it.options ?? ['Not yet'], header: header(it) })
     else if (it.kind === 'thread')
-      answer = await $.ui.ask(it.question ?? 'Which thread is this session part of?', { options: it.options ?? ['New thread', 'No thread'], header: header(it) })
+      answer = await $.ui.ask(it.question ?? 'Which piece of work is this session on?', { options: it.options ?? ['New thread', 'No thread'], header: header(it) })
     else if (it.kind === 'rule' || it.kind === 'connect' || it.kind === 'conflict' || it.kind === 'invite' || it.kind === 'doctor' || it.kind === 'disk' || it.kind === 'install' || it.kind === 'attention' || it.kind === 'steer' || it.kind === 'session' || it.kind === 'share' || it.kind === 'env')
       answer = await $.ui.ask(withContext(it, it.question ?? 'crosstalk has a question'), { options: (it.options ?? ['Not now']).slice(0, 4), header: header(it) })
     else {
@@ -565,7 +565,7 @@ async function answered($: EngineInterface, it: Item, answer: string) {
   }
   if (it.kind === 'thread') {
     const r = await step($, it, 'answer', answer)
-    $.ui.toast(r.ok ? (r.threads?.length ? `this session is in ${r.threads.join(', ')}` : 'this session is in no thread') : `not placed: ${r.error ?? 'no answer'}`)
+    $.ui.toast(r.ok ? (r.threads?.length ? `this session is on ${r.threads.join(', ')}` : 'this session is on no particular work') : `not placed: ${r.error ?? 'no answer'}`)
     return
   }
   if (it.kind === 'route') {

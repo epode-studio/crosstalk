@@ -1,9 +1,9 @@
 ┌─ pane · loading ───────────────────────────────────────────┐
-│loading the thread…                                         │
+│loading…                                                    │
 └────────────────────────────────────────────────────────────┘
 
 styles (dark theme):
-  1 [dim]loading the thread…[/]
+  1 [dim]loading…[/]
 
 ┌─ pane · no thread ─────────────────────────────────────────┐
 │no thread called "nope"                                     │
