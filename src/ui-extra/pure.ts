@@ -265,7 +265,10 @@ export function runningSummary(items: readonly PaneRunning[]): string {
 export function statusLine(o: { threads: readonly string[]; cards?: readonly string[]; repo?: string; running?: readonly PaneRunning[]; where?: string; waiting: number; label?: string; main?: { sessions: number; threads: number; waiting: number } }): string | undefined {
   // What waits on the person, said only when something does: "0 waiting" read as noise.
   const forYou = (n: number) => (n > 0 ? `${SIGN.waiting} ${n} for you` : "")
-  if (o.main) return ["◢ main", `${o.main.threads} thread${o.main.threads === 1 ? "" : "s"}`, `${SIGN.working} ${o.main.sessions} working`, forYou(o.waiting)].filter(Boolean).join(" · ")
+  // Main: what waits on the person first, then the person's own sessions at work. "Sessions", never "agents":
+  // Claude Code's own agent list sits right under it and counts something else.
+  if (o.main)
+    return ["◢ main", o.waiting > 0 ? `${SIGN.waiting} ${o.waiting} in your inbox` : "inbox empty", `${SIGN.working} ${o.main.sessions} session${o.main.sessions === 1 ? "" : "s"} working`].join(" · ")
   const named = o.threads.length ? o.threads.slice(0, 3).join(" · ") : o.cards?.length ? o.cards.slice(0, 3).join(", ") : o.repo ?? ""
   const where = o.where || runningSummary(o.running ?? [])
   if (!o.waiting && !o.label && !where) return undefined
