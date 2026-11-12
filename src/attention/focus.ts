@@ -44,7 +44,8 @@ export type Sys = {
 export const liveSys = (env: NodeJS.ProcessEnv = process.env): Sys => ({
   platform: process.platform,
   run: (s) => {
-    const r = spawnSync(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: 3000, env: cleanTmuxEnv(env) })
+    // osascript walks every tab of every window: with many open, 3 seconds was not always enough.
+    const r = spawnSync(s.cmd, s.args, { input: s.input, encoding: "utf8", timeout: s.cmd === "osascript" ? 10_000 : 3000, env: cleanTmuxEnv(env) })
     return { ok: r.status === 0, out: (r.stdout ?? "").trim() }
   },
   has: (bin) => spawnSync("sh", ["-c", `command -v ${bin}`], { stdio: "ignore", timeout: 2000 }).status === 0,
@@ -284,14 +285,16 @@ export function focusSteps(t: Term, platform: NodeJS.Platform = process.platform
  * Bring one session to the front. A tmux switch-client fails with no client
  * attached, and that is fine as long as its window and pane were selected.
  */
-export function focusTerm(t: Term, sys: Sys): { ok: boolean; kind?: string } {
+export function focusTerm(t: Term, sys: Sys): { ok: boolean; kind?: string; gone?: boolean } {
   const plan = focusSteps(t, sys.platform)
   if (!plan) return { ok: false }
   let ok = false
   for (const s of plan.steps) {
     const r = sys.run(s)
-    if (r.ok) ok = true
-    else if (plan.kind !== "tmux") return { ok: false, kind: plan.kind }
+    // A script that looked through every tab and found none of them says so ("" rather than "done"): not in front.
+    const found = s.cmd !== "osascript" || r.out === "done"
+    if (r.ok && found) ok = true
+    else if (plan.kind !== "tmux") return { ok: false, kind: plan.kind, ...(r.ok ? { gone: true } : {}) }
   }
   return { ok, kind: plan.kind }
 }

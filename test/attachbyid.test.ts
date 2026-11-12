@@ -26,3 +26,11 @@ test("the tab already attached to a session is found by its claude attach proces
   expect(S.attachedTty(["99999999"], ps)).toBe(null) // no terminal: a background process, not a tab
   expect(S.attachedTty(["probe"], ps)).toBe(null)
 })
+
+test("Terminal looking through its tabs and finding none is not 'in front'", async () => {
+  const F = await import("../src/attention/focus.ts")
+  const sys = (out: string) => ({ platform: "darwin" as NodeJS.Platform, run: () => ({ ok: true, out }), has: () => true })
+  const t = { program: "Apple_Terminal", tty: "/dev/ttys007" } as any
+  expect(F.focusTerm(t, sys("done")).ok).toBe(true)
+  expect(F.focusTerm(t, sys(""))).toEqual({ ok: false, kind: "apple", gone: true })
+})

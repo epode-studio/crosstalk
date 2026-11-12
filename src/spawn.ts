@@ -547,7 +547,8 @@ export function show(o: { name: string; cwd: string; env?: NodeJS.ProcessEnv; by
     const front = frontAttached([id, rec.name, ...(rec.sessionId ? [rec.sessionId] : [])], env)
     if (front) return front
     const r = openForRepo([{ cwd: rec.cwd, argv: bgx.attachArgv(claude, id), name: rec.name, thread: rec.thread }], { cwd: rec.cwd, envVars: env, by: o.by, thread: rec.thread })
-    if (r.opened.kind === "manual" || !r.ok) return { ok: r.opened.kind === "manual", text: `◢ crosstalk: to watch ${rec.name}, run:\n  ${R.shq(claude)} attach ${R.shq(id)}` }
+    if (r.opened.kind === "manual" || !r.ok)
+      return { ok: r.opened.kind === "manual", text: `◢ crosstalk: ${r.ok ? "" : `could not open a tab (${(r.out.split("\n").pop() ?? "").slice(0, 120)}). `}To watch ${rec.name}, run:\n  ${R.shq(claude)} attach ${R.shq(id)}` }
     return { ok: true, text: `◢ crosstalk: opened ${rec.name} in a new tab in ${r.opened.where}. Leaving it leaves it running.` }
   }
   const session = rec?.tmux ?? (tmuxHas(slug(o.name), env) ? slug(o.name) : null)
@@ -617,7 +618,8 @@ export function attachById(sessionId: string, o: { env?: NodeJS.ProcessEnv; by?:
   const front = frontAttached([short, sessionId], env)
   if (front) return front
   const r = openForRepo([{ cwd, argv: bgx.attachArgv(claude, short), name }], { cwd, envVars: env, by: o.by })
-  if (r.opened.kind === "manual" || !r.ok) return { ok: r.opened.kind === "manual", text: `◢ crosstalk: to open ${name}, run:\n  ${R.shq(claude)} attach ${short}` }
+  if (r.opened.kind === "manual" || !r.ok)
+    return { ok: r.opened.kind === "manual", text: `◢ crosstalk: ${r.ok ? "" : `could not open a tab (${(r.out.split("\n").pop() ?? "").slice(0, 120)}). `}To open ${name}, run:\n  ${R.shq(claude)} attach ${short}` }
   return { ok: true, text: `◢ crosstalk: opened ${name} in a new tab. Leaving it leaves it running.` }
 }
 

@@ -14,6 +14,8 @@ export function focusSession(o: { sessionId?: string; name?: string; env?: NodeJ
   const label = rec.name ?? rec.sessionId.slice(0, 8)
   const r = F.focusTerm(rec.terminal, o.sys ?? F.liveSys(o.env))
   if (r.ok) return { ok: true, found: true, text: `◢ crosstalk: brought ${label} to the front${r.kind ? ` (${r.kind})` : ""}.` }
+  // Its terminal looked and no tab has it any more: as good as no tab (it runs on without one).
+  if (r.gone) return { ok: false, found: false, text: `◢ crosstalk: ${label} has no tab open any more.` }
   return {
     ok: false,
     found: true,
