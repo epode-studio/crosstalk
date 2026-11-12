@@ -895,12 +895,8 @@ export const register: Register = on => {
       const n = inboxItems(open, await $.clock.now()).length
       if (!n) return next(e)
       const { Text, Button } = $.ui.resolve(e)
-      // On screen: where it is. Not on screen (a narrower terminal): one press opens it, at any width.
-      return inboxShown ? (
-        <Text dimColor wrap="truncate">
-          ◢ {n} in your inbox · ctrl+x tab to go there
-        </Text>
-      ) : (
+      // One press, or i, always shows the inbox in the pane: at any width, and instead of a thread shown there.
+      return (
         <Button key="open-inbox" plain hotkey="i" onPress={() => void openPane($, undefined)}>
           ◢ {n} in your inbox · open it
         </Button>

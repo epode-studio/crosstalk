@@ -378,3 +378,14 @@ describe("an MCP server asking in a session's tab", () => {
     expect(A.asking("el1", 1_800_000_000_000 + 1000)).toBe(undefined)
   })
 })
+
+describe("main's pane, after main restarted", () => {
+  test("still the inbox and sessions, though the process written down for main is an earlier one", async () => {
+    const Main = await import("../src/main.ts")
+    const P = await import("../src/ui-extra/pane.ts")
+    Main.writeMain({ sessionId: "m-restarted", name: "main", pid: 999_999_9, at: Date.now() })
+    const out = P.pane({ sessionId: "m-restarted" })
+    expect(out.ok && !!out.pane.agents).toBe(true)
+    Main.writeMain(null)
+  })
+})

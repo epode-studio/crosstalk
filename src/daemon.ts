@@ -61,6 +61,7 @@ import type { AttentionService } from "./attention/service.ts"
 import { spawnAgents, spawnedAt } from "./spawn.ts"
 import * as queueMod from "./urls/queue.ts"
 import * as restoreMod from "./restore.ts"
+import * as mainS from "./main.ts"
 import * as mergeMod from "./urls/merge.ts"
 import { createSessionOps } from "./sessions/daemon.ts"
 // Registers crosstalk services with the session manager (setServices), for close here.
@@ -1609,6 +1610,11 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
       if (!sessionId) return { ok: false, error: "register needs a sessionId" }
       if (req.refreshOnly && !sessions.has(sessionId))
         return { ok: false, error: "not a session this daemon knows" }
+      // Main, back in a new process (a restart, a resume): its record follows, so nothing takes it for gone.
+      try {
+        const m = mainS.readMain()
+        if (m && m.sessionId === sessionId && req.pid && m.pid !== Number(req.pid)) mainS.writeMain({ ...m, pid: Number(req.pid) })
+      } catch {}
       // Announcing again is how a pull-mode client says it is still alive, so
       // this runs every turn. Anything already learned about the session has to
       // survive that, or the working set would be handed over on every turn.

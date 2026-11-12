@@ -11,7 +11,7 @@ import * as ui from "../uistate.ts"
 import { dotFor, human, inboxItems, inboxLine, shortQuestion, type PaneModel, type PaneNote, type PaneRunning } from "./pure.ts"
 import { defaultThread, findThread, readThreads, type ThreadState } from "./threadfile.ts"
 import type * as Svc from "../services/service.ts"
-import { currentMain, itemsFor } from "../main.ts"
+import { itemsFor, readMain } from "../main.ts"
 import { allPrs, running } from "../threads/running.ts"
 import { recentEvents } from "../urls/ci.ts"
 import { line as usageLine } from "./usage.ts"
@@ -90,7 +90,7 @@ export function agentsPane(sessionId?: string, list = allAgents(sessionId)): Pan
   try {
     const open = Object.values(ui.snapshot()).filter((i) => (i.state === "pending" || i.state === "later") && !i.id.startsWith("open:") && now - i.createdAt < 86_400_000)
     relayed = new Set(open.filter((i) => i.id.startsWith("relay:")).map((i) => i.id.split(":")[1] ?? ""))
-    const mine = sessionId ? itemsFor(open, sessionId, currentMain()?.sessionId) : []
+    const mine = sessionId ? itemsFor(open, sessionId, readMain()?.sessionId) : []
     // The same rule as the inbox, the status line and the band (pure.ts inboxItems): one count everywhere.
     needs = inboxItems(mine as any, now).map((i: any) => inboxLine(i, now))
   } catch {}
@@ -137,7 +137,8 @@ export function agentsPane(sessionId?: string, list = allAgents(sessionId)): Pan
 
 export function pane(o: { sessionId?: string; thread?: string; st?: ThreadState; items?: Record<string, ui.UiItem>; services?: Svc.Shown[] }): PaneOut {
   if (o.thread && AGENTS.test(o.thread.trim())) return agentsPane(o.sessionId)
-  const isMain = !!o.sessionId && currentMain()?.sessionId === o.sessionId
+  // The session asking is running: main by its record (the pid written then may be an earlier process's).
+  const isMain = !!o.sessionId && readMain()?.sessionId === o.sessionId
   // The main session's pane is the overview: every agent, first.
   if (isMain && !o.thread) return agentsPane(o.sessionId)
   const st = o.st ?? readThreads()
@@ -153,7 +154,7 @@ export function pane(o: { sessionId?: string; thread?: string; st?: ThreadState;
   let items: PaneRunning[] = []
   try {
     // Links an agent printed are not running things: kept in History, never a wall of rows here.
-    items = running(model.thread, { sessionId: o.sessionId, main: !!o.sessionId && currentMain()?.sessionId === o.sessionId, servers: o.services }).filter((r) => r.kind !== "link")
+    items = running(model.thread, { sessionId: o.sessionId, main: !!o.sessionId && readMain()?.sessionId === o.sessionId, servers: o.services }).filter((r) => r.kind !== "link")
   } catch {}
   // History: what the thread had and no longer runs or knows, the latest few.
   const now = new Set(items.map((r) => r.url).filter(Boolean))
