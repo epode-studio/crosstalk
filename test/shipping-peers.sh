@@ -155,7 +155,7 @@ has "$(wait_for 10 ben_items)" "ship:$QID:b-login" "and as a picker in ben's ses
 AG=$(CLAUDECODE=1 ct "$B" ship answer "$QID" "Merge it" 2>&1)
 has "$AG" "for a person" "an agent on ben's machine cannot answer it"
 AT=$(rpc "$B" "{\"op\":\"thread\",\"sessionId\":\"b-login\",\"cwd\":\"$R/ben\",\"answer\":{\"id\":\"$QID\",\"text\":\"Merge it\"}}")
-has "$AT" "a person answers it" "nor can ben's agent's crosstalk_thread"
+has "$AT" "a person answers it" "nor can ben's agent's crosstalk_work"
 check "$(state_of)" "awaiting-merge" "ana's feature is still waiting"
 
 # --- 3. ben answers in his terminal ------------------------------------------------------------------

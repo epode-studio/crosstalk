@@ -151,8 +151,8 @@ hook "$(pane work:0)" hook_event_name=SessionStart session_id=crashed2 "cwd=$D3"
 bun -e 'const R = await import("./src/restore.ts"); R.writeRec({ ...R.readOne("crashed2"), pid: Number(process.argv[1]), pidStart: undefined })' "$DEAD"
 MCP=$( (printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' \
-  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"crosstalk_work","arguments":{"action":"restore"}}}' \
-  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"crosstalk_work","arguments":{"action":"restore","confirm":true}}}'; sleep 3) \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"crosstalk_sessions","arguments":{"action":"restore"}}}' \
+  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"crosstalk_sessions","arguments":{"action":"restore","confirm":true}}}'; sleep 3) \
   | CLAUDE_CODE_SESSION_ID=me3 TMUX="$(tmux display -p '#{socket_path}'),1,0" TMUX_PANE="$(pane work:0)" timeout 10 bun src/server.ts 2>/dev/null)
 has "$MCP" '1 session to restore' "without confirm it lists"
 has "$MCP" 'reopened 1 session' "with confirm it restores"

@@ -291,7 +291,7 @@ has "$(told s-login)" "login accepts empty passwords" "the findings reached the 
 ship s-login "$TMP/code/wt-login" '"action":"ready","feature":"login v2","response":"empty passwords are rejected now"' >/dev/null
 check "$(until_state "login v2" needs-evidence)" "needs-evidence" "round 2 signs off; evidence is needed before a merge"
 has "$(cat "$TMP/calls")" "codex-saw-round1:yes" "the round-2 reviewer saw round 1's findings"
-has "$(told s-login)" 'crosstalk_work action \"evidence\"' "the author is asked for evidence"
+has "$(told s-login)" 'crosstalk_sessions action \"evidence\"' "the author is asked for evidence"
 BAD=$(ship s-login "$TMP/code/wt-login" '"action":"evidence","feature":"login v2","summary":"diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b"')
 has "$BAD" "reads as a diff" "a diff is refused as evidence"
 EV=$(ship s-login "$TMP/code/wt-login" '"action":"evidence","feature":"login v2","summary":"Login rejects empty passwords and still accepts good ones.","tests":["login.test: 6 pass"]')
@@ -300,7 +300,7 @@ Q=$(field "$EV" 'r.question')
 has "$(field "$(rpc '{"op":"ui","sessionId":"s-login"}')" "r.items.find(i => i.kind === 'ship')?.question")" "Login rejects empty passwords" "the picker shows the evidence"
 check "$(g "$APP" merge-base --is-ancestor crosstalk/login main && echo in || echo out)" "out" "not merged before the answer"
 AG=$(rpc "{\"op\":\"thread\",\"sessionId\":\"s-login\",\"cwd\":\"$TMP/code/wt-login\",\"answer\":{\"id\":\"$Q\",\"text\":\"Merge it\"}}")
-has "$AG" "a person answers it" "an agent's crosstalk_thread answer is refused"
+has "$AG" "a person answers it" "an agent's crosstalk_work answer is refused"
 AC=$(CLAUDECODE=1 ct ship answer "$Q" "Merge it" 2>&1)
 has "$AC" "for a person" "so is the command run from inside an agent"
 YES=$(ct ship answer "$Q" "Merge it" 2>&1)
@@ -347,7 +347,7 @@ LO=$(ship s-login "$TMP/code/wt-login" '"action":"feature","name":"login v2","ri
 has "$(field "$LO" 'r.text')" "question for a person" "making it everyday is a question"
 check "$(field "$(rpc '{"op":"ship","action":"status"}')" "r.threads.flatMap(t => t.features).find(f => f.name === 'login v2').risk")" "risky" "and it stays risky meanwhile"
 LT=$(rpc "{\"op\":\"thread\",\"sessionId\":\"s-login\",\"cwd\":\"$TMP/code/wt-login\",\"feature\":{\"name\":\"login v2\",\"risk\":\"everyday\"}}")
-has "$LT" "question for a person" "crosstalk_thread cannot lower it either"
+has "$LT" "question for a person" "crosstalk_work cannot lower it either"
 risk_now() { field "$(rpc '{"op":"ship","action":"status"}')" "r.threads.flatMap(t => t.features).find(f => f.name.toLowerCase() === 'login v2')?.risk"; }
 LC=$(rpc "{\"op\":\"thread\",\"sessionId\":\"s-login\",\"cwd\":\"$TMP/code/wt-login\",\"feature\":{\"name\":\"Login V2\",\"risk\":\"everyday\"}}")
 has "$LC" "question for a person" "nor by another spelling of its name"

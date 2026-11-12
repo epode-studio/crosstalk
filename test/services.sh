@@ -99,7 +99,7 @@ mkdir -p "$OTHER"
 
 echo
 echo "serve: in crosstalk's tmux, on the worktree's own port"
-OUT=$(GITHUB_TOKEN=ghp_secret mcp sess-a crosstalk_work "{\"action\":\"serve\",\"command\":\"bun $TMP/srv.ts\",\"name\":\"web\"}" "$WT")
+OUT=$(GITHUB_TOKEN=ghp_secret mcp sess-a crosstalk_sessions "{\"action\":\"serve\",\"command\":\"bun $TMP/srv.ts\",\"name\":\"web\"}" "$WT")
 has "$OUT" "started web in crosstalk's background tmux" "crosstalk_serve starts it"
 PORT=$(echo "$OUT" | sed -n 's/.*PORT=\([0-9]*\).*/\1/p' | head -1)
 check "$PORT" "$CROSSTALK_PORT_START" "PORT is the first port of the worktree's block"
@@ -107,18 +107,18 @@ has "$OUT" "listening on http://localhost:$PORT" "and it says where it listens, 
 has "$(get "$PORT")" "up on $PORT" "the server answers on that port"
 has "$(get "$PORT")" "token=none" "a provider token did not reach it"
 has "$(tmux -L crosstalk list-windows -t =crosstalk-services -F '#{window_name}' 2>&1)" "web" "one window for it in tmux -L crosstalk"
-LIST=$(mcp sess-a crosstalk_work '{"action":"services"}' "$WT")
+LIST=$(mcp sess-a crosstalk_sessions '{"action":"services"}' "$WT")
 has "$LIST" "web" "crosstalk_services lists it"
 has "$LIST" "http://localhost:$PORT" "with its URL"
-TAIL=$(mcp sess-a crosstalk_work '{"action":"services","name":"web","tail":5}' "$WT")
+TAIL=$(mcp sess-a crosstalk_sessions '{"action":"services","name":"web","tail":5}' "$WT")
 has "$TAIL" "listening on $PORT" "its log, read only when asked"
-AGAIN=$(mcp sess-a crosstalk_work "{\"action\":\"serve\",\"command\":\"bun $TMP/srv.ts\",\"name\":\"web\"}" "$WT")
+AGAIN=$(mcp sess-a crosstalk_sessions "{\"action\":\"serve\",\"command\":\"bun $TMP/srv.ts\",\"name\":\"web\"}" "$WT")
 has "$AGAIN" "already running" "a second serve of the same name reuses it"
 check "$(tmux -L crosstalk list-windows -t =crosstalk-services | wc -l | tr -d ' ')" "1" "and starts nothing twice"
-O2=$(mcp sess-x crosstalk_work "{\"action\":\"serve\",\"command\":\"bun $TMP/srv.ts\",\"name\":\"web\"}" "$OTHER")
+O2=$(mcp sess-x crosstalk_sessions "{\"action\":\"serve\",\"command\":\"bun $TMP/srv.ts\",\"name\":\"web\"}" "$OTHER")
 P2=$(echo "$O2" | sed -n 's/.*PORT=\([0-9]*\).*/\1/p' | head -1)
 [ -n "$P2" ] && [ "$P2" -ge $((CROSSTALK_PORT_START + 10)) ] && pass "another folder gets a block of its own ($P2)" || fail "another folder's block ($P2)"
-mcp sess-x crosstalk_work '{"action":"stop","name":"web"}' "$OTHER" >/dev/null
+mcp sess-x crosstalk_sessions '{"action":"stop","name":"web"}' "$OTHER" >/dev/null
 
 echo
 echo "two sessions started before crosstalk, in the worktree; one runs a server of its own"
@@ -139,7 +139,7 @@ echo
 echo "gather: yes"
 OUT=$( (printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' \
-  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"crosstalk_work","arguments":{"action":"gather","confirm":true}}}'; sleep 2) \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"crosstalk_sessions","arguments":{"action":"gather","confirm":true}}}'; sleep 2) \
   | CLAUDE_CODE_SESSION_ID=asker CROSSTALK_NO_WAITER=1 timeout 15 bun src/server.ts 2>/dev/null)
 has "$OUT" "bringing 2 sessions into crosstalk" "both queued"
 bun src/cli.ts gather --finish >"$TMP/finish.log" 2>&1 &
@@ -183,14 +183,14 @@ mkdir -p "$CROSSTALK_HOME/spawned"
 cat >"$CROSSTALK_HOME/spawned/app--web.json" <<EOF
 {"id":"app--web","name":"web","task":"t","repo":"$REPO","worktree":"$WT","cwd":"$WT","branch":"crosstalk/web","base":"$(git -C "$REPO" rev-parse HEAD~1)","createdAt":1,"background":false,"links":[]}
 EOF
-LIST=$(mcp asker crosstalk_work '{"action":"cleanup"}' "$REPO")
+LIST=$(mcp asker crosstalk_sessions '{"action":"cleanup"}' "$REPO")
 has "$LIST" "Still in use or not merged: web (a process is running in it" "with sessions still in it, it is kept"
 # The sessions end the way Claude Code exits (their shells reap them), then the panes close.
 for f in "$HOME"/.claude/sessions/*.json; do [ -f "$f" ] && kill -TERM "$(basename "$f" .json)" 2>/dev/null; done
 sleep 0.5
 tmux kill-server 2>/dev/null
 sleep 0.5
-LIST=$(mcp asker crosstalk_work '{"action":"cleanup"}' "$REPO")
+LIST=$(mcp asker crosstalk_sessions '{"action":"cleanup"}' "$REPO")
 has "$LIST" "its services web · :$PORT stop first" "the listing says its service stops first"
 REF=$(bun -e '
   const C = await import("./src/cleanup.ts")
@@ -199,7 +199,7 @@ REF=$(bun -e '
 has "$REF" "a crosstalk service is running in it (web)" "removing without the yes refuses while it runs"
 [ -d "$WT" ] && pass "the worktree is still there" || fail "the worktree is still there"
 has "$(get "$PORT")" "up on $PORT" "and its service still answers"
-YES=$(mcp asker crosstalk_work '{"action":"cleanup","confirm":true}' "$REPO")
+YES=$(mcp asker crosstalk_sessions '{"action":"cleanup","confirm":true}' "$REPO")
 has "$YES" "stopped its service first: web" "after the yes, the service stops first"
 has "$YES" "removed 1 worktree" "then the worktree goes"
 [ -d "$WT" ] && fail "the folder is gone" || pass "the folder is gone"

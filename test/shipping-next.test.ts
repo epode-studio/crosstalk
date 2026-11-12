@@ -623,7 +623,7 @@ describe("a shipping question answered from another person's machine", () => {
       await A.e.pollVotes()
       expect(A.port.notes.length).toBe(before2)
     }
-    // Someone writing `answer` onto the item (an agent's crosstalk_thread, a rule) answers nothing.
+    // Someone writing `answer` onto the item (an agent's crosstalk_work, a rule) answers nothing.
     const { A, t } = setup()
     const qid = await askLower(A)
     M.put(t, "questions", qid, { ...t.questions[qid], answer: "Make it everyday", answeredBy: "a rule" } as any, fpB)

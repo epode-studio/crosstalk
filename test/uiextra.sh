@@ -158,8 +158,8 @@ has "$S1" "crosstalk found a problem" "the first session start says something is
 has "$S1" "To fix it" "with the fix"
 S2=$(start sd2)
 hasnt "$S2" "crosstalk found a problem" "the second one says nothing"
-DOC=$(tool "$D" sd1 crosstalk_doctor '{"action":"report"}')
-has "$DOC" "relay" "crosstalk_doctor returns the whole report"
+DOC=$(tool "$D" sd1 crosstalk_inbox '{"action":"report"}')
+has "$DOC" "relay" "crosstalk_inbox returns the whole report"
 stop_daemon "$D"
 
 # --- 6. digest, standup, pane -------------------------------------------------------------
@@ -176,13 +176,13 @@ CROSSTALK_HOME="$E" bun -e '
   M.put(t, "notes", "k1", { kind: "task", text: "write the migration note", who: "marie", at: now - 1000, state: "done", doneBy: "marie" }, Q, now)
   fs.mkdirSync(process.env.CROSSTALK_HOME, { recursive: true })
   fs.writeFileSync(path.join(process.env.CROSSTALK_HOME, "threads.json"), JSON.stringify({ v: 1, threads: { [t.id]: t }, placed: { se: { threads: [t.id], why: {} } } }))'
-DIG=$(tool "$E" se crosstalk_thread '{"action":"digest","since":"2d"}')
+DIG=$(tool "$E" se crosstalk_work '{"action":"digest","since":"2d"}')
 has "$DIG" "paul decided v1 tokens accepted until 0.2" "the digest has the decision"
 has "$DIG" "merged v2 token format" "and the merge"
-STAND=$(tool "$E" se crosstalk_thread '{"action":"standup"}')
+STAND=$(tool "$E" se crosstalk_work '{"action":"standup"}')
 has "$STAND" "shipped: v2 token format" "the standup has what paul shipped"
 has "$STAND" "finished: write the migration note" "and what marie finished"
-PANE=$(tool "$E" se crosstalk_look '{"action":"pane","thread":"auth"}')
+PANE=$(tool "$E" se crosstalk_work '{"action":"pane","thread":"auth"}')
 has "$PANE" "auth" "crosstalk_pane answers"
 hasnt "$PANE" "PANE-RECAP-CANARY" "without a word of what the pane shows"
 hasnt "$PANE" "v1 tokens accepted" "nor its decisions"

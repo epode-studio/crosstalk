@@ -9,7 +9,7 @@
 # warning; "off" starts it plainly. ben then sends a message, and the transcript
 # must name it exactly once: as a <channel source="plugin:crosstalk:crosstalk">
 # event when on, as the classic inbox notice when off. Neither may carry ben's
-# words, which stay behind crosstalk_say action "read".
+# words, which stay behind crosstalk_people action "read".
 set -uo pipefail
 RUN=$1 T=$2 MODE=${3:-off}
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -46,8 +46,8 @@ note "  of which channel events: $(printf '%s' "$ROWS" | grep -c '<channel sourc
 note "  of which inbox notices: $(printf '%s' "$ROWS" | grep -c '<crosstalk pending=')"
 # Ben's words may reach the model only as crosstalk_read's output, so nothing
 # carrying them goes to the API before the first call to it.
-READ_AT=$(grep -n '"type":"tool_use"[^}]*"name":"mcp__plugin_crosstalk_crosstalk__crosstalk_say"' "$F" | head -1 | cut -d: -f1)
-note "  crosstalk_say action "read" called: $([ -n "$READ_AT" ] && echo "yes, at row $READ_AT" || echo no)"
+READ_AT=$(grep -n '"type":"tool_use"[^}]*"name":"mcp__plugin_crosstalk_crosstalk__crosstalk_people"' "$F" | head -1 | cut -d: -f1)
+note "  crosstalk_people action "read" called: $([ -n "$READ_AT" ] && echo "yes, at row $READ_AT" || echo no)"
 note "  HAWK-7707 sent to the API before that: $(head -n $(( ${READ_AT:-999999} - 1 )) "$F" | grep -c HAWK-7707)"
 tmux kill-session -t "$T"
 note "done"

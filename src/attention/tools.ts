@@ -13,6 +13,8 @@ export async function callTool(name: string, a: any, o: { sessionId: string; cwd
   if (name === "crosstalk_auto_merge") {
     if (typeof a.on !== "boolean") return err("pass on: true or false")
     const r = await request({ op: "attn_merge_rule", sessionId: o.sessionId, cwd: o.cwd, on: a.on }, 10_000)
+    // One switch for merging: off also stops watching merge queues (src/urls/queue.ts).
+    if (r?.ok) (await import("../urls/queue.ts")).setQueueOff(!a.on)
     return r?.ok ? ok(r.text) : err(r?.error ?? "the daemon did not answer")
   }
   if (name === "crosstalk_merge_queue") {

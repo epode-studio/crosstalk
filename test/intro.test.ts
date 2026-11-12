@@ -24,8 +24,8 @@ describe("intro", () => {
       expect(l).not.toMatch(/\/crosstalk|(^|\s)--[a-z]/)
     }
   })
-  test(`"what can crosstalk do?" reaches the list through crosstalk_doctor`, () => {
-    expect(T.resolve("crosstalk_doctor", { action: "intro" })).toEqual({ name: "crosstalk_intro", args: {} })
+  test(`"what can crosstalk do?" reaches the list through crosstalk_inbox`, () => {
+    expect(T.resolve("crosstalk_inbox", { action: "intro" })).toEqual({ name: "crosstalk_intro", args: {} })
     expect(I.introText()).toContain(`"tidy up my sessions"`)
   })
 })

@@ -148,7 +148,7 @@ LIST=$(rpc "$A" '{"op":"route"}')
 has "$LIST" '"github.com/acme/docs"' "it is held, with the sender's repo"
 NOTICE=$(rpc "$A" '{"op":"notices","sessionId":"fw"}')
 has "$NOTICE" 'which session should get it' "the most recent session is asked where it goes"
-has "$NOTICE" 'crosstalk_answer action \"route\"' "and told how to answer"
+has "$NOTICE" 'crosstalk_inbox action \"route\"' "and told how to answer"
 case "$NOTICE" in *"docs site moved"*) fail "the question leaked the sender's words" ;; *) pass "the question carries none of the sender's words" ;; esac
 check "$(rpc "$A" '{"op":"notices","sessionId":"api-feat"}')" '{"ok":true,"notice":null}' "a session that was not touched last is not asked"
 

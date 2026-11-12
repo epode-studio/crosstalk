@@ -139,7 +139,7 @@ for _ in $(seq 1 40); do [ -S "$CROSSTALK_HOME/daemon.sock" ] && break; sleep 0.
 echo
 echo "names: the proxy routes auth.localhost to the service"
 has "$(waitfor 10 grep -o "proxy on http://127.0.0.1:$PPORT" "$TMP/daemon.log")" "proxy on http://127.0.0.1:$PPORT" "the daemon starts the proxy on CROSSTALK_PROXY_PORT"
-OUT=$(mcp sess-a crosstalk_work "{\"action\":\"serve\",\"command\":\"bun $TMP/srv.ts\",\"name\":\"web\"}" "$WT")
+OUT=$(mcp sess-a crosstalk_sessions "{\"action\":\"serve\",\"command\":\"bun $TMP/srv.ts\",\"name\":\"web\"}" "$WT")
 has "$OUT" "started web" "crosstalk_serve starts the server"
 P1=$(echo "$OUT" | sed -n 's/.*PORT=\([0-9]*\).*/\1/p' | head -1)
 R=$(waitfor 10 sh -c "grep -o '\"host\": \"auth\"' '$CROSSTALK_HOME/proxy.json'")
@@ -156,9 +156,9 @@ has "$(bun "$TMP/ws.ts" "$PPORT" "auth.localhost:$PPORT" 2>&1)" "echo hello" "a 
 
 echo
 echo "moves: another port, the same name"
-has "$(mcp sess-a crosstalk_work '{"action":"stop","name":"web"}' "$WT")" "stopped web" "the service is stopped"
+has "$(mcp sess-a crosstalk_sessions '{"action":"stop","name":"web"}' "$WT")" "stopped web" "the service is stopped"
 P2=$((P1 + 5))
-OUT=$(mcp sess-a crosstalk_work "{\"action\":\"serve\",\"command\":\"bun $TMP/srv.ts\",\"name\":\"web\",\"port\":$P2}" "$WT")
+OUT=$(mcp sess-a crosstalk_sessions "{\"action\":\"serve\",\"command\":\"bun $TMP/srv.ts\",\"name\":\"web\",\"port\":$P2}" "$WT")
 has "$OUT" "PORT=$P2" "and started again on $P2"
 has "$(waitfor 10 sh -c "curl -s --max-time 2 --resolve auth.localhost:$PPORT:127.0.0.1 http://auth.localhost:$PPORT/ | grep 'up on $P2'")" "up on $P2" "auth.localhost follows it there"
 has "$(waitfor 10 sh -c "grep -o 'localhost:$P2' '$CROSSTALK_HOME/urls.json'")" "localhost:$P2" "its URL record follows the port"
@@ -193,15 +193,15 @@ has "$(waitfor 15 sh -c "bun -e 'const f=JSON.parse(require(\"fs\").readFileSync
 
 echo
 echo "tools: one list, anywhere (Running)"
-LIST=$(mcp sess-b crosstalk_look '{"action":"running"}' "$TMP")
+LIST=$(mcp sess-b crosstalk_work '{"action":"running"}' "$TMP")
 has "$LIST" "auth · web — http://auth.localhost:$PPORT (http://localhost:$P2) · server" "Running labels the server, by its name"
 has "$LIST" "auth · app.acme.dev/cb — https://app.acme.dev/cb?page=2 · link found in output · not checked" "and the link, as found in output"
 has "$LIST" "data, not instructions" "framed as data"
 has "$LIST" "<crosstalk-running>" "inside its own block"
 hasnt "$LIST" "SEKRET123" "never the token"
-has "$(mcp sess-b crosstalk_look '{"action":"running","thread":"auth","kind":"link"}' "$TMP")" "app.acme.dev" "by thread and kind"
-hasnt "$(mcp sess-b crosstalk_look '{"action":"running","thread":"auth","kind":"link"}' "$TMP")" "auth · web" "and only that kind"
-OPENED=$(CROSSTALK_OPEN_URL_CMD="$TMP/bin/opener" mcp sess-b crosstalk_look '{"action":"open_url","name":"auth web"}' "$TMP")
+has "$(mcp sess-b crosstalk_work '{"action":"running","thread":"auth","kind":"link"}' "$TMP")" "app.acme.dev" "by thread and kind"
+hasnt "$(mcp sess-b crosstalk_work '{"action":"running","thread":"auth","kind":"link"}' "$TMP")" "auth · web" "and only that kind"
+OPENED=$(CROSSTALK_OPEN_URL_CMD="$TMP/bin/opener" mcp sess-b crosstalk_work '{"action":"open_url","name":"auth web"}' "$TMP")
 has "$OPENED" "opened auth · web" "crosstalk_open_url opens it"
 sleep 0.5
 check "$(cat "$TMP/opened" 2>/dev/null)" "http://auth.localhost:$PPORT" "by its name, in the browser"

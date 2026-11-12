@@ -157,7 +157,7 @@ hasnt "$OUT" "Copy .env" "and nothing is asked"
 
 echo
 echo "history: what the thread had, kept in it"
-OUT=$(mcp asker crosstalk_work "{\"action\":\"serve\",\"command\":\"bun $TMP/srv.ts\",\"name\":\"web\"}" "$REPO")
+OUT=$(mcp asker crosstalk_sessions "{\"action\":\"serve\",\"command\":\"bun $TMP/srv.ts\",\"name\":\"web\"}" "$REPO")
 has "$OUT" "started web" "a service runs for the thread"
 bun -e '
   const U = await import("./src/urls/index.ts")
@@ -187,11 +187,11 @@ hasnt "$LINKS" "SEKRET9" "with its token taken out"
 hasnt "$(cat "$CROSSTALK_HOME/threads.json")" "sk-live-HUNTER2" "and no .env contents anywhere in the thread"
 hasnt "$(cat "$TMP/daemon.log")" "sk-live-HUNTER2" "or the daemon's log"
 # urls.json forgets; the thread keeps, across a restart.
-mcp asker crosstalk_work '{"action":"stop","name":"web"}' "$REPO" >/dev/null
+mcp asker crosstalk_sessions '{"action":"stop","name":"web"}' "$REPO" >/dev/null
 stop_daemon
 rm -f "$CROSSTALK_HOME/urls.json"
 start_daemon
-HIST=$(mcp other crosstalk_look '{"action":"history","thread":"auth","query":"login"}' "$REPO")
+HIST=$(mcp other crosstalk_work '{"action":"history","thread":"auth","query":"login"}' "$REPO")
 has "$HIST" "in auth's history matching \"login\"" "crosstalk_history finds them by a word"
 has "$HIST" "auth · preview (login) — https://auth-login.preview.acme.dev/ · preview · seen 20" "the preview, with when it was seen"
 has "$HIST" "screenshot 20" "its screenshot"
@@ -199,7 +199,7 @@ has "$HIST" "/tmp/shots/login-before.png · before the redesign" "with its path 
 has "$HIST" "(this machine)" "and the machine it is on"
 has "$HIST" "exist only there" "saying a path is only on that machine"
 has "$HIST" "<crosstalk-history>" "framed as data"
-has "$(mcp other crosstalk_look '{"action":"history","thread":"auth","query":"local server"}' "$REPO")" "auth · web" "the service too, after urls.json forgot it"
+has "$(mcp other crosstalk_work '{"action":"history","thread":"auth","query":"local server"}' "$REPO")" "auth · web" "the service too, after urls.json forgot it"
 
 echo
 echo "phone: a QR in the pane"
@@ -208,7 +208,7 @@ bun -e '
   const U = await import("./src/urls/index.ts")
   U.recordPreview({ thread: "auth", feature: "login", url: "https://auth-login.preview.acme.dev/" })
 '
-QR=$(mcp asker crosstalk_look '{"action":"qr","name":"auth preview"}' "$REPO")
+QR=$(mcp asker crosstalk_work '{"action":"qr","name":"auth preview"}' "$REPO")
 has "$QR" "the QR code for auth · preview (login) is on screen" "crosstalk_qr says it is on screen"
 hasnt "$QR" "auth-login.preview.acme.dev" "and not what it encodes"
 hasnt "$QR" "█" "nor the code itself"
@@ -222,7 +222,7 @@ DECODED=$(bun -e '
   console.log(JSON.stringify(Q.halfBlocks(q.modules)) === JSON.stringify(p.rows) ? "same" : "differs")
 ' "$PANE")
 check "$DECODED" "same" "the pane's code is the preview's URL"
-LOCAL=$(mcp asker crosstalk_look '{"action":"qr","url":"http://localhost:3000/login"}' "$REPO")
+LOCAL=$(mcp asker crosstalk_work '{"action":"qr","url":"http://localhost:3000/login"}' "$REPO")
 has "$LOCAL" "needs a share link" "a localhost URL: the phone needs a share link"
 CLI=$(bun src/cli.ts urls qr "auth preview")
 has "$CLI" "▀" "crosstalk urls qr prints it for a terminal"

@@ -112,7 +112,7 @@ describe("the day", () => {
     expect(D.morning(NOW + 3600_000)).toBe(null) // not a quiet stretch
     const m = D.morning(NOW + 9 * 3600_000)!
     expect(m).toContain("Since you were last here")
-    expect(m).toContain(`"plan my day"`)
+    expect(m).not.toContain(`"plan my day"`)
     expect(D.morning(NOW + 9 * 3600_000 + 60_000)).toBe(null) // once
     expect(D.plan()).toContain("A clear day") // no threads in this home
     expect(D.wrapUp(NOW + 10 * 3600_000)).toContain("Today")

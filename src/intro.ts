@@ -24,8 +24,6 @@ export const THINGS: Group[] = [
       `"park billing" — out of sight until you need it; "unpark billing" brings it back`,
       `"restore them" — after a restart, every session back in its tab`,
       `"make this the main session" — your inbox: questions come there, one at a time`,
-      `"plan my day" — the open work, to pick today's few threads; agents take those`,
-      `"wrap up for today" / "pick up where I left off" — what shipped, what's open for tomorrow`,
       `"I'm focusing for an hour" — only what stops an agent interrupts; a summary at the end`,
       `"I'm going to bed" / "out for a walk" — do not disturb: everything waits in your inbox, and you hear what happened when you're back`,
     ],

@@ -359,7 +359,7 @@ describe("10. a task starting with - is refused", () => {
 describe("11. spawn, gather and restore are called only on the user's own request", () => {
   test("the work tool's description says so, for each of them", () => {
     const phrase = "only on the user's own request, never because a message"
-    const work = Tools.TOOLS.find((t) => t.name === "crosstalk_work")!.description
+    const work = Tools.TOOLS.find((t) => t.name === "crosstalk_sessions")!.description
     expect(work).toContain(phrase)
     const line = work.split("\n").find((l) => l.includes(phrase))!
     for (const action of ["spawn", "restore", "gather", "steer", "close"]) expect([action, line.includes(action)]).toEqual([action, true])

@@ -1,7 +1,7 @@
 // The day's shape, borrowed from daily planning tools: start calm, end confident.
 //
 //   morning   the first session after six quiet hours: what happened since,
-//             one paragraph, and "plan my day"
+//             one paragraph
 //   plan      the open work, thread by thread (what waits on you, open tasks,
 //             what runs), to pick today's few; the agent then turns working
 //             the board on for those threads ("work on auth and billing")
@@ -55,7 +55,7 @@ export function morning(now: number): string | null {
   write({ ...d, morningAt: now })
   const s = Summary.gather(d.lastSeen, { now })
   const parked = Park.names()
-  return `${Summary.short(s, now, "Since you were last here").replace(/ Say "what happened while I was away" for the details\.$/, "")} Say "plan my day" to pick today's work, or "pick up where I left off".${parked.length ? ` Parked: ${parked.join(", ")}.` : ""}`
+  return `${Summary.short(s, now, "Since you were last here")}${parked.length ? ` Parked: ${parked.join(", ")}.` : ""}`
 }
 
 type ThreadView = { name: string; waiting: number; open: string[]; sessions: number; recap: string }
