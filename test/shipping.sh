@@ -291,7 +291,7 @@ has "$(told s-login)" "login accepts empty passwords" "the findings reached the 
 ship s-login "$TMP/code/wt-login" '"action":"ready","feature":"login v2","response":"empty passwords are rejected now"' >/dev/null
 check "$(until_state "login v2" needs-evidence)" "needs-evidence" "round 2 signs off; evidence is needed before a merge"
 has "$(cat "$TMP/calls")" "codex-saw-round1:yes" "the round-2 reviewer saw round 1's findings"
-has "$(told s-login)" 'crosstalk_sessions action \"evidence\"' "the author is asked for evidence"
+has "$(told s-login)" 'crosstalk_work action \"evidence\"' "the author is asked for evidence"
 BAD=$(ship s-login "$TMP/code/wt-login" '"action":"evidence","feature":"login v2","summary":"diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b"')
 has "$BAD" "reads as a diff" "a diff is refused as evidence"
 EV=$(ship s-login "$TMP/code/wt-login" '"action":"evidence","feature":"login v2","summary":"Login rejects empty passwords and still accepts good ones.","tests":["login.test: 6 pass"]')
