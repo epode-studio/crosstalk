@@ -123,6 +123,8 @@ type State = {
   noticed: string[]
   /** Mail delivered here already, by item id. */
   mailSeen?: string[]
+  /** When the one-time tidy of old open tasks ran. */
+  tasksTidied?: number
   opaque: Record<string, Record<string, string>>
   roots: Record<string, string>
   publicStatus: Record<string, Record<string, string>>
@@ -296,6 +298,33 @@ export class ThreadService {
     // "auth-2" in auth is already named for it: "auth-2", not "auth · auth-2".
     const own = baseName(name)
     return own.toLowerCase().startsWith(names[0]!.toLowerCase()) ? own : `${names[0]} · ${own}`
+  }
+
+  /**
+   * Tasks crosstalk kept from Open lists that nobody touched for `ms`: closed quietly, so the board holds
+   * what is really open, never a pile of old status lines. Only this machine's own. Returns how many.
+   */
+  expireAutoTasks(ms = 3 * 86_400_000): number {
+    const now = this.now()
+    let n = 0
+    for (const t of Object.values(this.st.threads)) {
+      if (t.meta.value.combinedInto) continue
+      for (const k of M.notes(t, "task")) {
+        // Before tasks were marked as kept from Open lists: once, this machine's unclaimed ones over a week old.
+        const legacy = !this.st.tasksTidied && !k.auto && k.state === "open" && k.who === this.label && now - k.at > 7 * 86_400_000
+        if (!legacy && (!k.auto || k.state !== "open" || k.who !== this.label || now - k.at < ms)) continue
+        const { l: _l, by: _b, id: _i, gone: _g, ...data } = k as any
+        M.put(t, "notes", k.id, { ...data, state: "done", doneBy: "crosstalk", doneAt: now, note: "closed: untouched for three days" }, this.me, now)
+        this.touched.add(t.id)
+        n++
+      }
+    }
+    if (!this.st.tasksTidied) {
+      this.st.tasksTidied = now
+      this.save()
+    }
+    if (n) this.flush()
+    return n
   }
 
   /** Placed by a guess between equal matches: its recap may still move it (src/attention/service.ts stop). */
@@ -1122,13 +1151,13 @@ export class ThreadService {
     return { ok: true as const, thread: t.meta.value.name, id: next ?? o.id }
   }
 
-  task(sessionId: string | undefined, o: { text?: string; id?: string; op: "add" | "claim" | "done"; note?: string; thread?: string }) {
+  task(sessionId: string | undefined, o: { text?: string; id?: string; op: "add" | "claim" | "done"; note?: string; thread?: string; auto?: boolean }) {
     const t = this.target(sessionId, o.thread)
     if ("error" in t) return { ok: false as const, error: t.error }
     const now = this.now()
     if (o.op === "add") {
       if (!o.text?.trim()) return { ok: false as const, error: "a task needs some text" }
-      const id = M.note(t, { kind: "task", text: o.text.trim(), who: this.label, at: now, state: "open" }, this.me, now)
+      const id = M.note(t, { kind: "task", text: o.text.trim(), who: this.label, at: now, state: "open", ...(o.auto ? { auto: true } : {}) }, this.me, now)
       this.touched.add(t.id)
       this.flush()
       return { ok: true as const, thread: t.meta.value.name, id }

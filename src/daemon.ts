@@ -1766,7 +1766,7 @@ async function handle(req: Req, sock?: net.Socket): Promise<unknown> {
         const inThread = req.write === "add" || !!holder || req.thread
         if (inThread && (req.write === "add" || req.write === "claim" || req.write === "done")) {
           const owner = req.thread ?? holder
-          const r = threads.task(self?.sessionId, { op: req.write, text: req.text, id: req.id, note: req.note, thread: owner })
+          const r = threads.task(self?.sessionId, { op: req.write, text: req.text, id: req.id, note: req.note, thread: owner, ...(req.auto ? { auto: true } : {}) })
           return r.ok ? { ok: true, thread: r.thread, op: req.write, id: r.id } : r
         }
       }
@@ -3043,6 +3043,10 @@ setInterval(() => {
 }, 60_000).unref?.()
 
 setInterval(() => {
+  try {
+    const n = threads.expireAutoTasks()
+    if (n) log(`tasks: closed ${n} kept from Open lists and untouched for three days`)
+  } catch {}
   try {
     threads.fade()
   } catch (e) {

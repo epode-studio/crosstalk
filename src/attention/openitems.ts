@@ -155,7 +155,7 @@ export const hashOf = (items: string[]) => crypto.createHash("sha256").update(it
 
 // --- the preference and what was already taken in --------------------------------------
 
-type Prefs = { /** What each session's last open list only waited on: chased when it happens. */ waitingOn?: Record<string, { items: string[]; at: number }>; always?: boolean; seen?: Record<string, number>; seenItems?: Record<string, { t: string; at: number }[]>; /** Rounds carried on in a row since the person last typed, per session. */ chain?: Record<string, number>; /** When each session was last reminded that open items were kept. */ reminded?: Record<string, number> }
+type Prefs = { /** What each session's last open list only waited on: chased when it happens. */ waitingOn?: Record<string, { items: string[]; at: number }>; always?: boolean; seen?: Record<string, number>; seenItems?: Record<string, { t: string; at: number }[]>; /** Rounds carried on in a row since the person last typed, per session. */ chain?: Record<string, number>; /** When each session was last reminded that open items were kept. */ reminded?: Record<string, number>; /** The tasks kept from each session's Open lists, to close when they leave the list. */ tasks?: Record<string, { id: string; text: string; at: number }[]> }
 const file = () => path.join(P.root, "open-items.json")
 
 export function readPrefs(): Prefs {
@@ -306,4 +306,31 @@ export function mayRemind(sessionId: string, now = Date.now()): boolean {
   if (now - (p.reminded?.[sessionId] ?? 0) < 3_600_000) return false
   writePrefs({ ...p, reminded: { ...(p.reminded ?? {}), [sessionId]: now } })
   return true
+}
+
+/** A task kept from this session's Open list: closed again when a later list no longer has it. */
+export function rememberTask(sessionId: string, id: string, text: string, now = Date.now()) {
+  const p = readPrefs()
+  const mine = (p.tasks?.[sessionId] ?? []).filter((t) => now - t.at < 3 * 86_400_000)
+  writePrefs({ ...p, tasks: { ...(p.tasks ?? {}), [sessionId]: [...mine, { id, text, at: now }].slice(-100) } })
+}
+
+/** "Nothing is open", in so many words, without a list: every kept task of the session is done. */
+const NOTHING_LEFT = /\b(nothing (is |was )?(left|open|remaining|outstanding)|no open items|all (done|finished|complete)|everything('s| is) (done|finished|complete))\b/i
+
+/**
+ * The kept tasks this reply shows are finished: the ones its Open list no longer has (however reworded),
+ * or all of them when it says nothing is left. Forgotten here; the caller marks them done. A reply with
+ * no Open list and no such words says nothing about them, so none.
+ */
+export function finishedTasks(sessionId: string, reply: string): string[] {
+  const p = readPrefs()
+  const mine = p.tasks?.[sessionId] ?? []
+  if (!mine.length) return []
+  const list = parseOpen(reply)
+  const done = list.length ? mine.filter((t) => !list.some((x) => same(x, t.text, 0.5))) : NOTHING_LEFT.test(reply) ? mine : []
+  if (!done.length) return []
+  const gone = new Set(done.map((t) => t.id))
+  writePrefs({ ...p, tasks: { ...(p.tasks ?? {}), [sessionId]: mine.filter((t) => !gone.has(t.id)) } })
+  return done.map((t) => t.id)
 }

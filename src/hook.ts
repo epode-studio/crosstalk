@@ -448,7 +448,15 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
         return false
       }
     })()
-    const r = started ? null : openItems.atStop({ reply: openItems.lastReply(typeof hook.transcript_path === "string" ? hook.transcript_path : undefined), sessionId, continuing: hook.stop_hook_active === true })
+    const reply = started ? "" : openItems.lastReply(typeof hook.transcript_path === "string" ? hook.transcript_path : undefined)
+    // Tasks kept from earlier Open lists that this reply shows are finished: closed by themselves.
+    if (!started && reply) {
+      const finished = openItems.finishedTasks(sessionId, reply)
+      if (finished.length && (await ensureDaemon(root)))
+        for (const id of finished)
+          await request({ op: "tasks", sessionId, cwd, write: "done", id, note: "closed by itself: gone from the session's Open list" }, 3000).catch(() => null)
+    }
+    const r = started ? null : openItems.atStop({ reply, sessionId, continuing: hook.stop_hook_active === true })
     if (r?.waiting.length) openItems.noteWaiting(sessionId, r.waiting)
     if (r?.fresh && (r.items.length || r.persons.length)) {
       let thread: string | undefined
@@ -456,9 +464,12 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
       if (r.items.length && (await ensureDaemon(root)))
         for (const text of r.items)
           try {
-            const t = await request({ op: "tasks", sessionId, cwd, write: "add", text }, 3000)
+            const t = await request({ op: "tasks", sessionId, cwd, write: "add", text, auto: true }, 3000)
             if (t?.ok && t.thread) thread = t.thread
-            if (t?.ok && t.id) ids.push(String(t.id))
+            if (t?.ok && t.id) {
+              ids.push(String(t.id))
+              openItems.rememberTask(sessionId, String(t.id), text)
+            }
           } catch {}
       // Away: open lists are tackled by themselves, a few rounds per session.
       const away = calmMod.isAway() && calmMod.update((s) => calmMod.takeRound(s, sessionId))

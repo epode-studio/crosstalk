@@ -515,6 +515,20 @@ describe("service", () => {
     expect(ana.svc.repoOfSession("p")).toBe("github.com/other/evals")
   })
 
+  test("tasks kept from Open lists close after three untouched days; a person's own task never does", () => {
+    const [ana] = pair()
+    ana.svc.observe(sess("tk", "main", ["src/auth/a.ts", "src/auth/b.ts", "src/auth/c.ts"]))
+    const kept = ana.svc.task("tk", { op: "add", text: "check the CI run", auto: true })
+    const mine = ana.svc.task("tk", { op: "add", text: "write the release notes" })
+    expect(kept.ok && mine.ok).toBe(true)
+    expect(ana.svc.expireAutoTasks()).toBe(0) // fresh
+    ana.clock.t += 3 * 86_400_000 + 1
+    expect(ana.svc.expireAutoTasks()).toBe(1)
+    const t = ana.svc.find(undefined, "auth")!
+    const states = Object.fromEntries(M.notes(t, "task").map((k) => [k.text, k.state]))
+    expect(states).toEqual({ "check the CI run": "done", "write the release notes": "open" })
+  })
+
   test("the title is one thread and the session's own name, never built on the last title", () => {
     const [ana] = pair()
     ana.svc.observe(sess("t", "main", ["src/auth/a.ts", "src/auth/b.ts", "src/auth/c.ts"]))

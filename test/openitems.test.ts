@@ -169,3 +169,15 @@ describe("saying items were kept", () => {
     expect(O.mayRemind("r1", 1_800_000_000_000 + 3_600_001)).toBe(true)
   })
 })
+
+describe("kept tasks close by themselves", () => {
+  test("gone from the next Open list (however reworded), or all when the reply says nothing is left", () => {
+    O.rememberTask("k1", "t1", "Write the migration for device ids.")
+    O.rememberTask("k1", "t2", "Fix the flaky reconnect test.")
+    expect(O.finishedTasks("k1", "Done with that.")).toEqual([]) // no list, no words: says nothing about them
+    expect(O.finishedTasks("k1", "Progress.\n\nOpen\n- Fix the reconnect test that is flaky.")).toEqual(["t1"])
+    expect(O.finishedTasks("k1", "Progress.\n\nOpen\n- Fix the reconnect test that is flaky.")).toEqual([]) // once
+    expect(O.finishedTasks("k1", "All done, nothing is left.")).toEqual(["t2"])
+    expect(O.finishedTasks("nobody", "All done.")).toEqual([])
+  })
+})
