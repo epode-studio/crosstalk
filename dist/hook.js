@@ -6768,6 +6768,25 @@ function mayRemind(sessionId, now = Date.now()) {
   writePrefs({ ...p, reminded: { ...p.reminded ?? {}, [sessionId]: now } });
   return true;
 }
+function rememberTask(sessionId, id, text, now = Date.now()) {
+  const p = readPrefs();
+  const mine = (p.tasks?.[sessionId] ?? []).filter((t) => now - t.at < 3 * 86400000);
+  writePrefs({ ...p, tasks: { ...p.tasks ?? {}, [sessionId]: [...mine, { id, text, at: now }].slice(-100) } });
+}
+var NOTHING_LEFT = /\b(nothing (is |was )?(left|open|remaining|outstanding)|no open items|all (done|finished|complete)|everything('s| is) (done|finished|complete))\b/i;
+function finishedTasks(sessionId, reply) {
+  const p = readPrefs();
+  const mine = p.tasks?.[sessionId] ?? [];
+  if (!mine.length)
+    return [];
+  const list = parseOpen(reply);
+  const done = list.length ? mine.filter((t) => !list.some((x) => same(x, t.text, 0.5))) : NOTHING_LEFT.test(reply) ? mine : [];
+  if (!done.length)
+    return [];
+  const gone = new Set(done.map((t) => t.id));
+  writePrefs({ ...p, tasks: { ...p.tasks ?? {}, [sessionId]: mine.filter((t) => !gone.has(t.id)) } });
+  return done.map((t) => t.id);
+}
 
 // src/attention/calm.ts
 import fs41 from "node:fs";
@@ -7296,7 +7315,14 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
         return false;
       }
     })();
-    const r = started ? null : atStop({ reply: lastReply(typeof hook.transcript_path === "string" ? hook.transcript_path : undefined), sessionId, continuing: hook.stop_hook_active === true });
+    const reply = started ? "" : lastReply(typeof hook.transcript_path === "string" ? hook.transcript_path : undefined);
+    if (!started && reply) {
+      const finished = finishedTasks(sessionId, reply);
+      if (finished.length && await ensureDaemon(root))
+        for (const id of finished)
+          await request({ op: "tasks", sessionId, cwd, write: "done", id, note: "closed by itself: gone from the session's Open list" }, 3000).catch(() => null);
+    }
+    const r = started ? null : atStop({ reply, sessionId, continuing: hook.stop_hook_active === true });
     if (r?.waiting.length)
       noteWaiting(sessionId, r.waiting);
     if (r?.fresh && (r.items.length || r.persons.length)) {
@@ -7305,11 +7331,13 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
       if (r.items.length && await ensureDaemon(root))
         for (const text of r.items)
           try {
-            const t = await request({ op: "tasks", sessionId, cwd, write: "add", text }, 3000);
+            const t = await request({ op: "tasks", sessionId, cwd, write: "add", text, auto: true }, 3000);
             if (t?.ok && t.thread)
               thread = t.thread;
-            if (t?.ok && t.id)
+            if (t?.ok && t.id) {
               ids.push(String(t.id));
+              rememberTask(sessionId, String(t.id), text);
+            }
           } catch {}
       const away = isAway() && update((s) => takeRound(s, sessionId));
       if ((r.auto || away && r.items.length) && modActive(sessionId)) {

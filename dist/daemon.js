@@ -4004,6 +4004,30 @@ class ThreadService {
     const own = baseName(name);
     return own.toLowerCase().startsWith(names[0].toLowerCase()) ? own : `${names[0]} \u00b7 ${own}`;
   }
+  expireAutoTasks(ms = 3 * 86400000) {
+    const now = this.now();
+    let n = 0;
+    for (const t of Object.values(this.st.threads)) {
+      if (t.meta.value.combinedInto)
+        continue;
+      for (const k of notes(t, "task")) {
+        const legacy = !this.st.tasksTidied && !k.auto && k.state === "open" && k.who === this.label && now - k.at > 7 * 86400000;
+        if (!legacy && (!k.auto || k.state !== "open" || k.who !== this.label || now - k.at < ms))
+          continue;
+        const { l: _l, by: _b, id: _i, gone: _g, ...data } = k;
+        put(t, "notes", k.id, { ...data, state: "done", doneBy: "crosstalk", doneAt: now, note: "closed: untouched for three days" }, this.me, now);
+        this.touched.add(t.id);
+        n++;
+      }
+    }
+    if (!this.st.tasksTidied) {
+      this.st.tasksTidied = now;
+      this.save();
+    }
+    if (n)
+      this.flush();
+    return n;
+  }
   guessed(sessionId) {
     const rec = this.st.placed[sessionId];
     return !!rec && rec.threads.some((id) => rec.why[id] === GUESS);
@@ -4779,7 +4803,7 @@ class ThreadService {
     if (o.op === "add") {
       if (!o.text?.trim())
         return { ok: false, error: "a task needs some text" };
-      const id = note(t, { kind: "task", text: o.text.trim(), who: this.label, at: now, state: "open" }, this.me, now);
+      const id = note(t, { kind: "task", text: o.text.trim(), who: this.label, at: now, state: "open", ...o.auto ? { auto: true } : {} }, this.me, now);
       this.touched.add(t.id);
       this.flush();
       return { ok: true, thread: t.meta.value.name, id };
@@ -24409,7 +24433,7 @@ async function handle(req, sock) {
         const inThread = req.write === "add" || !!holder || req.thread;
         if (inThread && (req.write === "add" || req.write === "claim" || req.write === "done")) {
           const owner = req.thread ?? holder;
-          const r = threads2.task(self?.sessionId, { op: req.write, text: req.text, id: req.id, note: req.note, thread: owner });
+          const r = threads2.task(self?.sessionId, { op: req.write, text: req.text, id: req.id, note: req.note, thread: owner, ...req.auto ? { auto: true } : {} });
           return r.ok ? { ok: true, thread: r.thread, op: req.write, id: r.id } : r;
         }
       }
@@ -25595,6 +25619,11 @@ setInterval(() => {
   } catch {}
 }, 60000).unref?.();
 setInterval(() => {
+  try {
+    const n = threads2.expireAutoTasks();
+    if (n)
+      log(`tasks: closed ${n} kept from Open lists and untouched for three days`);
+  } catch {}
   try {
     threads2.fade();
   } catch (e) {
