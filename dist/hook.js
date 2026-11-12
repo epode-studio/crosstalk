@@ -1,33 +1,22 @@
 #!/usr/bin/env bun
 // @bun
-
-// src/urls/ci.ts
-import fs2 from "node:fs";
-import path2 from "node:path";
+var __esm = (fn, res, err) => () => {
+  if (fn)
+    try {
+      res = fn(fn = 0);
+    } catch (e) {
+      err = [e];
+    }
+  if (err)
+    throw err[0];
+  return res;
+};
 
 // src/config.ts
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-var ROOT = process.env.CROSSTALK_HOME ?? path.join(os.homedir(), ".claude", "crosstalk");
-var P = {
-  root: ROOT,
-  identity: path.join(ROOT, "identity.json"),
-  peers: path.join(ROOT, "peers.json"),
-  relay: path.join(ROOT, "relay.json"),
-  queue: path.join(ROOT, "queue.json"),
-  parked: path.join(ROOT, "parked.json"),
-  sessions: path.join(ROOT, "sessions.json"),
-  outbox: path.join(ROOT, "outbox.json"),
-  usage: path.join(ROOT, "usage.json"),
-  routes: path.join(ROOT, "routes.json"),
-  unrouted: path.join(ROOT, "unrouted.json"),
-  daemonSock: path.join(ROOT, "daemon.sock"),
-  daemonLock: path.join(ROOT, "daemon.lock"),
-  daemonVersion: path.join(ROOT, "daemon.version"),
-  log: path.join(ROOT, "daemon.log")
-};
 function readJson(file, fallback) {
   try {
     return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -35,38 +24,7 @@ function readJson(file, fallback) {
     return fallback;
   }
 }
-var KEYCHAIN_SERVICE = "crosstalk-identity";
-var keychain = {
-  available: () => process.platform === "darwin",
-  read() {
-    try {
-      const out = execFileSync("security", ["find-generic-password", "-a", "crosstalk", "-s", KEYCHAIN_SERVICE, "-w"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-      return out ? JSON.parse(Buffer.from(out, "base64").toString("utf8")) : null;
-    } catch {
-      return null;
-    }
-  },
-  write(id) {
-    execFileSync("security", [
-      "add-generic-password",
-      "-a",
-      "crosstalk",
-      "-s",
-      KEYCHAIN_SERVICE,
-      "-w",
-      Buffer.from(JSON.stringify(id), "utf8").toString("base64"),
-      "-U"
-    ], { stdio: ["ignore", "ignore", "ignore"] });
-  },
-  clear() {
-    try {
-      execFileSync("security", ["delete-generic-password", "-a", "crosstalk", "-s", KEYCHAIN_SERVICE], {
-        stdio: "ignore"
-      });
-    } catch {}
-  }
-};
-var loadIdentity = () => {
+var ROOT, P, KEYCHAIN_SERVICE = "crosstalk-identity", keychain, loadIdentity = () => {
   const onDisk = readJson(P.identity, null);
   if (onDisk?.storage === "keychain") {
     const full = keychain.read();
@@ -75,8 +33,7 @@ var loadIdentity = () => {
     return null;
   }
   return onDisk;
-};
-var identityUnreadable = () => {
+}, identityUnreadable = () => {
   if (!fs.existsSync(P.identity))
     return false;
   try {
@@ -84,14 +41,81 @@ var identityUnreadable = () => {
   } catch {
     return true;
   }
-};
-var loadPeers = () => readJson(P.peers, {});
-var loadRelay = () => readJson(P.relay, {
+}, loadPeers = () => readJson(P.peers, {}), loadRelay = () => readJson(P.relay, {
   url: process.env.CROSSTALK_RELAY ?? "wss://crosstalk-relay.billowing-poetry-4cd6.workers.dev"
+}), loadRegistered = () => readJson(P.sessions, {});
+var init_config = __esm(() => {
+  ROOT = process.env.CROSSTALK_HOME ?? path.join(os.homedir(), ".claude", "crosstalk");
+  P = {
+    root: ROOT,
+    identity: path.join(ROOT, "identity.json"),
+    peers: path.join(ROOT, "peers.json"),
+    relay: path.join(ROOT, "relay.json"),
+    queue: path.join(ROOT, "queue.json"),
+    parked: path.join(ROOT, "parked.json"),
+    sessions: path.join(ROOT, "sessions.json"),
+    outbox: path.join(ROOT, "outbox.json"),
+    usage: path.join(ROOT, "usage.json"),
+    routes: path.join(ROOT, "routes.json"),
+    unrouted: path.join(ROOT, "unrouted.json"),
+    daemonSock: path.join(ROOT, "daemon.sock"),
+    daemonLock: path.join(ROOT, "daemon.lock"),
+    daemonVersion: path.join(ROOT, "daemon.version"),
+    log: path.join(ROOT, "daemon.log")
+  };
+  keychain = {
+    available: () => process.platform === "darwin",
+    read() {
+      try {
+        const out = execFileSync("security", ["find-generic-password", "-a", "crosstalk", "-s", KEYCHAIN_SERVICE, "-w"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+        return out ? JSON.parse(Buffer.from(out, "base64").toString("utf8")) : null;
+      } catch {
+        return null;
+      }
+    },
+    write(id) {
+      execFileSync("security", [
+        "add-generic-password",
+        "-a",
+        "crosstalk",
+        "-s",
+        KEYCHAIN_SERVICE,
+        "-w",
+        Buffer.from(JSON.stringify(id), "utf8").toString("base64"),
+        "-U"
+      ], { stdio: ["ignore", "ignore", "ignore"] });
+    },
+    clear() {
+      try {
+        execFileSync("security", ["delete-generic-password", "-a", "crosstalk", "-s", KEYCHAIN_SERVICE], {
+          stdio: "ignore"
+        });
+      } catch {}
+    }
+  };
 });
-var loadRegistered = () => readJson(P.sessions, {});
+
+// src/ui-extra/asking.ts
+import fs49 from "node:fs";
+import path57 from "node:path";
+function noteAsking(sessionId, q, now = Date.now()) {
+  try {
+    if (!q)
+      return fs49.rmSync(fileOf7(sessionId), { force: true });
+    fs49.mkdirSync(dir10(), { recursive: true, mode: 448 });
+    const clean = (s, n) => s.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, n);
+    fs49.writeFileSync(fileOf7(sessionId), JSON.stringify({ server: clean(q.server, 60), text: clean(q.text, 200), at: now }), { mode: 384 });
+  } catch {}
+}
+var dir10 = () => path57.join(P.root, "asking"), fileOf7 = (sessionId) => path57.join(dir10(), `${sessionId.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+var init_asking = __esm(() => {
+  init_config();
+});
 
 // src/urls/ci.ts
+init_config();
+import fs2 from "node:fs";
+import path2 from "node:path";
 var FAIL = new Set(["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"]);
 var OK = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
 var events = () => path2.join(P.root, "events.json");
@@ -110,10 +134,11 @@ function recordEvent(text, at = Date.now()) {
 }
 
 // src/hook.ts
-import path57 from "path";
-import fs49 from "fs";
+import path58 from "path";
+import fs50 from "fs";
 
 // src/client.ts
+init_config();
 import net from "node:net";
 import fs3 from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
@@ -422,6 +447,7 @@ function pathsFromToolInput(input) {
 }
 
 // src/main.ts
+init_config();
 import fs5 from "node:fs";
 import path8 from "node:path";
 var file = () => path8.join(P.root, "main.json");
@@ -461,6 +487,7 @@ function setMain(on, s, now = Date.now()) {
 var CROSS_CUTTING = new Set(["route", "team", "gather", "cleanup"]);
 
 // src/restore.ts
+init_config();
 import fs6 from "node:fs";
 import os5 from "node:os";
 import path11 from "node:path";
@@ -523,6 +550,7 @@ function repoOf(cwd, g = git) {
 var repoKey = (cwd, g = git) => repoOf(cwd, g) ?? path9.resolve(cwd);
 
 // src/ui-extra/bots.ts
+init_config();
 function isBot(label, peers = loadPeers()) {
   if (!label)
     return false;
@@ -1633,10 +1661,12 @@ function baseName2(name) {
 var SNOOZE_MS2 = 2 * 3600000;
 
 // src/uistate.ts
+init_config();
 import fs8 from "node:fs";
 import path13 from "node:path";
 
 // src/metrics/log.ts
+init_config();
 import fs7 from "node:fs";
 import path12 from "node:path";
 var file2 = () => path12.join(process.env.CROSSTALK_HOME ?? ROOT, "metrics.jsonl");
@@ -1876,11 +1906,13 @@ function storeRestore(sessionId, offer, n, when) {
 }
 
 // src/gather.ts
+init_config();
 import fs20 from "node:fs";
 import path25 from "node:path";
 import { spawn as spawn5, spawnSync as spawnSync10 } from "node:child_process";
 
 // src/restore.ts
+init_config();
 import fs9 from "node:fs";
 import os6 from "node:os";
 import path14 from "node:path";
@@ -2172,16 +2204,19 @@ function activity(claudePid, o) {
 var oursBy = (root) => (args) => args.includes(path15.join(root, "bin", "crosstalk")) || args.includes(path15.join(root, "dist")) || args.includes(path15.join(root, "src")) || /(^|\/)crosstalk(\s|$)/.test(args.split(/\s+/)[0] ?? "");
 
 // src/services/service.ts
+init_config();
 import fs19 from "node:fs";
 import path24 from "node:path";
 import { spawn as spawn4, spawnSync as spawnSync9 } from "node:child_process";
 
 // src/spawn.ts
+init_config();
 import fs17 from "node:fs";
 import path22 from "node:path";
 import { spawnSync as spawnSync8 } from "node:child_process";
 
 // src/attention/park.ts
+init_config();
 import fs11 from "node:fs";
 import path16 from "node:path";
 var file4 = () => path16.join(P.root, "parked.json");
@@ -2215,7 +2250,11 @@ var itermFrontTtyScript = [
 ].join(`
 `);
 
+// src/attention/dispose.ts
+init_config();
+
 // src/gather.ts
+init_config();
 var RECHECK_MS = 10 * 60 * 1000;
 
 // src/threads/model.ts
@@ -2296,6 +2335,7 @@ function parseThread(v) {
 
 // src/client.ts
 import net2 from "node:net";
+init_config();
 function request2(req, timeoutMs = 130000) {
   return new Promise((resolve, reject) => {
     const sock = net2.createConnection(P.daemonSock);
@@ -2338,6 +2378,7 @@ function request2(req, timeoutMs = 130000) {
 }
 
 // src/services/ports.ts
+init_config();
 import fs12 from "node:fs";
 import path17 from "node:path";
 import { spawnSync as spawnSync6 } from "node:child_process";
@@ -2441,6 +2482,7 @@ function blockOf(root) {
 var span = (b) => `${b.ports[0]}-${b.ports[b.ports.length - 1]}`;
 
 // src/env/index.ts
+init_config();
 import crypto from "node:crypto";
 import fs15 from "node:fs";
 import path20 from "node:path";
@@ -2788,6 +2830,7 @@ function prepare(o) {
 }
 
 // src/uistate.ts
+init_config();
 import fs16 from "node:fs";
 import path21 from "node:path";
 var FINAL2 = new Set(["answered", "handed", "muted"]);
@@ -3032,6 +3075,7 @@ function claim(sessionId, cwd) {
 // src/cleanup.ts
 import fs18 from "node:fs";
 import path23 from "node:path";
+init_config();
 var svcLabel = (s) => {
   const b = badge([{ listening: s.listening, ports: s.ports }]);
   return b ? `${s.name} \u00b7 ${b}` : s.name;
@@ -3816,6 +3860,7 @@ function takeNote(session, id) {
 }
 
 // src/terminal/status.ts
+init_config();
 import fs21 from "node:fs";
 import path26 from "node:path";
 import { spawn as spawn6, spawnSync as spawnSync11 } from "node:child_process";
@@ -4230,9 +4275,11 @@ function pendingFor(sessionId, snapshot) {
 }
 
 // src/urls/index.ts
+init_config();
 import path30 from "node:path";
 
 // src/ui-extra/threadfile.ts
+init_config();
 import fs22 from "node:fs";
 import path27 from "node:path";
 var threadsFile = () => path27.join(P.root, "threads.json");
@@ -4252,6 +4299,7 @@ function readThreads(file = threadsFile()) {
 }
 
 // src/urls/store.ts
+init_config();
 import crypto2 from "node:crypto";
 import fs23 from "node:fs";
 import path28 from "node:path";
@@ -4631,6 +4679,7 @@ var label3 = (s) => s.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+
 
 // src/urls/proxy.ts
 import fs24 from "node:fs";
+init_config();
 import path29 from "node:path";
 var HEAD_MAX = 32 * 1024;
 var stateFile3 = () => path29.join(P.root, "proxy.json");
@@ -4830,6 +4879,7 @@ function fromHook(o) {
 }
 
 // src/repotrust/firstuse.ts
+init_config();
 import fs25 from "node:fs";
 import path32 from "node:path";
 
@@ -4891,6 +4941,7 @@ async function findRepo(cwd) {
 }
 
 // src/repotrust/github.ts
+init_config();
 var BUCKET = { max: 30, perMs: 10 * 60 * 1000 };
 
 // src/repotrust/firstuse.ts
@@ -5135,6 +5186,7 @@ ${(after ?? "").split(`
 // src/ui-extra/doctor.ts
 import fs27 from "node:fs";
 import path35 from "node:path";
+init_config();
 var FIX_IT = "Ask the agent to fix it";
 var NOT_NOW = "Not now";
 var DAY_MS = 24 * 60 * 60000;
@@ -5207,6 +5259,7 @@ async function atSessionStart2(o) {
 }
 
 // src/metrics/log.ts
+init_config();
 import fs28 from "node:fs";
 import path36 from "node:path";
 var file8 = () => path36.join(process.env.CROSSTALK_HOME ?? ROOT, "metrics.jsonl");
@@ -5233,6 +5286,9 @@ function record2(e) {
   } catch {}
 }
 var QUESTION_KINDS2 = new Set(["route", "gather", "team", "cleanup", "thread", "ship", "rule", "connect", "conflict", "disk", "install", "restore"]);
+
+// src/attention/openitems.ts
+init_config();
 
 // src/attention/recap.ts
 import fs29 from "node:fs";
@@ -5312,6 +5368,7 @@ var STOP2 = new Set(("a an the and or but of to in on at by for from with into o
 var isCrosstalkPrompt = (prompt) => /^\s*(Tackle the open items you listed|You left these for the person|I handed you the crosstalk message|What you were waiting on has moved|.{0,200}was taken out of the merge queue, and crosstalk asks you)/.test(prompt);
 
 // src/attention/activity.ts
+init_config();
 import fs30 from "node:fs";
 import path37 from "node:path";
 var dir6 = () => path37.join(P.root, "typed");
@@ -5382,6 +5439,7 @@ async function fromHook2(o) {
 }
 
 // src/sessions/names.ts
+init_config();
 import fs31 from "node:fs";
 import path38 from "node:path";
 var file9 = () => path38.join(P.root, "sessions", "names.json");
@@ -5399,6 +5457,7 @@ var nameOf2 = (sessionId) => {
 };
 
 // src/sessions/index.ts
+init_config();
 import fs33 from "node:fs";
 import path40 from "node:path";
 
@@ -5587,6 +5646,7 @@ function safeSummary(f) {
 }
 
 // src/urls/index.ts
+init_config();
 import path41 from "node:path";
 var threadsMemo2 = null;
 function threads2() {
@@ -5690,6 +5750,7 @@ function outputOf(hook) {
 }
 
 // src/urls/shots/index.ts
+init_config();
 import fs37 from "node:fs";
 import path45 from "node:path";
 import { spawn as spawn8, spawnSync as spawnSync13 } from "node:child_process";
@@ -5968,6 +6029,7 @@ async function capture(url, file, o = {}) {
 }
 
 // src/urls/history/sync.ts
+init_config();
 import fs35 from "node:fs";
 import os8 from "node:os";
 import path43 from "node:path";
@@ -5994,6 +6056,7 @@ function noteShot(s) {
 }
 
 // src/urls/shots/store.ts
+init_config();
 import crypto3 from "node:crypto";
 import fs36 from "node:fs";
 import path44 from "node:path";
@@ -6399,6 +6462,7 @@ var clean2 = (s) => s.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/[<>
 var tried = new Map;
 
 // src/intro.ts
+init_config();
 import fs38 from "node:fs";
 import path46 from "node:path";
 function welcomeText() {
@@ -6425,6 +6489,7 @@ function welcomeOnce() {
 }
 
 // src/terminal/status.ts
+init_config();
 import fs39 from "node:fs";
 import path47 from "node:path";
 import { spawn as spawn9, spawnSync as spawnSync14 } from "node:child_process";
@@ -6584,6 +6649,7 @@ var TMUX_SNIPPET2 = [
 `);
 
 // src/attention/openitems.ts
+init_config();
 import crypto4 from "node:crypto";
 import fs40 from "node:fs";
 import path48 from "node:path";
@@ -6708,7 +6774,7 @@ function tacklePrompt(items, ids = [], persons = []) {
       `Tackle the open items you listed:`,
       ...items.map((x, i) => `${i + 1}. ${x}${ids[i] ? ` (task ${ids[i]})` : ""}`),
       ``,
-      `Do each one you can do yourself${ids.length ? `, and mark it done with crosstalk_thread action "note", kind "task", op "done" and its task id` : ""}. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). For any that needs a decision only the person can make, ask them (one question for all of those, at the end) instead of guessing.`
+      `Do each one you can do yourself${ids.length ? `, and mark it done with crosstalk_thread action "note", kind "task", op "done" and its task id` : ""}. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). Do nothing that cannot be undone (deleting, deploying, merging, sending, paying) unless the person asked for it in this conversation; leave those, and anything only the person can decide, in your Open list for them.`
     ] : [],
     ...persons.length ? [
       ...items.length ? [``] : [],
@@ -6755,7 +6821,7 @@ function atStop(o) {
   const kept = [...(p.seenItems?.[o.sessionId] ?? []).filter((x) => now - x.at < 3 * 86400000), ...[...items, ...newPersons].map((t) => ({ t, at: now }))].slice(-200);
   const on = p.always !== false;
   const rounds = p.chain?.[o.sessionId] ?? 0;
-  const fresh = [...items, ...newPersons].filter((x) => !seen.some((y) => same(x, y, 0.5)));
+  const fresh = items.filter((x) => !seen.some((y) => same(x, y, 0.5)));
   const auto = on && !o.continuing && fresh.length > 0 && rounds < CHAIN_MAX;
   writePrefs({ ...p, seenItems: { ...p.seenItems ?? {}, [o.sessionId]: kept }, ...auto ? { chain: { ...p.chain ?? {}, [o.sessionId]: rounds + 1 } } : {}, ...waiting.length ? { waitingOn: { ...p.waitingOn ?? {}, [o.sessionId]: { items: waiting, at: now } } } : {} });
   return { items, waiting, persons: newPersons, id, fresh: !o.continuing, auto };
@@ -6789,6 +6855,7 @@ function finishedTasks(sessionId, reply) {
 }
 
 // src/attention/calm.ts
+init_config();
 import fs41 from "node:fs";
 import path49 from "node:path";
 var file12 = () => path49.join(P.root, "calm.json");
@@ -6857,10 +6924,12 @@ function takeRound(s, sessionId) {
 }
 
 // src/attention/day.ts
+init_config();
 import fs45 from "node:fs";
 import path53 from "node:path";
 
 // src/urls/ci.ts
+init_config();
 import fs42 from "node:fs";
 import path50 from "node:path";
 var FAIL2 = new Set(["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"]);
@@ -6876,6 +6945,7 @@ function recentEvents(n = 6, now = Date.now()) {
 }
 
 // src/ui-extra/usage.ts
+init_config();
 import fs43 from "node:fs";
 import path51 from "node:path";
 var dir8 = () => path51.join(P.root, "usage");
@@ -6893,6 +6963,7 @@ function all2() {
 }
 
 // src/attention/calm.ts
+init_config();
 import fs44 from "node:fs";
 import path52 from "node:path";
 var file13 = () => path52.join(P.root, "calm.json");
@@ -6977,6 +7048,7 @@ function morning(now) {
 }
 
 // src/main.ts
+init_config();
 import fs46 from "node:fs";
 import path54 from "node:path";
 var file15 = () => path54.join(P.root, "main.json");
@@ -7044,6 +7116,7 @@ function short2(s, now = Date.now(), what = "While you were away") {
 }
 
 // src/attention/worker.ts
+init_config();
 import fs47 from "node:fs";
 import path55 from "node:path";
 var file16 = () => path55.join(P.root, "worker.json");
@@ -7066,6 +7139,7 @@ function write5(p) {
 // src/spawn.ts
 import fs48 from "node:fs";
 import path56 from "node:path";
+init_config();
 var dir9 = () => path56.join(P.root, "spawned");
 function readSpawned2() {
   let names;
@@ -7133,6 +7207,14 @@ var isGoose = typeof hook.event === "string" && !hook.hook_event_name && !hook.h
 var isCursor = typeof hook.cursor_version === "string" || Array.isArray(hook.workspace_roots);
 var CURSOR_CONTEXT_LIMIT = Number(process.env.CROSSTALK_CURSOR_LIMIT) > 200 ? Number(process.env.CROSSTALK_CURSOR_LIMIT) : 1e4;
 var sessionId = hook.session_id ?? hook.sessionId ?? hook.thread_id ?? hook.conversation_id ?? hook.conversationId ?? process.env.CLAUDE_CODE_SESSION_ID ?? process.env.ANTIGRAVITY_CONVERSATION_ID;
+if (/^Elicitation(Result)?$/.test(eventName) && sessionId) {
+  try {
+    await Promise.resolve().then(() => init_asking());
+    noteAsking(sessionId, eventName === "Elicitation" ? { server: String(hook.mcp_server_name ?? hook.server_name ?? "an MCP server"), text: String(hook.message ?? "") } : null);
+  } catch {}
+  process.stdout.write("{}");
+  process.exit(0);
+}
 var isSessionStart = isAgy ? /^PreInvocation$/i.test(eventName) && Number(hook.invocationNum ?? 0) === 0 : isHermes ? /^pre_llm_call$/.test(eventName) && hook.extra?.is_first_turn === true : /^(SessionStart|sessionStart)$/.test(eventName);
 var AGENT_DIRS = new Set([".agents", ".agent", "_agents", "_agent"]);
 function agyCwd() {
@@ -7140,8 +7222,8 @@ function agyCwd() {
   if (Array.isArray(ws) && typeof ws[0] === "string" && ws[0])
     return ws[0];
   const here = process.cwd();
-  if (AGENT_DIRS.has(path57.basename(here)))
-    return path57.dirname(here);
+  if (AGENT_DIRS.has(path58.basename(here)))
+    return path58.dirname(here);
   return here;
 }
 var cwd = hook.cwd ?? hook.working_dir ?? hook.workspace_roots?.[0] ?? (isAgy ? agyCwd() : process.cwd());
@@ -7341,9 +7423,9 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
           } catch {}
       const away = isAway() && update((s) => takeRound(s, sessionId));
       if ((r.auto || away && r.items.length) && modActive(sessionId)) {
-        withStore((items, now) => upsert(items, { id: `tackle:${sessionId}:${r.id}`, kind: "attention", sessionId, text: tacklePrompt(r.items, ids, r.persons), auto: true, ts: now }, now));
+        withStore((items, now) => upsert(items, { id: `tackle:${sessionId}:${r.id}`, kind: "attention", sessionId, text: tacklePrompt(r.items, ids), auto: true, ts: now }, now));
       } else if (r.auto || away && r.items.length) {
-        process.stdout.write(JSON.stringify({ decision: "block", reason: tacklePrompt(r.items, ids, r.persons) }));
+        process.stdout.write(JSON.stringify({ decision: "block", reason: tacklePrompt(r.items, ids) }));
         process.exit(0);
       } else if ((r.items.length || r.persons.length) && mayRemind(sessionId)) {
         const n = r.items.length + r.persons.length;
@@ -7378,7 +7460,7 @@ if (restoreClient === "claude" && sessionId && typedByPerson && !process.env[BG_
     const was = update((s) => end(s));
     if (!was.workerWasOn)
       write5({ ...read7(), on: false });
-    const m = short2(gather2(was.since ?? Date.now() - 8 * 3600000, { ...was.usdAtStart !== undefined ? { usdAtStart: was.usdAtStart } : {} }));
+    const m = short2(gather2(was.since ?? Date.now() - 28800000, { ...was.usdAtStart !== undefined ? { usdAtStart: was.usdAtStart } : {} }));
     systemMessage = systemMessage ? `${systemMessage}
 ${m}` : m;
   } catch {}
@@ -7391,10 +7473,10 @@ async function registerSession() {
   if (socket) {
     try {
       const dir = sessionsDir();
-      for (const f of fs49.readdirSync(dir)) {
+      for (const f of fs50.readdirSync(dir)) {
         if (!f.endsWith(".json"))
           continue;
-        const e = JSON.parse(fs49.readFileSync(path57.join(dir, f), "utf8"));
+        const e = JSON.parse(fs50.readFileSync(path58.join(dir, f), "utf8"));
         if (e.sessionId === sessionId) {
           name = e.name ? baseName2(String(e.name)) : name;
           break;
@@ -7402,7 +7484,7 @@ async function registerSession() {
       }
     } catch {}
   } else {
-    name = hook.thread_name ?? (path57.basename(cwd) || name);
+    name = hook.thread_name ?? (path58.basename(cwd) || name);
   }
   const registered = await request({
     op: "register",

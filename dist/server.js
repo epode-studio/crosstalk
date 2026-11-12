@@ -13000,17 +13000,17 @@ var init_liveness = __esm(() => {
 });
 
 // src/urls/queue.ts
-import fs49 from "node:fs";
-import path54 from "node:path";
+import fs50 from "node:fs";
+import path55 from "node:path";
 function setQueueOff(off) {
   try {
     if (off)
-      fs49.writeFileSync(offFile(), String(Date.now()), { mode: 384 });
+      fs50.writeFileSync(offFile(), String(Date.now()), { mode: 384 });
     else
-      fs49.rmSync(offFile(), { force: true });
+      fs50.rmSync(offFile(), { force: true });
   } catch {}
 }
-var offFile = () => path54.join(P2.root, "queue-off");
+var offFile = () => path55.join(P2.root, "queue-off");
 var init_queue = __esm(() => {
   init_config();
   init_liveness();
@@ -21927,8 +21927,8 @@ var ServerResultSchema2 = union([
 
 // src/server.ts
 import net2 from "net";
-import fs53 from "fs";
-import path61 from "path";
+import fs54 from "fs";
+import path62 from "path";
 
 // src/config.ts
 import fs from "node:fs";
@@ -25313,14 +25313,31 @@ function readPaneQr(sessionId, now = Date.now()) {
   }
 }
 
+// src/ui-extra/asking.ts
+init_config();
+import fs47 from "node:fs";
+import path52 from "node:path";
+var dir6 = () => path52.join(P2.root, "asking");
+var fileOf5 = (sessionId) => path52.join(dir6(), `${sessionId.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+function asking(sessionId, now = Date.now()) {
+  try {
+    const o = JSON.parse(fs47.readFileSync(fileOf5(sessionId), "utf8"));
+    if (now - Number(o.at) > 86400000)
+      return;
+    return { server: String(o.server), text: String(o.text) };
+  } catch {
+    return;
+  }
+}
+
 // src/ui-extra/agents.ts
 init_restore();
 init_gather();
 init_uistate();
-import path52 from "node:path";
+import path53 from "node:path";
 init_status();
 init_pure();
-import fs47 from "node:fs";
+import fs48 from "node:fs";
 var alive3 = (pid) => {
   try {
     process.kill(pid, 0);
@@ -25338,14 +25355,14 @@ function agentsFrom(o) {
     const forYou = o.waiting(r.sessionId);
     const asks = o.asks?.(r.sessionId, r.cwd);
     const state = forYou > 0 || st === "waiting" || o.asking?.(r.sessionId) || asks ? "waiting" : st && st !== "idle" ? "working" : "idle";
-    const label = o.name(r.sessionId) ?? (r.name && !/^session-\d+$/.test(r.name) ? r.name : path52.basename(r.cwd) || r.sessionId.slice(0, 8));
+    const label = o.name(r.sessionId) ?? (r.name && !/^session-\d+$/.test(r.name) ? r.name : path53.basename(r.cwd) || r.sessionId.slice(0, 8));
     out.push({
       name: label,
       ...r.thread ? { thread: r.thread } : {},
       state,
       ...forYou ? { forYou } : {},
       ...state === "idle" ? { idleMin: Math.max(0, Math.floor((o.now - r.seenAt) / 60000)) } : {},
-      ...r.terminal?.tmux?.socket && path52.basename(r.terminal.tmux.socket) === "crosstalk" ? { background: true } : {},
+      ...r.terminal?.tmux?.socket && path53.basename(r.terminal.tmux.socket) === "crosstalk" ? { background: true } : {},
       ...r.sessionId === o.self ? { here: true } : {},
       sessionId: r.sessionId,
       ...asks ? { asks } : {},
@@ -25370,17 +25387,20 @@ function agents(self, now = Date.now()) {
   for (const i of Object.values(snap))
     if (!["answered", "handed", "muted"].includes(i.state))
       waiting.set(i.sessionId, (waiting.get(i.sessionId) ?? 0) + 1);
-  const asking = (id) => {
+  const asking2 = (id) => {
     const t = readTab(id);
     return (t?.base ?? t?.want) === "waiting";
   };
   const asks = (id, cwd) => {
+    const mcp = asking(id);
+    if (mcp)
+      return `${mcp.server} asks: ${mcp.text}`;
     const file = transcriptOf(id, cwd);
     if (!file)
       return;
     let m = 0;
     try {
-      m = fs47.statSync(file).mtimeMs;
+      m = fs48.statSync(file).mtimeMs;
     } catch {
       return;
     }
@@ -25394,7 +25414,7 @@ function agents(self, now = Date.now()) {
   };
   const spent = all3();
   const cost = (id) => usdText(spent.get(id.replace(/[^A-Za-z0-9._-]/g, "_"))?.usd) || undefined;
-  return agentsFrom({ recs: readAll(), status: (id) => reg.get(id), waiting: (id) => waiting.get(id) ?? 0, alive: alive3, name: (id) => nameOf2(id) ?? undefined, asking, asks, cost, self, now });
+  return agentsFrom({ recs: readAll(), status: (id) => reg.get(id), waiting: (id) => waiting.get(id) ?? 0, alive: alive3, name: (id) => nameOf2(id) ?? undefined, asking: asking2, asks, cost, self, now });
 }
 
 // src/ui-extra/pane.ts
@@ -25516,8 +25536,8 @@ function pane(o) {
 init_config();
 init_model();
 init_uistate();
-import fs48 from "node:fs";
-import path53 from "node:path";
+import fs49 from "node:fs";
+import path54 from "node:path";
 init_threadfile();
 init_running();
 init_pure();
@@ -25535,7 +25555,7 @@ init_pure();
 init_pure();
 
 // src/ui-extra/board.ts
-var boardFile = () => path53.join(P2.root, "board.html");
+var boardFile = () => path54.join(P2.root, "board.html");
 var esc2 = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 var slug3 = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "thread";
 var safeUrl = (u) => /^https?:\/\/[^\s"'<>]+$/.test(u) ? u : "";
@@ -25602,16 +25622,16 @@ function writeBoard(now = Date.now()) {
     } catch {}
     return { ...m, ...run.length ? { running: run } : {} };
   }).sort((a, b) => b.waiting.length - a.waiting.length || a.thread.localeCompare(b.thread));
-  fs48.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  fs49.mkdirSync(P2.root, { recursive: true, mode: 448 });
   const file = boardFile();
   const tmp = `${file}.${process.pid}.tmp`;
-  fs48.writeFileSync(tmp, boardHtml(threads, now), { mode: 384 });
-  fs48.renameSync(tmp, file);
+  fs49.writeFileSync(tmp, boardHtml(threads, now), { mode: 384 });
+  fs49.renameSync(tmp, file);
   return file;
 }
 function markOpened() {
   try {
-    fs48.writeFileSync(boardFile() + ".opened", String(Date.now()), { mode: 384 });
+    fs49.writeFileSync(boardFile() + ".opened", String(Date.now()), { mode: 384 });
   } catch {}
 }
 
@@ -25764,10 +25784,10 @@ async function callTool7(name, a, o) {
 
 // src/services/tools.ts
 init_service();
-import path55 from "node:path";
+import path56 from "node:path";
 var text3 = (out) => ({ content: [{ type: "text", text: out.text }], ...out.ok ? {} : { isError: true } });
 async function callTool8(name, a, o) {
-  const here = (c) => typeof c === "string" && c.trim() ? path55.resolve(o.cwd, c) : o.cwd;
+  const here = (c) => typeof c === "string" && c.trim() ? path56.resolve(o.cwd, c) : o.cwd;
   switch (name) {
     case "crosstalk_serve":
       return text3(serve({
@@ -26153,29 +26173,29 @@ function introText() {
 
 // src/attention/calm.ts
 init_config();
-import fs50 from "node:fs";
-import path56 from "node:path";
-var file15 = () => path56.join(P2.root, "calm.json");
+import fs51 from "node:fs";
+import path57 from "node:path";
+var file15 = () => path57.join(P2.root, "calm.json");
 var WINDOW_OPEN_MS = 2 * 60000;
 function read6() {
   try {
-    return JSON.parse(fs50.readFileSync(file15(), "utf8")) ?? {};
+    return JSON.parse(fs51.readFileSync(file15(), "utf8")) ?? {};
   } catch {
     return {};
   }
 }
 function update(fn) {
-  fs50.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  fs51.mkdirSync(P2.root, { recursive: true, mode: 448 });
   const lock = `${file15()}.lock`;
   let held = false;
   for (let i = 0;i < 40 && !held; i++) {
     try {
-      fs50.mkdirSync(lock);
+      fs51.mkdirSync(lock);
       held = true;
     } catch {
       try {
-        if (Date.now() - fs50.statSync(lock).mtimeMs > 5000)
-          fs50.rmdirSync(lock);
+        if (Date.now() - fs51.statSync(lock).mtimeMs > 5000)
+          fs51.rmdirSync(lock);
       } catch {}
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
     }
@@ -26184,13 +26204,13 @@ function update(fn) {
     const s = read6();
     const out = fn(s);
     const tmp = `${file15()}.${process.pid}.tmp`;
-    fs50.writeFileSync(tmp, JSON.stringify(s), { mode: 384 });
-    fs50.renameSync(tmp, file15());
+    fs51.writeFileSync(tmp, JSON.stringify(s), { mode: 384 });
+    fs51.renameSync(tmp, file15());
     return out;
   } finally {
     if (held)
       try {
-        fs50.rmdirSync(lock);
+        fs51.rmdirSync(lock);
       } catch {}
   }
 }
@@ -26271,21 +26291,21 @@ init_model();
 init_uistate();
 init_threadfile();
 init_pure();
-import fs51 from "node:fs";
-import path57 from "node:path";
-var file16 = () => path57.join(P2.root, "day.json");
+import fs52 from "node:fs";
+import path58 from "node:path";
+var file16 = () => path58.join(P2.root, "day.json");
 function read7() {
   try {
-    return JSON.parse(fs51.readFileSync(file16(), "utf8")) ?? {};
+    return JSON.parse(fs52.readFileSync(file16(), "utf8")) ?? {};
   } catch {
     return {};
   }
 }
 function write5(d) {
-  fs51.mkdirSync(P2.root, { recursive: true, mode: 448 });
+  fs52.mkdirSync(P2.root, { recursive: true, mode: 448 });
   const tmp = `${file16()}.${process.pid}.tmp`;
-  fs51.writeFileSync(tmp, JSON.stringify(d), { mode: 384 });
-  fs51.renameSync(tmp, file16());
+  fs52.writeFileSync(tmp, JSON.stringify(d), { mode: 384 });
+  fs52.renameSync(tmp, file16());
 }
 function threads2() {
   const st = readThreads();
@@ -27164,29 +27184,29 @@ async function callTool14(tool, a, o) {
 }
 
 // src/paths.ts
-import path58 from "node:path";
+import path59 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
-var dirOf2 = (metaUrl) => path58.dirname(fileURLToPath2(metaUrl));
-var rootFrom2 = (metaUrl) => path58.join(dirOf2(metaUrl), "..");
+var dirOf2 = (metaUrl) => path59.dirname(fileURLToPath2(metaUrl));
+var rootFrom2 = (metaUrl) => path59.join(dirOf2(metaUrl), "..");
 
 // src/registry.ts
 init_pure();
 import os8 from "node:os";
-import path59 from "node:path";
-var claudeConfigDir2 = (env = process.env) => env.CLAUDE_CONFIG_DIR || path59.join(os8.homedir(), ".claude");
-var sessionsDir2 = (env = process.env) => path59.join(claudeConfigDir2(env), "sessions");
+import path60 from "node:path";
+var claudeConfigDir2 = (env = process.env) => env.CLAUDE_CONFIG_DIR || path60.join(os8.homedir(), ".claude");
+var sessionsDir2 = (env = process.env) => path60.join(claudeConfigDir2(env), "sessions");
 var SESSIONS2 = sessionsDir2();
 
 // src/channels.ts
-import fs52 from "node:fs";
-import path60 from "node:path";
+import fs53 from "node:fs";
+import path61 from "node:path";
 import { execFileSync as execFileSync5 } from "node:child_process";
 var SHELLS2 = new Set(["sh", "bash", "dash", "zsh", "env", "fish"]);
 function argvOf(pid) {
   if (!pid || pid <= 1)
     return null;
   try {
-    const raw = fs52.readFileSync(`/proc/${pid}/cmdline`, "utf8");
+    const raw = fs53.readFileSync(`/proc/${pid}/cmdline`, "utf8");
     const a = raw.split("\x00");
     if (a[a.length - 1] === "")
       a.pop();
@@ -27201,7 +27221,7 @@ function argvOf(pid) {
 }
 function parentOf(pid) {
   try {
-    const stat = fs52.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const stat = fs53.readFileSync(`/proc/${pid}/stat`, "utf8");
     return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]) || 0;
   } catch {}
   try {
@@ -27220,7 +27240,7 @@ function hostArgv(registryPid) {
     const a = argvOf(pid);
     if (!a)
       return null;
-    if (!SHELLS2.has(path60.basename(a[0] ?? "")))
+    if (!SHELLS2.has(path61.basename(a[0] ?? "")))
       return a;
     pid = parentOf(pid);
   }
@@ -27252,7 +27272,7 @@ function entryNamesUs(entry, o) {
 function managedSettings() {
   const file = process.env.CROSSTALK_MANAGED_SETTINGS ?? (process.platform === "darwin" ? "/Library/Application Support/ClaudeCode/managed-settings.json" : process.platform === "win32" ? "C:\\Program Files\\ClaudeCode\\managed-settings.json" : "/etc/claude-code/managed-settings.json");
   try {
-    return JSON.parse(fs52.readFileSync(file, "utf8"));
+    return JSON.parse(fs53.readFileSync(file, "utf8"));
   } catch {
     return null;
   }
@@ -27354,10 +27374,10 @@ mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
 function selfRegistration() {
   try {
     const dir = sessionsDir2();
-    for (const f of fs53.readdirSync(dir)) {
+    for (const f of fs54.readdirSync(dir)) {
       if (!f.endsWith(".json"))
         continue;
-      const e = JSON.parse(fs53.readFileSync(path61.join(dir, f), "utf8"));
+      const e = JSON.parse(fs54.readFileSync(path62.join(dir, f), "utf8"));
       if (e.sessionId !== SESSION_ID)
         continue;
       return {
