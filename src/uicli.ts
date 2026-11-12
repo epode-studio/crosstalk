@@ -14,6 +14,7 @@
 
 import { daemonRunning, ensureDaemon, request } from "./client.ts"
 import * as openItems from "./attention/openitems.ts"
+import * as proposeMod from "./attention/propose.ts"
 import * as usage from "./ui-extra/usage.ts"
 import * as relay from "./attention/relay.ts"
 import * as calm from "./attention/calm.ts"
@@ -280,6 +281,11 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
         return print({ ok: out.ok, text: out.text, item: ui.snapshot()[id] })
       }
       // Something only the person could do, from an agent's open list: Done tells that agent.
+      // A proposal (src/attention/propose.ts): a yes hands it to its session, anything else lets it go.
+      if (id.startsWith("propose:")) {
+        if (action === "raised" || action === "later") return print(ui.withStore((items, now) => ui.act(items, id, action, now)))
+        return print(proposeMod.answer(id, action === "mute" ? proposeMod.NOT_NOW : (value ?? "").trim()))
+      }
       if (id.startsWith("you:")) {
         if (action === "raised" || action === "later") return print(ui.withStore((items, now) => ui.act(items, id, action, now)))
         const v = (value ?? "").trim()

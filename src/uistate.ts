@@ -72,6 +72,8 @@ export type UiItem = {
   ts?: number
   /** message: about this session's own thread, so the mod hands it to the agent without asking. */
   auto?: boolean
+  /** A proposal (src/attention/propose.ts): on a yes, this prompt goes to this session. */
+  delegate?: { sessionId: string; prompt: string }
 }
 
 type File = { v: 1; items: Record<string, UiItem> }

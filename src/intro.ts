@@ -27,7 +27,7 @@ export const THINGS: Group[] = [
       `"plan my day" — the open work, to pick today's few threads; agents take those`,
       `"wrap up for today" / "pick up where I left off" — what shipped, what's open for tomorrow`,
       `"I'm focusing for an hour" — only what stops an agent interrupts; a summary at the end`,
-      `"I'm going to bed" / "out for a walk" — agents keep going as far as they safely can; a summary when you're back`,
+      `"I'm going to bed" / "out for a walk" — do not disturb: everything waits in your inbox, and you hear what happened when you're back`,
     ],
   },
   {
@@ -52,7 +52,7 @@ export const THINGS: Group[] = [
     lines: [
       `"what did we decide about v1?" · "what happened while I was away?"`,
       `"ship it" — reviewed by another agent, behind a flag when it's risky`,
-      `a reply that ends with an "Open" list: crosstalk keeps them as tasks and offers to tackle them (pick Always and it just carries on)`,
+      `a reply that ends with an "Open" list: kept as tasks, and your inbox asks "Carry on?"; crosstalk proposes, you delegate`,
     ],
   },
   {

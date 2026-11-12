@@ -66,14 +66,13 @@ describe("an agent's question without the person", () => {
     expect(own.answer).toContain("safest, most reversible option yourself")
     expect(own.answer).toContain("as a decision in the thread")
   })
-  test("asked in main with a recommendation: says when it will go with it, and does, written down", () => {
+  test("asked in main with a recommendation: says what the agent recommends, and waits for the person", () => {
     process.env.CROSSTALK_DEFAULT_AFTER_MS = "0"
     const id = Rl.relay("work-1", { question: "Keep the Pi flat?", options: [{ label: "Pi flat (Recommended)" }, { label: "Keep any tilt" }] }, "main-s")
     const it = ui.snapshot()[id]
-    expect(it.defaultAnswer).toBe("Pi flat (Recommended)")
-    expect(it.text).toContain(`If you don't answer, it goes with "Pi flat (Recommended)"`)
-    expect(Rl.poll(id, { mainAlive: () => true })).toEqual({ answer: "Pi flat (Recommended)" })
-    expect(C.read().decisions?.at(-1)).toMatchObject({ answer: "Pi flat (Recommended)", how: "default" })
+    expect(it.defaultAnswer).toBeUndefined()
+    expect(it.text).toContain(`The agent recommends "Pi flat (Recommended)"`)
+    expect(Rl.poll(id, { mainAlive: () => true })).toEqual({}) // still waiting: never answered for them
     delete process.env.CROSSTALK_DEFAULT_AFTER_MS
   })
 })

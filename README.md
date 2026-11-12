@@ -144,67 +144,34 @@ you, it asks.
 - *"What did we decide about v1?"* · *"What happened while I was away?"*
 - *"Ship it."* Another agent reviews it first, and anything risky goes out
   behind a switch you turn on step by step.
-- No more *"tackle all open"*. When a reply ends with an Open list, crosstalk
-  keeps each item as a task in the thread and the agent carries on with the
-  new ones by itself, three rounds at most before it waits for you. What it
-  would have left to you, it does too; where it needs your yes (approving,
-  merging, a choice), it asks once in main, with the link, then does it.
-  What only waits (CI, a review)
-  is left alone, and picked up by itself once it moves. *"Stop tackling open
-  items by itself"* turns that off.
+- No more *"tackle all open"*. When a reply ends with an Open list, its items
+  are kept as tasks on that work, and closed again when they leave the list.
+  What the agent could carry on with comes to your inbox as one proposal:
+  *Carry on?* A yes hands it back to that session; nothing is sent before.
 
-**Your day**
-- The first session of the day says what happened since you were last
-  here, in one paragraph.
-- *"Plan my day."* The open work, thread by thread; pick today's few and
-  agents take those, the rest wait.
-- *"Wrap up for today."* What shipped and was decided, and what is open for
-  tomorrow. *"Pick up where I left off"* brings it back.
-- Back in a tab after a while, one line says where you left off there.
+**crosstalk proposes, you delegate**
 
-**crosstalk keeps things in shape by itself**
-- A session whose pull request merged and has gone quiet, or one idle for
-  three hours, comes up in main's inbox: close it? Nothing closes without your
-  yes. Never one that is busy, waiting on you, running a server or holding
-  uncommitted changes; *"resume <name>"* brings a closed one back.
-- crosstalk never ends a session you are in. When its context is full, Claude
-  Code compacts it as usual. *"Start sessions fresh instead of compacting"*
-  makes crosstalk start a fresh one from its thread in the same tab instead.
-- New agents open as tabs beside their thread's, so you can see them start;
-  their questions come to main. In main's pane, Enter on an agent takes you to
-  it (one in the background opens in a tab attached to it).
-- An agent that keeps spending without changing anything (five dollars in
-  half an hour, no edits) gets one question in main: stop it, or let it run.
-- Questions from a session that has since ended are put away by themselves.
-- Your pull request turns green and is approved: one question in main, merge
-  it? Pick *Always* and green PRs merge by themselves, one quiet line each.
-  *"Stop merging by itself"* goes back to asking.
-- When a pull request in a shared thread merges or its checks fail, your
-  teammates in that thread hear it once, in a line.
-- Merge queues are watched: where your PR is in line and about when it
-  merges. If it falls out on a failed check, it goes back in once (queue
-  checks are often flaky); if it fails again or conflicts, the session working
-  on it (or a new background agent) fixes it and puts it back. Taken out by
-  hand, it is left alone. A queue stuck far longer than usual is said once.
-  `CROSSTALK_NO_QUEUE=1` turns this off.
+crosstalk orchestrates; it does not act behind your back. Everything it
+would once have done by itself is a proposal in your inbox, with a one-key yes:
+
+- carry on with a session's open items, or pick up what it was waiting on once
+  that PR passed
+- merge a pull request that is green and approved
+- put a PR back in the merge queue, or have its session fix it
+- close a session that looks finished (closed sessions come back with
+  *"resume <name>"*)
+- stop an agent that keeps spending without changing anything
+
+An agent's own question comes to your inbox with what it recommends, and waits
+for you: nothing is answered for you. crosstalk never ends a session you are
+in: when its context is full, Claude Code compacts it as usual.
 
 **Less to carry**
-- *"I'm focusing for an hour."* Only what stops an agent interrupts you; the
-  rest waits, and one line at the end says what did.
-- *"I'm going to bed"* or *"out for a walk."* Agents keep going as far as
-  they safely can: a question takes the agent's own recommendation, or it
-  picks the safest reversible choice and writes down why; open lists are
-  tackled; open tasks are worked, two agents at most, paused near your plan's
-  limit. Permission prompts, deploys and anything only you can do wait. Your
-  first message back says what happened, what was decided for you, and what
-  it cost.
-- Questions that don't stop an agent come together, every half hour or so,
-  not one by one as they arise. After a dozen decisions in an hour,
-  crosstalk suggests a break and holds what can wait.
-- An agent's question that names a recommended option says so, and goes with
-  it if you don't answer within fifteen minutes. You can always change it.
-- A reply that ends with an Open list never stops you: its items are kept as
-  tasks, and one quiet line says so.
+- *"I'm focusing for an hour"*, *"I'm going to bed"*: do not disturb. Only what
+  stops an agent interrupts you; everything else waits in your inbox, and your
+  first message back says what happened.
+- When a pull request in a shared piece of work merges or its checks fail,
+  teammates on it see it in their Lately, never as an interruption.
 
 **When something is off**
 - *"Is crosstalk OK?"* It checks itself and tells you what to fix.

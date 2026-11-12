@@ -90,9 +90,10 @@ export function relay(sessionId: string, q: Question, main: string, now = Date.n
   } catch {}
   if (where) described.unshift(`Where it is: ${where}`)
   // The agent's own recommendation is taken if nobody answers in a while, and said so.
+  // Never answered for the person: it waits until they answer (crosstalk proposes, the person decides).
   const rec0 = Calm.recommended(opts)
-  const defaultAt = rec0 ? now + Calm.DEFAULT_AFTER_MS() : undefined
-  if (rec0 && defaultAt) described.push(`If you don't answer, it goes with "${clean(rec0.label, 60)}" at ${new Date(defaultAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}.`)
+  const defaultAt: number | undefined = undefined
+  if (rec0) described.push(`The agent recommends "${clean(rec0.label, 60)}".`)
   ui.withStore((items, t) =>
     ui.upsert(
       items,

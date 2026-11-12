@@ -313,16 +313,10 @@ export async function callLegacy(name: string, a: any, o: Ctx): Promise<Result |
         return text(`◢ crosstalk: focus until ${new Date(until).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}. Only what stops an agent will interrupt; the rest waits, and a summary comes at the end. Say "I'm back" to end it sooner.`)
       }
       if (a.mode === "away") {
-        // Starts work by itself: only on the person's own words, typed in this session.
-        const said = Transcripts.lastPrompt(Transcripts.transcriptOf(SESSION_ID, CWD))
-        if (!said || now - said.at > 15 * 60_000 || !/\b(bed|sleep|night|walk|away|leav\w*|out|lunch|dinner|gym|errands?|afk|keep (?:going|working)|back (?:in|later|tomorrow))\b/i.test(said.text))
-          return text(`◢ crosstalk: away mode lets agents keep going by themselves, so it needs your user's own words, typed here ("I'm going to bed"). Nothing was changed.`)
-        const before = Worker.read()
-        Calm.update((s) => Calm.startAway(s, { now, workerWasOn: before.on, usd: Summary.totalUsd(), hours: Number(a.hours) || undefined }))
-        // The board is worked while away (two agents at most, paused near the plan's limit).
-        if (!before.on) Worker.write({ ...before, on: true, tried: [] })
-        Openitems.setAlways(true)
-        return text(`◢ crosstalk: away mode. Agents keep going as far as they safely can: a question takes the agent's own recommendation, or it picks the safest reversible choice and writes down why; open lists are tackled; open tasks are worked, at most two agents, paused near your plan's limit. Permission prompts, deploys and anything only you can do wait for you. Your first message back gives the summary.`)
+        // Do not disturb, nothing more: crosstalk proposes, the person delegates, so nothing is answered,
+        // tackled or started for them while they are gone. It all waits in the inbox, with what happened.
+        Calm.update((s) => Calm.startFocus(s, Math.max(60, (Number(a.hours) || 10) * 60), now))
+        return text(`◢ crosstalk: do not disturb until you are back. Nothing is answered or started for you; questions and proposals wait in your inbox, and your first message back says what happened. Say "I'm back" to end it sooner.`)
       }
       if (a.mode === "plan") return text(Day.plan())
       if (a.mode === "wrap_up") return text(Day.wrapUp(now))

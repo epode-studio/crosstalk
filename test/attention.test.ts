@@ -581,7 +581,7 @@ describe("the service", () => {
     expect(w.pushed).toEqual([])
   })
 
-  test("a green PR: one question; Merge it merges; Not yet waits for the next green run; Always merges without asking", async () => {
+  test("a green PR: one question; Merge it merges; Not yet waits for the next green run; never merged without asking", async () => {
     const w = world()
     w.add("s-auth", ["src/auth/a.ts", "src/auth/b.ts", "src/auth/c.ts"])
     const url = "https://github.com/acme/api/pull/12"
@@ -598,7 +598,7 @@ describe("the service", () => {
     let q = open()
     expect(q.length).toBe(1)
     expect(q[0].question).toBe("auth · PR #12 is green and approved. Merge it?")
-    expect(q[0].options).toEqual([S.MERGE_IT, S.NOT_YET, S.ALWAYS_MERGE])
+    expect(q[0].options).toEqual([S.MERGE_IT, S.NOT_YET])
     expect(q[0].sessionId).toBe("s-auth")
     // Not yet: nothing merged; asked again only on the next green run, which replaces any older question.
     let r = await w.svc.act("s-auth", q[0].id, "answer", S.NOT_YET)
@@ -619,27 +619,15 @@ describe("the service", () => {
     expect(w.merged).toEqual([url])
     expect((await w.svc.act("s-auth", q[0].id, "answer", S.MERGE_IT)).ok).toBe(false)
     expect(w.merged.length).toBe(1)
-    // Always: merged, and from then on without asking, with one quiet line.
-    await tick()
-    w.svc.prChanged(pr, { kind: "passed" }, green)
-    r = await w.svc.act("s-auth", open()[0].id, "answer", S.ALWAYS_MERGE)
-    expect(String(r.text)).toContain("merge by themselves from now on")
-    expect(w.merged.length).toBe(2)
-    w.svc.takeNotes("s-auth")
-    await tick()
-    expect(w.svc.prChanged(pr, { kind: "passed" }, green)).toBe("merge")
-    await tick()
-    expect(open().length).toBe(0)
-    expect(w.merged.length).toBe(3)
-    expect(w.svc.takeNotes("s-auth").map((n) => n.text)).toEqual(["◢ crosstalk: merging auth · PR #12 (you said always merge green PRs). It merges once GitHub allows."])
-    // The way back: asked again.
-    expect(await w.svc.handle({ op: "attn_merge_rule", on: false }, undefined)).toEqual({ ok: true, text: "◢ crosstalk: you will be asked before a green PR is merged." })
+    // Even with an "always" from before: still a question, never merged by itself.
+    await w.svc.handle({ op: "attn_merge_rule", on: true }, undefined)
     await tick()
     expect(w.svc.prChanged(pr, { kind: "passed" }, green)).toBe("ask")
+    expect(w.merged.length).toBe(1)
     // Muted: the same as not yet.
     r = await w.svc.act("s-auth", open()[0].id, "mute", undefined)
     expect(r.ok).toBe(true)
-    expect(w.merged.length).toBe(3)
+    expect(w.merged.length).toBe(1)
   })
 
   test("merging: CROSSTALK_NO_MERGE=1 turns it all off; a failed merge says so", async () => {

@@ -734,7 +734,8 @@ export class AttentionService {
    * about the same PR still waiting is put away first.
    */
   prChanged(pr: MergePr, change: Change, view: PrView): Mg.Decision {
-    const d = Mg.decide({ change, view, always: this.st.mergeRule === true, env: this.env })
+    // Always asked: crosstalk proposes, the person decides (an "always" kept from before counts for nothing).
+    const d = Mg.decide({ change, view, always: false, env: this.env })
     if (d === "none") return d
     if (d === "merge") {
       void this.merge(pr, true)
@@ -758,7 +759,7 @@ export class AttentionService {
       ...(pr.thread ? { thread: pr.thread } : {}),
       question: Mg.question(pr.label, view),
       text: "Merging waits for anything else GitHub requires. Always: your green PRs merge without asking.",
-      options: [MERGE_IT, NOT_YET, ALWAYS_MERGE],
+      options: [MERGE_IT, NOT_YET],
     })
     this.d.log(`attention: ${pr.label} is green; asked whether to merge it`)
     return d

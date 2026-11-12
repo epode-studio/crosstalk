@@ -40,6 +40,7 @@ import * as shots from "./urls/shots/index.ts"
 import * as intro from "./intro.ts"
 import * as tabStatus from "./terminal/status.ts"
 import * as openItems from "./attention/openitems.ts"
+import * as proposeMod from "./attention/propose.ts"
 import * as calmMod from "./attention/calm.ts"
 import * as dayMod from "./attention/day.ts"
 import * as mainS from "./main.ts"
@@ -483,15 +484,22 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
               openItems.rememberTask(sessionId, String(t.id), text)
             }
           } catch {}
-      // Away: open lists are tackled by themselves, a few rounds per session.
-      const away = calmMod.isAway() && calmMod.update((s) => calmMod.takeRound(s, sessionId))
-      if ((r.auto || (away && r.items.length)) && ui.modActive(sessionId)) {
-        // With the mod: it sends this when the turn is over and the prompt is empty, as "Prompt from
-        // the crosstalk plugin": never late, never shown as a hook error.
-        ui.withStore((items, now) => ui.upsert(items, { id: `tackle:${sessionId}:${r.id}`, kind: "attention", sessionId, text: openItems.tacklePrompt(r.items, ids), auto: true, ts: now }, now))
-      } else if (r.auto || (away && r.items.length)) {
-        process.stdout.write(JSON.stringify({ decision: "block", reason: openItems.tacklePrompt(r.items, ids) }))
-        process.exit(0)
+      // crosstalk proposes, the person delegates: what the agent could carry on with is one question in main
+      // (else in this session), and only a yes hands it back to this session.
+      if (r.auto) {
+        const main = mainS.readMain()
+        const who = thread ?? restore.readOne(sessionId)?.thread ?? (path.basename(cwd) || "a session")
+        const n = r.items.length
+        proposeMod.propose({
+          key: `open:${sessionId}:${r.id}`,
+          askIn: main?.sessionId ?? sessionId,
+          forSession: sessionId,
+          from: who,
+          ...(thread ? { thread } : {}),
+          question: `${who}: ${n} open item${n === 1 ? "" : "s"} its agent can do. Carry on?`,
+          text: r.items.slice(0, 6).map((x) => `• ${x}`).join("\n"),
+          prompt: openItems.tacklePrompt(r.items, ids),
+        })
       } else if ((r.items.length || r.persons.length) && openItems.mayRemind(sessionId)) {
         // Carrying on is off, or the round is used: one quiet line, at most once an hour per session.
         const n = r.items.length + r.persons.length

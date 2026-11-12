@@ -60,6 +60,7 @@ import { createAttention } from "./attention/daemon.ts"
 import type { AttentionService } from "./attention/service.ts"
 import { spawnAgents, spawnedAt } from "./spawn.ts"
 import * as queueMod from "./urls/queue.ts"
+import * as proposeMod from "./attention/propose.ts"
 import * as restoreMod from "./restore.ts"
 import * as mainS from "./main.ts"
 import * as mergeMod from "./urls/merge.ts"
@@ -2948,25 +2949,24 @@ control.listen(P.daemonSock, () => {
           if (s.kind === "stuck") tell(`◢ ${line}`)
           if (s.kind !== "dequeued") return log(`queue: ${line}`)
           if (s.action === "leave") return tell(`◢ ${line}`)
-          if (s.action === "requeue") {
-            void mergeMod.ghMerge(u.url, u.worktree).then((r) => {
-              const m = r.ok ? `◢ ${line}` : `◢ ${u.label} left the merge queue and could not be put back (${r.text}). It needs a look.`
-              tell(m)
-              log(`queue: ${m}`)
-            })
-            return
+          // Proposed, never done by itself: the session working on it puts it back, or fixes it, on a yes.
+          const live = [...new Set([...(u.sessionId ? [u.sessionId] : []), ...(t ? threads.sessionsIn([t.id]) : [])])].filter((sid) => sessions.has(sid))
+          const sid = live.find((x) => x !== main) ?? live[0]
+          if (!sid) {
+            tell(`◢ ${line} No session is open on it, so nothing was proposed.`)
+            return void log(`queue: ${line}`)
           }
-          // Fixed by the session working on it, sent by its mod once idle; or, with none open, a background agent.
-          const prompt = queueMod.fixPrompt(u.label, u.url, s)
-          const live = [...new Set([...(u.sessionId ? [u.sessionId] : []), ...(t ? threads.sessionsIn([t.id]) : [])])].filter((sid) => sessions.has(sid) && sid !== main)
-          if (live.length && !parkMod.isParked(name)) {
-            const sid = live[0]!
-            ui.withStore((items, now) => ui.upsert(items, { id: `tackle:${sid}:queue-${u.id}-${u.queueSeenRemoval ?? Date.now()}`, kind: "attention", sessionId: sid, text: prompt, auto: true, ts: now }, now))
-            tell(`◢ ${line}`)
-          } else if (u.worktree && !parkMod.isParked(name)) {
-            const r = spawnAgents({ task: prompt, name: name ?? "unblock", cwd: u.worktree, background: true, by: "crosstalk" })
-            tell(r.ok ? `◢ ${line} An agent is on it in the background.` : `◢ ${u.label} left the merge queue and needs fixing; crosstalk could not start an agent (${r.text.replace(/^◢ crosstalk: /, "")}).`)
-          } else tell(`◢ ${u.label} left the merge queue and needs fixing${name && parkMod.isParked(name) ? ` (${name} is parked, so nothing was started)` : ""}.`)
+          const back = `Put ${u.label} (${u.url}) back in the merge queue: gh pr merge ${u.url} --auto (the same method it used before). Then say whether it went in.`
+          proposeMod.propose({
+            key: `queue:${u.id}:${u.queueSeenRemoval ?? Date.now()}`,
+            askIn: main ?? sid,
+            forSession: sid,
+            from: sessions.get(sid)?.name ?? "a session",
+            ...(name ? { thread: name } : {}),
+            question: s.action === "requeue" ? `${u.label} left the merge queue (${s.reason || "a check failed"}), often a flaky check. Put it back?` : `${u.label} left the merge queue (${s.reason || "it needs a fix"}). Have ${sessions.get(sid)?.name ?? "its session"} fix it and put it back?`,
+            prompt: s.action === "requeue" ? back : queueMod.fixPrompt(u.label, u.url, s),
+            yes: s.action === "requeue" ? "Put it back" : "Fix it",
+          })
           log(`queue: ${line}`)
         } catch (e) {
           log(`queue: ${(e as Error).message}`)
@@ -2989,7 +2989,17 @@ control.listen(P.daemonSock, () => {
           if ((c.kind === "passed" || c.kind === "merged") && !parkMod.isParked(t?.meta.value.name))
             for (const sid of to) {
               const prompt = openItemsMod.chase(sid, text)
-              if (prompt) ui.withStore((items, now) => ui.upsert(items, { id: `tackle:${sid}:chase-${u.id}-${c.kind}`, kind: "attention", sessionId: sid, text: prompt, auto: true, ts: now }, now))
+              // Proposed, never sent by itself: "PR #12 passed; auth was waiting on it. Carry on?"
+              if (prompt)
+                proposeMod.propose({
+                  key: `chase:${sid}:${u.id}:${c.kind}`,
+                  askIn: coord.mainId() ?? sid,
+                  forSession: sid,
+                  from: sessions.get(sid)?.name ?? "a session",
+                  ...(t ? { thread: t.meta.value.name } : {}),
+                  question: `${text.replace(/\s*\(https?:[^)]*\)\.?$/, "")} ${sessions.get(sid)?.name ?? "A session"} was waiting on it. Carry on?`,
+                  prompt,
+                })
             }
           if (c.kind === "failed" && t) threads.task(undefined, { op: "add", text: ciMod.investigation(u.label, u.url, c.failed), thread: t.meta.value.name })
           // Not pasted into the working sessions: Lately and main's pane show it, and an agent waiting on it is

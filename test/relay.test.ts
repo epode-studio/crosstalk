@@ -77,3 +77,21 @@ describe("questions nobody can receive any more", () => {
     expect(ui.snapshot()["you:old1:h"].state).toBe("muted")
   })
 })
+
+describe("crosstalk proposes, the person delegates", () => {
+  test("a proposal waits in the inbox; yes hands its prompt to its session, no lets it go", async () => {
+    const Pr = await import("../src/attention/propose.ts")
+    Pr.propose({ key: "t1", askIn: "main-s", forSession: "work-1", from: "auth", question: "auth: 2 open items its agent can do. Carry on?", prompt: "Tackle the open items you listed: …" })
+    Pr.propose({ key: "t1", askIn: "main-s", forSession: "work-1", from: "auth", question: "again", prompt: "x" }) // once
+    const it = ui.snapshot()[Pr.idOf("t1")]!
+    expect(it.sessionId).toBe("main-s")
+    expect(it.options).toEqual([Pr.DO_IT, Pr.NOT_NOW])
+    expect(Object.values(ui.snapshot()).some((i) => i.id.startsWith("tackle:work-1:"))).toBe(false) // nothing sent before a yes
+    expect(Pr.answer(it.id, Pr.DO_IT).ok).toBe(true)
+    const sent = Object.values(ui.snapshot()).find((i) => i.id === `tackle:work-1:${it.id}`)!
+    expect(sent.text).toBe("Tackle the open items you listed: …")
+    Pr.propose({ key: "t2", askIn: "main-s", forSession: "work-1", from: "auth", question: "q", prompt: "p2" })
+    expect(Pr.answer(Pr.idOf("t2"), Pr.NOT_NOW).ok).toBe(true)
+    expect(Object.values(ui.snapshot()).some((i) => i.id === `tackle:work-1:${Pr.idOf("t2")}`)).toBe(false)
+  })
+})
