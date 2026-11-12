@@ -192,9 +192,15 @@ export async function uiCmd(argv: string[], root: string): Promise<void> {
     case "show": {
       const target = arg(argv, "--target") ?? ""
       if (!target) return print({ ok: false, error: "--target is needed" })
-      const bg = spawnMod.readSpawned().find((r) => r.sessionId === target && r.background && !r.removedAt)
-      if (bg) return print(spawnMod.show({ name: bg.name, cwd: bg.cwd, by: session }))
-      return print(focusSession({ sessionId: target }))
+      const own = spawnMod.readSpawned().find((r) => r.sessionId === target && !r.removedAt && (r.background || r.claudeBg))
+      if (own) return print(spawnMod.show({ name: own.name, cwd: own.cwd, by: session }))
+      // Its tab, in front; with no tab to bring forward (a background session of Claude Code's own), attached in a new one.
+      const f = focusSession({ sessionId: target })
+      if (f.ok) return print(f)
+      // A tab that cannot be brought forward is still a tab: say where, rather than attach a second view to it.
+      const term = restore.readOne(target)?.terminal as { tty?: string } | undefined
+      if (f.found && term?.tty) return print(f)
+      return print(spawnMod.attachById(target, { by: session }) ?? f)
     }
     // A server or preview row in the pane pressed: in the browser (http and https only, never a shell).
     case "open-url": {

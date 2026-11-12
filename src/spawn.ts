@@ -575,6 +575,24 @@ export function show(o: { name: string; cwd: string; env?: NodeJS.ProcessEnv; by
   return { ok: true, text: `◢ crosstalk: opened ${session} in a new tab in ${r.opened.where}. Closing that tab leaves it running.` }
 }
 
+/**
+ * Any Claude Code session that has no tab to bring forward (a background session Claude Code
+ * started, or one whose tab is gone while it runs on): `claude attach <id>` in a new tab.
+ * Null when this claude has no attach.
+ */
+export function attachById(sessionId: string, o: { env?: NodeJS.ProcessEnv; by?: string } = {}): { ok: boolean; text: string } | null {
+  const env = o.env ?? process.env
+  const claude = which("claude", env) ?? "claude"
+  if (!bgx.claudeBackground(claude, env).attach) return null
+  const rec = R.readOne(sessionId)
+  const cwd = rec?.cwd && fs.existsSync(rec.cwd) ? rec.cwd : process.cwd()
+  const short = sessionId.slice(0, 8)
+  const name = rec?.name ?? short
+  const r = openForRepo([{ cwd, argv: bgx.attachArgv(claude, short), name }], { cwd, envVars: env, by: o.by })
+  if (r.opened.kind === "manual" || !r.ok) return { ok: r.opened.kind === "manual", text: `◢ crosstalk: to open ${name}, run:\n  ${R.shq(claude)} attach ${short}` }
+  return { ok: true, text: `◢ crosstalk: opened ${name} in a new tab. Leaving it leaves it running.` }
+}
+
 /** For the hook: the name a spawned agent's session goes by, claimed by its session id. */
 export function claim(sessionId: string, cwd: string): SpawnRec | null {
   const rec = spawnedAt(cwd)

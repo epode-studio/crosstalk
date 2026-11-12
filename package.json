@@ -32,7 +32,7 @@
     "test:extras": "bun test test/extras.test.ts && bash test/extras.sh",
     "test:attention": "bun test test/attention.test.ts test/openitems.test.ts && bun test test/relay.test.ts && bun test test/calm.test.ts && bun test test/park.test.ts && bun test test/handover.test.ts && bash test/attention.sh",
     "test:shipping": "bun test test/shipping.test.ts test/shipping-next.test.ts && bash test/shipping.sh && bash test/shipping-peers.sh",
-    "test:uiextra": "bun test test/uiextra.test.ts test/snapshots/mod.test.ts && bun test test/usage.test.ts && bash test/uiextra.sh && bash test/mod.sh",
+    "test:uiextra": "bun test test/attachbyid.test.ts && bun test test/uiextra.test.ts test/snapshots/mod.test.ts && bun test test/usage.test.ts && bash test/uiextra.sh && bash test/mod.sh",
     "test:repotrust": "bun test test/repotrust.test.ts && bash test/repotrust.sh",
     "test:gather": "bun test test/gather.test.ts && bash test/gather.sh",
     "test:channels": "bun test test/channels.test.ts && bash test/channels.sh",
