@@ -5,6 +5,7 @@
 // Read every second while the pane is open, so nothing here runs a process per
 // session: liveness is a signal 0, the state is Claude Code's own registry.
 
+import { asking as mcpAsking } from "./asking.ts"
 import path from "node:path"
 import * as R from "../restore.ts"
 import { readRegistry } from "../gather.ts"
@@ -86,6 +87,9 @@ export function agents(self?: string, now = Date.now()): PaneAgent[] {
   }
   // A transcript is read only when it changed since the last look: the pane asks every second.
   const asks = (id: string, cwd: string) => {
+    // An MCP server's question in that tab first: nothing in the transcript shows it.
+    const mcp = mcpAsking(id)
+    if (mcp) return `${mcp.server} asks: ${mcp.text}`
     const file = T.transcriptOf(id, cwd)
     if (!file) return undefined
     let m = 0

@@ -367,3 +367,14 @@ describe("main's inbox rows", () => {
     expect(pure.inboxChoices({ kind: "message" })).not.toContain(pure.MORE)
   })
 })
+
+describe("an MCP server asking in a session's tab", () => {
+  test("noted while open, gone once answered, and stale after a day", async () => {
+    const A = await import("../src/ui-extra/asking.ts")
+    A.noteAsking("el1", { server: "palpable-staging", text: "Delete this project? This can't be undone." }, 1_800_000_000_000)
+    expect(A.asking("el1", 1_800_000_000_000 + 1000)).toEqual({ server: "palpable-staging", text: "Delete this project? This can't be undone." })
+    expect(A.asking("el1", 1_800_000_000_000 + 86_400_001)).toBe(undefined)
+    A.noteAsking("el1", null)
+    expect(A.asking("el1", 1_800_000_000_000 + 1000)).toBe(undefined)
+  })
+})

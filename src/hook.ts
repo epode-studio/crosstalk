@@ -132,6 +132,18 @@ const sessionId: string | undefined =
   process.env.CLAUDE_CODE_SESSION_ID ??
   process.env.ANTIGRAVITY_CONVERSATION_ID
 
+// An MCP server asking the person something in this session's tab (a confirmation, a form): noted, so main's
+// pane shows this session as asking in its own tab, with the question, instead of it sitting there unseen.
+// Never answered or held here: the dialog is the person's.
+if (/^Elicitation(Result)?$/.test(eventName) && sessionId) {
+  try {
+    const { noteAsking } = await import("./ui-extra/asking.ts")
+    noteAsking(sessionId, eventName === "Elicitation" ? { server: String(hook.mcp_server_name ?? hook.server_name ?? "an MCP server"), text: String(hook.message ?? "") } : null)
+  } catch {}
+  process.stdout.write("{}")
+  process.exit(0)
+}
+
 /**
  * agy has no SessionStart. PreInvocation runs before every model call and
  * numbers them from zero, so the first one is where a session announces itself.
@@ -476,9 +488,9 @@ if (restoreClient === "claude" && sessionId && /^Stop$/.test(eventName) && !proc
       if ((r.auto || (away && r.items.length)) && ui.modActive(sessionId)) {
         // With the mod: it sends this when the turn is over and the prompt is empty, as "Prompt from
         // the crosstalk plugin": never late, never shown as a hook error.
-        ui.withStore((items, now) => ui.upsert(items, { id: `tackle:${sessionId}:${r.id}`, kind: "attention", sessionId, text: openItems.tacklePrompt(r.items, ids, r.persons), auto: true, ts: now }, now))
+        ui.withStore((items, now) => ui.upsert(items, { id: `tackle:${sessionId}:${r.id}`, kind: "attention", sessionId, text: openItems.tacklePrompt(r.items, ids), auto: true, ts: now }, now))
       } else if (r.auto || (away && r.items.length)) {
-        process.stdout.write(JSON.stringify({ decision: "block", reason: openItems.tacklePrompt(r.items, ids, r.persons) }))
+        process.stdout.write(JSON.stringify({ decision: "block", reason: openItems.tacklePrompt(r.items, ids) }))
         process.exit(0)
       } else if ((r.items.length || r.persons.length) && openItems.mayRemind(sessionId)) {
         // Carrying on is off, or the round is used: one quiet line, at most once an hour per session.

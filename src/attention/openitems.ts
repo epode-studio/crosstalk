@@ -203,7 +203,7 @@ export function tacklePrompt(items: string[], ids: string[] = [], persons: strin
           `Tackle the open items you listed:`,
           ...items.map((x, i) => `${i + 1}. ${x}${ids[i] ? ` (task ${ids[i]})` : ""}`),
           ``,
-          `Do each one you can do yourself${ids.length ? `, and mark it done with crosstalk_thread action "note", kind "task", op "done" and its task id` : ""}. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). For any that needs a decision only the person can make, ask them (one question for all of those, at the end) instead of guessing.`,
+          `Do each one you can do yourself${ids.length ? `, and mark it done with crosstalk_thread action "note", kind "task", op "done" and its task id` : ""}. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). Do nothing that cannot be undone (deleting, deploying, merging, sending, paying) unless the person asked for it in this conversation; leave those, and anything only the person can decide, in your Open list for them.`,
         ]
       : []),
     ...(persons.length
@@ -287,7 +287,9 @@ export function atStop(o: { reply: string; sessionId: string; continuing: boolea
   // Only something new starts a round: a list that only waits, or the same items
   // reworded (half their words in common with ones seen), never does. What was left for the person rides
   // along when there is a round (the agent does it, or asks them in main and then does it).
-  const fresh = [...items, ...newPersons].filter((x) => !seen.some((y) => same(x, y, 0.5)))
+  // Only what the agent can do itself starts a round by itself; what is the person's waits for them to say
+  // "tackle them", never pushed at the agent unasked (it tried a delete that could not be undone).
+  const fresh = items.filter((x) => !seen.some((y) => same(x, y, 0.5)))
   const auto = on && !o.continuing && fresh.length > 0 && rounds < CHAIN_MAX
   writePrefs({ ...p, seenItems: { ...(p.seenItems ?? {}), [o.sessionId]: kept }, ...(auto ? { chain: { ...(p.chain ?? {}), [o.sessionId]: rounds + 1 } } : {}), ...(waiting.length ? { waitingOn: { ...(p.waitingOn ?? {}), [o.sessionId]: { items: waiting, at: now } } } : {}) })
   return { items, waiting, persons: newPersons, id, fresh: !o.continuing, auto }

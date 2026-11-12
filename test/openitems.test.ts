@@ -88,7 +88,7 @@ describe("at the end of a turn", () => {
     expect(O.atStop({ reply: REPLY.trimEnd() + "\n- Rename the feature flag in config.\n", sessionId: "s1", continuing: false })!.auto).toBe(false)
     O.setAlways(true)
   })
-  test("what was left for the person goes back to the agent: it does it, or asks them in main and then does it", () => {
+  test("what was left for the person never starts a round by itself: it waits for them to say tackle them", () => {
     const reply = `All of this is waiting on you: what your console printed, then the four prompts.
 
 **Open**
@@ -98,7 +98,7 @@ describe("at the end of a turn", () => {
 `
     const r = O.atStop({ reply, sessionId: "s2", continuing: false })!
     expect(r.items).toEqual([])
-    expect(r.auto).toBe(true)
+    expect(r.auto).toBe(false) // the agent once tried a delete that could not be undone
     expect(r.persons).toHaveLength(3)
     const p = O.tacklePrompt(r.items, [], r.persons)
     expect(p).toContain("They want you to do these, not to be handed them")
@@ -112,7 +112,7 @@ describe("at the end of a turn", () => {
   test("the turn that tackles them lists them and says what to leave to the person", () => {
     const p = O.tacklePrompt(["ship B", "decide the Pi pose"])
     expect(p).toContain("1. ship B\n2. decide the Pi pose")
-    expect(p).toContain("ask them (one question for all of those, at the end) instead of guessing")
+    expect(p).toContain("Do nothing that cannot be undone")
   })
 })
 
