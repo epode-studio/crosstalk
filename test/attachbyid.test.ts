@@ -18,3 +18,11 @@ test("a session with no tab is attached by its id, or the command is given", asy
   expect(r.text).toContain("attach 062ad8c8")
   expect(S.attachById("062ad8c8-1111", { env: { ...env, CROSSTALK_CLAUDE_BG: "0" } })).toBe(null)
 })
+
+test("the tab already attached to a session is found by its claude attach process", async () => {
+  const S = await import("../src/spawn.ts")
+  const ps = () => ["ttys003  -zsh", "ttys007  /opt/homebrew/bin/claude attach 062ad8c8", "??       claude attach 99999999", "ttys009  claude --resume abc"].join("\n")
+  expect(S.attachedTty(["062ad8c8"], ps)).toBe("/dev/ttys007")
+  expect(S.attachedTty(["99999999"], ps)).toBe(null) // no terminal: a background process, not a tab
+  expect(S.attachedTty(["probe"], ps)).toBe(null)
+})

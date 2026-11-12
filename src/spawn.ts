@@ -541,10 +541,13 @@ export function show(o: { name: string; cwd: string; env?: NodeJS.ProcessEnv; by
   const env = o.env ?? process.env
   const rec = findAgent(o.name)
   if (rec?.claudeBg) {
-    // Claude Code's own background session: `claude attach` in a new tab.
+    // Claude Code's own background session: the tab already attached to it, in front; else `claude attach` in a new tab.
     const claude = which("claude", env) ?? "claude"
-    const r = openForRepo([{ cwd: rec.cwd, argv: bgx.attachArgv(claude, rec.name), name: rec.name, thread: rec.thread }], { cwd: rec.cwd, envVars: env, by: o.by, thread: rec.thread })
-    if (r.opened.kind === "manual" || !r.ok) return { ok: r.opened.kind === "manual", text: `◢ crosstalk: to watch ${rec.name}, run:\n  ${R.shq(claude)} attach ${R.shq(rec.name)}` }
+    const id = rec.sessionId ? rec.sessionId.slice(0, 8) : rec.name
+    const front = frontAttached([id, rec.name, ...(rec.sessionId ? [rec.sessionId] : [])], env)
+    if (front) return front
+    const r = openForRepo([{ cwd: rec.cwd, argv: bgx.attachArgv(claude, id), name: rec.name, thread: rec.thread }], { cwd: rec.cwd, envVars: env, by: o.by, thread: rec.thread })
+    if (r.opened.kind === "manual" || !r.ok) return { ok: r.opened.kind === "manual", text: `◢ crosstalk: to watch ${rec.name}, run:\n  ${R.shq(claude)} attach ${R.shq(id)}` }
     return { ok: true, text: `◢ crosstalk: opened ${rec.name} in a new tab in ${r.opened.where}. Leaving it leaves it running.` }
   }
   const session = rec?.tmux ?? (tmuxHas(slug(o.name), env) ? slug(o.name) : null)
@@ -575,6 +578,29 @@ export function show(o: { name: string; cwd: string; env?: NodeJS.ProcessEnv; by
   return { ok: true, text: `◢ crosstalk: opened ${session} in a new tab in ${r.opened.where}. Closing that tab leaves it running.` }
 }
 
+/** The terminal (tty) of a running `claude attach <one of ids>`, from ps: the tab already showing it. */
+export function attachedTty(ids: string[], ps: () => string = () => String(spawnSync("ps", ["-axo", "tty=,args="], { encoding: "utf8", timeout: 3000 }).stdout ?? "")): string | null {
+  const want = new Set(ids.filter(Boolean))
+  for (const line of ps().split("\n")) {
+    const m = /^\s*(\S+)\s+(.*)$/.exec(line)
+    if (!m || m[1] === "?" || m[1] === "??") continue
+    const a = /(?:^|\/)claude\s+attach\s+(\S+)/.exec(m[2]!)
+    if (a && want.has(a[1]!)) return m[1]!.startsWith("/dev/") ? m[1]! : `/dev/${m[1]}`
+  }
+  return null
+}
+
+/** That tab, brought to the front; null when no tab shows it. */
+function frontAttached(ids: string[], env: NodeJS.ProcessEnv): { ok: boolean; text: string } | null {
+  const tty = attachedTty(ids)
+  if (!tty) return null
+  let ok = false
+  try {
+    ok = F.focusTerm({ tty, ...(env.TERM_PROGRAM ? { program: env.TERM_PROGRAM } : {}) } as any, F.liveSys(env)).ok
+  } catch {}
+  return { ok: true, text: `◢ crosstalk: ${ok ? "brought its tab to the front" : `it is open in a tab already (${tty})`}.` }
+}
+
 /**
  * Any Claude Code session that has no tab to bring forward (a background session Claude Code
  * started, or one whose tab is gone while it runs on): `claude attach <id>` in a new tab.
@@ -588,6 +614,8 @@ export function attachById(sessionId: string, o: { env?: NodeJS.ProcessEnv; by?:
   const cwd = rec?.cwd && fs.existsSync(rec.cwd) ? rec.cwd : process.cwd()
   const short = sessionId.slice(0, 8)
   const name = rec?.name ?? short
+  const front = frontAttached([short, sessionId], env)
+  if (front) return front
   const r = openForRepo([{ cwd, argv: bgx.attachArgv(claude, short), name }], { cwd, envVars: env, by: o.by })
   if (r.opened.kind === "manual" || !r.ok) return { ok: r.opened.kind === "manual", text: `◢ crosstalk: to open ${name}, run:\n  ${R.shq(claude)} attach ${short}` }
   return { ok: true, text: `◢ crosstalk: opened ${name} in a new tab. Leaving it leaves it running.` }
