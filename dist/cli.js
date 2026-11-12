@@ -3814,7 +3814,7 @@ function threadBrief(v, task, o = {}) {
     ``,
     ...r.lines,
     ``,
-    `crosstalk_thread action "read" shows the whole thread; crosstalk_say action "tell" with no recipient reaches the people in it.`,
+    `crosstalk_work action "read" shows the whole thread; crosstalk_people action "tell" with no recipient reaches the people in it.`,
     ``,
     `## Your task`,
     task
@@ -4404,7 +4404,10 @@ function spawnAgents(o) {
   const main = wts[0]?.path ?? top.out;
   const common = g(o.cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   const claudeBin = which2("claude", env) ?? "claude";
-  const claudeBg = !!o.background && !which2("tmux", env) && claudeBackground(claudeBin, env).bg;
+  const native = claudeBackground(claudeBin, env).bg && env.CROSSTALK_TMUX_AGENTS !== "1";
+  if (o.background === undefined && native)
+    o = { ...o, background: true };
+  const claudeBg = !!o.background && (native || !which2("tmux", env)) && claudeBackground(claudeBin, env).bg;
   if (o.background && !which2("tmux", env) && !claudeBg)
     return { ok: false, text: "\u25e2 crosstalk: background agents run in tmux, which is not installed here. Install tmux, or start the agent in a tab instead.", agents: [] };
   if (o.background && !o.noQueue) {
@@ -4607,10 +4610,10 @@ function agentsAtWork(env = process.env, recs = readSpawned()) {
   return recs.filter((r) => {
     if (r.removedAt)
       return false;
-    if (r.background)
+    if (r.background && !r.claudeBg)
       return !!r.tmux && tmuxHas(r.tmux, env);
     if (!r.sessionId)
-      return false;
+      return !!r.claudeBg && Date.now() - r.createdAt < 2 * 60000;
     const rec = readOne(r.sessionId);
     return !!rec && !rec.endedAt && recAlive(rec);
   });
@@ -5036,7 +5039,7 @@ function indexPage(routes, port, asked) {
     const u = proxyUrl(r.host, port);
     return `<li><a href="${esc(u)}">${esc(u)}</a> &rarr; ${esc(r.group)} &middot; ${esc(r.service)} on :${r.port}</li>`;
   }).join(`
-`) : '<li>Nothing yet. Services crosstalk runs (crosstalk_work action "serve") show up here by name.</li>';
+`) : '<li>Nothing yet. Services crosstalk runs (crosstalk_sessions action "serve") show up here by name.</li>';
   return `<!doctype html><meta charset="utf-8"><title>crosstalk</title><style>body{font:14px/1.5 system-ui,sans-serif;margin:2rem;max-width:46rem}code{background:#eee;padding:0 .2em}</style>
 <h1>crosstalk</h1><p>${asked ? `No service is called <code>${esc(asked)}</code> here.` : "The local servers crosstalk knows by name:"}</p><ul>
 ${rows}
@@ -5689,6 +5692,7 @@ var init_phone = __esm(() => {
 });
 
 // src/urls/tools.ts
+import { spawn as spawn12 } from "node:child_process";
 function ago3(ts, now) {
   if (!ts)
     return "never";
@@ -5727,7 +5731,7 @@ function listText(o) {
   const all = gather2(o);
   const state = readState();
   if (!all.length)
-    return `\u25e2 crosstalk: no URLs${o.thread ? ` for ${clean5(o.thread)}` : ""} yet. Servers run with crosstalk_work action "serve", previews and PRs from shipping, and links commands print show up here.`;
+    return `\u25e2 crosstalk: no URLs${o.thread ? ` for ${clean5(o.thread)}` : ""} yet. Servers run with crosstalk_sessions action "serve", previews and PRs from shipping, and links commands print show up here.`;
   const shown = all.slice(0, 40);
   const now = Date.now();
   return [
@@ -5746,7 +5750,19 @@ function pick3(all, name) {
   const hay = (u) => `${u.label} ${u.name ?? ""} ${u.url} ${u.service ?? ""} ${u.feature ?? ""} ${u.kind === "pr" ? "pr pull request" : u.kind}`.toLowerCase();
   return all.filter((u) => words.every((w) => hay(u).includes(w)));
 }
-var clean5 = (s) => s.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/[<>]/g, (c) => c === "<" ? "\u2039" : "\u203a"), KIND_WORD;
+var clean5 = (s) => s.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/[<>]/g, (c) => c === "<" ? "\u2039" : "\u203a"), KIND_WORD, openInBrowser = (url) => {
+  if (!/^https?:\/\/[^\s\u0000-\u001f]+$/.test(url))
+    return false;
+  const cmd = process.env.CROSSTALK_OPEN_URL_CMD ?? (process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open");
+  try {
+    const c = spawn12(cmd, [url], { detached: true, stdio: "ignore" });
+    c.on("error", () => {});
+    c.unref();
+    return true;
+  } catch {
+    return false;
+  }
+};
 var init_tools = __esm(() => {
   init_urls();
   init_proxy();
@@ -5778,14 +5794,14 @@ function latest2() {
 }
 function qrCmd(argv) {
   if (insideAgent3()) {
-    console.log(`\u25e2 crosstalk: this prints a QR code for the person's eyes; inside an agent it is not shown. Ask for it with crosstalk_look action "qr", which draws it in the pane.`);
+    console.log(`\u25e2 crosstalk: this prints a QR code for the person's eyes; inside an agent it is not shown. Ask for it with crosstalk_work action "qr", which draws it in the pane.`);
     return 1;
   }
   const words = argv.slice(2).filter((a) => !a.startsWith("--")).join(" ").trim();
   if (!words) {
     const q = latest2();
     if (!q) {
-      console.log('\u25e2 crosstalk: no QR code yet. Run `crosstalk urls qr <name>` (as crosstalk_look action "urls" labels them) or pass a URL.');
+      console.log('\u25e2 crosstalk: no QR code yet. Run `crosstalk urls qr <name>` (as crosstalk_work action "urls" labels them) or pass a URL.');
       return 1;
     }
     printQr(q);
@@ -10679,7 +10695,7 @@ function tacklePrompt(items, ids = [], persons = []) {
       `Tackle the open items you listed:`,
       ...items.map((x, i) => `${i + 1}. ${x}${ids[i] ? ` (task ${ids[i]})` : ""}`),
       ``,
-      `Do each one you can do yourself${ids.length ? `, and mark it done with crosstalk_thread action "note", kind "task", op "done" and its task id` : ""}. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). Do nothing that cannot be undone (deleting, deploying, merging, sending, paying) unless the person asked for it in this conversation; leave those, and anything only the person can decide, in your Open list for them.`
+      `Do each one you can do yourself${ids.length ? `, and mark it done with crosstalk_work action "note", kind "task", op "done" and its task id` : ""}. Leave alone anything that only needs waiting (checks running, a merge or release landing, someone else's move). Do nothing that cannot be undone (deleting, deploying, merging, sending, paying) unless the person asked for it in this conversation; leave those, and anything only the person can decide, in your Open list for them.`
     ] : [],
     ...persons.length ? [
       ...items.length ? [``] : [],
@@ -10692,6 +10708,26 @@ function tacklePrompt(items, ids = [], persons = []) {
     `When you finish, list only what is still open; if nothing is, say so and leave out the Open list.`
   ].join(`
 `);
+}
+
+// src/attention/propose.ts
+init_uistate();
+var DO_IT = "Carry on";
+var NOT_NOW2 = "Not now";
+function answer2(id, value, now = Date.now()) {
+  return withStore((items, t) => {
+    const it = items[id];
+    if (!it || !it.delegate)
+      return { ok: false, text: "nothing waiting with that id" };
+    const yes = value === (it.options?.[0] ?? DO_IT);
+    const r = act(items, id, yes ? "answer" : "mute", t, value);
+    if (!r.ok)
+      return { ok: false, text: r.error ?? "already answered" };
+    if (!yes)
+      return { ok: true, text: "\u25e2 crosstalk: left as it is." };
+    upsert(items, { id: `tackle:${it.delegate.sessionId}:${id}`, kind: "attention", sessionId: it.delegate.sessionId, text: it.delegate.prompt, auto: true, ts: t }, t);
+    return { ok: true, text: `\u25e2 crosstalk: handed to ${it.from ?? "the session"}.` };
+  });
 }
 
 // src/ui-extra/usage.ts
@@ -10728,6 +10764,7 @@ function summarize(j) {
   return {
     state: String(j?.state ?? ""),
     draft: !!j?.isDraft,
+    ...typeof j?.title === "string" && j.title.trim() ? { title: j.title.trim().slice(0, 120) } : {},
     ...typeof j?.author?.login === "string" ? { author: j.author.login } : {},
     ...typeof j?.reviewDecision === "string" ? { review: j.reviewDecision.toUpperCase() } : {},
     ...typeof j?.mergeable === "string" ? { mergeable: j.mergeable.toUpperCase() } : {},
@@ -11133,7 +11170,6 @@ var file9 = () => path35.join(P.root, "calm.json");
 var WINDOW_MS3 = () => Number(process.env.CROSSTALK_WINDOW_MS ?? 30 * 60000);
 var WINDOW_OPEN_MS = 2 * 60000;
 var WINDOW_COUNT = 5;
-var DEFAULT_AFTER_MS = () => Number(process.env.CROSSTALK_DEFAULT_AFTER_MS ?? 15 * 60000);
 var NUDGE_AT = 12;
 function read3() {
   try {
@@ -11219,7 +11255,7 @@ function awayAnswer(options, until) {
     return { answer: r.label, how: "recommended" };
   const back = until ? ` (back around ${new Date(until).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })})` : "";
   return {
-    answer: `The person is away${back} and asked crosstalk to keep things going. Choose the safest, most reversible option yourself, write down which and why as a decision in the thread (crosstalk_thread), and carry on. If nothing here is safe to choose without them, leave this part, say so in the thread, and continue with the rest of the work.`,
+    answer: `The person is away${back} and asked crosstalk to keep things going. Choose the safest, most reversible option yourself, write down which and why as a decision in the thread (crosstalk_work), and carry on. If nothing here is safe to choose without them, leave this part, say so in the thread, and continue with the rest of the work.`,
     how: "own"
   };
 }
@@ -11273,9 +11309,9 @@ function relay(sessionId, q, main, now = Date.now()) {
   if (where)
     described.unshift(`Where it is: ${where}`);
   const rec0 = recommended(opts);
-  const defaultAt = rec0 ? now + DEFAULT_AFTER_MS() : undefined;
-  if (rec0 && defaultAt)
-    described.push(`If you don't answer, it goes with "${clean3(rec0.label, 60)}" at ${new Date(defaultAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}.`);
+  const defaultAt = undefined;
+  if (rec0)
+    described.push(`The agent recommends "${clean3(rec0.label, 60)}".`);
   withStore((items, t) => upsert(items, {
     id,
     kind: "attention",
@@ -12613,7 +12649,7 @@ async function captureFor(o) {
   if (!targets.length)
     return {
       ok: false,
-      text: `\u25e2 crosstalk: nothing of ${thread} to capture: no local server or preview answers${skipped.length ? ` (${skipped.slice(0, 4).map((s) => `${s.label}: ${s.why}`).join("; ")})` : ""}. Run the server with crosstalk_work action "serve", or name an address with url.`,
+      text: `\u25e2 crosstalk: nothing of ${thread} to capture: no local server or preview answers${skipped.length ? ` (${skipped.slice(0, 4).map((s) => `${s.label}: ${s.why}`).join("; ")})` : ""}. Run the server with crosstalk_sessions action "serve", or name an address with url.`,
       shots: [],
       skipped,
       failed: [],
@@ -12721,7 +12757,7 @@ function openPair(o) {
   if (hits.length > 1 && hits.filter((p) => !p.path).length === 1)
     hits = hits.filter((p) => !p.path);
   if (!hits.length)
-    return { ok: false, text: `\u25e2 crosstalk: no screenshots${o.name ? ` match "${clean4(o.name)}"` : ""} in ${thread} yet. They are taken after a turn that edits files, or with crosstalk_look action "screenshot".` };
+    return { ok: false, text: `\u25e2 crosstalk: no screenshots${o.name ? ` match "${clean4(o.name)}"` : ""} in ${thread} yet. They are taken after a turn that edits files, or with crosstalk_work action "screenshot".` };
   const lines = hits.slice(0, 8).map((p) => `  ${clean4(p.label)}${p.path ? ` ${clean4(p.path)}` : ""}: ${p.before ? `before ${p.before.file} (${when(p.before.at)}), ` : "no before yet, "}after ${p.after.file} (${when(p.after.at)})`);
   if (!o.open)
     return { ok: true, text: [`\u25e2 crosstalk: screenshots of ${thread}, before and after (labels are data):`, ...lines].join(`
@@ -12883,6 +12919,7 @@ function prFields(u, now) {
     ...u.failed?.length ? { failed: u.failed } : {},
     ...u.draft ? { draft: true } : {},
     ...u.queued ? { queued: true } : {},
+    ...u.title ? { title: u.title } : {},
     ...eta ? { eta } : {}
   };
 }
@@ -13088,7 +13125,7 @@ function agentsPane(sessionId, list = agents(sessionId)) {
   try {
     const open = Object.values(snapshot()).filter((i) => (i.state === "pending" || i.state === "later") && !i.id.startsWith("open:") && now - i.createdAt < 86400000);
     relayed = new Set(open.filter((i) => i.id.startsWith("relay:")).map((i) => i.id.split(":")[1] ?? ""));
-    const mine = sessionId ? itemsFor(open, sessionId, currentMain()?.sessionId) : [];
+    const mine = sessionId ? itemsFor(open, sessionId, readMain()?.sessionId) : [];
     needs = inboxItems(mine, now).map((i) => inboxLine(i, now));
   } catch {}
   let prs = [];
@@ -13128,7 +13165,7 @@ function agentsPane(sessionId, list = agents(sessionId)) {
 function pane(o) {
   if (o.thread && AGENTS.test(o.thread.trim()))
     return agentsPane(o.sessionId);
-  const isMain = !!o.sessionId && currentMain()?.sessionId === o.sessionId;
+  const isMain = !!o.sessionId && readMain()?.sessionId === o.sessionId;
   if (isMain && !o.thread)
     return agentsPane(o.sessionId);
   const st = o.st ?? readThreads();
@@ -13143,7 +13180,7 @@ function pane(o) {
   const model = paneModel(t, o.items ?? snapshot());
   let items = [];
   try {
-    items = running2(model.thread, { sessionId: o.sessionId, main: !!o.sessionId && currentMain()?.sessionId === o.sessionId, servers: o.services }).filter((r) => r.kind !== "link");
+    items = running2(model.thread, { sessionId: o.sessionId, main: !!o.sessionId && readMain()?.sessionId === o.sessionId, servers: o.services }).filter((r) => r.kind !== "link");
   } catch {}
   const now = new Set(items.map((r) => r.url).filter(Boolean));
   const history = paneHistory(t, 12).filter((h) => !h.url || !now.has(h.url)).slice(0, 5);
@@ -13333,7 +13370,7 @@ function act3(id, action, value) {
     return {
       ok: true,
       item: it,
-      prompt: `crosstalk says something is wrong. ${it.question ?? ""} Help me fix it; crosstalk_doctor action "report" has the whole report.`,
+      prompt: `crosstalk says something is wrong. ${it.question ?? ""} Help me fix it; crosstalk_inbox action "report" has the whole report.`,
       text: "handed to the agent"
     };
   return { ok: true, item: it, text: `Left as it is. Say "is crosstalk OK?" any time.` };
@@ -14568,6 +14605,37 @@ async function uiCmd(argv, root) {
         return print(show({ name: bg.name, cwd: bg.cwd, by: session }));
       return print(focusSession({ sessionId: target }));
     }
+    case "open-url": {
+      const url = arg2(argv, "--url") ?? "";
+      await Promise.resolve().then(() => init_tools());
+      return print(process.env.CROSSTALK_NO_OPEN ? { ok: true } : openInBrowser(url) ? { ok: true } : { ok: false, error: `could not open ${url}` });
+    }
+    case "pr": {
+      const url = arg2(argv, "--url") ?? "";
+      const what = arg2(argv, "--do") ?? "open";
+      if (!/^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+$/.test(url))
+        return print({ ok: false, error: "not a pull request's address" });
+      if (what === "open") {
+        await Promise.resolve().then(() => init_tools());
+        return print(process.env.CROSSTALK_NO_OPEN ? { ok: true, text: `would open ${url}` } : openInBrowser(url) ? { ok: true, text: `opened ${url}` } : { ok: false, error: `could not open ${url}` });
+      }
+      const u = urls().read().find((x) => x.kind === "pr" && x.url === url);
+      const n = /\/pull\/(\d+)$/.exec(url)?.[1];
+      const name = `PR #${n}${u?.title ? ` (${u.title})` : ""}`;
+      const prompt = [
+        `${name} ${url} has failing checks${u?.failed?.length ? `: ${u.failed.join(", ")}` : ""}. The person asked you to fix them.`,
+        `Check out its branch if you are not on it (gh pr checkout ${n}), find why each failed (gh pr checks ${url}, and the run's log), fix the cause rather than skipping or disabling a test, run those checks locally, and push.`,
+        `Do nothing that cannot be undone (merging, deleting, deploying) unless the person asks. If it needs a decision only they can make, ask them with AskUserQuestion.`
+      ].join(`
+`);
+      if (what === "fix")
+        return print({ ok: true, prompt, name, ...u?.sessionId ? { sessionId: u.sessionId } : {} });
+      if (what === "spawn") {
+        const r = spawnAgents({ task: prompt, name: `fix-${n}`, background: true, cwd: u?.worktree && (await import("node:fs")).existsSync(u.worktree) ? u.worktree : process.cwd(), by: session });
+        return print({ ok: r.ok, text: r.text });
+      }
+      return print({ ok: false, error: `--do is open, fix or spawn` });
+    }
     case "relay": {
       let q = null;
       try {
@@ -14649,6 +14717,11 @@ async function uiCmd(argv, root) {
         const yes = action !== "mute" && (value ?? "").trim() === CONNECT;
         const out = await connect({ slug: id.slice("connect:".length), yes, ensureDaemon: () => ensureDaemon(root), request });
         return print({ ok: out.ok, text: out.text, item: snapshot()[id] });
+      }
+      if (id.startsWith("propose:")) {
+        if (action === "raised" || action === "later")
+          return print(withStore((items, now) => act(items, id, action, now)));
+        return print(answer2(id, action === "mute" ? NOT_NOW2 : (value ?? "").trim()));
       }
       if (id.startsWith("you:")) {
         if (action === "raised" || action === "later")
@@ -15101,7 +15174,7 @@ function runGh(args, o = {}) {
     }
   });
 }
-var PR_FIELDS = "state,isDraft,statusCheckRollup,author,reviewDecision,mergeable,mergeStateStatus,autoMergeRequest";
+var PR_FIELDS = "title,state,isDraft,statusCheckRollup,author,reviewDecision,mergeable,mergeStateStatus,autoMergeRequest";
 var login;
 var asking2;
 function ghLogin() {
@@ -15150,7 +15223,7 @@ async function tick2(store, o = { liveRoots: new Set }) {
         recordDuration(repoOf2(u.url), now - u.checksSince);
       const since = v.checks === "running" ? u.checks === "running" && u.checksSince ? u.checksSince : v.startedAt ?? now : undefined;
       const r = v.state === "OPEN" ? store.markOk(u.id, { state: v.state }) : store.markDead(u.id, { state: v.state });
-      const after = store.update(u.id, { checks: v.checks, draft: v.draft, failed: v.failed, checksSince: since }) ?? r;
+      const after = store.update(u.id, { checks: v.checks, draft: v.draft, failed: v.failed, checksSince: since, ...v.title ? { title: v.title } : {} }) ?? r;
       if (after)
         out.push(after);
       const me = !v.author ? undefined : o.me ? await o.me() : await ghLogin();
@@ -15280,7 +15353,7 @@ async function shotsCmd(argv) {
 import fs53 from "fs";
 import path60 from "path";
 import os11 from "os";
-import { spawn as spawn12, execFileSync as execFileSync6 } from "child_process";
+import { spawn as spawn13, execFileSync as execFileSync6 } from "child_process";
 var argv = process.argv.slice(2);
 var cmd = argv[0] ?? "status";
 var VALUE_FLAGS = new Set([
@@ -15405,7 +15478,7 @@ async function startRelay(port = Number(flag6("--port", "8787"))) {
       return url;
   }
   const out = fs53.openSync(path60.join(ROOT2, "relay.log"), "a");
-  const child = spawn12(shim2(ROOT_DIR), ["relay-server", "--host", "0.0.0.0", "--port", String(port)], {
+  const child = spawn13(shim2(ROOT_DIR), ["relay-server", "--host", "0.0.0.0", "--port", String(port)], {
     detached: true,
     stdio: ["ignore", out, out]
   });
