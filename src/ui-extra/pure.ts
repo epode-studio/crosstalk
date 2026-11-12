@@ -384,6 +384,32 @@ export function agentLine(a: PaneAgent): string {
   return [`${a.thread ? dotFor(a.thread) : ""}${sign} ${name}`, what, a.background ? "out of sight" : "", a.cost ?? ""].filter(Boolean).join(" · ")
 }
 
+/**
+ * The panel's summary, kept current as the pane redraws: what is at work, what
+ * waits on the person, how the pull requests stand, and the latest thing that
+ * happened. A few plain lines, nothing to act on (the sections below are for that).
+ */
+export function nowSummary(p: { agents?: PaneAgent[]; prs?: PaneRunning[]; events?: { text: string; at: number }[]; usage?: { text: string; hot: boolean } }, inbox: number, now: number): string[] {
+  const out: string[] = []
+  const agents = p.agents ?? []
+  const working = agents.filter((a) => a.state === "working")
+  const waiting = agents.filter((a) => a.state === "waiting")
+  const names = (xs: PaneAgent[]) => xs.slice(0, 2).map((a) => human(a.thread ?? a.name, 28)).join(", ") + (xs.length > 2 ? ` and ${xs.length - 2} more` : "")
+  const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
+  if (working.length) out.push(`${plural(working.length, "session")} working: ${names(working)}.`)
+  else out.push(agents.length ? "Nothing is working right now." : "No sessions open.")
+  const wait = [inbox ? `${plural(inbox, "thing")} in your inbox` : "", waiting.length ? `${plural(waiting.length, "session")} waiting on you (${names(waiting)})` : ""].filter(Boolean)
+  out.push(wait.length ? `${wait.join(", ")}.`.replace(/^./, (c) => c.toUpperCase()) : "Nothing waits on you.")
+  const g = prGroups(p.prs ?? [])
+  const running = g.rest.filter((r) => (!r.state || r.state === "OPEN") && r.checks === "running").length
+  const prs = [g.fix.length ? `${g.fix.length} failing` : "", g.ready.length ? `${g.ready.length} ready to review` : "", running ? `${running} with checks running` : ""].filter(Boolean)
+  if (prs.length) out.push(`Pull requests: ${prs.join(", ")}.`)
+  const last = [...(p.events ?? [])].sort((a, b) => b.at - a.at)[0]
+  if (last) out.push(`Latest: ${last.text.replace(/\s+/g, " ").trim().replace(/\.$/, "")} · ${ago(last.at, now) || "now"}`)
+  if (p.usage?.hot) out.push(p.usage.text)
+  return out
+}
+
 /** The question an agent is waiting on, on the line under it: `    asks: Keep the Pi flat? (Pi flat / Keep any tilt)`. */
 export const agentAsks = (a: PaneAgent): string | null => (a.asks ? `   asks: ${a.asks}` : null)
 

@@ -9,7 +9,7 @@
 // on black, so it scans on any theme. No hook, state or I/O in here.
 
 import type { Item, Pane } from './types'
-import { agentAsks, agentLine, ago, dotFor, featureLine, fileLink, historyLine, cleanRecap, inboxChoices, inboxMail, inboxRow, inboxSections, inboxUrgent, linkable, withoutThread, noteLine, prGroups, prName, prWhy, runningGroups, runningLine, runningWhere } from '../src/ui-extra/pure.ts'
+import { agentAsks, agentLine, ago, dotFor, featureLine, fileLink, historyLine, cleanRecap, inboxChoices, inboxMail, inboxRow, inboxSections, inboxUrgent, linkable, withoutThread, noteLine, nowSummary, prGroups, prName, prWhy, runningGroups, runningLine, runningWhere } from '../src/ui-extra/pure.ts'
 
 /** The elements these trees are made of: the surface's own Box, Text and Link, and Button where a tree takes presses. */
 export type Els = { Box: any; Text: any; Link: any; Button?: any }
@@ -236,8 +236,15 @@ export function paneTree(E: Els, p: Pane | null, problem: string, now: number, i
           <Text color={THREAD} bold>
             ◢ {clean(p.thread)}
           </Text>
-          <Text dimColor> · {clean(p.status)}</Text>
         </Text>
+        {/* Now: kept current as the pane redraws, so a glance tells where things stand. */}
+        <Box flexDirection="column" marginTop={1}>
+          {nowSummary(p, p.inbox?.length ?? 0, now).map((l, i) => (
+            <Text key={`now${i}`} wrap="wrap" dimColor={i > 1}>
+              {clean(l)}
+            </Text>
+          ))}
+        </Box>
         {inbox ? (
           <Box flexDirection="column" marginTop={1}>
             {inbox}

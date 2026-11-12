@@ -405,3 +405,32 @@ describe("pull requests in the pane, by what the person can do", () => {
     expect(P.prWhy(prs[2]!)).toBe("draft")
   })
 })
+
+describe("the panel's summary", () => {
+  test("what works, what waits, how the PRs stand, the latest; current to the clock", async () => {
+    const P = await import("../src/ui-extra/pure.ts")
+    const now = 10_000_000
+    const lines = P.nowSummary(
+      {
+        agents: [
+          { name: "probe", thread: "blacksmith-runners", state: "working" },
+          { name: "api", state: "waiting", forYou: 1 },
+          { name: "docs", state: "idle", idleMin: 30 },
+        ],
+        prs: [
+          { kind: "pr", label: "a", url: "https://github.com/a/b/pull/1", alive: true, owner: "you", state: "OPEN", checks: "failed" },
+          { kind: "pr", label: "b", url: "https://github.com/a/b/pull/2", alive: true, owner: "you", state: "OPEN", checks: "passed" },
+          { kind: "pr", label: "c", url: "https://github.com/a/b/pull/3", alive: true, owner: "you", state: "OPEN", checks: "running" },
+        ],
+        events: [{ text: "Agent \"Intent judge\" finished.", at: now - 9 * 60_000 }],
+      },
+      3,
+      now,
+    )
+    expect(lines[0]).toBe("1 session working: Blacksmith runners.")
+    expect(lines[1]).toBe("3 things in your inbox, 1 session waiting on you (API).")
+    expect(lines[2]).toBe("Pull requests: 1 failing, 1 ready to review, 1 with checks running.")
+    expect(lines[3]).toContain('Latest: Agent "Intent judge" finished · 9')
+    expect(P.nowSummary({ agents: [] }, 0, now)).toEqual(["No sessions open.", "Nothing waits on you."])
+  })
+})

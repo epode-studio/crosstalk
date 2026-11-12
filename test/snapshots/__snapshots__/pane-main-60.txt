@@ -1,0 +1,52 @@
+┌─ pane · main · 60 cols ────────────────────────────────────┐
+│◢ main                                                      │
+│                                                            │
+│1 session working: Blacksmith runners.                      │
+│3 things in your inbox, 1 session waiting on you (API).     │
+│Pull requests: 1 failing, 1 ready to review.                │
+│Latest: Agent "Intent judge" finished · 9m                  │
+│                                                            │
+│Needs you · 3                                               │
+│ 1. a                                                       │
+│ 2. b                                                       │
+│ 3. c                                                       │
+│                                                            │
+│◉ Sessions 2 · Enter opens one                              │
+│ 🟤⏳ Blacksmith runners · $5.44                              │
+│ ❓ API · 1 for you                                          │
+│                                                            │
+│◉ Checks failed 1 · Enter hands one to an agent             │
+│  #3024 A carrier's button and buzzer are parts the board r…│
+│                                                            │
+│◉ Ready to review 1 · Enter opens it                        │
+│  #3028 Shadow-mode cheap judge · checks passed             │
+│                                                            │
+│What happened                                               │
+│ Agent "Intent judge" finished. · 9m                        │
+└────────────────────────────────────────────────────────────┘
+
+styles (dark theme):
+  1 [bold fg=suggestion:#b1b9f9]◢ main[/]
+  2 
+  3 1 session working: Blacksmith runners.
+  4 3 things in your inbox, 1 session waiting on you (API).
+  5 [dim]Pull requests: 1 failing, 1 ready to review.[/]
+  6 [dim]Latest: Agent "Intent judge" finished · 9m[/]
+  7 
+  8 [bold]Needs you · 3[/]
+  9 [bold] 1. a[/]
+ 10  2. b
+ 11  3. c
+ 12 
+ 13 [fg=gray]◉[/] [bold]Sessions[/] [dim]2 · Enter opens one[/]
+ 14  🟤⏳ Blacksmith runners · $5.44
+ 15  ❓ API · 1 for you
+ 16 
+ 17 [fg=error:#ff6b80]◉[/] [bold]Checks failed[/] [dim]1 · Enter hands one to an agent[/]
+ 18 [fg=error:#ff6b80]  #3024 A carrier's button and buzzer are parts the board r…[/]
+ 19 
+ 20 [fg=green]◉[/] [bold]Ready to review[/] [dim]1 · Enter opens it[/]
+ 21   #3028 Shadow-mode cheap judge · checks passed
+ 22 
+ 23 [bold]What happened[/]
+ 24 [dim] Agent "Intent judge" finished. · 9m[/]

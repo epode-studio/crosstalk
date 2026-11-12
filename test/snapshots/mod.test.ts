@@ -135,6 +135,23 @@ describe("the thread pane", () => {
     snapshot("pane-dark-120", frame("pane · dark · 120 cols", D.paneTree(ELS, PANE, "", NOW, undefined, { expanded: true }), 120, "dark"))
     // What a thread's pane shows to begin with: what is open and running; the rest behind "more".
     snapshot("pane-collapsed-60", frame("pane · collapsed · 60 cols", D.paneTree(ELS, PANE, "", NOW), 60, "dark"))
+    // Main's panel: a summary on top, kept current, then what to act on.
+    const MAIN = {
+      ...PANE,
+      thread: "main",
+      status: "3 need you · 1 working",
+      agents: [
+        { name: "probe", thread: "blacksmith-runners", state: "working" as const, cost: "$5.44" },
+        { name: "api", state: "waiting" as const, forYou: 1 },
+      ],
+      prs: [
+        { kind: "pr" as const, label: "agent-ae13 · PR #3024", title: "A carrier's button and buzzer are parts the board reports", url: "https://github.com/acme/app/pull/3024", alive: true, owner: "you", state: "OPEN", checks: "failed" as const, failed: ["E2E suite"] },
+        { kind: "pr" as const, label: "agent-a044 · PR #3028", title: "Shadow-mode cheap judge", url: "https://github.com/acme/app/pull/3028", alive: true, owner: "you", state: "OPEN", checks: "passed" as const },
+      ],
+      events: [{ text: "Agent \"Intent judge\" finished.", at: NOW - 9 * 60_000 }],
+      inbox: ["a", "b", "c"],
+    }
+    snapshot("pane-main-60", frame("pane · main · 60 cols", D.paneTree(ELS, MAIN as any, "", NOW), 60, "dark"))
   })
   test("while it loads, and when it cannot show the thread", () => {
     snapshot("pane-loading", [frame("pane · loading", D.paneTree(ELS, null, "", NOW), 60, "dark"), frame("pane · no thread", D.paneTree(ELS, null, 'no thread called "nope"', NOW), 60, "dark")].join("\n"))
