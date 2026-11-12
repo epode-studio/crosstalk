@@ -401,7 +401,7 @@ async function maybeRaise($: EngineInterface) {
       if (box.text.trim()) return
       const r = await cli($, ['act', '--id', tackle.id, '--action', 'answer'])
       await forget($, tackle.id)
-      if (r?.ok && typeof r.prompt === 'string' && r.prompt) await $.prompt.submit({ text: r.prompt })
+      if (r?.ok && typeof r.prompt === 'string' && r.prompt) await asCrosstalk($, r.prompt)
       return
     }
     // About this session's own thread: it goes to the agent without asking, once.
@@ -552,14 +552,14 @@ async function answered($: EngineInterface, it: Item, answer: string) {
   if (it.kind === 'rule' || it.kind === 'connect' || it.kind === 'conflict' || it.kind === 'invite' || it.kind === 'install' || it.kind === 'attention' || it.kind === 'steer' || it.kind === 'session' || it.kind === 'share' || it.kind === 'env') {
     const r = await step($, it, 'answer', answer)
     $.ui.toast(oneLine((r.text ?? r.error ?? 'crosstalk did not answer').replace(/^◢ crosstalk: /, '')))
-    // The person's pick that starts work (tackle the open items): the turn, in their session.
-    if (r.ok && typeof r.prompt === 'string' && r.prompt) await $.prompt.submit({ text: r.prompt })
+    // The person's pick that starts work (tackle the open items): crosstalk tells the agent, in its own name.
+    if (r.ok && typeof r.prompt === 'string' && r.prompt) await asCrosstalk($, r.prompt)
     return
   }
   if (it.kind === 'doctor') {
     const r = await step($, it, 'answer', answer)
-    // The person asked for it: the problem and its fix go to the agent, as their own turn.
-    if (r.ok && r.prompt) await $.prompt.submit({ text: String(r.prompt) })
+    // The person asked for it: the problem and its fix go to the agent, from crosstalk, never in their voice.
+    if (r.ok && r.prompt) await asCrosstalk($, String(r.prompt))
     else $.ui.toast(oneLine(r.text ?? r.error ?? 'crosstalk did not answer'))
     return
   }
@@ -630,17 +630,35 @@ async function hand($: EngineInterface, it: Item, auto = false) {
     $.ui.toast(`not handed over: ${r.error ?? 'no answer'}`)
     return
   }
-  const appended = await $.session
-    .append({ message: { type: 'user', content: [{ type: 'text', text: r.text }] } })
-    .catch((err: unknown) => ({ deny: String(err).slice(0, 120) }))
-  if ('deny' in appended && appended.deny) {
+  // A note about this session's own work: kept as data for the agent's next turn, no turn of its own.
+  // A message the person hands over: sent to the agent from crosstalk, so it acts on it now, never as words
+  // the person typed.
+  const done = auto
+    ? await $.session
+        .append({ message: { type: 'user', content: [{ type: 'text', text: r.text }] } })
+        .then((a: any) => (a && 'deny' in a && a.deny ? String(a.deny) : ''))
+        .catch((err: unknown) => String(err).slice(0, 120))
+    : await asCrosstalk($, r.text)
+  if (done) {
     await cli($, ['act', '--id', it.id, '--action', 'unhand'])
     settled.delete(it.id)
-    $.ui.toast(`not handed over: ${appended.deny}`)
+    $.ui.toast(`not handed over: ${done}`)
     return
   }
   await receipt($, `hand-${it.id}`, auto ? `◢ gave ${it.from}'s note about this work to the agent` : `◢ gave ${it.from}'s message to the agent`)
-  if (!auto) await $.prompt.submit({ text: HANDED_PROMPT })
+}
+
+/**
+ * Something crosstalk has for this session's agent, sent as crosstalk's own message (a peer's, from this
+ * plugin), never typed into the prompt as the person's words. Empty when sent, else why not.
+ */
+async function asCrosstalk($: EngineInterface, text: string): Promise<string> {
+  try {
+    await $.session.send({ to: { sessionId: session }, text })
+    return ''
+  } catch (err) {
+    return String(err).slice(0, 120)
+  }
 }
 
 async function receipt($: EngineInterface, key: string, text: string) {
